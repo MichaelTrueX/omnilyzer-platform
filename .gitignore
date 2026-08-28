@@ -1,0 +1,76 @@
+# File: .gitignore
+# Purpose: Excludes local, generated, sensitive, and future framework artifacts.
+# Related: SECURITY.md, .github/workflows/repository-quality.yml
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.template
+!.env.*.template
+*.secret
+*.secrets
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.venv/
+venv/
+
+# Node, TypeScript, Next.js, Vite, and Expo
+node_modules/
+.next/
+.nuxt/
+.vite/
+.expo/
+.expo-shared/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build, test, and generated output
+build/
+dist/
+out/
+coverage/
+.coverage
+htmlcov/
+*.lcov
+*.map
+tmp/
+temp/
+*.tmp
+*.temp
+*.log
+
+# Local databases
+*.sqlite
+*.sqlite3
+*.db
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating systems
+.DS_Store
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,8 @@
+# File: .github/CODEOWNERS
+# Purpose: Reserves repository ownership configuration without inventing owners.
+# Related: CONTRIBUTING.md, .github/pull_request_template.md
+
+# No ownership rule is active yet because no authorized GitHub users or teams have
+# been provided. Repository administrators must add real user/team assignments and
+# configure branch protection once ownership is selected. Do not add placeholder
+# or fabricated @organization/team entries.

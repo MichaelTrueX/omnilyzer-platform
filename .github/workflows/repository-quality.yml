@@ -1,0 +1,126 @@
+# File: .github/workflows/repository-quality.yml
+# Purpose: Runs lightweight standard-library checks for required files and repository hygiene.
+# Related: README.md, SECURITY.md, .gitignore
+
+name: Repository quality
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  repository-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate required files and sensitive-file hygiene
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          required = {
+              "README.md",
+              "LICENSE",
+              "CONTRIBUTING.md",
+              "SECURITY.md",
+              ".editorconfig",
+              ".gitignore",
+              "docs/architecture/platform-principles.md",
+              "docs/architecture/technology-decisions.md",
+              "docs/architecture/security-model.md",
+              "docs/architecture/tenancy-model.md",
+              "docs/architecture/deployment-model.md",
+              "docs/architecture/integration-model.md",
+              "docs/architecture/design-system.md",
+              "docs/adr/README.md",
+              "spikes/README.md",
+              ".github/CODEOWNERS",
+              ".github/pull_request_template.md",
+              ".github/workflows/repository-quality.yml",
+          }
+          missing = sorted(path for path in required if not Path(path).is_file())
+
+          repository_files = set(
+              subprocess.check_output(
+                  ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+                  text=True,
+                  encoding="utf-8",
+              ).splitlines()
+          )
+
+          allowed_env = {
+              path
+              for path in repository_files
+              if Path(path).name == ".env.example"
+              or Path(path).name == ".env.template"
+              or Path(path).name.startswith(".env.")
+              and Path(path).suffix in {".example", ".template"}
+          }
+          tracked_env = sorted(
+              path
+              for path in repository_files
+              if (Path(path).name == ".env" or Path(path).name.startswith(".env."))
+              and path not in allowed_env
+          )
+
+          private_suffixes = {".key", ".p12", ".pfx", ".jks"}
+          private_files = sorted(
+              path
+              for path in repository_files
+              if Path(path).suffix.lower() in private_suffixes
+          )
+          private_markers = tuple(
+              f"-----BEGIN {key_type}-----".encode("ascii")
+              for key_type in (
+                  "PRIVATE KEY",
+                  "RSA PRIVATE KEY",
+                  "EC PRIVATE KEY",
+                  "OPENSSH PRIVATE KEY",
+              )
+          )
+          marked_files = []
+          for path in sorted(repository_files):
+              candidate = Path(path)
+              if not candidate.is_file() or candidate.stat().st_size > 5_000_000:
+                  continue
+              try:
+                  content = candidate.read_bytes()
+              except OSError as error:
+                  print(f"Unable to inspect {path}: {error}", file=sys.stderr)
+                  sys.exit(1)
+              if any(marker in content for marker in private_markers):
+                  marked_files.append(path)
+
+          failures = {
+              "Missing required files": missing,
+              "Tracked disallowed environment files": tracked_env,
+              "Tracked private-key file extensions": private_files,
+              "Tracked private-key content markers": marked_files,
+          }
+          failed = False
+          for label, values in failures.items():
+              if values:
+                  failed = True
+                  print(f"{label}:", file=sys.stderr)
+                  for value in values:
+                      print(f"  - {value}", file=sys.stderr)
+
+          if failed:
+              sys.exit(1)
+          print(
+              "Repository quality checks passed for "
+              f"{len(repository_files)} repository files."
+          )
+          PY
