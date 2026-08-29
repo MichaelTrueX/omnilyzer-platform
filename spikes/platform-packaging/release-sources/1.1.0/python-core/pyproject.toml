@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling==1.32.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "omnilyzer-platform-core"
+version = "1.1.0"
+description = "Representative Omnilyzer platform packaging fixture"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/omnilyzer_platform_core"]
+
