@@ -1,0 +1,16 @@
+# File: spikes/supply-chain/fixtures/python/pyproject.toml
+# Purpose: Defines the synthetic PEP 517/518 wheel fixture copied for Task 008 builds.
+
+[build-system]
+requires = ["hatchling==1.32.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "omnilyzer-supply-chain-spike"
+version = "0.0.0"
+description = "Synthetic private-registry validation fixture."
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/omnilyzer_supply_chain_spike"]

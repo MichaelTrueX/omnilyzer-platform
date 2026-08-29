@@ -1,0 +1,188 @@
+# File: .github/workflows/task008-publish.yml
+# Purpose: Publishes coordinated Task 008 fixtures through GitHub OIDC to Cloudsmith.
+
+name: Task 008 publish
+
+on:
+  push:
+    branches:
+      - spike/008-supply-chain
+    paths:
+      - spikes/supply-chain/control/publish.trigger
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: task008-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/spike/008-supply-chain'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDSMITH_NAMESPACE: omnilyzer
+      CLOUDSMITH_REPOSITORY: platform-spike
+      IMAGE_REPOSITORY: docker.cloudsmith.io/omnilyzer/platform-spike/omnilyzer-supply-chain-spike
+    steps:
+      - name: Check out repository
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Read and validate coordinated release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_version="$(python - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          content = Path("spikes/supply-chain/control/publish.trigger").read_text(
+              encoding="utf-8"
+          )
+          if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+\n?", content) is None:
+              print("publish.trigger must contain exactly an X.Y.Z version", file=sys.stderr)
+              raise SystemExit(1)
+          print(content.rstrip("\n"))
+          PY
+          )"
+          printf 'RELEASE_VERSION=%s\n' "$release_version" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        # actions/setup-python v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.20.0'
+
+      - name: Authenticate short-lived Cloudsmith publisher
+        # cloudsmith-io/cloudsmith-cli-action v3.1.0
+        uses: cloudsmith-io/cloudsmith-cli-action@ad73fafb92e3e29a5166c529464c2df7658a608e
+        with:
+          oidc-namespace: omnilyzer
+          oidc-service-slug: gha-publisher-u76y
+          verify-auth: true
+          export-auth-token: true
+
+      - name: Prepare coordinated build inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python spikes/supply-chain/scripts/prepare_release.py \
+            "$RELEASE_VERSION" "$RUNNER_TEMP/task008-release"
+          mkdir -p \
+            "$RUNNER_TEMP/task008-artifacts/python" \
+            "$RUNNER_TEMP/task008-artifacts/npm"
+
+      - name: Build standard Python wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check \
+            build==1.6.0 hatchling==1.32.0
+          python -m build --wheel \
+            --outdir "$RUNNER_TEMP/task008-artifacts/python" \
+            "$RUNNER_TEMP/task008-release/python"
+
+      - name: Build standard npm tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm pack "$RUNNER_TEMP/task008-release/npm" \
+            --ignore-scripts \
+            --pack-destination "$RUNNER_TEMP/task008-artifacts/npm"
+
+      - name: Verify prepared artifact names
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_wheel="omnilyzer_supply_chain_spike-${RELEASE_VERSION}-py3-none-any.whl"
+          expected_tarball="omnilyzer-supply-chain-spike-${RELEASE_VERSION}.tgz"
+          test -f "$RUNNER_TEMP/task008-artifacts/python/$expected_wheel"
+          test -f "$RUNNER_TEMP/task008-artifacts/npm/$expected_tarball"
+          printf 'WHEEL_PATH=%s\n' \
+            "$RUNNER_TEMP/task008-artifacts/python/$expected_wheel" >> "$GITHUB_ENV"
+          printf 'NPM_TARBALL_PATH=%s\n' \
+            "$RUNNER_TEMP/task008-artifacts/npm/$expected_tarball" >> "$GITHUB_ENV"
+
+      - name: Publish Python package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cloudsmith push python \
+            "$CLOUDSMITH_NAMESPACE/$CLOUDSMITH_REPOSITORY" "$WHEEL_PATH"
+
+      - name: Publish npm package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cloudsmith push npm \
+            "$CLOUDSMITH_NAMESPACE/$CLOUDSMITH_REPOSITORY" "$NPM_TARBALL_PATH"
+
+      - name: Build OCI fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE_REPOSITORY}:${RELEASE_VERSION}"
+          docker build --tag "$image_ref" "$RUNNER_TEMP/task008-release/oci"
+          printf 'IMAGE_REF=%s\n' "$image_ref" >> "$GITHUB_ENV"
+
+      - name: Authenticate Docker with short-lived Cloudsmith identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$CLOUDSMITH_API_KEY" | docker login docker.cloudsmith.io \
+            --username token --password-stdin
+          touch "$RUNNER_TEMP/task008-docker-login"
+
+      - name: Push OCI fixture and resolve immutable digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "$IMAGE_REF"
+          oci_digest="$(docker buildx imagetools inspect "$IMAGE_REF" \
+            --format '{{.Manifest.Digest}}')"
+          if [[ ! "$oci_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Cloudsmith did not return a valid OCI digest" >&2
+            exit 1
+          fi
+          printf 'OCI_DIGEST=%s\n' "$oci_digest" >> "$GITHUB_ENV"
+
+      - name: Write non-secret release record
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel_sha256="$(sha256sum "$WHEEL_PATH" | cut -d ' ' -f 1)"
+          npm_sha256="$(sha256sum "$NPM_TARBALL_PATH" | cut -d ' ' -f 1)"
+          {
+            echo '## Task 008A private registry publication'
+            echo
+            echo "- Source commit SHA: \`$GITHUB_SHA\`"
+            echo "- Release version: \`$RELEASE_VERSION\`"
+            echo '- Python package: `omnilyzer-supply-chain-spike`'
+            echo "- Python wheel SHA-256: \`$wheel_sha256\`"
+            echo '- npm package: `@omnilyzer/supply-chain-spike`'
+            echo "- npm tarball SHA-256: \`$npm_sha256\`"
+            echo "- OCI image: \`$IMAGE_REF\`"
+            echo "- OCI immutable digest: \`$OCI_DIGEST\`"
+            echo "- Cloudsmith namespace/repository: \`$CLOUDSMITH_NAMESPACE/$CLOUDSMITH_REPOSITORY\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log out from Cloudsmith Docker registry
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/task008-docker-login" ]]; then
+            docker logout docker.cloudsmith.io
+          fi
