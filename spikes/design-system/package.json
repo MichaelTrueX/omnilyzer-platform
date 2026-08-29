@@ -1,0 +1,38 @@
+{
+  "name": "omnilyzer-design-system-spike",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24.15.0 <25"
+  },
+  "scripts": {
+    "tokens:build": "node scripts/build-tokens.mjs",
+    "tokens:validate": "node scripts/validate-tokens.mjs",
+    "lint:semantic": "node scripts/lint-semantic-usage.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build:web": "vite build && node scripts/validate-web-build.mjs",
+    "validate": "npm run tokens:validate && npm run tokens:build && npm run lint:semantic && npm run typecheck && npm test && npm run build:web"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "1.1.23",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.6",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.1.0",
+    "axe-core": "4.13.0",
+    "jsdom": "30.0.1",
+    "style-dictionary": "5.5.2",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "4.1.10"
+  }
+}

@@ -1,0 +1,66 @@
+:root,
+[data-theme="light"] {
+  --omni-color-action-primary-background: #1D4ED8;
+  --omni-color-action-primary-foreground: #FFFFFF;
+  --omni-color-action-primary-hover: #1E40AF;
+  --omni-color-border-control: #64748B;
+  --omni-color-canvas: #FFFFFF;
+  --omni-color-danger-background: #B91C1C;
+  --omni-color-danger-foreground: #FFFFFF;
+  --omni-color-focus-ring: #1D4ED8;
+  --omni-color-overlay: rgba(0, 0, 0, 0.6);
+  --omni-color-surface: #F8FAFC;
+  --omni-color-surface-raised: #FFFFFF;
+  --omni-color-text-inverse: #FFFFFF;
+  --omni-color-text-primary: #0F172A;
+  --omni-color-text-secondary: #475569;
+  --omni-font-family: system-ui, sans-serif;
+  --omni-font-line-body: 1.5;
+  --omni-font-line-compact: 1.25;
+  --omni-font-size-body: 16px;
+  --omni-font-size-label: 14px;
+  --omni-font-size-title: 20px;
+  --omni-font-weight-bold: 700;
+  --omni-font-weight-regular: 400;
+  --omni-font-weight-semibold: 600;
+  --omni-radius-control: 8px;
+  --omni-radius-dialog: 12px;
+  --omni-space-control-block: 8px;
+  --omni-space-control-gap: 8px;
+  --omni-space-control-inline: 16px;
+  --omni-space-dialog: 24px;
+  --omni-space-hit-target: 44px;
+}
+
+[data-theme="dark"] {
+  --omni-color-action-primary-background: #93C5FD;
+  --omni-color-action-primary-foreground: #0F172A;
+  --omni-color-action-primary-hover: #60A5FA;
+  --omni-color-border-control: #64748B;
+  --omni-color-canvas: #0F172A;
+  --omni-color-danger-background: #FCA5A5;
+  --omni-color-danger-foreground: #0F172A;
+  --omni-color-focus-ring: #93C5FD;
+  --omni-color-overlay: rgba(0, 0, 0, 0.6);
+  --omni-color-surface: #1E293B;
+  --omni-color-surface-raised: #1E293B;
+  --omni-color-text-inverse: #0F172A;
+  --omni-color-text-primary: #F8FAFC;
+  --omni-color-text-secondary: #CBD5E1;
+  --omni-font-family: system-ui, sans-serif;
+  --omni-font-line-body: 1.5;
+  --omni-font-line-compact: 1.25;
+  --omni-font-size-body: 16px;
+  --omni-font-size-label: 14px;
+  --omni-font-size-title: 20px;
+  --omni-font-weight-bold: 700;
+  --omni-font-weight-regular: 400;
+  --omni-font-weight-semibold: 600;
+  --omni-radius-control: 8px;
+  --omni-radius-dialog: 12px;
+  --omni-space-control-block: 8px;
+  --omni-space-control-gap: 8px;
+  --omni-space-control-inline: 16px;
+  --omni-space-dialog: 24px;
+  --omni-space-hit-target: 44px;
+}

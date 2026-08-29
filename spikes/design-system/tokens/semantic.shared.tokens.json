@@ -1,0 +1,28 @@
+{
+  "$schema": "https://www.designtokens.org/schemas/2025.10/format.json",
+  "semantic": {
+    "space": {
+      "controlInline": { "$type": "dimension", "$value": "{primitive.space.16}" },
+      "controlBlock": { "$type": "dimension", "$value": "{primitive.space.8}" },
+      "controlGap": { "$type": "dimension", "$value": "{primitive.space.8}" },
+      "dialog": { "$type": "dimension", "$value": "{primitive.space.24}" },
+      "hitTarget": { "$type": "dimension", "$value": "{primitive.space.44}" }
+    },
+    "radius": {
+      "control": { "$type": "dimension", "$value": "{primitive.radius.8}" },
+      "dialog": { "$type": "dimension", "$value": "{primitive.radius.12}" }
+    },
+    "font": {
+      "family": { "$type": "fontFamily", "$value": "{primitive.font.family}" },
+      "sizeBody": { "$type": "dimension", "$value": "{primitive.font.size.16}" },
+      "sizeLabel": { "$type": "dimension", "$value": "{primitive.font.size.14}" },
+      "sizeTitle": { "$type": "dimension", "$value": "{primitive.font.size.20}" },
+      "weightRegular": { "$type": "fontWeight", "$value": "{primitive.font.weight.regular}" },
+      "weightSemibold": { "$type": "fontWeight", "$value": "{primitive.font.weight.semibold}" },
+      "weightBold": { "$type": "fontWeight", "$value": "{primitive.font.weight.bold}" },
+      "lineBody": { "$type": "number", "$value": "{primitive.font.line.body}" },
+      "lineCompact": { "$type": "number", "$value": "{primitive.font.line.compact}" }
+    }
+  }
+}
+
