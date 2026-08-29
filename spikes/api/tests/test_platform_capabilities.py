@@ -2,14 +2,18 @@
 
 Related modules: domain.services, domain.admin, and scripts.generate_openapi.
 """
+from unittest.mock import patch
 from django.contrib import admin
 from django.db import IntegrityError, connection, transaction
 from django.test import TestCase, TransactionTestCase
 from drf_spectacular.generators import SchemaGenerator
+from pydantic import ValidationError as PydanticValidationError
+from domain.auth import RequestPrincipal, synthetic_actor_id
 from domain.exceptions import ValidationFailed
 from domain.models import Project, Workspace
-from domain.services import create_workspace_with_first_project
+from domain.services import create_workspace_with_first_project, update_project
 from ninja_api.api import api as ninja_api
+from ninja_api.schemas import ProjectPatch
 
 
 class TransactionTests(TransactionTestCase):
@@ -68,6 +72,36 @@ class TransactionTests(TransactionTestCase):
                 )
 
 
+class ServiceBoundaryTests(TestCase):
+    """Validate security invariants without relying on API adapter validation."""
+
+    def test_update_project_rejects_unexpected_field_directly(self) -> None:
+        """Reject service-level mass assignment before changing or saving a model."""
+        workspace = Workspace.objects.create(
+            name="Service allowlist",
+            workspace_type=Workspace.WorkspaceType.ORGANIZATION,
+        )
+        project = Project.objects.create(workspace=workspace, name="Original")
+        principal = RequestPrincipal(
+            actor_id=synthetic_actor_id(workspace.id),
+            workspace_id=workspace.id,
+        )
+
+        with patch.object(Project, "save") as save, self.assertRaises(
+            ValidationFailed
+        ):
+            update_project(
+                principal=principal,
+                project_id=project.id,
+                changes={"workspace_id": workspace.id},
+            )
+        save.assert_not_called()
+
+        project.refresh_from_db()
+        self.assertEqual(project.workspace_id, workspace.id)
+        self.assertEqual(project.name, "Original")
+
+
 class DjangoCapabilityTests(TestCase):
     """Check admin integration, database backend, and generated schemas."""
 
@@ -76,12 +110,25 @@ class DjangoCapabilityTests(TestCase):
         self.assertIn(Workspace, admin.site._registry)
         self.assertIn(Project, admin.site._registry)
 
+    def test_ninja_patch_omits_fields_but_rejects_explicit_null(self) -> None:
+        """Protect the pinned Pydantic PATCH omission/non-null workaround."""
+        patch = ProjectPatch(description="Only this field")
+        self.assertEqual(
+            patch.model_dump(exclude_unset=True),
+            {"description": "Only this field"},
+        )
+        with self.assertRaises(PydanticValidationError):
+            ProjectPatch(name=None)
+        schema = ProjectPatch.model_json_schema()
+        self.assertNotIn("name", schema.get("required", []))
+        self.assertEqual(schema["properties"]["name"]["type"], "string")
+
     def test_postgresql_is_the_validation_backend(self) -> None:
         """Prevent accidental SQLite evidence in the primary validation run."""
         self.assertEqual(connection.vendor, "postgresql")
 
     def test_generated_openapi_contains_major_routes(self) -> None:
-        """Generate both schemas from implementation and require all major paths."""
+        """Require routes plus normalized JSON-body boundary response models."""
         drf_schema = SchemaGenerator().get_schema(request=None, public=True)
         ninja_schema = ninja_api.get_openapi_schema(path_prefix="/api/v1/ninja")
         expected_drf = {
@@ -98,3 +145,31 @@ class DjangoCapabilityTests(TestCase):
         self.assertTrue(expected_ninja <= set(ninja_schema["paths"]))
         self.assertEqual(drf_schema["openapi"], "3.0.3")
         self.assertTrue(ninja_schema["openapi"].startswith("3.1."))
+
+        operations = (
+            (drf_schema, "/api/v1/drf/projects/", "post"),
+            (drf_schema, "/api/v1/drf/projects/{project_id}/", "patch"),
+            (ninja_schema, "/api/v1/ninja/projects/", "post"),
+            (ninja_schema, "/api/v1/ninja/projects/{project_id}/", "patch"),
+        )
+        for schema, path, method in operations:
+            with self.subTest(path=path, method=method):
+                operation = schema["paths"][path][method]
+                responses = {
+                    str(code): value
+                    for code, value in operation["responses"].items()
+                }
+                self.assertTrue({"400", "413"} <= set(responses))
+                for status_code in ("400", "413"):
+                    response_schema = responses[status_code]["content"][
+                        "application/json"
+                    ]["schema"]
+                    self.assertIn("ErrorEnvelope", response_schema["$ref"])
+                workspace_parameters = [
+                    parameter
+                    for parameter in operation["parameters"]
+                    if parameter["name"] == "X-Workspace-ID"
+                ]
+                self.assertEqual(len(workspace_parameters), 1)
+                self.assertTrue(workspace_parameters[0]["required"])
+                self.assertTrue(operation["security"])

@@ -3,7 +3,8 @@
     "custom_hooks": [
       "authentication adapter",
       "five exception handlers",
-      "strict Ninja Schema base"
+      "strict Ninja Schema base",
+      "PATCH omission/non-null typing workaround"
     ],
     "direct_framework_dependencies": 1,
     "file_count": 4,
@@ -13,13 +14,13 @@
       "ninja_api/authentication.py",
       "ninja_api/schemas.py"
     ],
-    "nonblank_noncomment_physical_lines": 264
+    "nonblank_noncomment_physical_lines": 279
   },
   "drf": {
     "custom_hooks": [
       "authentication adapter",
       "exception handler",
-      "permission adapter",
+      "Workspace-context permission adapter",
       "unknown-field validation mixin",
       "drf-spectacular schema annotations"
     ],
@@ -36,7 +37,7 @@
       "drf_api/urls.py",
       "drf_api/views.py"
     ],
-    "nonblank_noncomment_physical_lines": 385
+    "nonblank_noncomment_physical_lines": 402
   },
   "method": "Python files and nonblank, non-comment physical lines; docstrings count."
 }

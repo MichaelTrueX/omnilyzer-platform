@@ -75,6 +75,9 @@ class ProjectSerializer(serializers.ModelSerializer):
     """Render the common Project response shape."""
 
     workspace_id = serializers.UUIDField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    description = serializers.CharField(read_only=True)
+    status = serializers.ChoiceField(choices=Project.Status.choices, read_only=True)
 
     class Meta:
         """Select the intentionally public Project fields."""

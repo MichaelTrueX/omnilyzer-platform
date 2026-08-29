@@ -266,18 +266,75 @@ class ApiContractMixin:
         )
         self.assertTrue(Project.objects.filter(workspace=self.workspace_b).exists())
 
-    def test_authentication_health_and_unsafe_method(self) -> None:
-        """Fail closed, expose minimal health, and reject unsupported methods."""
-        missing_auth = self.client.get(f"{self.prefix}/projects/")
-        self.assert_error(missing_auth, 401, "authentication_required")
-
-        mismatched = self.client.get(
+    def test_missing_actor_is_authentication_failure(self) -> None:
+        """Return 401 when the actor credential is absent."""
+        response = self.client.get(
             f"{self.prefix}/projects/",
-            HTTP_X_SPIKE_ACTOR=synthetic_actor_id(self.workspace_b.id),
             HTTP_X_WORKSPACE_ID=str(self.workspace_a.id),
         )
-        self.assert_error(mismatched, 401, "authentication_required")
+        self.assert_error(response, 401, "authentication_required")
 
+    def test_invalid_actor_is_authentication_failure(self) -> None:
+        """Return 401 when the synthetic actor credential is malformed."""
+        response = self.client.get(
+            f"{self.prefix}/projects/",
+            HTTP_X_SPIKE_ACTOR="actor:not-a-uuid",
+            HTTP_X_WORKSPACE_ID=str(self.workspace_a.id),
+        )
+        self.assert_error(response, 401, "authentication_required")
+
+    def test_workspace_context_is_validated_after_authentication(self) -> None:
+        """Normalize missing and malformed Workspace context as validation errors."""
+        actor_header = {
+            "HTTP_X_SPIKE_ACTOR": synthetic_actor_id(self.workspace_a.id)
+        }
+        missing = self.client.get(f"{self.prefix}/projects/", **actor_header)
+        malformed = self.client.get(
+            f"{self.prefix}/projects/",
+            HTTP_X_WORKSPACE_ID="not-a-uuid",
+            **actor_header,
+        )
+        for response in (missing, malformed):
+            self.assert_error(response, 422, "validation_error")
+
+    def test_authorized_actor_and_workspace_succeed(self) -> None:
+        """Allow an authenticated actor in its synthetic authorized Workspace."""
+        response = self.client.get(f"{self.prefix}/projects/", **self.headers())
+        self.assertEqual(response.status_code, 200, response.content)
+
+    def test_authenticated_actor_is_denied_in_another_workspace(self) -> None:
+        """Deny every operation when a valid actor targets another Workspace."""
+        project = Project.objects.create(
+            workspace=self.workspace_a, name="Authorization boundary"
+        )
+        headers = {
+            "HTTP_X_SPIKE_ACTOR": synthetic_actor_id(self.workspace_b.id),
+            "HTTP_X_WORKSPACE_ID": str(self.workspace_a.id),
+        }
+        detail = f"{self.prefix}/projects/{project.id}/"
+        responses = [
+            self.client.get(f"{self.prefix}/projects/", **headers),
+            self.client.get(detail, **headers),
+            self.json_request(
+                "post",
+                f"{self.prefix}/projects/",
+                {"workspace_id": str(self.workspace_a.id), "name": "Denied create"},
+                **headers,
+            ),
+            self.json_request("patch", detail, {"name": "Denied update"}, **headers),
+            self.client.delete(detail, **headers),
+            self.client.get(
+                f"{self.prefix}/projects/?workspace_id={self.workspace_a.id}",
+                **headers,
+            ),
+        ]
+        for response in responses:
+            self.assert_error(response, 404, "not_found")
+        project.refresh_from_db()
+        self.assertEqual(project.name, "Authorization boundary")
+
+    def test_health_and_unsafe_method(self) -> None:
+        """Expose minimal health and normalize unsupported routing behavior."""
         health = self.client.get(f"{self.prefix}/health/")
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json(), {"status": "ok"})

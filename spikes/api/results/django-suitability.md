@@ -17,7 +17,7 @@ This is evidence for human review, not an accepted architecture decision.
 No blocker was found in the tested scope. Django 6.1 provided PostgreSQL ORM integration,
 constraints/indexes, transactions, schema migrations, admin, middleware/security
 settings, WSGI and ASGI entry points, test database isolation and clean boundaries around
-two API adapters. All 26 final PostgreSQL tests passed.
+two API adapters. All 38 final PostgreSQL tests passed.
 
 This is conditional evidence. RLS, real OIDC, audit events, background work, production
 deployment and alternatives remain unvalidated.
@@ -61,9 +61,10 @@ here is not RLS evidence.
 
 ## 5. Can Django support Keycloak/OIDC without domain coupling?
 
-Yes at the boundary-design level. The test authenticator converts delivery credentials
-and Workspace context into `RequestPrincipal`; services know nothing about headers,
-sessions, JWTs, Keycloak or either API framework. DRF authentication classes, Ninja auth
+Yes at the boundary-design level. The test authenticator establishes only actor identity.
+A separate adapter step validates Workspace context and constructs `RequestPrincipal`; shared services then authorize the
+actor for that Workspace. Services know nothing about headers, sessions, JWTs, Keycloak
+or either API framework. DRF authentication classes, Ninja auth
 callables and Django's pluggable authentication mechanisms provide replacement points.
 Django documents extensible authentication backends and request authentication
 ([Django authentication documentation](https://docs.djangoproject.com/en/6.1/topics/auth/default/)).
@@ -138,8 +139,8 @@ architectural viability, not capacity certification.
 
 Django satisfies the spike's foundation criteria for enterprise SaaS structure,
 PostgreSQL, transactions, migrations, security extension points, maintainability,
-testability, generated contracts and horizontal topology. Its most relevant constraint
-is that transactional ORM workflows remain synchronous; this is manageable for the
+testability, generated contracts, validated TypeScript output and horizontal
+topology. Its most relevant constraint is that transactional ORM workflows remain synchronous; this is manageable for the
 expected core request types and should be isolated when async network fan-out is useful.
 
 Recommendation: **adopt Django as the candidate foundation**, subject to human

@@ -70,7 +70,7 @@
             "type": "string"
           },
           "description": {
-            "maxLength": 2000,
+            "readOnly": true,
             "type": "string"
           },
           "id": {
@@ -79,11 +79,16 @@
             "type": "string"
           },
           "name": {
-            "maxLength": 120,
+            "readOnly": true,
             "type": "string"
           },
           "status": {
-            "$ref": "#/components/schemas/ProjectStatusEnum"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProjectStatusEnum"
+              }
+            ],
+            "readOnly": true
           },
           "updated_at": {
             "format": "date-time",
@@ -98,8 +103,10 @@
         },
         "required": [
           "created_at",
+          "description",
           "id",
           "name",
+          "status",
           "updated_at",
           "workspace_id"
         ],
@@ -369,6 +376,16 @@
             },
             "description": ""
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": ""
+          },
           "401": {
             "content": {
               "application/json": {
@@ -390,6 +407,16 @@
             "description": ""
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": ""
+          },
+          "413": {
             "content": {
               "application/json": {
                 "schema": {
@@ -649,6 +676,16 @@
             },
             "description": ""
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": ""
+          },
           "401": {
             "content": {
               "application/json": {
@@ -670,6 +707,16 @@
             "description": ""
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": ""
+          },
+          "413": {
             "content": {
               "application/json": {
                 "schema": {

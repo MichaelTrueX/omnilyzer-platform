@@ -8,6 +8,7 @@ import uuid
 from django.http import HttpRequest, HttpResponse
 from ninja import Header, NinjaAPI, Query, Router
 from ninja.errors import AuthenticationError, HttpError, ValidationError
+from domain.auth import RequestPrincipal, build_request_principal
 from domain.exceptions import ApplicationError
 from domain.services import (
     archive_or_delete_project,
@@ -43,6 +44,16 @@ ERROR_RESPONSES = {
     422: ErrorEnvelope,
     500: ErrorEnvelope,
 }
+JSON_BODY_ERROR_RESPONSES = {
+    400: ErrorEnvelope,
+    413: ErrorEnvelope,
+    **ERROR_RESPONSES,
+}
+
+
+def _principal(request: HttpRequest, workspace_value: str) -> RequestPrincipal:
+    """Combine Ninja-authenticated identity with validated Workspace context."""
+    return build_request_principal(request.auth, workspace_value)
 
 
 def _error(
@@ -144,7 +155,7 @@ def project_list(
 ):
     """Validate filters and return a deterministic Project page."""
     return list_projects(
-        principal=request.auth,
+        principal=_principal(request, x_workspace_id),
         status=status.value if status else None,
         workspace_id=workspace_id,
         page=page,
@@ -154,7 +165,7 @@ def project_list(
 
 @projects.post(
     "/",
-    response={201: ProjectOut, **ERROR_RESPONSES},
+    response={201: ProjectOut, **JSON_BODY_ERROR_RESPONSES},
     operation_id="ninja_create_project",
 )
 def project_create(
@@ -165,7 +176,9 @@ def project_create(
     """Validate input and create a Workspace-scoped Project."""
     values = payload.model_dump(mode="python")
     values["status"] = payload.status.value
-    return 201, create_project(principal=request.auth, **values)
+    return 201, create_project(
+        principal=_principal(request, x_workspace_id), **values
+    )
 
 
 @projects.get(
@@ -179,12 +192,14 @@ def project_retrieve(
     x_workspace_id: str = Header(..., alias="X-Workspace-ID"),
 ):
     """Retrieve a Project without revealing cross-Workspace existence."""
-    return get_project(principal=request.auth, project_id=project_id)
+    return get_project(
+        principal=_principal(request, x_workspace_id), project_id=project_id
+    )
 
 
 @projects.patch(
     "/{project_id}/",
-    response={200: ProjectOut, **ERROR_RESPONSES},
+    response={200: ProjectOut, **JSON_BODY_ERROR_RESPONSES},
     operation_id="ninja_update_project",
 )
 def project_update(
@@ -198,7 +213,9 @@ def project_update(
     if "status" in changes:
         changes["status"] = changes["status"].value
     return update_project(
-        principal=request.auth, project_id=project_id, changes=changes
+        principal=_principal(request, x_workspace_id),
+        project_id=project_id,
+        changes=changes
     )
 
 
@@ -213,7 +230,9 @@ def project_delete(
     x_workspace_id: str = Header(..., alias="X-Workspace-ID"),
 ):
     """Delete one authorized Project and return an empty 204 response."""
-    archive_or_delete_project(principal=request.auth, project_id=project_id)
+    archive_or_delete_project(
+        principal=_principal(request, x_workspace_id), project_id=project_id
+    )
     return 204, None
 
 

@@ -9,9 +9,11 @@ from typing import Any
 import uuid
 from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
-from domain.auth import RequestPrincipal
+from domain.auth import RequestPrincipal, synthetic_actor_id
 from domain.exceptions import ConflictDetected, ResourceNotFound, ValidationFailed
 from domain.models import Project, Workspace
+
+MUTABLE_PROJECT_FIELDS = frozenset({"name", "description", "status"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,8 +29,11 @@ class ProjectPage:
 def _authorized_workspace(
     principal: RequestPrincipal, workspace_id: uuid.UUID
 ) -> Workspace:
-    """Return an in-scope Workspace or the same opaque not-found error."""
-    if workspace_id != principal.workspace_id:
+    """Authorize the synthetic actor and return an in-scope Workspace opaquely."""
+    if (
+        principal.actor_id != synthetic_actor_id(principal.workspace_id)
+        or workspace_id != principal.workspace_id
+    ):
         raise ResourceNotFound()
     try:
         return Workspace.objects.get(id=principal.workspace_id)
@@ -37,7 +42,8 @@ def _authorized_workspace(
 
 
 def _authorized_projects(principal: RequestPrincipal) -> QuerySet[Project]:
-    """Build the mandatory Workspace-scoped Project query."""
+    """Build the mandatory authorized Workspace-scoped Project query."""
+    _authorized_workspace(principal, principal.workspace_id)
     return Project.objects.filter(workspace_id=principal.workspace_id)
 
 
@@ -64,7 +70,7 @@ def create_project(
 
 
 def get_project(*, principal: RequestPrincipal, project_id: uuid.UUID) -> Project:
-    """Retrieve only a Project inside the principal's Workspace."""
+    """Retrieve only a Project inside the principal's authorized Workspace."""
     try:
         return _authorized_projects(principal).get(id=project_id)
     except Project.DoesNotExist as error:
@@ -108,13 +114,21 @@ def update_project(
     """Partially update explicitly allowed fields on an authorized Project."""
     if not changes:
         raise ValidationFailed({"body": ["At least one field is required."]})
+    unexpected_fields = sorted(set(changes) - MUTABLE_PROJECT_FIELDS)
+    if unexpected_fields:
+        raise ValidationFailed({
+            field: ["Field cannot be updated."] for field in unexpected_fields
+        })
     project = get_project(principal=principal, project_id=project_id)
-    for field in ("name", "description", "status"):
+    for field in MUTABLE_PROJECT_FIELDS:
         if field in changes:
             setattr(project, field, changes[field])
     try:
         with transaction.atomic():
-            project.save(update_fields=[*changes.keys(), "updated_at"])
+            update_fields = [
+                *sorted(set(changes) & MUTABLE_PROJECT_FIELDS), "updated_at"
+            ]
+            project.save(update_fields=update_fields)
     except IntegrityError as error:
         raise ConflictDetected({"name": ["Must be unique within the Workspace."]}) from error
     return project

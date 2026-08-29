@@ -12,8 +12,12 @@ spike_pg_log="${SPIKE_PG_LOG:-/tmp/omnilyzer-platform-api-spike-postgres.log}"
 spike_db_name="${SPIKE_DATABASE_NAME:-omnilyzer_platform_api_spike}"
 spike_db_role="${SPIKE_DATABASE_USER:-omnilyzer_api_spike_owner}"
 spike_cluster_admin="omnilyzer_api_spike_cluster_admin"
+spike_pg_start_options="-k $spike_pg_socket -p $spike_pg_port"
+spike_pg_start_options="$spike_pg_start_options -c listen_addresses=''"
+spike_pg_start_options="$spike_pg_start_options -c unix_socket_permissions=0700"
 
-mkdir -p "$spike_pg_socket"
+install -d -m 0700 "$spike_pg_socket"
+chmod 0700 "$spike_pg_socket"
 
 if [ ! -f "$spike_pg_data/PG_VERSION" ]; then
     "$spike_pg_bin/initdb" \
@@ -29,7 +33,7 @@ if ! "$spike_pg_bin/pg_ctl" --pgdata="$spike_pg_data" status >/dev/null 2>&1; th
     "$spike_pg_bin/pg_ctl" \
         --pgdata="$spike_pg_data" \
         --log="$spike_pg_log" \
-        --options="-k $spike_pg_socket -p $spike_pg_port -c listen_addresses=''" \
+        --options="$spike_pg_start_options" \
         start
 fi
 
@@ -63,5 +67,21 @@ WHERE NOT EXISTS (
 )\gexec
 SQL
 
+actual_listen_addresses="$(
+    "$spike_pg_bin/psql" \
+        --host="$spike_pg_socket" \
+        --port="$spike_pg_port" \
+        --username="$spike_cluster_admin" \
+        --dbname=postgres \
+        --tuples-only \
+        --no-align \
+        --command="SHOW listen_addresses"
+)"
+socket_directory_mode="$(stat --format=%a "$spike_pg_socket")"
+test -z "$actual_listen_addresses"
+test "$socket_directory_mode" = "700"
+
+printf '%s\n' \
+    "Validation: listen_addresses is empty; socket directory mode is $socket_directory_mode."
 printf '%s\n' "Isolated PostgreSQL is ready at $spike_pg_socket:$spike_pg_port."
 printf '%s\n' "Database: $spike_db_name; non-superuser owner: $spike_db_role."

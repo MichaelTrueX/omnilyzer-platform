@@ -35,7 +35,7 @@ def main() -> None:
             "custom_hooks": [
                 "authentication adapter",
                 "exception handler",
-                "permission adapter",
+                "Workspace-context permission adapter",
                 "unknown-field validation mixin",
                 "drf-spectacular schema annotations",
             ],
@@ -47,6 +47,7 @@ def main() -> None:
                 "authentication adapter",
                 "five exception handlers",
                 "strict Ninja Schema base",
+                "PATCH omission/non-null typing workaround",
             ],
         },
     }

@@ -35,6 +35,11 @@ ERROR_RESPONSES = {
     422: ErrorEnvelopeSerializer,
     500: ErrorEnvelopeSerializer,
 }
+JSON_BODY_ERROR_RESPONSES = {
+    400: ErrorEnvelopeSerializer,
+    413: ErrorEnvelopeSerializer,
+    **ERROR_RESPONSES,
+}
 WORKSPACE_CONTEXT_PARAMETER = OpenApiParameter(
     "X-Workspace-ID",
     str,
@@ -92,7 +97,7 @@ class ProjectListCreateView(APIView):
         operation_id="drf_create_project",
         request=ProjectCreateSerializer,
         parameters=[WORKSPACE_CONTEXT_PARAMETER],
-        responses={201: ProjectSerializer, **ERROR_RESPONSES},
+        responses={201: ProjectSerializer, **JSON_BODY_ERROR_RESPONSES},
     )
     def post(self, request: Request) -> Response:
         """Validate input and create a Workspace-scoped Project."""
@@ -126,7 +131,7 @@ class ProjectDetailView(APIView):
         operation_id="drf_update_project",
         request=ProjectPatchSerializer,
         parameters=[WORKSPACE_CONTEXT_PARAMETER],
-        responses={200: ProjectSerializer, **ERROR_RESPONSES},
+        responses={200: ProjectSerializer, **JSON_BODY_ERROR_RESPONSES},
     )
     def patch(self, request: Request, project_id: str) -> Response:
         """Apply a validated non-empty partial update."""

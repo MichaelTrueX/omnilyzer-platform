@@ -28,7 +28,7 @@ The spike tested two claims independently:
 
 ## Environment
 
-Evidence was generated on 2026-08-28 with:
+Evidence was regenerated on 2026-08-29 with:
 
 | Component | Exact version/configuration |
 | --- | --- |
@@ -42,15 +42,18 @@ Evidence was generated on 2026-08-28 with:
 | psycopg / psycopg-binary | 3.3.4 / 3.3.4 |
 | PostgreSQL server/client | 16.15 / 16.15 |
 | Test tools | Django 6.1 test runner and Python 3.12.3 `unittest.mock`; no pytest |
+| Type generation | Node 20.20.0; openapi-typescript 7.13.0; TypeScript 7.0.2 |
 | Benchmark mode | DEBUG false, in-process WSGI test client, concurrency 1 |
 
 The isolated PostgreSQL cluster lives under
-`/tmp/omnilyzer-platform-api-spike-pgdata`, listens on no TCP address, and exposes only
-the dedicated Unix socket and port 55434. Application settings use
-`omnilyzer_api_spike_owner`, a non-superuser/non-role-admin role. It has `CREATEDB`
+`/tmp/omnilyzer-platform-api-spike-pgdata`, keeps `listen_addresses` empty, and exposes
+only the dedicated Unix socket and port 55434. Its socket directory is created mode
+`0700`, and PostgreSQL starts with `unix_socket_permissions=0700`.
+Application settings use `omnilyzer_api_spike_owner`, a non-superuser/non-role-admin role. It has `CREATEDB`
 only so Django can create disposable test databases. The cluster bootstrap administrator
-is never present in application settings. Local `trust` authentication is acceptable
-only for this isolated, no-TCP, synthetic spike and is not a production recommendation.
+is never present in application settings. Local `trust` authentication remains acceptable only for this isolated,
+no-TCP, current-user-only synthetic spike. It is NOT acceptable production database
+authentication.
 
 ### Dependency review
 
@@ -66,7 +69,10 @@ This review was recorded before installation. Exact transitive versions are in
 | psycopg 3.3.4 with binary extra | PostgreSQL driver | LGPL-3.0-only | Python and Django do not include a PostgreSQL wire driver | Acceptable in principle; production packaging must choose binary versus system-linked build deliberately |
 
 Django's test runner replaces pytest, and the benchmark uses the Python standard
-library. No unrelated service or tooling dependency was installed.
+library. Type generation uses ephemeral `npx` packages: `openapi-typescript@7.13.0`
+(MIT) generates declarations, and `typescript@7.0.2` (Apache-2.0) performs strict,
+no-emit validation. They are spike-only development tools, not platform runtime
+dependencies; no package manifest, lockfile, `node_modules`, or frontend project is added.
 
 ## Architecture
 
@@ -103,19 +109,29 @@ Explicit `/api/v1/` routing allows a future `/api/v2/` adapter to coexist. Old m
 clients can remain on v1 while compatible changes and security fixes continue; breaking
 changes require a new route and an explicit support/deprecation window.
 
-### Authentication and authorization extension point
+### Authentication, context and authorization boundaries
 
-`domain.auth.RequestPrincipal` contains only `actor_id` and resolved
-`workspace_id`. The test-only resolver requires matching `X-Spike-Actor` and
-`X-Workspace-ID`; it stores no token. DRF adapts it through `BaseAuthentication` plus
-a permission, while Ninja adapts it through `APIKeyHeader`. Services receive the same
-principal and perform resource authorization, so identity-provider code does not enter
-domain operations.
+`domain.auth.RequestPrincipal` remains framework-neutral and contains only `actor_id`
+and resolved `workspace_id`. The synthetic flow now separates three decisions:
 
-A future browser BFF can construct the principal from a secure Django server session. A
-mobile/integration adapter can construct it after bearer-token issuer, audience, expiry
-and signature validation. Both can coexist as separate authenticators while sharing
-authorization services. Keycloak and those real flows were not validated here.
+```text
+authentication: validate X-Spike-Actor and establish the actor
+context: require and parse X-Workspace-ID
+authorization: shared services decide whether that actor may use that Workspace
+```
+
+Missing or structurally invalid synthetic actors return 401. Once an actor is
+authenticated, missing or malformed Workspace context returns a normalized 422
+validation response. A valid actor targeting another Workspace reaches shared service
+authorization and receives the same opaque 404 as an unknown resource.
+
+DRF adapts actor authentication through `BaseAuthentication`, resolves context in its
+permission boundary, then passes `RequestPrincipal` to services. Ninja authenticates
+the actor through `APIKeyHeader`, validates the required operation header, constructs
+the same principal, and calls the same services. Every list, retrieve, create, update,
+delete and Workspace-filter operation crosses shared authorization. The deterministic
+actor convention is forgeable test data and proves separation only; it is not a final
+membership, OIDC, token, session or authorization model.
 
 ### Workspace isolation simulation
 
@@ -172,11 +188,22 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r spikes/api/requirements-lock.txt
 bash spikes/api/scripts/init-postgres.sh
 .venv/bin/python spikes/api/manage.py migrate --noinput
+.venv/bin/python spikes/api/manage.py makemigrations --check --dry-run
+.venv/bin/python spikes/api/manage.py migrate --check
 .venv/bin/python spikes/api/manage.py test tests --verbosity 2
 .venv/bin/python spikes/api/scripts/generate_openapi.py
+bash spikes/api/scripts/generate-typescript.sh
 .venv/bin/python spikes/api/scripts/benchmark.py
 .venv/bin/python spikes/api/scripts/code_metrics.py
+.venv/bin/python -m pip check
+.venv/bin/python -m compileall -q spikes/api
 ```
+
+`generate-typescript.sh` runs exactly `openapi-typescript@7.13.0` with
+`--default-non-nullable false` for each OpenAPI artifact, then runs
+`typescript@7.0.2` `tsc --noEmit --strict --skipLibCheck false` over both generated
+declarations. Node 20 or newer is required. The packages remain in the user-level npx
+cache; no `node_modules` is created or tracked in the repository.
 
 Optional local server:
 
@@ -231,52 +258,62 @@ capacity or 100k-user scale.
 
 ## Findings
 
-- All 26 PostgreSQL tests passed in the final run (0.656 seconds).
+- All 38 PostgreSQL tests passed in the final run, including independent
+  authentication, context-validation, authorization and direct service allowlist cases.
+- Missing/invalid actor credentials return 401; valid actors with missing/malformed
+  Workspace context return 422; authenticated cross-Workspace attempts and foreign
+  Project identifiers return opaque 404 in both adapters.
 - Empty-database migration, incremental optional-field migration, rollback, and
   post-migration ORM usability passed.
-- Both generated schemas contain all six operations, three paths, explicit auth and
-  Workspace-context input, reusable Project/error/page schemas, UUIDs, status enums,
-  request bodies, response codes and stable operation IDs.
+- Both generated schemas contain all six operations, three paths, explicit authentication
+  and required Workspace context, reusable Project/error/page schemas, UUIDs, status
+  enums, request bodies and stable operation IDs. POST and PATCH document normalized 400
+  and 413 errors in addition to their applicable 401/404/409/422/500 errors.
+- HTTP 405 remains tested normalized routing/boundary behavior and is not represented by
+  invented OpenAPI operations.
 - DRF emitted OpenAPI 3.0.3 with eight reusable schemas. Ninja emitted OpenAPI 3.1.0 with
   eight reusable schemas.
+- openapi-typescript 7.13.0 generated both declaration artifacts, and TypeScript 7.0.2
+  compiled both under strict, no-emit validation.
 - DRF required drf-spectacular, extensive endpoint annotations, an authentication schema
-  extension, a permission adapter, an unknown-field mixin and an exception adapter.
-  Ninja inferred more from type declarations but required five error handlers and a
-  boundary normalization for framework-external 405 responses.
-- Measured framework-specific code was 385 nonblank/non-comment physical lines in nine
-  DRF files versus 264 lines in four Ninja files (`results/code-metrics.json`).
-  Docstrings count. Fewer lines are not automatically safer; DRF's extra lines make
-  permissions, serialization and schema metadata explicit.
-- Final benchmark results are in `results/benchmark.json`. Ninja was faster in all
-  three runs, but both were millisecond-scale and no framework choice is based on this.
-- Django's application-service boundary, PostgreSQL integration, transaction semantics,
-  normal migrations, admin and test isolation met the representative criteria.
-- No material architectural blocker was found for stateless, horizontally replicated
-  Django API nodes backed by shared PostgreSQL and externalized session/state services.
+  extension, a permission/context adapter, an unknown-field mixin and an exception
+  adapter. Ninja inferred more metadata but required five error handlers, boundary
+  normalization for framework-external 405, and the documented PATCH typing workaround.
+- Measured framework-specific code is 402 nonblank/non-comment physical lines in nine
+  DRF files versus 279 lines in four Ninja files (results/code-metrics.json). Fewer
+  lines are not automatically safer.
+- The authorization-aware benchmark was rerun and remains a non-production sanity
+  measurement; results are in results/benchmark.json.
+- Django's service boundary, PostgreSQL integration, transaction semantics, migrations,
+  admin and test isolation met the representative criteria.
 
 ## Security findings
 
 | Check | Result |
 | --- | --- |
 | DEBUG disabled/internal exception | 500 normalized; no exception type, message or trace in body |
-| Missing/mismatched authentication | 401 normalized for both |
+| Missing actor | 401 normalized for both |
+| Invalid synthetic actor | 401 normalized for both |
+| Missing/malformed Workspace context | 422 normalized validation for authenticated actors |
+| Authenticated actor/Workspace mismatch | Opaque 404 from shared authorization |
 | Malformed JSON | 400 `malformed_request` for both |
 | Body over 1 MiB | 413 `request_too_large` before parsing |
 | Unsafe PUT | 405 normalized for both |
 | SQL-injection-style name | Stored/retrieved literally through parameterized ORM; no query broadening |
 | Cross-Workspace guessed ID | Read/update/delete all returned opaque 404; foreign row unchanged |
 | Relationship/filter substitution | Foreign Workspace returned opaque 404 |
-| Mass assignment | Unexpected JSON fields returned 422 |
+| Mass assignment | Unexpected API fields and direct-service update keys returned 422/ValidationFailed |
+| PostgreSQL boundary | Empty listen_addresses; socket directory mode 0700 |
 | Duplicate scoped name | Database uniqueness conflict normalized to 409 |
-| Unknown resource/context | Opaque 404 |
+| Unknown resource or well-formed Workspace | Opaque 404 |
 | Health exposure | Exact body `{"status":"ok"}`; no environment, DB or server details |
 | Secure defaults checked | DEBUG false; secure cookies, nosniff and frame denial configured |
 
 `manage.py check --deploy` intentionally retains TLS-boundary warnings for HSTS and
 HTTP-to-HTTPS redirect because this non-deployed test client has no TLS proxy. A
 production deployment must terminate/redirect HTTPS correctly and enable reviewed HSTS.
-The synthetic headers are forgeable and are not authentication. Local trust database
-auth is isolated-spike-only. No RLS, real OIDC, CSRF/BFF flow, CORS policy, rate limiting,
+The synthetic headers are forgeable and are not production authentication. Local `trust` database authentication is isolated-spike-only and is
+NOT acceptable for production. No RLS, real OIDC, CSRF/BFF flow, CORS policy, rate limiting,
 audit log, secret manager, dependency vulnerability scan, TLS, admin hardening, or
 penetration test was performed.
 
@@ -293,8 +330,8 @@ This spike does not prove:
 - complete penetration testing, compliance, audit-event design or admin support policy;
 - FastAPI/NestJS comparison, final package boundaries, deployment, tenancy, auth, design
   system, or product behavior;
-- production dependency maintenance, vulnerability posture or TypeScript generator
-  compatibility across chosen client tools.
+- production dependency maintenance, vulnerability posture or compatibility with
+  TypeScript generators other than the pinned tool tested here.
 
 ## Recommendation
 
@@ -307,8 +344,9 @@ This spike does not prove:
   later outweigh typing/schema overhead.
 - **Django Ninja — adopt:** it is the stronger default candidate from this comparison:
   equivalent safety behavior, more direct typing/OpenAPI 3.1, fewer framework-specific
-  files/lines, and no pathological overhead. Adoption remains contingent on human review,
-  maintenance/security due diligence, real authentication, and client-generation tests.
+  files/lines, and usable generated TypeScript. Its PATCH omission/non-null workaround is
+  a genuine typing and upgrade-maintenance tradeoff. Adoption remains contingent on human
+  review, maintenance/security due diligence, real authentication, and upgrade tests.
 
 These recommendations are evidence for an ADR review only.
 `docs/architecture/technology-decisions.md` remains `TO VALIDATE`.

@@ -37,7 +37,10 @@ class ProjectCreate(StrictInputSchema):
 class ProjectPatch(StrictInputSchema):
     """Validate an explicit, non-empty Project partial update."""
 
-    # None defaults encode omission; non-null annotations reject explicit JSON null.
+    # Pydantic 2.13.5 uses the None defaults to mark these fields omittable, while
+    # the non-null annotations reject explicit JSON null and emit a non-null schema.
+    # Stable nullable annotations/partial helpers would accept null; keep the three
+    # targeted ignores and protect this pinned-version behavior with tests.
     name: str = Field(default=None, min_length=1, max_length=120)  # type: ignore[assignment]
     description: str = Field(default=None, max_length=2_000)  # type: ignore[assignment]
     status: ProjectStatus = None  # type: ignore[assignment]

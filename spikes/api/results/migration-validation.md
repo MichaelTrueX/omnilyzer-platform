@@ -9,7 +9,8 @@ Related:
 
 # Migration validation evidence
 
-Date: 2026-08-28. Backend: isolated PostgreSQL 16.15.
+Initial evidence date: 2026-08-28. Corrective rerun: 2026-08-29. Backend: isolated
+PostgreSQL 16.15.
 
 ## Empty database
 
@@ -19,6 +20,12 @@ A new, explicitly disposable database named
 successfully. The shared transaction service then created one Workspace and
 one Project; observed counts were `workspace_count 1 project_count 1`. The disposable
 database was dropped afterward.
+
+On 2026-08-29, a second explicitly disposable database named
+`omnilyzer_api_spike_task002r_validation` was created under the same non-superuser
+application/test role. All migrations applied from empty, `migrate --check` succeeded,
+and the disposable database was dropped. Final `makemigrations --check --dry-run` and
+the primary database `migrate --check` also succeeded.
 
 ## Incremental schema change and rollback
 
