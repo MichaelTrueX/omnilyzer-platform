@@ -66,6 +66,7 @@ jobs:
         with:
           oidc-namespace: omnilyzer
           oidc-service-slug: gha-consumer
+          cli-version: '1.26.0'
           verify-auth: true
           export-auth-token: true
 

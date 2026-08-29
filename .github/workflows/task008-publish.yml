@@ -66,15 +66,6 @@ jobs:
         with:
           node-version: '24.20.0'
 
-      - name: Authenticate short-lived Cloudsmith publisher
-        # cloudsmith-io/cloudsmith-cli-action v3.1.0
-        uses: cloudsmith-io/cloudsmith-cli-action@ad73fafb92e3e29a5166c529464c2df7658a608e
-        with:
-          oidc-namespace: omnilyzer
-          oidc-service-slug: gha-publisher-u76y
-          verify-auth: true
-          export-auth-token: true
-
       - name: Prepare coordinated build inputs
         shell: bash
         run: |
@@ -85,13 +76,18 @@ jobs:
             "$RUNNER_TEMP/task008-artifacts/python" \
             "$RUNNER_TEMP/task008-artifacts/npm"
 
-      - name: Build standard Python wheel
+      - name: Install exact Python build tooling
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --disable-pip-version-check \
             build==1.6.0 hatchling==1.32.0
-          python -m build --wheel \
+
+      - name: Build standard Python wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m build --wheel --no-isolation \
             --outdir "$RUNNER_TEMP/task008-artifacts/python" \
             "$RUNNER_TEMP/task008-release/python"
 
@@ -116,6 +112,24 @@ jobs:
           printf 'NPM_TARBALL_PATH=%s\n' \
             "$RUNNER_TEMP/task008-artifacts/npm/$expected_tarball" >> "$GITHUB_ENV"
 
+      - name: Build OCI fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE_REPOSITORY}:${RELEASE_VERSION}"
+          docker build --tag "$image_ref" "$RUNNER_TEMP/task008-release/oci"
+          printf 'IMAGE_REF=%s\n' "$image_ref" >> "$GITHUB_ENV"
+
+      - name: Authenticate short-lived Cloudsmith publisher
+        # cloudsmith-io/cloudsmith-cli-action v3.1.0
+        uses: cloudsmith-io/cloudsmith-cli-action@ad73fafb92e3e29a5166c529464c2df7658a608e
+        with:
+          oidc-namespace: omnilyzer
+          oidc-service-slug: gha-publisher-u76y
+          cli-version: '1.26.0'
+          verify-auth: true
+          export-auth-token: true
+
       - name: Publish Python package
         shell: bash
         run: |
@@ -130,14 +144,6 @@ jobs:
           cloudsmith push npm \
             "$CLOUDSMITH_NAMESPACE/$CLOUDSMITH_REPOSITORY" "$NPM_TARBALL_PATH"
 
-      - name: Build OCI fixture
-        shell: bash
-        run: |
-          set -euo pipefail
-          image_ref="${IMAGE_REPOSITORY}:${RELEASE_VERSION}"
-          docker build --tag "$image_ref" "$RUNNER_TEMP/task008-release/oci"
-          printf 'IMAGE_REF=%s\n' "$image_ref" >> "$GITHUB_ENV"
-
       - name: Authenticate Docker with short-lived Cloudsmith identity
         shell: bash
         run: |
@@ -151,8 +157,11 @@ jobs:
         run: |
           set -euo pipefail
           docker push "$IMAGE_REF"
-          oci_digest="$(docker buildx imagetools inspect "$IMAGE_REF" \
-            --format '{{.Manifest.Digest}}')"
+          oci_digest_json="$(docker buildx imagetools inspect "$IMAGE_REF" \
+            --format '{{json .Manifest.Digest}}')"
+          oci_digest="$(python -c \
+            'import json, sys; value = json.load(sys.stdin); print(value if isinstance(value, str) else "")' \
+            <<< "$oci_digest_json")"
           if [[ ! "$oci_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "Cloudsmith did not return a valid OCI digest" >&2
             exit 1
