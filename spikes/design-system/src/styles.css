@@ -1,0 +1,50 @@
+@import "tailwindcss";
+@import "../generated/web/tokens.css";
+
+@theme {
+  --*: initial;
+}
+
+@theme inline {
+  --color-canvas: var(--omni-color-canvas);
+  --color-surface: var(--omni-color-surface);
+  --color-surface-raised: var(--omni-color-surface-raised);
+  --color-text-primary: var(--omni-color-text-primary);
+  --color-text-secondary: var(--omni-color-text-secondary);
+  --color-text-inverse: var(--omni-color-text-inverse);
+  --color-text-danger: var(--omni-color-text-danger);
+  --color-border-control: var(--omni-color-border-control);
+  --color-action-primary: var(--omni-color-action-primary-background);
+  --color-action-primary-hover: var(--omni-color-action-primary-hover);
+  --color-action-primary-foreground: var(--omni-color-action-primary-foreground);
+  --color-danger: var(--omni-color-danger-background);
+  --color-danger-foreground: var(--omni-color-danger-foreground);
+  --color-focus: var(--omni-color-focus-ring);
+  --color-overlay: var(--omni-color-overlay);
+  --spacing-control-inline: var(--omni-space-control-inline);
+  --spacing-control-block: var(--omni-space-control-block);
+  --spacing-control: var(--omni-space-control-gap);
+  --spacing-dialog: var(--omni-space-dialog);
+  --spacing-hit-target: var(--omni-space-hit-target);
+  --radius-control: var(--omni-radius-control);
+  --radius-dialog: var(--omni-radius-dialog);
+  --font-sans: var(--omni-font-family);
+  --text-body: var(--omni-font-size-body);
+  --text-body--line-height: var(--omni-font-line-body);
+  --text-label: var(--omni-font-size-label);
+  --text-label--line-height: var(--omni-font-line-compact);
+  --text-title: var(--omni-font-size-title);
+  --text-title--line-height: var(--omni-font-line-compact);
+  --font-weight-regular: var(--omni-font-weight-regular);
+  --font-weight-semibold: var(--omni-font-weight-semibold);
+  --font-weight-bold: var(--omni-font-weight-bold);
+}
+
+@layer base {
+  body {
+    margin: 0;
+    font-family: var(--omni-font-family);
+    background: var(--omni-color-canvas);
+    color: var(--omni-color-text-primary);
+  }
+}
