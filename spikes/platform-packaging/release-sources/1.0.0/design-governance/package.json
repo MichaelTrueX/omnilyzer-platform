@@ -1,0 +1,10 @@
+{
+  "name": "@omnilyzer/design-governance",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": { "omnilyzer-semantic-lint": "./cli.js" },
+  "exports": { ".": "./rules.js" },
+  "files": ["cli.js", "rules.js", "public-contract.json"],
+  "engines": { "node": ">=24.15.0 <25" },
+  "dependencies": {}
+}
