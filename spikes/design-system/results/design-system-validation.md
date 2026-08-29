@@ -5,7 +5,7 @@
 - **DTCG source result:** PASS — four canonical files identify the DTCG 2025.10 schema and retain structured sRGB colors and px dimensions. The fail-closed profile checks supported types/shapes, component ranges, hex agreement, aliases, schema IDs, and theme keys.
 - **Runtime result:** PASS — the initial Node 20 run exposed an unsupported-engine mismatch. Node 20 is EOL and was rejected as the frontend/design-system tooling baseline. The spike was rerun with an isolated official Node.js 24.20.0 runtime; pinned dependencies satisfied their engine requirements, and the Node 20 jsdom workaround was removed.
 - **Style Dictionary result:** PASS — the narrow in-memory adapter preserves aliases and Style Dictionary 5.5.2 resolves/builds both platforms under the supported runtime. Complete DTCG 2025.10 support was not validated.
-- **Semantic-token result:** PASS — generated consumer artifacts contain the 30 semantic keys and no primitive namespace.
+- **Semantic-token result:** PASS — generated consumer artifacts contain the 31 semantic keys and no primitive namespace; validation text uses the dedicated `color.textDanger` role rather than the danger-fill role.
 - **Light/dark result:** PASS — both themes expose the same keys through the same component source/classes with different resolved color values.
 - **Web output result:** PASS — deterministic static CSS contains light/dark selectors and semantic `--omni-*` properties only.
 - **Native output result:** PASS — light/dark JSON has matching resolved keys, string colors, numeric dimensions/numbers/weights, and no aliases or primitives.

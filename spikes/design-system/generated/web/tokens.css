@@ -11,6 +11,7 @@
   --omni-color-overlay: rgba(0, 0, 0, 0.6);
   --omni-color-surface: #F8FAFC;
   --omni-color-surface-raised: #FFFFFF;
+  --omni-color-text-danger: #B91C1C;
   --omni-color-text-inverse: #FFFFFF;
   --omni-color-text-primary: #0F172A;
   --omni-color-text-secondary: #475569;
@@ -44,6 +45,7 @@
   --omni-color-overlay: rgba(0, 0, 0, 0.6);
   --omni-color-surface: #1E293B;
   --omni-color-surface-raised: #1E293B;
+  --omni-color-text-danger: #FCA5A5;
   --omni-color-text-inverse: #0F172A;
   --omni-color-text-primary: #F8FAFC;
   --omni-color-text-secondary: #CBD5E1;

@@ -24,8 +24,7 @@ export function TextField({ label, hint, error, id: suppliedId, ...props }: Text
         {...props}
       />
       {hint && <span id={hintId} className="text-label text-text-secondary">{hint}</span>}
-      {error && <span id={errorId} className="text-label font-semibold text-danger">{error}</span>}
+      {error && <span id={errorId} className="text-label font-semibold text-text-danger">{error}</span>}
     </div>
   );
 }
-

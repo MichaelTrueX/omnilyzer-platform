@@ -10,6 +10,7 @@
   "color.overlay": "rgba(0, 0, 0, 0.6)",
   "color.surface": "#F8FAFC",
   "color.surfaceRaised": "#FFFFFF",
+  "color.textDanger": "#B91C1C",
   "color.textInverse": "#FFFFFF",
   "color.textPrimary": "#0F172A",
   "color.textSecondary": "#475569",

@@ -32,7 +32,7 @@ describe("canonical DTCG profile", () => {
   it("uses the 2025.10 schema and identical semantic keys", async () => {
     const canonical = await loadCanonical(root);
     expect(Object.values(canonical.documents as Record<string, { $schema: string }>).every((document) => document.$schema === SCHEMA)).toBe(true);
-    expect(canonical.semanticKeys).toHaveLength(30);
+    expect(canonical.semanticKeys).toHaveLength(31);
   });
 
   it.each([
@@ -54,6 +54,7 @@ describe("generated platform outputs", () => {
   it("exposes semantic web variables and theme selectors without primitives", async () => {
     const css = await readFile(path.join(generated, "web/tokens.css"), "utf8");
     expect(css).toContain("--omni-color-canvas");
+    expect(css).toContain("--omni-color-text-danger");
     expect(css).toContain(":root");
     expect(css).toContain('[data-theme="light"]');
     expect(css).toContain('[data-theme="dark"]');
@@ -66,6 +67,8 @@ describe("generated platform outputs", () => {
     expect(Object.keys(light).sort()).toEqual(Object.keys(dark).sort());
     expect(JSON.stringify([light, dark])).not.toMatch(/primitive|\{[A-Za-z][A-Za-z0-9_.-]+\}/);
     expect(light["color.canvas"]).not.toBe(dark["color.canvas"]);
+    expect(light["color.textDanger"]).toBe("#B91C1C");
+    expect(dark["color.textDanger"]).toBe("#FCA5A5");
     expect(light["space.hitTarget"]).toBe(44);
   });
 
@@ -77,6 +80,8 @@ describe("generated platform outputs", () => {
         ["color.textSecondary", "color.canvas"],
         ["color.actionPrimaryForeground", "color.actionPrimaryBackground"],
         ["color.dangerForeground", "color.dangerBackground"],
+        ["color.textDanger", "color.canvas"],
+        ["color.textDanger", "color.surface"],
       ]) expect(ratio(tokens[foreground], tokens[background]), `${theme}: ${foreground} on ${background}`).toBeGreaterThanOrEqual(4.5);
       for (const [foreground, background] of [
         ["color.focusRing", "color.canvas"],
