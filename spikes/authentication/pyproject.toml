@@ -1,0 +1,12 @@
+[project]
+name = "omnilyzer-authentication-spike"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "Authlib==1.7.2",
+  "Django==6.1",
+  "psycopg[binary]==3.3.4",
+]
+
+[tool.setuptools]
+packages = ["authspike", "config"]
