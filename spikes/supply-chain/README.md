@@ -42,14 +42,16 @@ The provider is `https://token.actions.githubusercontent.com`. The publisher rem
 
 The committed fixtures contain only the harmless placeholder `0.0.0`. `scripts/prepare_release.py` accepts a strict release version and a new absolute output directory outside the spike source, copies all mutable inputs there, coordinates the Python, npm, and OCI versions, and records expected artifact names. Standard-library unit tests verify valid `0.8.0`, malformed inputs, unsafe output use, coordinated versions, unchanged committed fixtures, exact workflow triggers and identities, action pins, credential policy, and ignored generated paths.
 
-The temporary feature-branch push triggers exist because GitHub cannot dispatch a new `workflow_dispatch` workflow until that workflow exists on the default branch. Publication is isolated to changes to `control/publish.trigger`; consumption is isolated to `control/consume.trigger`. Only `publish.trigger` exists initially, so the first reviewed push can publish while the consumer remains dormant pending review. Production workflows should use protected release refs and/or protected environments rather than this temporary spike branch.
+The temporary feature-branch push trigger paths are used because GitHub cannot dispatch a new `workflow_dispatch` workflow until that workflow exists on the default branch. Publication is isolated to changes to `control/publish.trigger`; consumption is isolated to `control/consume.trigger`. During the PRE-LIVE review state, neither trigger exists: the workflow implementation is committed and pushed first without causing a registry operation. Production workflows should use protected release refs and/or protected environments rather than this temporary spike branch.
 
 The intended live sequence is:
 
-1. Review and push `publish.trigger` with the exact coordinated version.
-2. Review the publisher run, package identities, hashes, and OCI digest.
-3. Intentionally add `consume.trigger` with that exact version in a later reviewed change.
-4. Review independent read-only consumption of all three registry artifacts.
+1. Commit and push the workflow implementation without either trigger.
+2. Have ChatGPT review that committed workflow implementation.
+3. Add `publish.trigger` with the exact coordinated version in a separate reviewed commit.
+4. Push that second commit to trigger the first live publisher run, then review its package identities, hashes, and OCI digest.
+5. Intentionally add `consume.trigger` with that exact version in a later reviewed change.
+6. Review independent read-only consumption of all three registry artifacts.
 
 ## Findings
 
@@ -57,6 +59,7 @@ The intended live sequence is:
 
 Task 008B still must validate:
 
+- separation of build and publisher jobs so build execution does not receive the job-scoped `id-token: write` permission;
 - Sigstore/Cosign keyless signing;
 - signed release provenance;
 - SBOM attachment and verification;

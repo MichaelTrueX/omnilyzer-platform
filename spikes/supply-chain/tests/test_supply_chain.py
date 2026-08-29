@@ -91,10 +91,9 @@ class WorkflowPolicyTests(unittest.TestCase):
     def test_expected_workflows_and_trigger_state(self) -> None:
         self.assertTrue(PUBLISH_WORKFLOW.is_file())
         self.assertTrue(CONSUME_WORKFLOW.is_file())
-        self.assertEqual(
-            (SPIKE_ROOT / "control/publish.trigger").read_text(encoding="utf-8"),
-            "0.8.0\n",
-        )
+        publish_trigger = SPIKE_ROOT / "control/publish.trigger"
+        if publish_trigger.exists():
+            self.assertEqual(publish_trigger.read_text(encoding="utf-8"), "0.8.0\n")
         self.assertFalse((SPIKE_ROOT / "control/consume.trigger").exists())
 
     def test_triggers_are_exact_and_consumer_is_dormant(self) -> None:
@@ -127,8 +126,35 @@ class WorkflowPolicyTests(unittest.TestCase):
         for workflow in (self.publish, self.consume):
             self.assertIn("oidc-namespace: omnilyzer", workflow)
             self.assertIn("omnilyzer/platform-spike", workflow)
+            self.assertEqual(workflow.count("cli-version: '1.26.0'"), 1)
             self.assertIn("export-auth-token: true", workflow)
             self.assertIn("verify-auth: true", workflow)
+
+    def test_publisher_build_contract_precedes_cloudsmith_authentication(self) -> None:
+        self.assertIn("python -m build --wheel --no-isolation", self.publish)
+        authentication = self.publish.index(
+            "- name: Authenticate short-lived Cloudsmith publisher"
+        )
+        local_steps = (
+            "- name: Read and validate coordinated release version",
+            "- name: Set up Python",
+            "- name: Set up Node",
+            "- name: Prepare coordinated build inputs",
+            "- name: Install exact Python build tooling",
+            "- name: Build standard Python wheel",
+            "- name: Build standard npm tarball",
+            "- name: Verify prepared artifact names",
+            "- name: Build OCI fixture",
+        )
+        for step in local_steps:
+            with self.subTest(step=step):
+                self.assertLess(self.publish.index(step), authentication)
+
+    def test_oci_digest_extraction_is_json_safe(self) -> None:
+        self.assertIn("--format '{{json .Manifest.Digest}}'", self.publish)
+        self.assertNotIn("--format '{{.Manifest.Digest}}'", self.publish)
+        self.assertIn("json.load(sys.stdin)", self.publish)
+        self.assertIn("^sha256:[0-9a-f]{64}$", self.publish)
 
     def test_actions_are_exactly_pinned(self) -> None:
         expected = {
