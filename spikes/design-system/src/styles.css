@@ -12,6 +12,7 @@
   --color-text-primary: var(--omni-color-text-primary);
   --color-text-secondary: var(--omni-color-text-secondary);
   --color-text-inverse: var(--omni-color-text-inverse);
+  --color-text-danger: var(--omni-color-text-danger);
   --color-border-control: var(--omni-color-border-control);
   --color-action-primary: var(--omni-color-action-primary-background);
   --color-action-primary-hover: var(--omni-color-action-primary-hover);
@@ -47,4 +48,3 @@
     color: var(--omni-color-text-primary);
   }
 }
-

@@ -41,9 +41,13 @@ describe("shared-source governance", () => {
   });
 
   it("uses semantic classes without theme branches", async () => {
-    const source = (await componentSource()).map(([, content]) => content).join("\n");
+    const sources = await componentSource();
+    const source = sources.map(([, content]) => content).join("\n");
+    const textField = sources.find(([name]) => name === "TextField.tsx")![1];
     expect(source).toContain("bg-action-primary");
     expect(source).toContain("border-border-control");
+    expect(textField).toContain("text-text-danger");
+    expect(textField).not.toMatch(/[ "'`]text-danger(?=[ "'`])/);
     expect(source).not.toMatch(/data-theme|theme\s*===|primitive\.color/);
   });
 });

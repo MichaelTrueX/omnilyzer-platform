@@ -8,6 +8,7 @@
       "textPrimary": { "$type": "color", "$value": "{primitive.color.neutral.50}" },
       "textSecondary": { "$type": "color", "$value": "{primitive.color.neutral.300}" },
       "textInverse": { "$type": "color", "$value": "{primitive.color.neutral.900}" },
+      "textDanger": { "$type": "color", "$value": "{primitive.color.red.300}" },
       "borderControl": { "$type": "color", "$value": "{primitive.color.neutral.500}" },
       "actionPrimaryBackground": { "$type": "color", "$value": "{primitive.color.blue.300}" },
       "actionPrimaryHover": { "$type": "color", "$value": "{primitive.color.blue.400}" },
