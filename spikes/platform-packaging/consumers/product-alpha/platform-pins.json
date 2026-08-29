@@ -1,0 +1,6 @@
+{
+  "platformRelease": "1.0.0",
+  "omnilyzer-platform-core": "1.0.0",
+  "@omnilyzer/platform-web-contract": "1.0.0",
+  "@omnilyzer/design-governance": "1.0.0"
+}
