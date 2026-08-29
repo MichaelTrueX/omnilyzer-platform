@@ -1,0 +1,43 @@
+{
+  "django_ninja": {
+    "custom_hooks": [
+      "authentication adapter",
+      "five exception handlers",
+      "strict Ninja Schema base",
+      "PATCH omission/non-null typing workaround"
+    ],
+    "direct_framework_dependencies": 1,
+    "file_count": 4,
+    "files": [
+      "ninja_api/__init__.py",
+      "ninja_api/api.py",
+      "ninja_api/authentication.py",
+      "ninja_api/schemas.py"
+    ],
+    "nonblank_noncomment_physical_lines": 279
+  },
+  "drf": {
+    "custom_hooks": [
+      "authentication adapter",
+      "exception handler",
+      "Workspace-context permission adapter",
+      "unknown-field validation mixin",
+      "drf-spectacular schema annotations"
+    ],
+    "direct_framework_dependencies": 2,
+    "file_count": 9,
+    "files": [
+      "drf_api/__init__.py",
+      "drf_api/apps.py",
+      "drf_api/authentication.py",
+      "drf_api/errors.py",
+      "drf_api/permissions.py",
+      "drf_api/schema.py",
+      "drf_api/serializers.py",
+      "drf_api/urls.py",
+      "drf_api/views.py"
+    ],
+    "nonblank_noncomment_physical_lines": 402
+  },
+  "method": "Python files and nonblank, non-comment physical lines; docstrings count."
+}
