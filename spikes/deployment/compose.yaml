@@ -1,0 +1,76 @@
+services:
+  db:
+    image: docker.io/library/postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    environment:
+      POSTGRES_DB: deployment
+      POSTGRES_USER: deployment
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deployment -d deployment"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  app_blue:
+    image: ${APP_BLUE_IMAGE:?digest-pinned APP_BLUE_IMAGE required}
+    environment: &app_environment
+      STAGE_NAME: ${STAGE_NAME:?required}
+      PUBLIC_MARKER: ${PUBLIC_MARKER:?required}
+      DB_HOST: db
+      DB_NAME: deployment
+      DB_USER: deployment
+      DB_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    networks: [frontend, backend]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+  app_green:
+    image: ${APP_GREEN_IMAGE:?digest-pinned APP_GREEN_IMAGE required}
+    environment: *app_environment
+    secrets: [db_password]
+    networks: [frontend, backend]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+  migrate:
+    image: ${MIGRATION_IMAGE:?digest-pinned MIGRATION_IMAGE required}
+    entrypoint: ["python", "/app/migrate.py"]
+    environment:
+      DB_HOST: db
+      DB_NAME: deployment
+      DB_USER: deployment
+      DB_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    networks: [backend]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    profiles: [tools]
+  nginx:
+    image: docker.io/library/nginx:stable@sha256:09cc2702709e6388d979d8030e3ab4eb1ceb699b2dced26d7543e872a822e823
+    ports:
+      - "127.0.0.1:${HOST_PORT:?required}:8080"
+    volumes:
+      - ${NGINX_CONFIG:?required}:/etc/nginx/nginx.conf:ro
+    networks: [frontend]
+    user: "101:101"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp, /var/cache/nginx:mode=1777, /var/run:mode=1777]
+secrets:
+  db_password:
+    file: ${SECRET_FILE:?required}
+volumes:
+  db_data:
+networks:
+  frontend:
+  backend:
+    internal: true
