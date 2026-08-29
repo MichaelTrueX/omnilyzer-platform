@@ -1,0 +1,21 @@
+{
+  "$schema": "https://www.designtokens.org/schemas/2025.10/format.json",
+  "semantic": {
+    "color": {
+      "canvas": { "$type": "color", "$value": "{primitive.color.neutral.900}" },
+      "surface": { "$type": "color", "$value": "{primitive.color.neutral.800}" },
+      "surfaceRaised": { "$type": "color", "$value": "{primitive.color.neutral.800}" },
+      "textPrimary": { "$type": "color", "$value": "{primitive.color.neutral.50}" },
+      "textSecondary": { "$type": "color", "$value": "{primitive.color.neutral.300}" },
+      "textInverse": { "$type": "color", "$value": "{primitive.color.neutral.900}" },
+      "borderControl": { "$type": "color", "$value": "{primitive.color.neutral.500}" },
+      "actionPrimaryBackground": { "$type": "color", "$value": "{primitive.color.blue.300}" },
+      "actionPrimaryHover": { "$type": "color", "$value": "{primitive.color.blue.400}" },
+      "actionPrimaryForeground": { "$type": "color", "$value": "{primitive.color.neutral.900}" },
+      "dangerBackground": { "$type": "color", "$value": "{primitive.color.red.300}" },
+      "dangerForeground": { "$type": "color", "$value": "{primitive.color.neutral.900}" },
+      "focusRing": { "$type": "color", "$value": "{primitive.color.blue.300}" },
+      "overlay": { "$type": "color", "$value": "{primitive.color.blackOverlay}" }
+    }
+  }
+}
