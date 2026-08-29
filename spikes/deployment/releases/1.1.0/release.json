@@ -1,0 +1,6 @@
+{
+  "release": "1.1.0",
+  "required_schema_version": 2,
+  "required_migrations": ["001_create_items.sql", "002_add_description.sql"],
+  "source_revision": "SOURCE_REVISION"
+}

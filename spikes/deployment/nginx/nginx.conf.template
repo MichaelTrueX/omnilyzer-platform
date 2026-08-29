@@ -1,0 +1,11 @@
+pid /tmp/nginx.pid;
+error_log /dev/stderr notice;
+events {}
+http {
+    access_log off;
+    upstream fixture { server __ACTIVE_SLOT__:8080; }
+    server {
+        listen 8080;
+        location / { proxy_pass http://fixture; proxy_connect_timeout 1s; proxy_read_timeout 3s; }
+    }
+}
