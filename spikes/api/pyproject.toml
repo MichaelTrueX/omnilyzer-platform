@@ -1,0 +1,19 @@
+# File: spikes/api/pyproject.toml
+# Purpose: Pins the direct dependencies and Python metadata for API spike reproduction.
+# Related: spikes/api/requirements-lock.txt, spikes/api/README.md
+
+[project]
+name = "omnilyzer-platform-api-spike"
+version = "0.0.0"
+description = "Removable evidence spike comparing DRF and Django Ninja."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "Django==6.1",
+    "djangorestframework==3.18.0",
+    "django-ninja==1.6.3",
+    "drf-spectacular==0.30.0",
+    "psycopg[binary]==3.3.4",
+]
+
+[tool.setuptools]
+packages = []

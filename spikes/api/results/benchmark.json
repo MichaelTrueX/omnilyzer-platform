@@ -1,0 +1,52 @@
+{
+  "django_ninja": {
+    "create": {
+      "elapsed_seconds": 0.254099,
+      "mean_latency_ms": 2.541,
+      "requests": 100,
+      "requests_per_second": 393.55
+    },
+    "list": {
+      "elapsed_seconds": 0.357839,
+      "mean_latency_ms": 1.789,
+      "requests": 200,
+      "requests_per_second": 558.91
+    },
+    "retrieve": {
+      "elapsed_seconds": 0.255547,
+      "mean_latency_ms": 1.278,
+      "requests": 200,
+      "requests_per_second": 782.64
+    }
+  },
+  "drf": {
+    "create": {
+      "elapsed_seconds": 0.281198,
+      "mean_latency_ms": 2.812,
+      "requests": 100,
+      "requests_per_second": 355.62
+    },
+    "list": {
+      "elapsed_seconds": 0.486954,
+      "mean_latency_ms": 2.435,
+      "requests": 200,
+      "requests_per_second": 410.72
+    },
+    "retrieve": {
+      "elapsed_seconds": 0.337723,
+      "mean_latency_ms": 1.689,
+      "requests": 200,
+      "requests_per_second": 592.2
+    }
+  },
+  "environment": {
+    "concurrency": 1,
+    "database": "PostgreSQL 16.15",
+    "debug": false,
+    "django": "6.1",
+    "python": "3.12.3",
+    "server_mode": "Django in-process WSGI test client"
+  },
+  "limitations": "Sequential in-process requests include ORM/database work but omit network, production server, TLS, load balancing, and concurrent-client effects.",
+  "recorded_at": "2026-08-28T23:56:12.527988+00:00"
+}
