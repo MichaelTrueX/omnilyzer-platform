@@ -1,0 +1,137 @@
+# File: .github/workflows/task008-consume.yml
+# Purpose: Consumes exact Task 008 artifacts using a separate read-only OIDC identity.
+
+name: Task 008 consume
+
+on:
+  push:
+    branches:
+      - spike/008-supply-chain
+    paths:
+      - spikes/supply-chain/control/consume.trigger
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  consume:
+    if: github.ref == 'refs/heads/spike/008-supply-chain'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      IMAGE_REPOSITORY: docker.cloudsmith.io/omnilyzer/platform-spike/omnilyzer-supply-chain-spike
+    steps:
+      - name: Check out repository
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Read and validate coordinated release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_version="$(python - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          content = Path("spikes/supply-chain/control/consume.trigger").read_text(
+              encoding="utf-8"
+          )
+          if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+\n?", content) is None:
+              print("consume.trigger must contain exactly an X.Y.Z version", file=sys.stderr)
+              raise SystemExit(1)
+          print(content.rstrip("\n"))
+          PY
+          )"
+          printf 'RELEASE_VERSION=%s\n' "$release_version" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        # actions/setup-python v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.20.0'
+
+      - name: Authenticate short-lived read-only Cloudsmith consumer
+        # cloudsmith-io/cloudsmith-cli-action v3.1.0
+        uses: cloudsmith-io/cloudsmith-cli-action@ad73fafb92e3e29a5166c529464c2df7658a608e
+        with:
+          oidc-namespace: omnilyzer
+          oidc-service-slug: gha-consumer
+          verify-auth: true
+          export-auth-token: true
+
+      - name: Install and verify exact Python package from Cloudsmith
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PIP_INDEX_URL="https://token:${CLOUDSMITH_API_KEY}@dl.cloudsmith.io/basic/omnilyzer/platform-spike/python/simple/"
+          python -m venv "$RUNNER_TEMP/task008-python-consumer"
+          "$RUNNER_TEMP/task008-python-consumer/bin/python" -m pip install \
+            --disable-pip-version-check --only-binary=:all: --no-deps \
+            "omnilyzer-supply-chain-spike==${RELEASE_VERSION}"
+          "$RUNNER_TEMP/task008-python-consumer/bin/python" -c \
+            'import os; import omnilyzer_supply_chain_spike as p; assert p.report() == os.environ["RELEASE_VERSION"]'
+
+      - name: Install and verify exact npm package from Cloudsmith
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm_project="$RUNNER_TEMP/task008-npm-consumer"
+          mkdir "$npm_project"
+          printf '%s\n' '{"name":"task008-consumer","private":true,"type":"module"}' \
+            > "$npm_project/package.json"
+          npm_config="$RUNNER_TEMP/task008-npmrc"
+          printf '%s\n' \
+            '@omnilyzer:registry=https://npm.cloudsmith.io/omnilyzer/platform-spike/' \
+            '//npm.cloudsmith.io/omnilyzer/platform-spike/:_authToken=${CLOUDSMITH_API_KEY}' \
+            'always-auth=true' > "$npm_config"
+          NPM_CONFIG_USERCONFIG="$npm_config" npm install \
+            --prefix "$npm_project" --save-exact --ignore-scripts \
+            "@omnilyzer/supply-chain-spike@${RELEASE_VERSION}"
+          (
+            cd "$npm_project"
+            node --input-type=module -e \
+              'import { report } from "@omnilyzer/supply-chain-spike"; if (report() !== process.env.RELEASE_VERSION) process.exit(1)'
+          )
+
+      - name: Authenticate Docker with short-lived Cloudsmith identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$CLOUDSMITH_API_KEY" | docker login docker.cloudsmith.io \
+            --username token --password-stdin
+          touch "$RUNNER_TEMP/task008-docker-login"
+
+      - name: Pull and inspect exact OCI artifact without running it
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE_REPOSITORY}:${RELEASE_VERSION}"
+          docker pull "$image_ref"
+          observed_version="$(docker image inspect "$image_ref" \
+            --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+          test "$observed_version" = "$RELEASE_VERSION"
+          oci_reference="$(docker image inspect "$image_ref" \
+            --format '{{index .RepoDigests 0}}')"
+          if [[ ! "$oci_reference" =~ @sha256:[0-9a-f]{64}$ ]]; then
+            echo "Pulled image has no valid immutable digest" >&2
+            exit 1
+          fi
+          printf 'Verified OCI digest: `%s`\n' "$oci_reference" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log out from Cloudsmith Docker registry
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/task008-docker-login" ]]; then
+            docker logout docker.cloudsmith.io
+          fi

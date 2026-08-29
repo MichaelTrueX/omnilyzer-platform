@@ -1,0 +1,5 @@
+# File: spikes/supply-chain/.gitignore
+# Purpose: Prevents accidental tracking of local Task 008 generated work.
+
+generated/
+artifacts/
