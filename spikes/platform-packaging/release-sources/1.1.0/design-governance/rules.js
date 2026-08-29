@@ -4,8 +4,8 @@ import { join } from "node:path";
 const RULES = [
   [/(?:^|[^\w-])#[0-9a-fA-F]{3,8}\b/, "hard-coded hex color"],
   [/\b(?:rgb|rgba|hsl|oklch)\s*\(/i, "raw color function"],
-  [/\b(?:bg|text|border)-(?:red|blue|green|gray|slate|amber|yellow|purple|pink)-\d{2,3}\b/, "raw Tailwind palette"],
-  [/\b(?:bg|text|border|p|m|w|h)-\[[^\]]+\]/, "Tailwind arbitrary styling"],
+  [/\b(?:(?:[a-z0-9_-]+):)*(?:bg|text|border|ring|outline|decoration|fill|stroke|shadow)-(?:red|blue|green|gray|slate|amber|yellow|purple|pink|neutral)-\d{2,3}\b/i, "raw Tailwind palette"],
+  [/\b(?:(?:[a-z0-9_-]+):)*[a-z][a-z0-9_-]*-\[[^\]\r\n]+\]/i, "Tailwind arbitrary styling"],
   [/style\s*=\s*\{\s*\{/, "inline React style"],
 ];
 

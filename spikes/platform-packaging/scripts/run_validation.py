@@ -222,16 +222,32 @@ def product_checks(artifact_root: Path, node: Path, evidence: Evidence):
     evidence.check("Alpha unchanged upgrade to 1.1.0", lambda: execute_product(alpha, artifact_root, "1.1.0", node))
     evidence.truth("Alpha source unchanged during upgrade", code_hash == hashlib.sha256((alpha / "backend_consumer.py").read_bytes() + (alpha / "web_consumer.mjs").read_bytes()).hexdigest())
     evidence.check("Alpha unchanged rollback to 1.0.0", lambda: execute_product(alpha, artifact_root, "1.0.0", node))
-    evidence.check("Beta package-only downgrade expected failure", lambda: execute_product(beta, artifact_root, "1.0.0", node, expect_consumers=False))
-    bad = beta / "noncompliant"
-    bad.mkdir()
-    (bad / "Bad.jsx").write_text('export const Bad = () => <div className="bg-red-500" style={{color: "#fff"}} />;\n')
     env = clean_environment(node)
-    def bad_lint_fails():
-        result = subprocess.run([beta / "node_modules/.bin/omnilyzer-semantic-lint", bad], cwd=beta, env=env)
-        if result.returncode == 0:
-            raise AssertionError("installed governance CLI accepted non-compliant fixture")
-    evidence.check("installed governance CLI rejects violations", bad_lint_fails)
+    violation_sources = {
+        "bg-red-500": 'export const Bad = () => <div className="bg-red-500" />;\n',
+        "ring-red-500": 'export const Bad = () => <div className="ring-red-500" />;\n',
+        "gap-[13px]": 'export const Bad = () => <div className="gap-[13px]" />;\n',
+        "ring-[#ffffff]": 'export const Bad = () => <div className="ring-[#ffffff]" />;\n',
+        "inline style/hard-coded color": 'export const Bad = () => <div style={{ color: "#fff" }} />;\n',
+    }
+    violations_root = TEMP_ROOT / "governance-negative"
+    violations_root.mkdir()
+    for index, (label, source) in enumerate(violation_sources.items()):
+        fixture = violations_root / str(index)
+        fixture.mkdir()
+        (fixture / "Bad.jsx").write_text(source, encoding="utf-8")
+        def installed_clis_reject(path=fixture):
+            for product in (alpha, beta):
+                executable = product / "node_modules/.bin/omnilyzer-semantic-lint"
+                result = subprocess.run(
+                    [executable, path], cwd=product, env=env,
+                    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                )
+                if result.returncode == 0:
+                    version = load_json(product / "node_modules/@omnilyzer/design-governance/package.json")["version"]
+                    raise AssertionError(f"installed governance {version} accepted {label}")
+        evidence.check(f"installed governance 1.0.0/1.1.0 reject {label}", installed_clis_reject)
+    evidence.check("Beta package-only downgrade expected failure", lambda: execute_product(beta, artifact_root, "1.0.0", node, expect_consumers=False))
     def private_boundary():
         web_env = env.copy()
         result = subprocess.run([node / "node", "-e", "import('@omnilyzer/platform-web-contract/internal.js')"], cwd=alpha, env=web_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -276,7 +292,7 @@ Recommendation: **adopt**
 | Alpha rollback result | PASS — unchanged consumers returned to 1.0.0 |
 | Beta downgrade negative test | PASS — package-only downgrade failed because Beta uses 1.1.0 APIs |
 | Mixed-version rejection result | PASS — rejected before consumer execution |
-| Governance-distribution result | PASS — installed CLI accepted compliant fixtures and rejected a temporary violation |
+| Governance-distribution result | PASS — installed 1.0.0 and 1.1.0 CLIs accepted compliant fixtures and rejected `bg-red-500`, `ring-red-500`, `gap-[13px]`, `ring-[#ffffff]`, and inline style/hard-coded color fixtures |
 | Source-copy isolation result | PASS — products executed under `/tmp` with artifact-only installs and no source references |
 
 Tests: **{evidence.passed} passed, {evidence.failed} failed**.
