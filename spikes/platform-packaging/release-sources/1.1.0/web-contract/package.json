@@ -1,0 +1,9 @@
+{
+  "name": "@omnilyzer/platform-web-contract",
+  "version": "1.1.0",
+  "type": "module",
+  "exports": { ".": "./index.js" },
+  "files": ["index.js", "public-contract.json"],
+  "engines": { "node": ">=24.15.0 <25" },
+  "dependencies": {}
+}
