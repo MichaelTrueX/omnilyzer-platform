@@ -147,9 +147,30 @@ The dependent `execute-verified` job passed with only GitHub's `Metadata: read` 
 
 Python execution used only the local wheel with `pip --no-index --no-deps`; `report()` returned `0.8.3`, so the Python check passed. npm execution used only the local tarball with `--ignore-scripts`, `--no-audit`, and `--no-fund`; `report()` returned `0.8.3`, so the npm check passed. OCI remained inspection-only throughout. This preserves the execution order: authenticated retrieval, cryptographic verification, provenance and SBOM validation, immutable verified handoff, then non-OIDC local code execution.
 
+## Task 008B vulnerability policy gate
+
+**TASK 008B PHASE 4A — PRE-LIVE / TO VALIDATE.** The proposed release gate installs Grype `0.118.0` only in the non-OIDC build job through the pinned `anchore/scan-action/download-grype` sub-action. It verifies the exact CLI version, explicitly updates the public Grype vulnerability database once, captures sanitized non-secret database identity/status metadata, disables automatic updates for the scans, and scans exactly the three already-built CycloneDX 1.6 SBOMs in explicit `sbom:` input mode. It does not recatalog source, pull an OCI image, or execute release artifacts.
+
+The initial version-controlled policy is:
+
+- Critical: **BLOCK**.
+- High: **BLOCK**.
+- Medium: report.
+- Low: report.
+- Negligible: report.
+- Unknown: report.
+
+The standard-library Python evaluator receives the current UTC date explicitly, validates all policy, database-status, and Grype result structures, and emits deterministic newline-terminated JSON evidence. A policy exception must identify the exact vulnerability ID, package name, and installed package version; include a non-empty rationale; and have a mandatory canonical `YYYY-MM-DD` expiry date in the future. Expired, duplicate, malformed, unknown-field, wildcard, and regex-like exceptions fail closed. No exceptions are currently configured.
+
+A BLOCK decision returns nonzero inside the build job before handoff-manifest creation and upload. The dependent publisher therefore cannot start, request its OIDC token, authenticate to Cloudsmith, publish artifacts, or sign release evidence. A PASS expands the exact same-run build handoff from seven to twelve files with three Grype JSON reports, sanitized Grype DB status, and the policy result. The handoff records hashes for all five files, Grype `0.118.0`, and the vulnerability-policy SHA-256. The publisher still performs no checkout, build, or scan; its pre-OIDC verifier independently binds the handoff policy SHA to the reviewed hash embedded in the workflow source.
+
+The five vulnerability evidence files are not individually signed. Their hashes are incorporated into the signed evidence manifest, and the files are covered by both the evidence-manifest signature and deterministic evidence-archive signature. The proposed archive allowlist therefore expands from twelve to exactly seventeen files, without including the policy source, Grype binary/database, runner cache, credentials, repository source, package artifacts, or OCI archive.
+
+The OIDC consumer verifies the signed vulnerability report, database-status, and policy-result hashes; scanner version; exact Critical/High blocking policy; PASS decision; policy binding; structurally valid severity counts; and absence of blocking findings before it can create the existing exact three-file execution handoff. It does not rerun Grype. The `execute-verified` job remains `permissions: {}` and receives only the verified wheel, npm tarball, and execution manifest; it receives no scanner, database, or vulnerability evidence.
+
 Remaining Task 008B work:
 
-- vulnerability/scanning policy;
+- live validation of the Phase 4A vulnerability/scanning policy;
 - tamper/substitution negative validation;
 - retention and rollback validation;
 - provider operations, cost, and disaster-recovery analysis;

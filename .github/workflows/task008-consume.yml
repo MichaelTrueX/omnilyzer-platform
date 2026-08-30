@@ -288,6 +288,9 @@ jobs:
           archive_path, destination = Path(sys.argv[1]), Path(sys.argv[2])
           expected = {
               "python-sbom.cdx.json", "npm-sbom.cdx.json", "oci-sbom.cdx.json",
+              "python-vulnerabilities.grype.json", "npm-vulnerabilities.grype.json",
+              "oci-vulnerabilities.grype.json", "grype-db-status.json",
+              "vulnerability-policy-result.json",
               "release-provenance.json", "evidence-manifest.json",
               "python-wheel.sigstore.json", "npm-tarball.sigstore.json",
               "python-sbom.sigstore.json", "npm-sbom.sigstore.json",
@@ -298,7 +301,7 @@ jobs:
               members = archive.getmembers()
               names = {member.name for member in members}
               if len(members) != len(expected) or names != expected:
-                  raise SystemExit("evidence archive does not match exact twelve-file allowlist")
+                  raise SystemExit("evidence archive does not match exact seventeen-file allowlist")
               for member in members:
                   path = PurePosixPath(member.name)
                   if path.is_absolute() or ".." in path.parts:
@@ -337,7 +340,8 @@ jobs:
           manifest = json.loads((root / "evidence-manifest.json").read_text(encoding="utf-8"))
           if set(manifest) != {
               "release_version", "publisher_source_sha", "github", "signer",
-              "tools", "artifacts", "sboms", "provenance", "signature_bundles",
+              "tools", "artifacts", "sboms", "provenance", "vulnerability_scanning",
+              "signature_bundles",
           }:
               raise SystemExit("evidence manifest has unexpected fields")
           if manifest.get("release_version") != os.environ["RELEASE_VERSION"]:
@@ -351,7 +355,9 @@ jobs:
               "transparency": "public-sigstore",
           }:
               raise SystemExit("unexpected signer identity metadata")
-          if manifest.get("tools") != {"cosign": "3.1.2", "syft": "1.51.0"}:
+          if manifest.get("tools") != {
+              "cosign": "3.1.2", "grype": "0.118.0", "syft": "1.51.0"
+          }:
               raise SystemExit("unexpected evidence tool versions")
           github = manifest.get("github")
           if not isinstance(github, dict) or set(github) != {"run_id", "run_attempt"}:
@@ -398,6 +404,98 @@ jobs:
               if document.get("bomFormat") != "CycloneDX" or document.get("specVersion") != "1.6":
                   raise SystemExit(f"{kind} SBOM schema mismatch")
 
+          vulnerability = manifest.get("vulnerability_scanning")
+          if not isinstance(vulnerability, dict) or set(vulnerability) != {
+              "scanner", "policy", "database", "reports", "policy_result"
+          }:
+              raise SystemExit("invalid signed vulnerability evidence inventory")
+          if vulnerability["scanner"] != {"name": "grype", "version": "0.118.0"}:
+              raise SystemExit("unexpected signed vulnerability scanner")
+          policy = vulnerability.get("policy")
+          if not isinstance(policy, dict) or policy.get("decision") != "PASS" or policy.get("block_severities") != ["Critical", "High"]:
+              raise SystemExit("signed vulnerability policy did not pass exact blocking policy")
+          policy_sha256 = policy.get("sha256")
+          if not isinstance(policy_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", policy_sha256) is None:
+              raise SystemExit("invalid signed vulnerability policy SHA-256")
+
+          database_status_path = root / "grype-db-status.json"
+          database = vulnerability.get("database")
+          if not isinstance(database, dict) or set(database) != {"metadata", "status_file"}:
+              raise SystemExit("invalid signed vulnerability database evidence")
+          if database.get("status_file") != {
+              "filename": database_status_path.name,
+              "sha256": sha256(database_status_path),
+          }:
+              raise SystemExit("Grype DB status hash mismatch")
+          database_status = json.loads(database_status_path.read_text(encoding="utf-8"))
+          if database.get("metadata") != database_status:
+              raise SystemExit("Grype DB metadata mismatch")
+          if not isinstance(database_status, dict) or set(database_status) - {
+              "built", "checksum", "schema_version", "status", "valid"
+          } or not {"built", "checksum", "schema_version"} <= set(database_status):
+              raise SystemExit("invalid sanitized Grype DB status")
+
+          expected_reports = {
+              "python": "python-vulnerabilities.grype.json",
+              "npm": "npm-vulnerabilities.grype.json",
+              "oci": "oci-vulnerabilities.grype.json",
+          }
+          reports = vulnerability.get("reports")
+          if not isinstance(reports, dict) or set(reports) != set(expected_reports):
+              raise SystemExit("invalid signed Grype report inventory")
+          for kind, filename in expected_reports.items():
+              if reports[kind] != {"filename": filename, "sha256": sha256(root / filename)}:
+                  raise SystemExit(f"{kind} Grype report hash mismatch")
+
+          policy_result_path = root / "vulnerability-policy-result.json"
+          if vulnerability.get("policy_result") != {
+              "filename": policy_result_path.name,
+              "sha256": sha256(policy_result_path),
+          }:
+              raise SystemExit("vulnerability policy result hash mismatch")
+          policy_result = json.loads(policy_result_path.read_text(encoding="utf-8"))
+          if not isinstance(policy_result, dict) or set(policy_result) != {
+              "schema_version", "policy", "scanner", "database", "targets",
+              "decision", "evaluated_at_date",
+          }:
+              raise SystemExit("invalid vulnerability policy result structure")
+          if policy_result.get("schema_version") != 1 or policy_result.get("decision") != "PASS":
+              raise SystemExit("vulnerability policy result is not PASS")
+          if policy_result.get("scanner") != vulnerability["scanner"]:
+              raise SystemExit("vulnerability policy result scanner mismatch")
+          if policy_result.get("policy") != {
+              "block_severities": ["Critical", "High"],
+              "policy_sha256": policy_sha256,
+          }:
+              raise SystemExit("vulnerability policy result policy binding mismatch")
+          if policy_result.get("database") != database_status:
+              raise SystemExit("vulnerability policy result DB metadata mismatch")
+          targets = policy_result.get("targets")
+          if not isinstance(targets, dict) or set(targets) != set(expected_reports):
+              raise SystemExit("invalid vulnerability policy result targets")
+          expected_severities = {"Critical", "High", "Medium", "Low", "Negligible", "Unknown"}
+          for kind, filename in expected_reports.items():
+              target = targets[kind]
+              if not isinstance(target, dict) or set(target) != {
+                  "scan_report_filename", "scan_report_sha256", "total_matches",
+                  "severity_counts", "blocking_findings", "excepted_findings",
+              }:
+                  raise SystemExit(f"invalid {kind} vulnerability target result")
+              if target["scan_report_filename"] != filename or target["scan_report_sha256"] != reports[kind]["sha256"]:
+                  raise SystemExit(f"{kind} vulnerability target hash mismatch")
+              counts = target.get("severity_counts")
+              if not isinstance(counts, dict) or set(counts) != expected_severities or any(
+                  not isinstance(count, int) or isinstance(count, bool) or count < 0
+                  for count in counts.values()
+              ):
+                  raise SystemExit(f"invalid {kind} vulnerability severity counts")
+              if not isinstance(target.get("total_matches"), int) or isinstance(target["total_matches"], bool) or sum(counts.values()) != target["total_matches"]:
+                  raise SystemExit(f"inconsistent {kind} vulnerability match count")
+              if target.get("blocking_findings") != []:
+                  raise SystemExit(f"{kind} vulnerability PASS result retains blocking findings")
+              if not isinstance(target.get("excepted_findings"), list):
+                  raise SystemExit(f"invalid {kind} vulnerability exceptions evidence")
+
           provenance_path = root / "release-provenance.json"
           provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
           if manifest.get("provenance") != {
@@ -430,6 +528,7 @@ jobs:
               "workflow_path": ".github/workflows/task008-publish.yml",
               "ref": "refs/heads/spike/008-supply-chain",
               "release_version": os.environ["RELEASE_VERSION"],
+              "vulnerability_policy_sha256": policy_sha256,
           }:
               raise SystemExit("unexpected provenance external parameters")
           dependencies = definition.get("resolvedDependencies")

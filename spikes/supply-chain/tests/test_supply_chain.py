@@ -5,6 +5,7 @@ Purpose: Validate Task 008 release preparation and workflow policy without a net
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -548,7 +549,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         ):
             self.assertIn(field, build)
         publish = self.job(self.publish, "publish")
-        self.assertIn("handoff contains missing or unrelated files", publish)
+        self.assertIn("handoff does not contain exactly twelve files", publish)
         self.assertIn("missing regular SBOM file", publish)
         self.assertIn('document.get("bomFormat") != "CycloneDX"', publish)
         self.assertIn('document.get("specVersion") != "1.6"', publish)
@@ -641,12 +642,20 @@ class WorkflowPolicyTests(unittest.TestCase):
                 "oci-sbom.sigstore.json",
                 "release-provenance.sigstore.json",
                 "evidence-manifest.sigstore.json",
+                "python-vulnerabilities.grype.json",
+                "npm-vulnerabilities.grype.json",
+                "oci-vulnerabilities.grype.json",
+                "grype-db-status.json",
+                "vulnerability-policy-result.json",
             },
         )
-        self.assertEqual(len(allowlist.split()), 12)
-        for excluded in (".whl", ".tgz", "task008-oci-image.tar", ".git"):
+        self.assertEqual(len(allowlist.split()), 17)
+        for excluded in (
+            ".whl", ".tgz", "task008-oci-image.tar", ".git",
+            "vulnerability-policy.json", "grype.db",
+        ):
             self.assertNotIn(excluded, allowlist)
-        self.assertIn("exact twelve-file allowlist", self.consume)
+        self.assertIn("exact seventeen-file allowlist", self.consume)
         self.assertIn("tar --sort=name --mtime='UTC 1970-01-01'", publish)
         self.assertIn("--owner=0 --group=0 --numeric-owner", publish)
         self.assertIn("gzip -n", publish)
@@ -705,7 +714,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             generic_download,
             r"https://[^\s\"']*\$\{CLOUDSMITH_API_KEY\}",
         )
-        self.assertIn("evidence archive does not match exact twelve-file allowlist", consume)
+        self.assertIn("evidence archive does not match exact seventeen-file allowlist", consume)
         self.assertIn("not member.isfile()", consume)
         self.assertIn("downloaded wheel does not match evidence", consume)
         self.assertIn("downloaded npm tarball does not match evidence", consume)
@@ -841,6 +850,143 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("json.load(sys.stdin)", self.publish)
         self.assertIn("^sha256:[0-9a-f]{64}$", self.publish)
 
+    def test_grype_is_exact_and_confined_to_non_oidc_build(self) -> None:
+        build = self.job(self.publish, "build")
+        publish = self.job(self.publish, "publish")
+        execute = self.job(self.consume, "execute-verified")
+        self.assertIn(
+            "uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2",
+            build,
+        )
+        self.assertIn("grype-version: v0.118.0", build)
+        self.assertIn("cache-db: false", build)
+        self.assertIn("GRYPE_COMMAND: ${{ steps.grype.outputs.cmd }}", build)
+        self.assertIn('versions == ["0.118.0"]', build)
+        self.assertNotIn("id-token: write", build)
+        for job in (publish, execute):
+            self.assertNotIn("anchore/scan-action/download-grype", job)
+            self.assertNotIn("GRYPE_COMMAND", job)
+            self.assertNotIn('"$GRYPE_COMMAND" db', job)
+            self.assertNotRegex(job, r'"\$GRYPE_COMMAND"\s+"sbom:')
+
+    def test_grype_database_is_updated_once_then_frozen_for_three_sbom_scans(self) -> None:
+        build = self.job(self.publish, "build")
+        update = build.index('"$GRYPE_COMMAND" db update')
+        status = build.index('"$GRYPE_COMMAND" db status -o json')
+        scans = build.index("Scan exactly the three existing CycloneDX SBOMs")
+        policy = build.index("Evaluate version-controlled vulnerability policy")
+        manifest = build.index("Create machine-readable handoff manifest")
+        upload = build.index("Upload minimal release handoff")
+        self.assertLess(update, status)
+        self.assertLess(status, scans)
+        self.assertLess(scans, policy)
+        self.assertLess(policy, manifest)
+        self.assertLess(manifest, upload)
+        self.assertEqual(build.count('"$GRYPE_COMMAND" db update'), 1)
+        self.assertEqual(build.count('"$GRYPE_COMMAND" db status -o json'), 1)
+        scan_step = build.split(
+            "      - name: Scan exactly the three existing CycloneDX SBOMs", 1
+        )[1].split(
+            "      - name: Evaluate version-controlled vulnerability policy", 1
+        )[0]
+        self.assertIn("GRYPE_DB_AUTO_UPDATE: 'false'", scan_step)
+        self.assertEqual(scan_step.count('"$GRYPE_COMMAND" "sbom:'), 3)
+        for filename in (
+            "python-sbom.cdx.json",
+            "npm-sbom.cdx.json",
+            "oci-sbom.cdx.json",
+        ):
+            self.assertEqual(scan_step.count(filename), 1)
+        for prohibited in (
+            "docker.cloudsmith.io",
+            "docker-archive:",
+            "dir:",
+            "spikes/supply-chain/fixtures",
+            "docker pull",
+        ):
+            self.assertNotIn(prohibited, scan_step)
+        update_step = build.split(
+            "      - name: Update and validate one Grype vulnerability database", 1
+        )[1].split(
+            "      - name: Scan exactly the three existing CycloneDX SBOMs", 1
+        )[0]
+        self.assertNotIn("GRYPE_DB_VALIDATE_AGE", update_step)
+        self.assertNotIn("GRYPE_DB_VALIDATE_BY_HASH_ON_START", update_step)
+        self.assertNotIn("location", update_step.split("evidence = {", 1)[1])
+
+    def test_vulnerability_gate_extends_exact_build_handoff_before_oidc(self) -> None:
+        build = self.job(self.publish, "build")
+        publish = self.job(self.publish, "publish")
+        files = (
+            "python-vulnerabilities.grype.json",
+            "npm-vulnerabilities.grype.json",
+            "oci-vulnerabilities.grype.json",
+            "grype-db-status.json",
+            "vulnerability-policy-result.json",
+        )
+        for filename in files:
+            self.assertIn(filename, build)
+            self.assertIn(filename, publish)
+        self.assertIn("build handoff does not contain exactly twelve files", build)
+        self.assertIn("handoff does not contain exactly twelve files", publish)
+        self.assertIn('"grype_version": "0.118.0"', build)
+        self.assertIn('"vulnerability_policy_sha256"', build)
+        expected_sha = hashlib.sha256(
+            (SPIKE_ROOT / "vulnerability-policy.json").read_bytes()
+        ).hexdigest()
+        self.assertEqual(
+            expected_sha,
+            "f36c806af62c1920890b6c33ae5dc03aa738af860e73a08b6fea3543c03d6530",
+        )
+        self.assertIn(f"EXPECTED_VULNERABILITY_POLICY_SHA256: {expected_sha}", publish)
+        verification = publish.index("Verify handoff manifest and checksums before OIDC")
+        authentication = publish.index("Authenticate short-lived Cloudsmith publisher")
+        self.assertLess(verification, authentication)
+        self.assertIn('policy_result["decision"] != "PASS"', publish)
+        self.assertIn("handoff vulnerability policy is not bound to workflow source", publish)
+        self.assertIn("vulnerability policy decision is not PASS", publish)
+
+    def test_signed_and_consumed_vulnerability_evidence_precedes_execution_handoff(self) -> None:
+        publish = self.job(self.publish, "publish")
+        consume = self.job(self.consume, "consume")
+        execute = self.job(self.consume, "execute-verified")
+        self.assertIn('"vulnerability_scanning"', publish)
+        self.assertIn('"scanner": {"name": "grype", "version": "0.118.0"}', publish)
+        self.assertIn('"block_severities": ["Critical", "High"]', publish)
+        self.assertIn('"decision": "PASS"', publish)
+        self.assertIn('"status_file"', publish)
+        self.assertIn('"policy_result"', publish)
+        self.assertNotIn(
+            "sign_blob \"$evidence_dir/python-vulnerabilities.grype.json\"",
+            publish,
+        )
+        validate = consume.index("Validate evidence hashes SBOMs and provenance")
+        handoff = consume.index("Create exact verified execution handoff")
+        self.assertLess(validate, handoff)
+        self.assertIn("exact seventeen-file allowlist", consume)
+        self.assertIn("Grype DB status hash mismatch", consume)
+        self.assertIn("vulnerability policy result hash mismatch", consume)
+        self.assertIn("vulnerability policy result is not PASS", consume)
+        self.assertIn("vulnerability severity counts", consume)
+        self.assertIn("PASS result retains blocking findings", consume)
+        for filename in (
+            "python-vulnerabilities.grype.json",
+            "npm-vulnerabilities.grype.json",
+            "oci-vulnerabilities.grype.json",
+            "grype-db-status.json",
+            "vulnerability-policy-result.json",
+        ):
+            self.assertNotIn(filename, execute)
+        self.assertIn("permissions: {}", execute)
+        for prohibited in (
+            "id-token: write",
+            "cloudsmith",
+            "cosign",
+            "docker",
+            "actions/checkout",
+        ):
+            self.assertNotIn(prohibited, execute.lower())
+
     def test_actions_are_exactly_pinned(self) -> None:
         expected = {
             "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
@@ -858,6 +1004,9 @@ class WorkflowPolicyTests(unittest.TestCase):
             "anchore/sbom-action/download-syft": (
                 "3ad7283483fc7af8ff2b4ea19663c2d5ca935e26"
             ),
+            "anchore/scan-action/download-grype": (
+                "e1165082ffb1fe366ebaf02d8526e7c4989ea9d2"
+            ),
             "sigstore/cosign-installer": (
                 "6f9f17788090df1f26f669e9d70d6ae9567deba6"
             ),
@@ -868,7 +1017,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                 for line in workflow.splitlines()
                 if line.strip().startswith("uses: ")
             ]
-            expected_count = 10 if workflow is self.publish else 11
+            expected_count = 11
             self.assertEqual(len(uses_lines), expected_count)
             for use in uses_lines:
                 action, revision = use.split("@", 1)
