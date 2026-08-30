@@ -64,6 +64,7 @@ class ObservabilityConfig:
     product: str
     environment: str
     trust_incoming_request_id: bool
+    trust_incoming_trace_context: bool
     otlp_endpoint: str | None
     export_timeout_millis: int
     schedule_delay_millis: int
@@ -81,6 +82,10 @@ class ObservabilityConfig:
         trust_incoming_request_id = _boolean(
             values.get("OBSERVABILITY_TRUST_INCOMING_REQUEST_ID", "false"),
             "OBSERVABILITY_TRUST_INCOMING_REQUEST_ID",
+        )
+        trust_incoming_trace_context = _boolean(
+            values.get("OBSERVABILITY_TRUST_INCOMING_TRACE_CONTEXT", "false"),
+            "OBSERVABILITY_TRUST_INCOMING_TRACE_CONTEXT",
         )
         if _NAME.fullmatch(service) is None or _NAME.fullmatch(product) is None:
             raise ValueError("service and product must use bounded lowercase slug format")
@@ -100,6 +105,7 @@ class ObservabilityConfig:
             product,
             environment,
             trust_incoming_request_id,
+            trust_incoming_trace_context,
             endpoint,
             timeout,
             delay,
