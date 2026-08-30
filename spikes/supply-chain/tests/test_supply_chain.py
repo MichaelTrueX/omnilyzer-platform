@@ -138,9 +138,9 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertTrue(PUBLISH_WORKFLOW.is_file())
         self.assertTrue(CONSUME_WORKFLOW.is_file())
         publish_trigger = SPIKE_ROOT / "control/publish.trigger"
-        self.assertEqual(publish_trigger.read_text(encoding="utf-8"), "0.8.1\n")
+        self.assertEqual(publish_trigger.read_text(encoding="utf-8"), "0.8.2\n")
         consume_trigger = SPIKE_ROOT / "control/consume.trigger"
-        self.assertEqual(consume_trigger.read_text(encoding="utf-8"), "0.8.1\n")
+        self.assertEqual(consume_trigger.read_text(encoding="utf-8"), "0.8.2\n")
         self.assertEqual(
             (SPIKE_ROOT / "control/publisher-permissions.trigger").read_text(
                 encoding="utf-8"
@@ -155,26 +155,26 @@ class WorkflowPolicyTests(unittest.TestCase):
         )
 
     def test_publish_trigger_accepts_only_one_strict_version_plus_newline(self) -> None:
-        self.assertIsNotNone(TRIGGER_VERSION_PATTERN.fullmatch("0.8.1\n"))
+        self.assertIsNotNone(TRIGGER_VERSION_PATTERN.fullmatch("0.8.2\n"))
         for malformed in (
-            "0.8.1",
-            "v0.8.1\n",
+            "0.8.2",
+            "v0.8.2\n",
             "0.8\n",
-            "0.8.1-dev\n",
-            "0.8.1\n1.0.0\n",
+            "0.8.2-dev\n",
+            "0.8.2\n1.0.0\n",
             "",
         ):
             with self.subTest(content=malformed):
                 self.assertIsNone(TRIGGER_VERSION_PATTERN.fullmatch(malformed))
 
     def test_consume_trigger_accepts_only_one_strict_version_plus_newline(self) -> None:
-        self.assertIsNotNone(TRIGGER_VERSION_PATTERN.fullmatch("0.8.1\n"))
+        self.assertIsNotNone(TRIGGER_VERSION_PATTERN.fullmatch("0.8.2\n"))
         for malformed in (
-            "0.8.1",
-            "v0.8.1\n",
+            "0.8.2",
+            "v0.8.2\n",
             "0.8\n",
-            "0.8.1-dev\n",
-            "0.8.1\n1.0.0\n",
+            "0.8.2-dev\n",
+            "0.8.2\n1.0.0\n",
             "",
         ):
             with self.subTest(content=malformed):
@@ -449,7 +449,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertNotRegex(combined, r"(?m)(?:^|[ |])jq(?:[ |]|$)")
         self.assertIn("import json", self.publish)
         self.assertIn("import json", self.consume)
-        self.assertEqual(combined.count("--output-format json"), 2)
+        self.assertEqual(combined.count("--output-format json"), 3)
 
     def test_release_build_job_has_no_oidc_or_cloudsmith_authority(self) -> None:
         build = self.job(self.publish, "build")
@@ -473,6 +473,34 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertNotRegex(build.lower(), r"(?m)^\s*cloudsmith\s")
         self.assertNotIn("CLOUDSMITH_API_KEY", build)
         self.assertNotIn("docker login", build)
+
+    def test_build_generates_exact_sboms_from_built_artifacts_without_oidc(self) -> None:
+        build = self.job(self.publish, "build")
+        self.assertIn(
+            "uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26",
+            build,
+        )
+        self.assertIn("syft-version: v1.51.0", build)
+        self.assertIn("SYFT_COMMAND: ${{ steps.syft.outputs.cmd }}", build)
+        self.assertEqual(build.count("cyclonedx-json@1.6="), 3)
+        for filename in (
+            "python-sbom.cdx.json",
+            "npm-sbom.cdx.json",
+            "oci-sbom.cdx.json",
+        ):
+            self.assertIn(filename, build)
+        self.assertIn("zipfile.ZipFile(wheel)", build)
+        self.assertIn("tarfile.open(npm_tarball", build)
+        self.assertIn('stat.S_ISLNK(mode)', build)
+        self.assertIn("member.issym() or member.islnk()", build)
+        self.assertIn('scan "dir:$wheel_root"', build)
+        self.assertIn('scan "dir:$npm_root"', build)
+        self.assertIn(
+            'scan "docker-archive:$handoff_dir/task008-oci-image.tar"', build
+        )
+        self.assertNotIn("id-token: write", build)
+        publish = self.job(self.publish, "publish")
+        self.assertNotIn("cyclonedx-json@1.6=", publish)
 
     def test_release_handoff_is_minimal_checksummed_and_short_lived(self) -> None:
         build = self.job(self.publish, "build")
@@ -505,6 +533,165 @@ class WorkflowPolicyTests(unittest.TestCase):
             "spikes/supply-chain",
         ):
             self.assertNotIn(prohibited, upload)
+
+        for field in (
+            '"sboms"',
+            '"format": "cyclonedx-json"',
+            '"spec_version": "1.6"',
+            '"syft_version": "1.51.0"',
+        ):
+            self.assertIn(field, build)
+        publish = self.job(self.publish, "publish")
+        self.assertIn("handoff contains missing or unrelated files", publish)
+        self.assertIn("missing regular SBOM file", publish)
+        self.assertIn('document.get("bomFormat") != "CycloneDX"', publish)
+        self.assertIn('document.get("specVersion") != "1.6"', publish)
+        for filename in (
+            "python-sbom.cdx.json",
+            "npm-sbom.cdx.json",
+            "oci-sbom.cdx.json",
+        ):
+            self.assertIn(filename, publish)
+
+    def test_phase3_cosign_policy_is_public_keyless_and_exact(self) -> None:
+        release_jobs = self.job(self.publish, "publish") + self.job(
+            self.consume, "consume"
+        )
+        self.assertEqual(
+            release_jobs.count(
+                "uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6"
+            ),
+            2,
+        )
+        self.assertEqual(release_jobs.count("cosign-release: v3.1.2"), 2)
+        identity = (
+            "https://github.com/MichaelTrueX/omnilyzer-platform/.github/workflows/"
+            "task008-publish.yml@refs/heads/spike/008-supply-chain"
+        )
+        issuer = "https://token.actions.githubusercontent.com"
+        self.assertEqual(release_jobs.count(f"SIGNER_IDENTITY: {identity}"), 2)
+        self.assertEqual(release_jobs.count(f"OIDC_ISSUER: {issuer}"), 2)
+        for prohibited in (
+            "certificate-identity-regexp",
+            "private-infrastructure",
+            "insecure-ignore-tlog",
+            "insecure-ignore-sct",
+            "COSIGN_PRIVATE_KEY",
+            "cosign generate-key-pair",
+        ):
+            self.assertNotIn(prohibited, release_jobs)
+
+    def test_publisher_signs_verifies_and_publishes_exact_evidence(self) -> None:
+        publish = self.job(self.publish, "publish")
+        provenance = publish.index("Create SLSA v1-formatted workload provenance")
+        signing = publish.index("Keylessly sign release blobs")
+        verification = publish.index("Immediately verify signed release content")
+        publication = publish.index("Publish versioned Generic release evidence")
+        self.assertLess(provenance, signing)
+        self.assertLess(signing, verification)
+        self.assertLess(verification, publication)
+        self.assertEqual(publish.count("cosign sign-blob --yes"), 3)
+        self.assertIn('cosign sign --yes "$IMAGE_REPOSITORY@$OCI_DIGEST"', publish)
+        self.assertIn('--certificate-identity "$SIGNER_IDENTITY"', publish)
+        self.assertIn('--certificate-oidc-issuer "$OIDC_ISSUER"', publish)
+        self.assertIn('"_type": "https://in-toto.io/Statement/v1"', publish)
+        self.assertIn('"predicateType": "https://slsa.dev/provenance/v1"', publish)
+        self.assertIn(
+            '"buildType": "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1"',
+            publish,
+        )
+        self.assertIn('"gitCommit": os.environ["GITHUB_SHA"]', publish)
+        self.assertIn('"id": "https://github.com/actions/runner/github-hosted"', publish)
+        for unsupported_claim in ("SLSA Build L2", "SLSA Build L3", "reproducible"):
+            self.assertNotIn(unsupported_claim, publish)
+        for bundle in (
+            "python-wheel.sigstore.json",
+            "npm-tarball.sigstore.json",
+            "python-sbom.sigstore.json",
+            "npm-sbom.sigstore.json",
+            "oci-sbom.sigstore.json",
+            "release-provenance.sigstore.json",
+            "evidence-manifest.sigstore.json",
+        ):
+            self.assertIn(bundle, publish)
+        archive_step = publish.split(
+            "- name: Create, sign, and verify deterministic evidence archive", 1
+        )[1].split("      - name: Publish versioned Generic release evidence", 1)[0]
+        allowlist = archive_step.split(
+            "          mapfile -t evidence_files <<'EOF'\n", 1
+        )[1].split("          EOF", 1)[0]
+        self.assertEqual(
+            set(allowlist.split()),
+            {
+                "python-sbom.cdx.json",
+                "npm-sbom.cdx.json",
+                "oci-sbom.cdx.json",
+                "release-provenance.json",
+                "evidence-manifest.json",
+                "python-wheel.sigstore.json",
+                "npm-tarball.sigstore.json",
+                "python-sbom.sigstore.json",
+                "npm-sbom.sigstore.json",
+                "oci-sbom.sigstore.json",
+                "release-provenance.sigstore.json",
+                "evidence-manifest.sigstore.json",
+            },
+        )
+        self.assertEqual(len(allowlist.split()), 12)
+        for excluded in (".whl", ".tgz", "task008-oci-image.tar", ".git"):
+            self.assertNotIn(excluded, allowlist)
+        self.assertIn("exact twelve-file allowlist", self.consume)
+        self.assertIn("tar --sort=name --mtime='UTC 1970-01-01'", publish)
+        self.assertIn("--owner=0 --group=0 --numeric-owner", publish)
+        self.assertIn("gzip -n", publish)
+        generic_upload = publish.split(
+            "- name: Publish versioned Generic release evidence", 1
+        )[1]
+        self.assertEqual(generic_upload.count("cloudsmith push generic"), 2)
+        self.assertEqual(generic_upload.count('--version "$RELEASE_VERSION"'), 2)
+        self.assertIn(
+            '--filepath "task008/evidence/${RELEASE_VERSION}/${archive_name}"',
+            generic_upload,
+        )
+        self.assertNotIn("--republish", generic_upload)
+        self.assertNotIn("--name", generic_upload)
+
+    def test_consumer_verifies_before_installing_or_importing(self) -> None:
+        consume = self.job(self.consume, "consume")
+        wheel_download = consume.index("Download exact Python wheel without installing")
+        npm_download = consume.index("Download exact npm tarball without installing")
+        archive_verify = consume.index("Verify evidence archive signature before extraction")
+        extraction = consume.index("Safely extract exact evidence allowlist")
+        signatures = consume.index("Verify all release signatures before code execution")
+        python_install = consume.index("Install and execute verified local Python wheel")
+        npm_install = consume.index("Install and execute verified local npm tarball")
+        self.assertLess(wheel_download, archive_verify)
+        self.assertLess(npm_download, archive_verify)
+        self.assertLess(archive_verify, extraction)
+        self.assertLess(extraction, signatures)
+        self.assertLess(signatures, python_install)
+        self.assertLess(signatures, npm_install)
+        self.assertIn("python -m pip download", consume)
+        self.assertIn("--only-binary=:all: --no-deps", consume)
+        self.assertIn("NPM_CONFIG_USERCONFIG", consume)
+        self.assertIn("npm pack", consume)
+        self.assertIn("--ignore-scripts", consume)
+        self.assertIn("expected exactly one versioned evidence package", consume)
+        self.assertIn("cdn_url", consume)
+        self.assertIn('--user "token:${CLOUDSMITH_API_KEY}"', consume)
+        self.assertIn("evidence archive does not match exact twelve-file allowlist", consume)
+        self.assertIn("not member.isfile()", consume)
+        self.assertIn("downloaded wheel does not match evidence", consume)
+        self.assertIn("downloaded npm tarball does not match evidence", consume)
+        self.assertIn("pulled OCI digest does not match evidence", consume)
+        self.assertIn("provenance subjects do not match retrieved artifacts", consume)
+        self.assertIn("provenance Git dependency does not match publisher source", consume)
+        self.assertIn('--certificate-identity "$SIGNER_IDENTITY"', consume)
+        self.assertIn('--certificate-oidc-issuer "$OIDC_ISSUER"', consume)
+        self.assertIn('"$OCI_REFERENCE"', consume)
+        self.assertIn('--no-index --no-deps "$WHEEL_PATH"', consume)
+        self.assertIn('"$NPM_TARBALL_PATH"', consume)
+        self.assertNotRegex(consume, r"(?m)^\s*docker run(?:\s|$)")
 
     def test_release_publisher_verifies_handoff_before_oidc_without_rebuilding_packages(self) -> None:
         publish = self.job(self.publish, "publish")
@@ -579,6 +766,12 @@ class WorkflowPolicyTests(unittest.TestCase):
             "actions/download-artifact": (
                 "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
             ),
+            "anchore/sbom-action/download-syft": (
+                "3ad7283483fc7af8ff2b4ea19663c2d5ca935e26"
+            ),
+            "sigstore/cosign-installer": (
+                "6f9f17788090df1f26f669e9d70d6ae9567deba6"
+            ),
         }
         for workflow in (self.publish, self.consume):
             uses_lines = [
@@ -586,7 +779,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                 for line in workflow.splitlines()
                 if line.strip().startswith("uses: ")
             ]
-            expected_count = 8 if workflow is self.publish else 6
+            expected_count = 10 if workflow is self.publish else 7
             self.assertEqual(len(uses_lines), expected_count)
             for use in uses_lines:
                 action, revision = use.split("@", 1)

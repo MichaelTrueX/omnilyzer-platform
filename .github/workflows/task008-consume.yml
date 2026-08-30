@@ -86,9 +86,11 @@ jobs:
       contents: read
       id-token: write
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       IMAGE_REPOSITORY: docker.cloudsmith.io/omnilyzer/platform-spike/omnilyzer-supply-chain-spike
+      SIGNER_IDENTITY: https://github.com/MichaelTrueX/omnilyzer-platform/.github/workflows/task008-publish.yml@refs/heads/spike/008-supply-chain
+      OIDC_ISSUER: https://token.actions.githubusercontent.com
     steps:
       - name: Check out repository
         # actions/checkout v7.0.1
@@ -138,39 +140,55 @@ jobs:
           verify-auth: true
           export-auth-token: true
 
-      - name: Install and verify exact Python package from Cloudsmith
-        shell: bash
-        run: |
-          set -euo pipefail
-          export PIP_INDEX_URL="https://token:${CLOUDSMITH_API_KEY}@dl.cloudsmith.io/basic/omnilyzer/platform-spike/python/simple/"
-          python -m venv "$RUNNER_TEMP/task008-python-consumer"
-          "$RUNNER_TEMP/task008-python-consumer/bin/python" -m pip install \
-            --disable-pip-version-check --only-binary=:all: --no-deps \
-            "omnilyzer-supply-chain-spike==${RELEASE_VERSION}"
-          "$RUNNER_TEMP/task008-python-consumer/bin/python" -c \
-            'import os; import omnilyzer_supply_chain_spike as p; assert p.report() == os.environ["RELEASE_VERSION"]'
+      - name: Install exact Cosign
+        # sigstore/cosign-installer v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.1.2
 
-      - name: Install and verify exact npm package from Cloudsmith
+      - name: Verify exact Cosign installation
         shell: bash
         run: |
           set -euo pipefail
-          npm_project="$RUNNER_TEMP/task008-npm-consumer"
-          mkdir "$npm_project"
-          printf '%s\n' '{"name":"task008-consumer","private":true,"type":"module"}' \
-            > "$npm_project/package.json"
+          cosign_version="$({ cosign version; } 2>&1)"
+          printf '%s\n' "$cosign_version"
+          python -c \
+            'import re, sys; raise SystemExit(0 if re.search(r"\bv?3\.1\.2\b", sys.stdin.read()) else "unexpected Cosign version")' \
+            <<< "$cosign_version"
+
+      - name: Download exact Python wheel without installing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          download_dir="$RUNNER_TEMP/task008-downloads"
+          mkdir "$download_dir"
+          export PIP_INDEX_URL="https://token:${CLOUDSMITH_API_KEY}@dl.cloudsmith.io/basic/omnilyzer/platform-spike/python/simple/"
+          python -m pip download --disable-pip-version-check \
+            --only-binary=:all: --no-deps --dest "$download_dir" \
+            "omnilyzer-supply-chain-spike==${RELEASE_VERSION}"
+          expected_wheel="omnilyzer_supply_chain_spike-${RELEASE_VERSION}-py3-none-any.whl"
+          test -f "$download_dir/$expected_wheel"
+          test "$(find "$download_dir" -maxdepth 1 -type f -name '*.whl' | wc -l)" -eq 1
+          printf 'WHEEL_PATH=%s\n' "$download_dir/$expected_wheel" >> "$GITHUB_ENV"
+
+      - name: Download exact npm tarball without installing it
+        shell: bash
+        run: |
+          set -euo pipefail
           npm_config="$RUNNER_TEMP/task008-npmrc"
           printf '%s\n' \
             '@omnilyzer:registry=https://npm.cloudsmith.io/omnilyzer/platform-spike/' \
             '//npm.cloudsmith.io/omnilyzer/platform-spike/:_authToken=${CLOUDSMITH_API_KEY}' \
             > "$npm_config"
-          NPM_CONFIG_USERCONFIG="$npm_config" npm install \
-            --prefix "$npm_project" --save-exact --ignore-scripts \
+          NPM_CONFIG_USERCONFIG="$npm_config" npm pack \
+            --ignore-scripts \
+            --pack-destination "$RUNNER_TEMP/task008-downloads" \
             "@omnilyzer/supply-chain-spike@${RELEASE_VERSION}"
-          (
-            cd "$npm_project"
-            node --input-type=module -e \
-              'import { report } from "@omnilyzer/supply-chain-spike"; if (report() !== process.env.RELEASE_VERSION) process.exit(1)'
-          )
+          expected_tarball="omnilyzer-supply-chain-spike-${RELEASE_VERSION}.tgz"
+          test -f "$RUNNER_TEMP/task008-downloads/$expected_tarball"
+          test "$(find "$RUNNER_TEMP/task008-downloads" -maxdepth 1 -type f -name '*.tgz' | wc -l)" -eq 1
+          printf 'NPM_TARBALL_PATH=%s\n' \
+            "$RUNNER_TEMP/task008-downloads/$expected_tarball" >> "$GITHUB_ENV"
 
       - name: Authenticate Docker with short-lived Cloudsmith identity
         shell: bash
@@ -195,7 +213,291 @@ jobs:
             echo "Pulled image has no valid immutable digest" >&2
             exit 1
           fi
-          printf 'Verified OCI digest: `%s`\n' "$oci_reference" >> "$GITHUB_STEP_SUMMARY"
+          printf 'OCI_REFERENCE=%s\n' "$oci_reference" >> "$GITHUB_ENV"
+          printf 'OCI_DIGEST=%s\n' "${oci_reference##*@}" >> "$GITHUB_ENV"
+
+      - name: Download exact versioned evidence archive and bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_download="$RUNNER_TEMP/task008-evidence-download"
+          mkdir "$evidence_download"
+          archive_name="omnilyzer-supply-chain-spike-${RELEASE_VERSION}-evidence.tar.gz"
+          bundle_name="${archive_name}.sigstore.json"
+          download_generic() {
+            local filename="$1"
+            local filepath="task008/evidence/${RELEASE_VERSION}/${filename}"
+            local listing="$RUNNER_TEMP/task008-${filename}.json"
+            cloudsmith list packages omnilyzer/platform-spike \
+              --query "format:generic AND filename:${filename} AND version:${RELEASE_VERSION}" \
+              --output-format json > "$listing"
+            local cdn_url
+            cdn_url="$(python - "$listing" "$filename" "$filepath" "$RELEASE_VERSION" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          records = payload.get("data")
+          if not isinstance(records, list):
+              raise SystemExit("Cloudsmith package list has no data list")
+          matches = [
+              item for item in records
+              if item.get("format") == "generic"
+              and item.get("filename") == sys.argv[2]
+              and item.get("filepath") == sys.argv[3]
+              and item.get("version") == sys.argv[4]
+          ]
+          if len(matches) != 1:
+              raise SystemExit("expected exactly one versioned evidence package")
+          url = matches[0].get("cdn_url")
+          if not isinstance(url, str) or not url.startswith("https://"):
+              raise SystemExit("evidence package has no HTTPS cdn_url")
+          print(url)
+          PY
+            )"
+            curl --fail --silent --show-error --location \
+              --user "token:${CLOUDSMITH_API_KEY}" \
+              --output "$evidence_download/$filename" "$cdn_url"
+          }
+          download_generic "$archive_name"
+          download_generic "$bundle_name"
+          printf 'EVIDENCE_ARCHIVE=%s\n' "$evidence_download/$archive_name" >> "$GITHUB_ENV"
+          printf 'EVIDENCE_ARCHIVE_BUNDLE=%s\n' "$evidence_download/$bundle_name" >> "$GITHUB_ENV"
+
+      - name: Verify evidence archive signature before extraction
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign verify-blob \
+            --bundle "$EVIDENCE_ARCHIVE_BUNDLE" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$EVIDENCE_ARCHIVE"
+
+      - name: Safely extract exact evidence allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/task008-verified-evidence"
+          mkdir "$evidence_dir"
+          python - "$EVIDENCE_ARCHIVE" "$evidence_dir" <<'PY'
+          from pathlib import Path, PurePosixPath
+          import sys
+          import tarfile
+
+          archive_path, destination = Path(sys.argv[1]), Path(sys.argv[2])
+          expected = {
+              "python-sbom.cdx.json", "npm-sbom.cdx.json", "oci-sbom.cdx.json",
+              "release-provenance.json", "evidence-manifest.json",
+              "python-wheel.sigstore.json", "npm-tarball.sigstore.json",
+              "python-sbom.sigstore.json", "npm-sbom.sigstore.json",
+              "oci-sbom.sigstore.json", "release-provenance.sigstore.json",
+              "evidence-manifest.sigstore.json",
+          }
+          with tarfile.open(archive_path, mode="r:gz") as archive:
+              members = archive.getmembers()
+              names = {member.name for member in members}
+              if len(members) != len(expected) or names != expected:
+                  raise SystemExit("evidence archive does not match exact twelve-file allowlist")
+              for member in members:
+                  path = PurePosixPath(member.name)
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit("evidence archive contains an unsafe path")
+                  if not member.isfile() or member.issym() or member.islnk():
+                      raise SystemExit("evidence archive contains a non-regular entry")
+              archive.extractall(destination, filter="data")
+          PY
+          printf 'EVIDENCE_DIR=%s\n' "$evidence_dir" >> "$GITHUB_ENV"
+
+      - name: Verify evidence manifest signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign verify-blob \
+            --bundle "$EVIDENCE_DIR/evidence-manifest.sigstore.json" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$EVIDENCE_DIR/evidence-manifest.json"
+
+      - name: Validate evidence hashes SBOMs and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$EVIDENCE_DIR" "$WHEEL_PATH" "$NPM_TARBALL_PATH" "$OCI_REFERENCE" <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import sys
+
+          root, wheel, npm_tarball = map(Path, sys.argv[1:4])
+          oci_reference = sys.argv[4]
+          sha256 = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+          manifest = json.loads((root / "evidence-manifest.json").read_text(encoding="utf-8"))
+          if set(manifest) != {
+              "release_version", "publisher_source_sha", "github", "signer",
+              "tools", "artifacts", "sboms", "provenance", "signature_bundles",
+          }:
+              raise SystemExit("evidence manifest has unexpected fields")
+          if manifest.get("release_version") != os.environ["RELEASE_VERSION"]:
+              raise SystemExit("evidence release version mismatch")
+          source_sha = manifest.get("publisher_source_sha")
+          if not isinstance(source_sha, str) or re.fullmatch(r"[0-9a-f]{40}", source_sha) is None:
+              raise SystemExit("invalid publisher source SHA")
+          if manifest.get("signer") != {
+              "identity": os.environ["SIGNER_IDENTITY"],
+              "oidc_issuer": os.environ["OIDC_ISSUER"],
+              "transparency": "public-sigstore",
+          }:
+              raise SystemExit("unexpected signer identity metadata")
+          if manifest.get("tools") != {"cosign": "3.1.2", "syft": "1.51.0"}:
+              raise SystemExit("unexpected evidence tool versions")
+          github = manifest.get("github")
+          if not isinstance(github, dict) or set(github) != {"run_id", "run_attempt"}:
+              raise SystemExit("invalid publisher run metadata")
+          if not all(isinstance(github[key], str) and github[key].isdigit() for key in github):
+              raise SystemExit("invalid publisher run identity")
+          if manifest.get("signature_bundles") != {
+              "wheel": "python-wheel.sigstore.json",
+              "npm": "npm-tarball.sigstore.json",
+              "python_sbom": "python-sbom.sigstore.json",
+              "npm_sbom": "npm-sbom.sigstore.json",
+              "oci_sbom": "oci-sbom.sigstore.json",
+              "provenance": "release-provenance.sigstore.json",
+          }:
+              raise SystemExit("unexpected release signature bundle inventory")
+          artifacts = manifest.get("artifacts")
+          if not isinstance(artifacts, dict) or set(artifacts) != {"wheel", "npm", "oci"}:
+              raise SystemExit("invalid artifact evidence inventory")
+          if artifacts["wheel"] != {"filename": wheel.name, "sha256": sha256(wheel)}:
+              raise SystemExit("downloaded wheel does not match evidence")
+          if artifacts["npm"] != {"filename": npm_tarball.name, "sha256": sha256(npm_tarball)}:
+              raise SystemExit("downloaded npm tarball does not match evidence")
+          if artifacts["oci"] != {"image": oci_reference, "digest": oci_reference.split("@", 1)[1]}:
+              raise SystemExit("pulled OCI digest does not match evidence")
+
+          expected_sboms = {
+              "python": "python-sbom.cdx.json",
+              "npm": "npm-sbom.cdx.json",
+              "oci": "oci-sbom.cdx.json",
+          }
+          sboms = manifest.get("sboms")
+          if not isinstance(sboms, dict) or set(sboms) != set(expected_sboms):
+              raise SystemExit("invalid SBOM inventory")
+          for kind, filename in expected_sboms.items():
+              path = root / filename
+              if sboms[kind] != {
+                  "filename": filename,
+                  "sha256": sha256(path),
+                  "format": "cyclonedx-json",
+                  "spec_version": "1.6",
+              }:
+                  raise SystemExit(f"{kind} SBOM metadata mismatch")
+              document = json.loads(path.read_text(encoding="utf-8"))
+              if document.get("bomFormat") != "CycloneDX" or document.get("specVersion") != "1.6":
+                  raise SystemExit(f"{kind} SBOM schema mismatch")
+
+          provenance_path = root / "release-provenance.json"
+          provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+          if manifest.get("provenance") != {
+              "filename": provenance_path.name,
+              "sha256": sha256(provenance_path),
+              "predicate_type": "https://slsa.dev/provenance/v1",
+          }:
+              raise SystemExit("provenance manifest record mismatch")
+          if provenance.get("_type") != "https://in-toto.io/Statement/v1" or provenance.get("predicateType") != "https://slsa.dev/provenance/v1":
+              raise SystemExit("invalid provenance statement type")
+          expected_subjects = {
+              (wheel.name, sha256(wheel)),
+              (npm_tarball.name, sha256(npm_tarball)),
+              (oci_reference, oci_reference.split("sha256:", 1)[1]),
+          }
+          subjects = provenance.get("subject")
+          if not isinstance(subjects, list) or len(subjects) != 3:
+              raise SystemExit("provenance must contain exactly three subjects")
+          observed_subjects = {
+              (subject.get("name"), subject.get("digest", {}).get("sha256"))
+              for subject in subjects if isinstance(subject, dict)
+          }
+          if observed_subjects != expected_subjects:
+              raise SystemExit("provenance subjects do not match retrieved artifacts")
+          definition = provenance.get("predicate", {}).get("buildDefinition", {})
+          if definition.get("buildType") != "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1":
+              raise SystemExit("unexpected provenance build type")
+          if definition.get("externalParameters") != {
+              "repository": "https://github.com/MichaelTrueX/omnilyzer-platform",
+              "workflow_path": ".github/workflows/task008-publish.yml",
+              "ref": "refs/heads/spike/008-supply-chain",
+              "release_version": os.environ["RELEASE_VERSION"],
+          }:
+              raise SystemExit("unexpected provenance external parameters")
+          dependencies = definition.get("resolvedDependencies")
+          if dependencies != [{
+              "uri": "git+https://github.com/MichaelTrueX/omnilyzer-platform@refs/heads/spike/008-supply-chain",
+              "digest": {"gitCommit": source_sha},
+          }]:
+              raise SystemExit("provenance Git dependency does not match publisher source")
+          builder = provenance.get("predicate", {}).get("runDetails", {}).get("builder", {})
+          if builder.get("id") != "https://github.com/actions/runner/github-hosted":
+              raise SystemExit("unexpected provenance builder")
+          PY
+
+      - name: Verify all release signatures before code execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_blob() {
+            cosign verify-blob \
+              --bundle "$EVIDENCE_DIR/$2" \
+              --certificate-identity "$SIGNER_IDENTITY" \
+              --certificate-oidc-issuer "$OIDC_ISSUER" \
+              "$1"
+          }
+          verify_blob "$WHEEL_PATH" python-wheel.sigstore.json
+          verify_blob "$NPM_TARBALL_PATH" npm-tarball.sigstore.json
+          verify_blob "$EVIDENCE_DIR/python-sbom.cdx.json" python-sbom.sigstore.json
+          verify_blob "$EVIDENCE_DIR/npm-sbom.cdx.json" npm-sbom.sigstore.json
+          verify_blob "$EVIDENCE_DIR/oci-sbom.cdx.json" oci-sbom.sigstore.json
+          verify_blob "$EVIDENCE_DIR/release-provenance.json" release-provenance.sigstore.json
+          cosign verify \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$OCI_REFERENCE"
+
+      - name: Install and execute verified local Python wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/task008-python-consumer"
+          "$RUNNER_TEMP/task008-python-consumer/bin/python" -m pip install \
+            --disable-pip-version-check --no-index --no-deps "$WHEEL_PATH"
+          "$RUNNER_TEMP/task008-python-consumer/bin/python" -c \
+            'import os; import omnilyzer_supply_chain_spike as p; assert p.report() == os.environ["RELEASE_VERSION"]'
+
+      - name: Install and execute verified local npm tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm_project="$RUNNER_TEMP/task008-npm-consumer"
+          mkdir "$npm_project"
+          printf '%s\n' '{"name":"task008-consumer","private":true,"type":"module"}' \
+            > "$npm_project/package.json"
+          npm install --prefix "$npm_project" --ignore-scripts --no-audit --no-fund \
+            "$NPM_TARBALL_PATH"
+          (
+            cd "$npm_project"
+            node --input-type=module -e \
+              'import { report } from "@omnilyzer/supply-chain-spike"; if (report() !== process.env.RELEASE_VERSION) process.exit(1)'
+          )
+
+      - name: Record verified immutable release
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'Cryptographically verified OCI digest: `%s`\n' \
+            "$OCI_REFERENCE" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Log out from Cloudsmith Docker registry
         if: ${{ always() }}
