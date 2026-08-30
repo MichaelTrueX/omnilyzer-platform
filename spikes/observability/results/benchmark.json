@@ -1,0 +1,53 @@
+{
+  "acceptance": {
+    "all_requests_succeeded": true,
+    "unavailable_p95_added_less_than_ms": 10,
+    "unavailable_peak_growth_less_than_bytes": 8388608,
+    "unavailable_shutdown_less_than_ms": 1000
+  },
+  "mode": "in-process Django test client; synthetic sanity measurement",
+  "results": [
+    {
+      "condition": "observability_disabled",
+      "cpu_seconds": 0.4229,
+      "failures": 0,
+      "latency_mean_ms": 0.843,
+      "latency_p50_ms": 0.767,
+      "latency_p95_ms": 1.277,
+      "requests": 500,
+      "shutdown_ms": 0.002,
+      "throughput_requests_per_second": 1182.2,
+      "tracemalloc_current_growth_bytes": 252744,
+      "tracemalloc_peak_growth_bytes": 272601
+    },
+    {
+      "condition": "otlp_accepting",
+      "cpu_seconds": 0.7722,
+      "failures": 0,
+      "latency_mean_ms": 1.52,
+      "latency_p50_ms": 1.358,
+      "latency_p95_ms": 2.184,
+      "receiver_bytes": 57453,
+      "receiver_posts": 11,
+      "requests": 500,
+      "shutdown_ms": 0.251,
+      "throughput_requests_per_second": 657.0,
+      "tracemalloc_current_growth_bytes": 766678,
+      "tracemalloc_peak_growth_bytes": 840581
+    },
+    {
+      "condition": "otlp_unavailable",
+      "cpu_seconds": 0.7817,
+      "failures": 0,
+      "latency_mean_ms": 1.536,
+      "latency_p50_ms": 1.265,
+      "latency_p95_ms": 3.066,
+      "requests": 500,
+      "shutdown_ms": 0.171,
+      "throughput_requests_per_second": 650.2,
+      "tracemalloc_current_growth_bytes": 1266460,
+      "tracemalloc_peak_growth_bytes": 1385185
+    }
+  ],
+  "schema_version": 1
+}
