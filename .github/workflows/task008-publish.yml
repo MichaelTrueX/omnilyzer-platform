@@ -257,46 +257,13 @@ jobs:
             'import re, sys; text = sys.stdin.read(); versions = re.findall(r"(?im)^version:\s*v?([^\s]+)\s*$", text); raise SystemExit(0 if versions == ["0.118.0"] else "unexpected Grype version")' \
             <<< "$grype_version"
           "$GRYPE_COMMAND" db update
+          raw_status="$RUNNER_TEMP/task008-grype-db-status-raw.json"
           "$GRYPE_COMMAND" db status -o json \
-            > "$RUNNER_TEMP/task008-handoff/grype-db-status.json"
-          python - "$RUNNER_TEMP/task008-handoff/grype-db-status.json" <<'PY'
-          import json
-          from pathlib import Path
-          import re
-          import sys
-
-          path = Path(sys.argv[1])
-          document = json.loads(path.read_text(encoding="utf-8"))
-          if not isinstance(document, dict):
-              raise SystemExit("Grype DB status must be a JSON object")
-          schema_version = document.get("schemaVersion", document.get("schema_version"))
-          built = document.get("built")
-          checksum = document.get("checksum")
-          if not isinstance(schema_version, (str, int)) or isinstance(schema_version, bool):
-              raise SystemExit("Grype DB status has no valid schema version")
-          if not isinstance(built, str) or not built.strip():
-              raise SystemExit("Grype DB status has no build identity")
-          if not isinstance(checksum, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", checksum) is None:
-              raise SystemExit("Grype DB status has no checksum")
-          if "valid" in document and not isinstance(document["valid"], bool):
-              raise SystemExit("Grype DB status has a malformed valid flag")
-          if document.get("error") not in (None, "") or document.get("valid") is False:
-              raise SystemExit("Grype DB status reports an invalid database")
-          status = document.get("status")
-          if not isinstance(status, str) or status.lower() != "valid":
-              raise SystemExit("Grype DB status is not valid")
-          evidence = {
-              "built": built,
-              "checksum": checksum,
-              "schema_version": schema_version,
-          }
-          evidence["status"] = status
-          if isinstance(document.get("valid"), bool):
-              evidence["valid"] = document["valid"]
-          path.write_text(
-              json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-          )
-          PY
+            > "$raw_status"
+          python spikes/supply-chain/evaluate_vulnerabilities.py \
+            sanitize-db-status \
+            "$raw_status" \
+            "$RUNNER_TEMP/task008-handoff/grype-db-status.json"
 
       - name: Scan exactly the three existing CycloneDX SBOMs with one database
         shell: bash
@@ -640,10 +607,18 @@ jobs:
               verified_vulnerability_files[key] = (path, digest)
 
           database_status = json.loads(verified_vulnerability_files["database_status"][0].read_text(encoding="utf-8"))
-          if not isinstance(database_status, dict) or set(database_status) - {
-              "built", "checksum", "schema_version", "status", "valid"
-          } or not {"built", "checksum", "schema_version"} <= set(database_status):
+          if not isinstance(database_status, dict) or set(database_status) != {
+              "built", "checksum", "schema_version", "valid"
+          }:
               raise SystemExit("invalid sanitized Grype DB status evidence")
+          if not isinstance(database_status["built"], str) or not database_status["built"].strip():
+              raise SystemExit("invalid sanitized Grype DB build identity")
+          if not isinstance(database_status["schema_version"], str) or not database_status["schema_version"].strip():
+              raise SystemExit("invalid sanitized Grype DB schema version")
+          if not isinstance(database_status["checksum"], str) or re.fullmatch(r"sha256:[0-9a-f]{64}", database_status["checksum"]) is None:
+              raise SystemExit("invalid sanitized Grype DB checksum")
+          if database_status["valid"] is not True:
+              raise SystemExit("sanitized Grype DB is not valid")
           policy_result = json.loads(verified_vulnerability_files["policy_result"][0].read_text(encoding="utf-8"))
           if not isinstance(policy_result, dict) or set(policy_result) != {
               "schema_version", "policy", "scanner", "database", "targets",
