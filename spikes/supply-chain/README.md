@@ -170,13 +170,19 @@ The OIDC consumer verifies the signed vulnerability report, database-status, and
 
 ## Task 008B tamper and substitution negative validation
 
-**TASK 008B PHASE 4B — PRE-LIVE / TO VALIDATE.** A dedicated trigger and `tamper-negative-probe` job are scaffolded independently from the normal release consumer. The probe uses only the existing read-only `gha-consumer` OIDC relationship to retrieve immutable release `0.8.4`; it has no publisher service identity, publishing command, signing operation, Docker operation, checkout, or artifact upload. The normal `consume` and no-OIDC `execute-verified` jobs remain release-only and do not run in tamper mode.
+**TASK 008B PHASE 4B — PASS.** GitHub Actions run `33300180268`, triggered by commit `c628e4c149ab288b74960fb9db8cf92885691ffc`, completed the live tamper and substitution negative validation against known-good release `0.8.4` and immutable OCI digest `sha256:44cdf2855105c824fcad999723ed7cc4f4a0ba276c8b953882413a1c61004967`.
 
-The probe performs four explicit expected-failure validations on temporary local copies: a modified wheel must fail its legitimate blob-signature verification; a modified signed evidence archive must fail against its legitimate external bundle before any extraction; legitimate signed `0.8.4` evidence presented for a different requested release must fail the signed `release_version` binding; and a three-file candidate execution handoff whose wheel is modified after manifest creation must fail checksum validation before any pip or npm execution. Each probe treats unexpected validation success as a security failure. No Phase 4B live result is recorded yet, and the legitimate `0.8.4` registry state is not mutated.
+The run demonstrated the intended job isolation: `gate` passed and `tamper-negative-probe` passed, while normal `consume`, `execute-verified`, and `consumer-permission-probe` were skipped. The probe authenticated only through the short-lived, read-only Cloudsmith OIDC identity `gha-consumer`. It performed no repository checkout, had no `gha-publisher` identity, and performed no publication, signing of attacker-controlled content, Docker execution, artifact upload, `pip install`, or `npm install`. GitHub displayed only the `Metadata: read` token baseline. No tampered content executed, and the legitimate registry release `0.8.4` remained unchanged.
+
+The four live negative cases passed as follows:
+
+1. **Tampered signed evidence archive — PASS, attack rejected before extraction.** A temporary copy of the legitimate signed evidence archive was modified and checked with its legitimate external Sigstore bundle. Cosign returned nonzero as required, the expected-failure guard would have failed the workflow on an unexpected zero result, and the tampered archive was never extracted.
+2. **Tampered Python wheel — PASS, attack rejected.** A temporary copy of the legitimate `0.8.4` wheel was modified and checked with the legitimate publisher-created `python-wheel.sigstore.json` bundle. Cosign returned nonzero as required, and no accepted execution handoff was created.
+3. **Release-version substitution — PASS, substitution rejected.** The legitimate evidence archive and signed evidence manifest were first verified against the exact publisher workflow identity and OIDC issuer. Presenting that valid signed `0.8.4` evidence as requested version `0.8.5` then failed the signed `release_version` binding with `signed release_version rejects substituted release material`.
+4. **Mutated verified-execution handoff — PASS, mutation rejected before execution.** An exact three-file candidate handoff was created and its hashes were proven valid before its wheel was modified after manifest creation. The checksum-validation semantics used by `execute-verified` rejected it with `verified wheel checksum mismatch`; no execution environment file was produced, and no package was installed or executed.
 
 Remaining Task 008B work:
 
-- live validation of the Phase 4B tamper/substitution probes;
 - retention and rollback validation;
 - provider operations, cost, and disaster-recovery analysis;
 - the final architecture decision;
@@ -184,4 +190,4 @@ Remaining Task 008B work:
 
 ## Recommendation
 
-Task 008A and Task 008B Phases 1, 2, 3, and 4A passed, with the documented Generic-republish provider caveat. Cloudsmith remains a **VALIDATED CANDIDATE**, **NOT ACCEPTED DIRECTION**. Do not write ADR 0007 or make the final package-registry/trusted-publishing architecture decision until the remaining evidence is reviewed.
+Task 008A and Task 008B Phases 1, 2, 3, 4A, and 4B passed, with the documented Generic-republish provider caveat. Cloudsmith remains a **VALIDATED CANDIDATE**, **NOT ACCEPTED DIRECTION**. Task 008 is not complete. Do not write ADR 0007 or make the final package-registry/trusted-publishing architecture decision until all Task 008 evidence is reviewed.
