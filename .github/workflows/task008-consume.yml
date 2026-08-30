@@ -70,8 +70,10 @@ jobs:
               mode=release
             elif [[ "${changed_paths[0]}" == \
                     "spikes/supply-chain/control/consumer-permissions.trigger" ]] && \
-                 [[ "$changed_status" == \
-                    $'A\tspikes/supply-chain/control/consumer-permissions.trigger' ]]; then
+                 ([[ "$changed_status" == \
+                     $'A\tspikes/supply-chain/control/consumer-permissions.trigger' ]] || \
+                  [[ "$changed_status" == \
+                     $'M\tspikes/supply-chain/control/consumer-permissions.trigger' ]]); then
               mode=permission
             fi
           fi
