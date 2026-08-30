@@ -42,7 +42,7 @@ The provider is `https://token.actions.githubusercontent.com`. The publisher rem
 
 The committed fixture version metadata uses only the harmless placeholder `0.0.0`. The scratch OCI fixture also contains one harmless synthetic text artifact so its image has a real filesystem layer while remaining non-executable and base-image-free. `scripts/prepare_release.py` accepts a strict release version and a new absolute output directory outside the spike source, copies all mutable inputs there, coordinates the Python, npm, and OCI versions, and records expected artifact names. Standard-library unit tests verify valid coordinated versions, malformed inputs, unsafe output use, the layered scratch-image contract, unchanged committed fixtures, exact workflow triggers and identities, action pins, credential policy, and ignored generated paths.
 
-The temporary feature-branch push trigger paths are used because GitHub cannot dispatch a new `workflow_dispatch` workflow until that workflow exists on the default branch. Publication is isolated to changes to `control/publish.trigger`; consumption is isolated to `control/consume.trigger`. The current release triggers contain `0.8.2`; the complete Task 008A evidence for `0.8.1` remains recorded below. Production workflows should use protected release refs and/or protected environments rather than this temporary spike branch.
+The temporary feature-branch push trigger paths are used because GitHub cannot dispatch a new `workflow_dispatch` workflow until that workflow exists on the default branch. Publication is isolated to changes to `control/publish.trigger`; consumption is isolated to `control/consume.trigger`. The current release triggers contain `0.8.3`; the complete Task 008A evidence for `0.8.1` remains recorded below. Production workflows should use protected release refs and/or protected environments rather than this temporary spike branch.
 
 ## Findings
 
@@ -101,7 +101,7 @@ Cloudsmith Generic identity is the unique filepath and filename, not a separate 
 
 The publisher v2 probe adds an explicit `0.0.<GITHUB_RUN_ID>` Generic version to both create and `--republish`. It uses a small bounded list retry while Cloudsmith makes the create visible and requires exactly one format/filename/filepath/version match, a valid non-empty `slug_perm`, and a Cloudsmith SHA-256 equal to the original local file SHA-256. Replacement and deletion are classified independently as `PASS`, `INCONCLUSIVE`, or `FAIL`: an inconclusive replacement still proceeds to deletion after the original state is verified unchanged, while unexpected mutation fails immediately. Each denied or inconclusive operation is followed by an exact read proving the same `slug_perm`, version, filepath, filename, and original checksum remain. `slug_perm` is the sole package identifier used for deletion. Sacrificial publisher artifacts, including the artifact from run `33289502031`, remain in `omnilyzer/platform-spike` as evidence.
 
-Each workflow starts with a pre-authentication gate that has only `contents: read`, has no OIDC authority, checks out full history without persisted credentials, validates `github.event.before` and `github.sha`, and classifies the complete net `before`-to-`after` Git diff. Only a one-file modification of the existing release trigger emits `release`; a one-file addition or modification of the respective permission trigger emits `permission`; all mixed, unrelated, removed, renamed, type-changed, or ambiguous states emit `none` and cannot enter a Cloudsmith job. The release and permission jobs alone receive job-scoped `id-token: write`. For every controlled rerun, the trigger commit must contain only its respective permission trigger file. The existing release triggers now remain `0.8.2`.
+Each workflow starts with a pre-authentication gate that has only `contents: read`, has no OIDC authority, checks out full history without persisted credentials, validates `github.event.before` and `github.sha`, and classifies the complete net `before`-to-`after` Git diff. Only a one-file modification of the existing release trigger emits `release`; a one-file addition or modification of the respective permission trigger emits `permission`; all mixed, unrelated, removed, renamed, type-changed, or ambiguous states emit `none` and cannot enter a Cloudsmith job. The release and permission jobs alone receive job-scoped `id-token: write`. For every controlled rerun, the trigger commit must contain only its respective permission trigger file. The existing release triggers now remain `0.8.3`.
 
 Cloudsmith repository action thresholds and Self Privileges must be established through observed create, replace, delete, upload, and read behavior rather than inferred from `Read`, `Write`, or other labels. The provider caveat is that Generic `--republish` returns duplicate/existing-package `400` behavior for this restricted publisher rather than a permission-specific `403`, despite blocking the operation and preserving byte-identical state. No further live runs will attempt to force a `403` replacement response. Cloudsmith remains a validated candidate, not an **ACCEPTED DIRECTION**.
 
@@ -117,26 +117,45 @@ The OIDC-enabled publisher does not build. It rejects unrelated handoff entries,
 
 ## Task 008B public signing, SBOM, and provenance
 
-**TASK 008B PHASE 3 — PRE-LIVE / TO VALIDATE.** The non-OIDC build job now generates three CycloneDX JSON 1.6 SBOMs using Syft `1.51.0`: one from safely unpacked built-wheel contents, one from safely unpacked built-npm-tarball contents, and one from the already-built Docker image archive. Those SBOMs extend the temporary GitHub Actions handoff to exactly seven regular files. The OIDC publisher verifies all seven files and their hashes before authentication, then publishes the already-built artifacts, creates SLSA v1-formatted workload-generated provenance after resolving the immutable registry digest, and signs and immediately verifies the wheel, npm tarball, all SBOMs, provenance, evidence manifest, evidence archive, and exact OCI digest. This workload-generated statement is useful signed provenance; it does not itself establish SLSA Build L2, SLSA Build L3, reproducibility, or trusted control-plane provenance.
+**TASK 008B PHASE 3 — PASS.** Publisher GitHub Actions run `33292673187`, from commit `38d732ee808a22c1301018593d4c03cf3d957144`, published release `0.8.3`. The build job had no OIDC authority and was the only job that built Python, npm, and OCI. Syft `1.51.0` generated three CycloneDX JSON 1.6 SBOMs. The exact seven-file handoff was verified before publisher authentication as the Cloudsmith OIDC identity `gha-publisher-u76y`.
+
+Publisher artifact and SBOM evidence:
+
+- Python wheel SHA-256: `48ddc7e892f12fc5ba3ff302c52f667bb2abc548669b51cbc15d13b72854c6c6`.
+- npm tarball SHA-256: `a69787acebd40f0f185f0b14beeadbfa1c4551c72d872d49628313e83b110399`.
+- OCI Docker archive SHA-256: `046b1258b7c1ee1046e60a47f9e62cdb82b4cb6e55ba30ce969d9faf220d7f46`.
+- Immutable OCI registry digest: `sha256:e60e4679a53ac144b529139fdfacc1933e1d530ade07327b19b1f8a822460406`.
+- Python SBOM SHA-256: `4b7b03b2873174c6c207879479996d6eb27cb11c17d2c6d51d6720c7b8c8ae03`.
+- npm SBOM SHA-256: `c3ca0f9cf6b03b3014cad14af566215a797ea53edefe6c933ce2cd0afbb62a27`.
+- OCI SBOM SHA-256: `d5e7fece098d5f6cc15513c60c678799d896a92792151193aba8c4321cf5ed73`.
+
+Python, npm, and OCI `0.8.3` publication succeeded, and the immutable OCI registry digest was resolved. The publisher created SLSA v1-formatted workload-generated provenance. Cosign `3.1.2` keylessly signed the six primary blobs and the immutable OCI digest, and immediately verified every signature against the exact workflow identity `https://github.com/MichaelTrueX/omnilyzer-platform/.github/workflows/task008-publish.yml@refs/heads/spike/008-supply-chain` and OIDC issuer `https://token.actions.githubusercontent.com`. Public Sigstore, Fulcio, and Rekor transparency-log verification succeeded. No persistent signing key was used.
+
+The evidence manifest was signed and verified. Its deterministic twelve-file evidence archive was also signed and verified, then the archive and its external Sigstore bundle were published to Cloudsmith Generic. Docker logout succeeded.
 
 Phase 3 intentionally uses the **Sigstore Public Good** infrastructure with public transparency, as explicitly selected for this spike. No long-lived signing key or `COSIGN_PRIVATE_KEY` exists. Fulcio issues a short-lived certificate bound to the exact GitHub Actions publisher workflow identity, and Rekor makes the signing activity publicly auditable. Repository and workflow signing-identity metadata may therefore be public. Verification accepts only `https://github.com/MichaelTrueX/omnilyzer-platform/.github/workflows/task008-publish.yml@refs/heads/spike/008-supply-chain` from issuer `https://token.actions.githubusercontent.com`; it uses no wildcard identity, private-infrastructure mode, or transparency-log bypass.
 
 The publisher packages exactly twelve non-secret metadata and Sigstore bundle files into a deterministic versioned evidence archive, signs that archive separately, and publishes only the archive and its bundle as filepath-oriented Cloudsmith Generic packages under `task008/evidence/<version>/` without republishing. The release wheel, npm tarball, and OCI archive are excluded from this evidence archive.
 
-The OIDC-enabled consumer downloads the exact wheel and npm tarball without installation or import, pulls but never runs the OCI image, and retrieves the exact evidence archive and its separate signature bundle with the short-lived read-only Cloudsmith identity. Its authenticated Generic package lookup still requires one exact format/filename/filepath/version match, but credentials are sent only to the fixed `https://generic.cloudsmith.io/omnilyzer/platform-spike/` endpoint rather than a metadata-selected URL. The consumer verifies the archive signature before safe extraction, requires the exact twelve-file allowlist, verifies the evidence manifest and every direct blob/OCI signature against the exact identity and issuer, and validates all hashes, CycloneDX versions, SLSA statement fields, empty internal parameters, Git source dependency, immutable OCI digest, and the exact invocation ID derived from the signed run ID and attempt.
+Consumer GitHub Actions run `33292816649`, from commit `5cc565eaddc047f050a544f668b085d37cc5ee7b`, validated release `0.8.3` using the short-lived, read-only Cloudsmith OIDC identity `gha-consumer`. It downloaded the exact Python wheel and npm tarball without installing or executing either. It pulled and inspected OCI `0.8.3` without running it, and the digest exactly matched the publisher digest: `sha256:e60e4679a53ac144b529139fdfacc1933e1d530ade07327b19b1f8a822460406`. Consumer Docker logout succeeded.
 
-Only after every cryptographic and metadata check passes does that job upload an exact three-file, one-day GitHub Actions handoff containing the verified wheel, npm tarball, and a filename/checksum manifest. A dependent `execute-verified` job has `permissions: {}`, no checkout, OIDC, Cloudsmith, Cosign, Docker, or registry retrieval, revalidates the exact three-file handoff and both hashes, and only then installs and imports the local wheel and npm tarball with lifecycle scripts disabled. This is the sole release-code execution boundary. The order is therefore authenticated download, cryptographic verification, provenance/SBOM validation, immutable verified handoff, then unprivileged local code execution.
+The consumer retrieved the exact Generic evidence archive and external bundle, verified the archive signature before extraction, and safely extracted the exact twelve-file allowlist. It verified the evidence-manifest signature; matched the wheel, npm, and OCI hashes to the signed evidence; validated all three CycloneDX 1.6 SBOMs and the SLSA v1-formatted workload-generated provenance; and validated the publisher Git SHA, workflow/ref, and run-ID/run-attempt invocation ID. It independently verified all six blob signatures and the OCI signature against the immutable digest, including Rekor/transparency evidence.
 
-Task 008B still must validate:
+Only after every check passed did the consumer create the exact three-file verified execution handoff containing the wheel, npm tarball, and manifest.
 
-- live validation of Phase 3 public Sigstore keyless signing;
-- signed SLSA v1-formatted workload-generated provenance;
-- CycloneDX SBOM publication and consumer verification;
-- vulnerability scanning and a policy gate;
-- tamper/substitution failure;
-- retention and rollback retrieval;
-- provider operational, cost, and disaster-recovery findings.
+The dependent `execute-verified` job passed with only GitHub's `Metadata: read` baseline shown in its job permissions. It had no `id-token` permission, no `contents` permission, no Cloudsmith authentication, no `CLOUDSMITH_API_KEY`, no checkout, no Docker, no Cosign, and no package-registry retrieval. It downloaded the same-run verified handoff, required exactly the three expected files, and revalidated the wheel and npm tarball SHA-256 values from the manifest.
+
+Python execution used only the local wheel with `pip --no-index --no-deps`; `report()` returned `0.8.3`, so the Python check passed. npm execution used only the local tarball with `--ignore-scripts`, `--no-audit`, and `--no-fund`; `report()` returned `0.8.3`, so the npm check passed. OCI remained inspection-only throughout. This preserves the execution order: authenticated retrieval, cryptographic verification, provenance and SBOM validation, immutable verified handoff, then non-OIDC local code execution.
+
+Remaining Task 008B work:
+
+- vulnerability/scanning policy;
+- tamper/substitution negative validation;
+- retention and rollback validation;
+- provider operations, cost, and disaster-recovery analysis;
+- the final architecture decision;
+- ADR 0007 only after all evidence is reviewed.
 
 ## Recommendation
 
-Task 008A, the Task 008B Phase 1 permission boundaries, and the Phase 2 OIDC build isolation passed, with the documented Generic-republish provider caveat. Retain Cloudsmith as a **VALIDATED CANDIDATE**, not an **ACCEPTED DIRECTION**. Do not write ADR 0007 or change the package-registry/trusted-publishing decision from **TO VALIDATE** until Phase 3 and later work validate public Sigstore signatures, provenance, SBOMs, vulnerability scanning and policy, tamper/substitution rejection, retention and rollback, and provider operations/cost/disaster recovery.
+Task 008A and Task 008B Phases 1, 2, and 3 passed, with the documented Generic-republish provider caveat. Cloudsmith remains a **VALIDATED CANDIDATE**, **NOT ACCEPTED DIRECTION**. Do not write ADR 0007 or make the final package-registry/trusted-publishing architecture decision until the remaining evidence is reviewed.
