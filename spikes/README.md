@@ -35,5 +35,6 @@ Recommendations that settle major choices must proceed through an ADR. Productio
 5. **Platform packaging** (`platform-packaging/`): validate versioned platform packages consumed and upgraded independently by dummy products.
 6. **Deployment** (`deployment/`): validate promotion of one immutable image through DEV, STAGING, and PROD, including configuration, migration, rollback, and auditability.
 7. **Supply chain** (`supply-chain/`): validate private Python, npm, and OCI delivery through separate GitHub OIDC publisher and consumer identities, with signing and stronger policy evidence deferred to Task 008B.
+8. **Observability contract** (`observability/`): validate secure structured logging, correlation IDs, OpenTelemetry tracing, bounded Prometheus-compatible metrics, health semantics, deployment metadata, and failure isolation without selecting production collector infrastructure.
 
 Task 001 creates only these isolated locations and governance. It does not implement any spike.
