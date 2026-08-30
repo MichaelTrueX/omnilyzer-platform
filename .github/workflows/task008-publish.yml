@@ -173,6 +173,69 @@ jobs:
             --output "$RUNNER_TEMP/task008-handoff/task008-oci-image.tar" \
             "$local_image_ref"
 
+      - name: Install exact Syft for build-time SBOM generation
+        id: syft
+        # anchore/sbom-action/download-syft v0.24.2
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26
+        with:
+          syft-version: v1.51.0
+
+      - name: Generate CycloneDX SBOMs from built artifacts
+        shell: bash
+        env:
+          SYFT_COMMAND: ${{ steps.syft.outputs.cmd }}
+        run: |
+          set -euo pipefail
+          handoff_dir="$RUNNER_TEMP/task008-handoff"
+          wheel="$(find "$handoff_dir" -maxdepth 1 -type f -name '*.whl' -print)"
+          npm_tarball="$(find "$handoff_dir" -maxdepth 1 -type f -name '*.tgz' -print)"
+          test -n "$wheel"
+          test -n "$npm_tarball"
+          test -x "$SYFT_COMMAND"
+          "$SYFT_COMMAND" version
+
+          wheel_root="$RUNNER_TEMP/task008-wheel-sbom-root"
+          npm_root="$RUNNER_TEMP/task008-npm-sbom-root"
+          mkdir "$wheel_root" "$npm_root"
+          python - "$wheel" "$wheel_root" "$npm_tarball" "$npm_root" <<'PY'
+          from pathlib import Path, PurePosixPath
+          import stat
+          import sys
+          import tarfile
+          import zipfile
+
+          wheel, wheel_root, npm_tarball, npm_root = map(Path, sys.argv[1:])
+
+          def safe_name(name: str) -> None:
+              path = PurePosixPath(name)
+              if path.is_absolute() or ".." in path.parts:
+                  raise SystemExit(f"unsafe archive path: {name!r}")
+
+          with zipfile.ZipFile(wheel) as archive:
+              for member in archive.infolist():
+                  safe_name(member.filename)
+                  mode = member.external_attr >> 16
+                  if stat.S_ISLNK(mode):
+                      raise SystemExit("wheel contains a symbolic link")
+              archive.extractall(wheel_root)
+
+          with tarfile.open(npm_tarball, mode="r:gz") as archive:
+              for member in archive.getmembers():
+                  safe_name(member.name)
+                  if member.issym() or member.islnk():
+                      raise SystemExit("npm tarball contains a link")
+                  if not (member.isfile() or member.isdir()):
+                      raise SystemExit("npm tarball contains a special file")
+              archive.extractall(npm_root, filter="data")
+          PY
+
+          "$SYFT_COMMAND" scan "dir:$wheel_root" \
+            -o "cyclonedx-json@1.6=$handoff_dir/python-sbom.cdx.json"
+          "$SYFT_COMMAND" scan "dir:$npm_root" \
+            -o "cyclonedx-json@1.6=$handoff_dir/npm-sbom.cdx.json"
+          "$SYFT_COMMAND" scan "docker-archive:$handoff_dir/task008-oci-image.tar" \
+            -o "cyclonedx-json@1.6=$handoff_dir/oci-sbom.cdx.json"
+
       - name: Create machine-readable handoff manifest
         shell: bash
         run: |
@@ -183,6 +246,9 @@ jobs:
           test -f "$handoff_dir/$expected_wheel"
           test -f "$handoff_dir/$expected_tarball"
           test -f "$handoff_dir/task008-oci-image.tar"
+          test -f "$handoff_dir/python-sbom.cdx.json"
+          test -f "$handoff_dir/npm-sbom.cdx.json"
+          test -f "$handoff_dir/oci-sbom.cdx.json"
           python - \
             "$handoff_dir" \
             "$RELEASE_VERSION" \
@@ -228,6 +294,20 @@ jobs:
                   "sha256": sha256("task008-oci-image.tar"),
                   "version_label": release_version,
               },
+              "sboms": {
+                  kind: {
+                      "filename": filename,
+                      "sha256": sha256(filename),
+                      "format": "cyclonedx-json",
+                      "spec_version": "1.6",
+                  }
+                  for kind, filename in {
+                      "python": "python-sbom.cdx.json",
+                      "npm": "npm-sbom.cdx.json",
+                      "oci": "oci-sbom.cdx.json",
+                  }.items()
+              },
+              "tools": {"syft_version": "1.51.0"},
           }
           (root / "handoff-manifest.json").write_text(
               json.dumps(manifest, indent=2, sort_keys=True) + "\n",
@@ -254,11 +334,13 @@ jobs:
       contents: read
       id-token: write
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       CLOUDSMITH_NAMESPACE: omnilyzer
       CLOUDSMITH_REPOSITORY: platform-spike
       IMAGE_REPOSITORY: docker.cloudsmith.io/omnilyzer/platform-spike/omnilyzer-supply-chain-spike
+      SIGNER_IDENTITY: https://github.com/MichaelTrueX/omnilyzer-platform/.github/workflows/task008-publish.yml@refs/heads/spike/008-supply-chain
+      OIDC_ISSUER: https://token.actions.githubusercontent.com
     steps:
       - name: Download exact release handoff
         # actions/download-artifact v8.0.1
@@ -284,14 +366,20 @@ jobs:
           source_sha = sys.argv[2]
           environment_path = Path(sys.argv[3])
           manifest_path = root / "handoff-manifest.json"
+          if manifest_path.is_symlink() or not manifest_path.is_file():
+              raise SystemExit("handoff manifest is not a regular file")
           manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-          if set(manifest) != {"release_version", "source_sha", "python", "npm", "oci"}:
+          if set(manifest) != {
+              "release_version", "source_sha", "python", "npm", "oci", "sboms", "tools"
+          }:
               raise SystemExit("handoff manifest has unexpected top-level fields")
           release_version = manifest["release_version"]
           if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release_version) is None:
               raise SystemExit("handoff manifest has an invalid release version")
           if manifest["source_sha"] != source_sha:
               raise SystemExit("handoff source SHA does not match this workflow run")
+          if manifest["tools"] != {"syft_version": "1.51.0"}:
+              raise SystemExit("handoff records an unexpected Syft version")
 
           expected_wheel = f"omnilyzer_supply_chain_spike-{release_version}-py3-none-any.whl"
           expected_npm = f"omnilyzer-supply-chain-spike-{release_version}.tgz"
@@ -330,6 +418,36 @@ jobs:
                   raise SystemExit(f"{key} handoff checksum mismatch")
               verified[key] = (artifact_path, digest)
 
+          sbom_files = {
+              "python": "python-sbom.cdx.json",
+              "npm": "npm-sbom.cdx.json",
+              "oci": "oci-sbom.cdx.json",
+          }
+          if not isinstance(manifest["sboms"], dict) or set(manifest["sboms"]) != set(sbom_files):
+              raise SystemExit("handoff has an invalid SBOM inventory")
+          verified_sboms = {}
+          for kind, expected_filename in sbom_files.items():
+              record = manifest["sboms"].get(kind)
+              if not isinstance(record, dict) or set(record) != {
+                  "filename", "sha256", "format", "spec_version"
+              }:
+                  raise SystemExit(f"invalid {kind} SBOM record")
+              if record["filename"] != expected_filename or record["format"] != "cyclonedx-json" or record["spec_version"] != "1.6":
+                  raise SystemExit(f"unexpected {kind} SBOM metadata")
+              sbom_path = root / expected_filename
+              if sbom_path.is_symlink() or not sbom_path.is_file():
+                  raise SystemExit(f"missing regular SBOM file: {expected_filename}")
+              if not re.fullmatch(r"[0-9a-f]{64}", record["sha256"]):
+                  raise SystemExit(f"invalid {kind} SBOM SHA-256")
+              digest = hashlib.sha256(sbom_path.read_bytes()).hexdigest()
+              if digest != record["sha256"]:
+                  raise SystemExit(f"{kind} SBOM checksum mismatch")
+              document = json.loads(sbom_path.read_text(encoding="utf-8"))
+              if document.get("bomFormat") != "CycloneDX" or document.get("specVersion") != "1.6":
+                  raise SystemExit(f"{kind} SBOM is not CycloneDX JSON 1.6")
+              expected_files.add(expected_filename)
+              verified_sboms[kind] = (sbom_path, digest)
+
           actual_entries = {path.name for path in root.iterdir()}
           if actual_entries != expected_files:
               raise SystemExit("handoff contains missing or unrelated files")
@@ -343,6 +461,12 @@ jobs:
               environment.write(f"OCI_IMAGE_SHA256={verified['oci'][1]}\n")
               environment.write(f"LOCAL_IMAGE_REF={manifest['oci']['image_reference']}\n")
               environment.write(f"OCI_VERSION_LABEL={manifest['oci']['version_label']}\n")
+              environment.write(f"PYTHON_SBOM_PATH={verified_sboms['python'][0]}\n")
+              environment.write(f"PYTHON_SBOM_SHA256={verified_sboms['python'][1]}\n")
+              environment.write(f"NPM_SBOM_PATH={verified_sboms['npm'][0]}\n")
+              environment.write(f"NPM_SBOM_SHA256={verified_sboms['npm'][1]}\n")
+              environment.write(f"OCI_SBOM_PATH={verified_sboms['oci'][0]}\n")
+              environment.write(f"OCI_SBOM_SHA256={verified_sboms['oci'][1]}\n")
           PY
 
       - name: Load and inspect already-built OCI image
@@ -375,6 +499,22 @@ jobs:
           image_ref="${IMAGE_REPOSITORY}:${RELEASE_VERSION}"
           docker tag "$LOCAL_IMAGE_REF" "$image_ref"
           printf 'IMAGE_REF=%s\n' "$image_ref" >> "$GITHUB_ENV"
+
+      - name: Install exact Cosign
+        # sigstore/cosign-installer v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.1.2
+
+      - name: Verify exact Cosign installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign_version="$({ cosign version; } 2>&1)"
+          printf '%s\n' "$cosign_version"
+          python -c \
+            'import re, sys; raise SystemExit(0 if re.search(r"\bv?3\.1\.2\b", sys.stdin.read()) else "unexpected Cosign version")' \
+            <<< "$cosign_version"
 
       - name: Authenticate short-lived Cloudsmith publisher
         # cloudsmith-io/cloudsmith-cli-action v3.1.0
@@ -423,6 +563,248 @@ jobs:
             exit 1
           fi
           printf 'OCI_DIGEST=%s\n' "$oci_digest" >> "$GITHUB_ENV"
+
+      - name: Create SLSA v1-formatted workload provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/task008-evidence"
+          mkdir "$evidence_dir"
+          cp "$PYTHON_SBOM_PATH" "$evidence_dir/python-sbom.cdx.json"
+          cp "$NPM_SBOM_PATH" "$evidence_dir/npm-sbom.cdx.json"
+          cp "$OCI_SBOM_PATH" "$evidence_dir/oci-sbom.cdx.json"
+          python - "$evidence_dir/release-provenance.json" <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          digest = os.environ["OCI_DIGEST"]
+          if not digest.startswith("sha256:"):
+              raise SystemExit("invalid immutable OCI digest")
+          statement = {
+              "_type": "https://in-toto.io/Statement/v1",
+              "subject": [
+                  {
+                      "name": Path(os.environ["WHEEL_PATH"]).name,
+                      "digest": {"sha256": os.environ["WHEEL_SHA256"]},
+                  },
+                  {
+                      "name": Path(os.environ["NPM_TARBALL_PATH"]).name,
+                      "digest": {"sha256": os.environ["NPM_SHA256"]},
+                  },
+                  {
+                      "name": f'{os.environ["IMAGE_REPOSITORY"]}@{digest}',
+                      "digest": {"sha256": digest.removeprefix("sha256:")},
+                  },
+              ],
+              "predicateType": "https://slsa.dev/provenance/v1",
+              "predicate": {
+                  "buildDefinition": {
+                      "buildType": "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+                      "externalParameters": {
+                          "repository": "https://github.com/MichaelTrueX/omnilyzer-platform",
+                          "workflow_path": ".github/workflows/task008-publish.yml",
+                          "ref": "refs/heads/spike/008-supply-chain",
+                          "release_version": os.environ["RELEASE_VERSION"],
+                      },
+                      "internalParameters": {},
+                      "resolvedDependencies": [{
+                          "uri": "git+https://github.com/MichaelTrueX/omnilyzer-platform@refs/heads/spike/008-supply-chain",
+                          "digest": {"gitCommit": os.environ["GITHUB_SHA"]},
+                      }],
+                  },
+                  "runDetails": {
+                      "builder": {"id": "https://github.com/actions/runner/github-hosted"},
+                      "metadata": {
+                          "invocationId": (
+                              "https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/"
+                              f'{os.environ["GITHUB_RUN_ID"]}/attempts/{os.environ["GITHUB_RUN_ATTEMPT"]}'
+                          )
+                      },
+                  },
+              },
+          }
+          Path(__import__("sys").argv[1]).write_text(
+              json.dumps(statement, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+
+      - name: Keylessly sign release blobs and immutable OCI digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/task008-evidence"
+          sign_blob() {
+            cosign sign-blob --yes --bundle "$evidence_dir/$2" "$1"
+          }
+          sign_blob "$WHEEL_PATH" python-wheel.sigstore.json
+          sign_blob "$NPM_TARBALL_PATH" npm-tarball.sigstore.json
+          sign_blob "$evidence_dir/python-sbom.cdx.json" python-sbom.sigstore.json
+          sign_blob "$evidence_dir/npm-sbom.cdx.json" npm-sbom.sigstore.json
+          sign_blob "$evidence_dir/oci-sbom.cdx.json" oci-sbom.sigstore.json
+          sign_blob "$evidence_dir/release-provenance.json" release-provenance.sigstore.json
+          cosign sign --yes "$IMAGE_REPOSITORY@$OCI_DIGEST"
+
+      - name: Immediately verify signed release content
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/task008-evidence"
+          verify_blob() {
+            cosign verify-blob \
+              --bundle "$evidence_dir/$2" \
+              --certificate-identity "$SIGNER_IDENTITY" \
+              --certificate-oidc-issuer "$OIDC_ISSUER" \
+              "$1"
+          }
+          verify_blob "$WHEEL_PATH" python-wheel.sigstore.json
+          verify_blob "$NPM_TARBALL_PATH" npm-tarball.sigstore.json
+          verify_blob "$evidence_dir/python-sbom.cdx.json" python-sbom.sigstore.json
+          verify_blob "$evidence_dir/npm-sbom.cdx.json" npm-sbom.sigstore.json
+          verify_blob "$evidence_dir/oci-sbom.cdx.json" oci-sbom.sigstore.json
+          verify_blob "$evidence_dir/release-provenance.json" release-provenance.sigstore.json
+          cosign verify \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$IMAGE_REPOSITORY@$OCI_DIGEST"
+
+      - name: Create, sign, and verify release evidence manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/task008-evidence"
+          python - "$evidence_dir" <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1])
+          provenance = root / "release-provenance.json"
+          sha256 = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+          manifest = {
+              "release_version": os.environ["RELEASE_VERSION"],
+              "publisher_source_sha": os.environ["GITHUB_SHA"],
+              "github": {
+                  "run_id": os.environ["GITHUB_RUN_ID"],
+                  "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              },
+              "signer": {
+                  "identity": os.environ["SIGNER_IDENTITY"],
+                  "oidc_issuer": os.environ["OIDC_ISSUER"],
+                  "transparency": "public-sigstore",
+              },
+              "tools": {"cosign": "3.1.2", "syft": "1.51.0"},
+              "artifacts": {
+                  "wheel": {"filename": Path(os.environ["WHEEL_PATH"]).name, "sha256": os.environ["WHEEL_SHA256"]},
+                  "npm": {"filename": Path(os.environ["NPM_TARBALL_PATH"]).name, "sha256": os.environ["NPM_SHA256"]},
+                  "oci": {"image": f'{os.environ["IMAGE_REPOSITORY"]}@{os.environ["OCI_DIGEST"]}', "digest": os.environ["OCI_DIGEST"]},
+              },
+              "sboms": {
+                  kind: {
+                      "filename": filename,
+                      "sha256": sha256(root / filename),
+                      "format": "cyclonedx-json",
+                      "spec_version": "1.6",
+                  }
+                  for kind, filename in {
+                      "python": "python-sbom.cdx.json",
+                      "npm": "npm-sbom.cdx.json",
+                      "oci": "oci-sbom.cdx.json",
+                  }.items()
+              },
+              "provenance": {
+                  "filename": provenance.name,
+                  "sha256": sha256(provenance),
+                  "predicate_type": "https://slsa.dev/provenance/v1",
+              },
+              "signature_bundles": {
+                  "wheel": "python-wheel.sigstore.json",
+                  "npm": "npm-tarball.sigstore.json",
+                  "python_sbom": "python-sbom.sigstore.json",
+                  "npm_sbom": "npm-sbom.sigstore.json",
+                  "oci_sbom": "oci-sbom.sigstore.json",
+                  "provenance": "release-provenance.sigstore.json",
+              },
+          }
+          (root / "evidence-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+          cosign sign-blob --yes \
+            --bundle "$evidence_dir/evidence-manifest.sigstore.json" \
+            "$evidence_dir/evidence-manifest.json"
+          cosign verify-blob \
+            --bundle "$evidence_dir/evidence-manifest.sigstore.json" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$evidence_dir/evidence-manifest.json"
+
+      - name: Create, sign, and verify deterministic evidence archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/task008-evidence"
+          archive_name="omnilyzer-supply-chain-spike-${RELEASE_VERSION}-evidence.tar.gz"
+          archive_path="$RUNNER_TEMP/$archive_name"
+          archive_bundle="$archive_path.sigstore.json"
+          mapfile -t evidence_files <<'EOF'
+          evidence-manifest.json
+          evidence-manifest.sigstore.json
+          npm-sbom.cdx.json
+          npm-sbom.sigstore.json
+          npm-tarball.sigstore.json
+          oci-sbom.cdx.json
+          oci-sbom.sigstore.json
+          python-sbom.cdx.json
+          python-sbom.sigstore.json
+          python-wheel.sigstore.json
+          release-provenance.json
+          release-provenance.sigstore.json
+          EOF
+          python - "$evidence_dir" "${evidence_files[@]}" <<'PY'
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1])
+          expected = set(sys.argv[2:])
+          actual = {path.name for path in root.iterdir()}
+          if actual != expected:
+              raise SystemExit("evidence staging directory does not match exact allowlist")
+          for name in expected:
+              path = root / name
+              if path.is_symlink() or not path.is_file():
+                  raise SystemExit(f"evidence entry is not a regular file: {name}")
+          PY
+          tar --sort=name --mtime='UTC 1970-01-01' \
+            --owner=0 --group=0 --numeric-owner \
+            -cf - -C "$evidence_dir" "${evidence_files[@]}" | gzip -n > "$archive_path"
+          cosign sign-blob --yes --bundle "$archive_bundle" "$archive_path"
+          cosign verify-blob \
+            --bundle "$archive_bundle" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$archive_path"
+          printf 'EVIDENCE_ARCHIVE=%s\n' "$archive_path" >> "$GITHUB_ENV"
+          printf 'EVIDENCE_ARCHIVE_BUNDLE=%s\n' "$archive_bundle" >> "$GITHUB_ENV"
+
+      - name: Publish versioned Generic release evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive_name="$(basename "$EVIDENCE_ARCHIVE")"
+          bundle_name="$(basename "$EVIDENCE_ARCHIVE_BUNDLE")"
+          cloudsmith push generic \
+            "$CLOUDSMITH_NAMESPACE/$CLOUDSMITH_REPOSITORY" \
+            "$EVIDENCE_ARCHIVE" \
+            --version "$RELEASE_VERSION" \
+            --filepath "task008/evidence/${RELEASE_VERSION}/${archive_name}"
+          cloudsmith push generic \
+            "$CLOUDSMITH_NAMESPACE/$CLOUDSMITH_REPOSITORY" \
+            "$EVIDENCE_ARCHIVE_BUNDLE" \
+            --version "$RELEASE_VERSION" \
+            --filepath "task008/evidence/${RELEASE_VERSION}/${bundle_name}"
 
       - name: Write non-secret release record
         shell: bash
