@@ -252,6 +252,10 @@ jobs:
           PY
             generic_url="https://generic.cloudsmith.io/omnilyzer/platform-spike/${filepath}"
             curl --fail --silent --show-error \
+              --location \
+              --proto '=https' \
+              --proto-redir '=https' \
+              --max-redirs 3 \
               --user "token:${CLOUDSMITH_API_KEY}" \
               --output "$evidence_download/$filename" "$generic_url"
           }
