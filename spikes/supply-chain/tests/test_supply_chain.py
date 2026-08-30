@@ -682,18 +682,29 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("NPM_CONFIG_USERCONFIG", consume)
         self.assertIn("npm pack", consume)
         self.assertIn("--ignore-scripts", consume)
-        self.assertIn("expected exactly one versioned evidence package", consume)
-        self.assertNotIn("cdn_url", consume)
+        generic_download = consume.split(
+            "- name: Download exact versioned evidence archive and bundle", 1
+        )[1].split("      - name: Verify evidence archive signature before extraction", 1)[0]
+        self.assertIn("expected exactly one versioned evidence package", generic_download)
+        self.assertNotIn("cdn_url", generic_download)
         self.assertIn(
             'generic_url="https://generic.cloudsmith.io/omnilyzer/platform-spike/${filepath}"',
-            consume,
+            generic_download,
         )
         self.assertIn(
             'local filepath="task008/evidence/${RELEASE_VERSION}/${filename}"',
-            consume,
+            generic_download,
         )
-        self.assertIn('--user "token:${CLOUDSMITH_API_KEY}"', consume)
-        self.assertNotIn("--location-trusted", consume)
+        self.assertIn('--user "token:${CLOUDSMITH_API_KEY}"', generic_download)
+        self.assertIn("--location", generic_download)
+        self.assertIn("--proto '=https'", generic_download)
+        self.assertIn("--proto-redir '=https'", generic_download)
+        self.assertIn("--max-redirs 3", generic_download)
+        self.assertNotIn("--location-trusted", generic_download)
+        self.assertNotRegex(
+            generic_download,
+            r"https://[^\s\"']*\$\{CLOUDSMITH_API_KEY\}",
+        )
         self.assertIn("evidence archive does not match exact twelve-file allowlist", consume)
         self.assertIn("not member.isfile()", consume)
         self.assertIn("downloaded wheel does not match evidence", consume)
