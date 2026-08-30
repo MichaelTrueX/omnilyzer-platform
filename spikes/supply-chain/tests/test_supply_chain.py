@@ -139,9 +139,9 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertTrue(PUBLISH_WORKFLOW.is_file())
         self.assertTrue(CONSUME_WORKFLOW.is_file())
         publish_trigger = SPIKE_ROOT / "control/publish.trigger"
-        self.assertEqual(publish_trigger.read_text(encoding="utf-8"), "0.8.4\n")
+        self.assertEqual(publish_trigger.read_text(encoding="utf-8"), "0.8.5\n")
         consume_trigger = SPIKE_ROOT / "control/consume.trigger"
-        self.assertEqual(consume_trigger.read_text(encoding="utf-8"), "0.8.4\n")
+        self.assertEqual(consume_trigger.read_text(encoding="utf-8"), "0.8.5\n")
         self.assertEqual(
             (SPIKE_ROOT / "control/publisher-permissions.trigger").read_text(
                 encoding="utf-8"
@@ -159,6 +159,12 @@ class WorkflowPolicyTests(unittest.TestCase):
                 encoding="utf-8"
             ),
             "task008b-phase4b-tamper-negative-v2\n",
+        )
+        self.assertEqual(
+            (SPIKE_ROOT / "control/rollback-retention.trigger").read_text(
+                encoding="utf-8"
+            ),
+            "task008b-phase5-rollback-retention-v1\n",
         )
 
     def test_publish_trigger_accepts_only_one_strict_version_plus_newline(self) -> None:
@@ -210,6 +216,13 @@ class WorkflowPolicyTests(unittest.TestCase):
                 tamper_trigger = "spikes/supply-chain/control/tamper-negative.trigger"
                 self.assertEqual(
                     trigger.count(f"- {tamper_trigger}"),
+                    1 if workflow is self.consume else 0,
+                )
+                rollback_trigger = (
+                    "spikes/supply-chain/control/rollback-retention.trigger"
+                )
+                self.assertEqual(
+                    trigger.count(f"- {rollback_trigger}"),
                     1 if workflow is self.consume else 0,
                 )
                 for prohibited in ("workflow_dispatch", "pull_request", "schedule"):
@@ -272,8 +285,16 @@ class WorkflowPolicyTests(unittest.TestCase):
                     self.assertIn(f"$'M\\t{tamper_trigger}'", gate)
                     self.assertNotIn(f"$'A\\t{tamper_trigger}'", gate)
                     self.assertIn("mode=tamper", gate)
+                    rollback_trigger = (
+                        "spikes/supply-chain/control/rollback-retention.trigger"
+                    )
+                    self.assertIn(f'"{rollback_trigger}"', gate)
+                    self.assertIn(f"$'M\\t{rollback_trigger}'", gate)
+                    self.assertNotIn(f"$'A\\t{rollback_trigger}'", gate)
+                    self.assertIn("mode=rollback", gate)
                 else:
                     self.assertNotIn(tamper_trigger, gate)
+                    self.assertNotIn("rollback-retention.trigger", gate)
 
         combined = self.publish + self.consume
         for unsafe in (
@@ -301,6 +322,9 @@ class WorkflowPolicyTests(unittest.TestCase):
         tamper = self.job(self.consume, "tamper-negative-probe")
         self.assertIn("needs: gate", tamper)
         self.assertIn("if: needs.gate.outputs.mode == 'tamper'", tamper)
+        rollback = self.job(self.consume, "rollback-retention-probe")
+        self.assertIn("needs: gate", rollback)
+        self.assertIn("if: needs.gate.outputs.mode == 'rollback'", rollback)
 
     def test_permissions_and_oidc_identities_are_narrow(self) -> None:
         for workflow in (self.publish, self.consume):
@@ -342,12 +366,17 @@ class WorkflowPolicyTests(unittest.TestCase):
             "    runs-on:", 1
         )[0]
         self.assertEqual(tamper_permissions.strip(), "id-token: write")
+        rollback = self.job(self.consume, "rollback-retention-probe")
+        rollback_permissions = rollback.split("    permissions:\n", 1)[1].split(
+            "    runs-on:", 1
+        )[0]
+        self.assertEqual(rollback_permissions.strip(), "id-token: write")
         self.assertIn("oidc-service-slug: gha-publisher-u76y", self.publish)
         self.assertIn("oidc-service-slug: gha-consumer", self.consume)
         for workflow in (self.publish, self.consume):
             self.assertIn("oidc-namespace: omnilyzer", workflow)
             self.assertIn("omnilyzer/platform-spike", workflow)
-            expected_cli_count = 2 if workflow is self.publish else 3
+            expected_cli_count = 2 if workflow is self.publish else 4
             self.assertEqual(workflow.count("cli-version: '1.26.0'"), expected_cli_count)
             self.assertIn("export-auth-token: true", workflow)
             self.assertIn("verify-auth: true", workflow)
@@ -484,7 +513,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertNotRegex(combined, r"(?m)(?:^|[ |])jq(?:[ |]|$)")
         self.assertIn("import json", self.publish)
         self.assertIn("import json", self.consume)
-        self.assertEqual(combined.count("--output-format json"), 4)
+        self.assertEqual(combined.count("--output-format json"), 5)
 
     def test_release_build_job_has_no_oidc_or_cloudsmith_authority(self) -> None:
         build = self.job(self.publish, "build")
@@ -921,6 +950,191 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("Validate exact verified execution handoff", execute)
         self.assertIn("permissions: {}", execute)
 
+    def test_rollback_probe_is_isolated_and_registry_only(self) -> None:
+        rollback = self.job(self.consume, "rollback-retention-probe")
+        self.assertIn("if: needs.gate.outputs.mode == 'rollback'", rollback)
+        self.assertIn("oidc-service-slug: gha-consumer", rollback)
+        self.assertEqual(
+            rollback.count("cloudsmith-io/cloudsmith-cli-action@"), 1
+        )
+        for prohibited in (
+            "gha-publisher",
+            "actions/checkout",
+            "actions/download-artifact",
+            "actions/upload-artifact",
+            "task008-release-",
+            "task008-verified-execution-",
+            "cloudsmith push",
+            "npm publish",
+            "docker push",
+            "cosign sign",
+            "--republish",
+            "--location-trusted",
+            "cdn_url",
+            "cloudsmith delete",
+            "cloudsmith replace",
+        ):
+            self.assertNotIn(prohibited, rollback)
+        self.assertNotRegex(rollback, r"/artifacts(?:/|\b)")
+        self.assertNotIn("github.run_id", rollback)
+        self.assertNotIn("Create exact verified execution handoff", rollback)
+
+    def test_rollback_probe_hard_binds_exact_historical_release(self) -> None:
+        rollback = self.job(self.consume, "rollback-retention-probe")
+        digest = (
+            "sha256:44cdf2855105c824fcad999723ed7cc4f4a0ba276c8b953882413a1c61004967"
+        )
+        self.assertIn("CURRENT_RELEASE_VERSION: 0.8.5", rollback)
+        self.assertIn("ROLLBACK_VERSION: 0.8.4", rollback)
+        self.assertIn(f"EXPECTED_ROLLBACK_OCI_DIGEST: {digest}", rollback)
+        self.assertIn('test "$CURRENT_RELEASE_VERSION" != "$ROLLBACK_VERSION"', rollback)
+        self.assertIn(
+            '"omnilyzer-supply-chain-spike==${ROLLBACK_VERSION}"', rollback
+        )
+        self.assertIn(
+            '"@omnilyzer/supply-chain-spike@${ROLLBACK_VERSION}"', rollback
+        )
+        self.assertIn(
+            'image_ref="${IMAGE_REPOSITORY}:${ROLLBACK_VERSION}"', rollback
+        )
+        self.assertIn(
+            'expected_reference="${IMAGE_REPOSITORY}@${EXPECTED_ROLLBACK_OCI_DIGEST}"',
+            rollback,
+        )
+        self.assertIn("EXPECTED_PUBLISHER_RUN_ID: '33294828516'", rollback)
+        for floating in (
+            ":latest",
+            "@latest",
+            "==latest",
+            "^0.8",
+            "~0.8",
+            ">=0.8",
+            "0.8.*",
+            "0.8.x",
+        ):
+            self.assertNotIn(floating, rollback.lower())
+
+    def test_rollback_probe_retrieves_exact_cloudsmith_material(self) -> None:
+        rollback = self.job(self.consume, "rollback-retention-probe")
+        for filename in (
+            "omnilyzer_supply_chain_spike-${ROLLBACK_VERSION}-py3-none-any.whl",
+            "omnilyzer-supply-chain-spike-${ROLLBACK_VERSION}.tgz",
+            "omnilyzer-supply-chain-spike-${ROLLBACK_VERSION}-evidence.tar.gz",
+            "${archive_name}.sigstore.json",
+        ):
+            self.assertIn(filename, rollback)
+        self.assertIn("--only-binary=:all: --no-deps", rollback)
+        self.assertIn("npm pack", rollback)
+        self.assertIn("--ignore-scripts", rollback)
+        self.assertIn(
+            'local filepath="task008/evidence/${ROLLBACK_VERSION}/${filename}"',
+            rollback,
+        )
+        self.assertIn(
+            'generic_url="https://generic.cloudsmith.io/omnilyzer/platform-spike/${filepath}"',
+            rollback,
+        )
+        for option in (
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--location",
+            "--proto '=https'",
+            "--proto-redir '=https'",
+            "--max-redirs 3",
+        ):
+            self.assertIn(option, rollback)
+        self.assertIn("if len(matches) != 1:", rollback)
+
+    def test_rollback_probe_verifies_current_format_before_signatures(self) -> None:
+        rollback = self.job(self.consume, "rollback-retention-probe")
+        archive_verify = rollback.index(
+            "Verify rollback evidence archive signature before extraction"
+        )
+        extraction = rollback.index(
+            "Safely extract exact seventeen-file rollback evidence allowlist"
+        )
+        manifest_verify = rollback.index("Verify rollback evidence manifest signature")
+        validation = rollback.index(
+            "Validate exact rollback evidence hashes SBOMs policy and provenance"
+        )
+        signatures = rollback.index(
+            "Verify all rollback release signatures without execution"
+        )
+        result = rollback.index("Record registry-only rollback verification")
+        self.assertLess(archive_verify, extraction)
+        self.assertLess(extraction, manifest_verify)
+        self.assertLess(manifest_verify, validation)
+        self.assertLess(validation, signatures)
+        self.assertLess(signatures, result)
+        self.assertIn("len(members) != 17", rollback)
+        for bundle in (
+            "python-wheel.sigstore.json",
+            "npm-tarball.sigstore.json",
+            "python-sbom.sigstore.json",
+            "npm-sbom.sigstore.json",
+            "oci-sbom.sigstore.json",
+            "release-provenance.sigstore.json",
+            "evidence-manifest.sigstore.json",
+        ):
+            self.assertIn(bundle, rollback)
+        self.assertIn(
+            "EXPECTED_VULNERABILITY_POLICY_SHA256: "
+            "f36c806af62c1920890b6c33ae5dc03aa738af860e73a08b6fea3543c03d6530",
+            rollback,
+        )
+        self.assertIn('["Critical", "High"]', rollback)
+        self.assertIn('target.get("blocking_findings") != []', rollback)
+        self.assertIn('"spec_version": "1.6"', rollback)
+        self.assertIn('"predicate_type": "https://slsa.dev/provenance/v1"', rollback)
+        self.assertIn("provenance subjects do not match retrieved artifacts", rollback)
+        self.assertIn("--certificate-identity \"$SIGNER_IDENTITY\"", rollback)
+        self.assertIn("--certificate-oidc-issuer \"$OIDC_ISSUER\"", rollback)
+        self.assertNotIn("--insecure-ignore-tlog", rollback)
+
+    def test_rollback_probe_never_executes_or_creates_a_handoff(self) -> None:
+        rollback = self.job(self.consume, "rollback-retention-probe")
+        for prohibited in (
+            "pip install",
+            "npm install",
+            "verified-execution-manifest.json",
+            "actions/upload-artifact",
+            "omnilyzer_supply_chain_spike as p",
+            'import { report } from "@omnilyzer/supply-chain-spike"',
+        ):
+            self.assertNotIn(prohibited, rollback)
+        self.assertNotRegex(rollback, r"(?m)^\s*docker run(?:\s|$)")
+        self.assertNotRegex(rollback, r"(?m)^\s*node(?:\s|$)")
+        self.assertIn("docker pull", rollback)
+        self.assertIn("docker image inspect", rollback)
+
+    def test_existing_consumer_jobs_do_not_accept_rollback_mode(self) -> None:
+        for name in (
+            "consume",
+            "execute-verified",
+            "tamper-negative-probe",
+            "consumer-permission-probe",
+        ):
+            job = self.job(self.consume, name)
+            with self.subTest(job=name):
+                self.assertNotIn("mode == 'rollback'", job)
+        self.assertIn(
+            "if: needs.gate.outputs.mode == 'release'",
+            self.job(self.consume, "consume"),
+        )
+        self.assertIn(
+            "if: needs.gate.outputs.mode == 'release'",
+            self.job(self.consume, "execute-verified"),
+        )
+        self.assertIn(
+            "if: needs.gate.outputs.mode == 'tamper'",
+            self.job(self.consume, "tamper-negative-probe"),
+        )
+        self.assertIn(
+            "if: needs.gate.outputs.mode == 'permission'",
+            self.job(self.consume, "consumer-permission-probe"),
+        )
+
     def test_consumer_validates_provenance_invocation_and_empty_internal_parameters(self) -> None:
         consume = self.job(self.consume, "consume")
         self.assertIn('definition.get("internalParameters") != {}', consume)
@@ -1181,7 +1395,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                 for line in workflow.splitlines()
                 if line.strip().startswith("uses: ")
             ]
-            expected_count = 11 if workflow is self.publish else 15
+            expected_count = 11 if workflow is self.publish else 19
             self.assertEqual(len(uses_lines), expected_count)
             for use in uses_lines:
                 action, revision = use.split("@", 1)

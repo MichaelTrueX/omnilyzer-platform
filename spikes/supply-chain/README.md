@@ -181,9 +181,20 @@ The four live negative cases passed as follows:
 3. **Release-version substitution — PASS, substitution rejected.** The legitimate evidence archive and signed evidence manifest were first verified against the exact publisher workflow identity and OIDC issuer. Presenting that valid signed `0.8.4` evidence as requested version `0.8.5` then failed the signed `release_version` binding with `signed release_version rejects substituted release material`.
 4. **Mutated verified-execution handoff — PASS, mutation rejected before execution.** An exact three-file candidate handoff was created and its hashes were proven valid before its wheel was modified after manifest creation. The checksum-validation semantics used by `execute-verified` rejected it with `verified wheel checksum mismatch`; no execution environment file was produced, and no package was installed or executed.
 
+## Task 008B registry-only retention and rollback validation
+
+The fully verified reference release is `0.8.5`. Publisher run `33300665806`, from commit `431c984d3c3e81f358c0653d8d8d4041a31883e3`, and consumer run `33300905736`, from commit `d608ec5ebd5b85b9f17ef340b648538c14a7a362`, validated immutable OCI digest `sha256:b01299d6afe9f635a567347cc7617876ab90c024e1bfe644d71097eadcc184d1`.
+
+**TASK 008B PHASE 5 — PRE-LIVE / TO VALIDATE.** The intended state is explicit: **CURRENT = `0.8.5`** and **ROLLBACK TARGET = `0.8.4`**, whose reviewed immutable OCI digest is `sha256:44cdf2855105c824fcad999723ed7cc4f4a0ba276c8b953882413a1c61004967`. A dedicated, no-checkout `rollback-retention-probe` is scaffolded behind its own trigger. It uses only short-lived, read-only `gha-consumer` Cloudsmith OIDC authority and obtains the exact historical wheel, npm tarball, OCI image, signed seventeen-file evidence archive, and external archive bundle from Cloudsmith. It does not infer a rollback version, use a floating selector, retrieve a historical CI artifact, create an execution handoff, publish, sign, or execute package content.
+
+The probe first retrieves exact `0.8.4` registry material, requires the OCI tag to resolve to the reviewed immutable digest, and retrieves exactly one matching versioned Generic record for both the archive and external bundle. It then verifies the archive signature before safe extraction, verifies the evidence-manifest signature, and validates the signed release and publisher metadata; artifact, SBOM, vulnerability-report, database-status, policy-result, and provenance hashes; exact Grype `0.118.0` Critical/High PASS policy and reviewed policy SHA; empty blocking findings; CycloneDX JSON 1.6 documents; provenance subjects; publisher workflow/ref; and exact OCI digest. Finally, it verifies all six release blobs and the digest-qualified OCI signature against the exact publisher identity and OIDC issuer with public Sigstore transparency verification enabled. It creates no verified-execution handoff and uploads no GitHub artifact.
+
+GitHub Actions release handoffs are intentionally transient same-run trust-boundary transport with one-day retention; they are not the durable release archive. Durable supported-release recovery depends on Cloudsmith package and evidence retention plus public Sigstore verification. Supported production releases must not be silently removed by automatic registry retention rules. The first live Phase 5 probe will test registry-only recovery while historical one-day CI artifacts may still exist, without reading them. The strongest retention evidence additionally requires a second live rerun after those historical GitHub artifacts have expired; that post-expiry validation has not happened.
+
 Remaining Task 008B work:
 
-- retention and rollback validation;
+- first live registry-only Phase 5 rollback validation;
+- a second Phase 5 rerun after historical one-day GitHub artifacts expire;
 - provider operations, cost, and disaster-recovery analysis;
 - the final architecture decision;
 - ADR 0007 only after all evidence is reviewed.
