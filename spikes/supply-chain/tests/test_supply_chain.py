@@ -308,6 +308,12 @@ class WorkflowPolicyTests(unittest.TestCase):
         )[0]
         self.assertEqual(build_permissions.strip(), "contents: read")
         self.assertNotIn("id-token: write", build)
+        execute = self.job(self.consume, "execute-verified")
+        execute_permissions = execute.split("    permissions:", 1)[1].split(
+            "    runs-on:", 1
+        )[0]
+        self.assertEqual(execute_permissions.strip(), "{}")
+        self.assertNotIn("id-token: write", execute)
         self.assertIn("oidc-service-slug: gha-publisher-u76y", self.publish)
         self.assertIn("oidc-service-slug: gha-consumer", self.consume)
         for workflow in (self.publish, self.consume):
@@ -663,22 +669,31 @@ class WorkflowPolicyTests(unittest.TestCase):
         archive_verify = consume.index("Verify evidence archive signature before extraction")
         extraction = consume.index("Safely extract exact evidence allowlist")
         signatures = consume.index("Verify all release signatures before code execution")
-        python_install = consume.index("Install and execute verified local Python wheel")
-        npm_install = consume.index("Install and execute verified local npm tarball")
+        handoff = consume.index("Create exact verified execution handoff")
+        upload = consume.index("Upload verified execution handoff after all verification")
         self.assertLess(wheel_download, archive_verify)
         self.assertLess(npm_download, archive_verify)
         self.assertLess(archive_verify, extraction)
         self.assertLess(extraction, signatures)
-        self.assertLess(signatures, python_install)
-        self.assertLess(signatures, npm_install)
+        self.assertLess(signatures, handoff)
+        self.assertLess(handoff, upload)
         self.assertIn("python -m pip download", consume)
         self.assertIn("--only-binary=:all: --no-deps", consume)
         self.assertIn("NPM_CONFIG_USERCONFIG", consume)
         self.assertIn("npm pack", consume)
         self.assertIn("--ignore-scripts", consume)
         self.assertIn("expected exactly one versioned evidence package", consume)
-        self.assertIn("cdn_url", consume)
+        self.assertNotIn("cdn_url", consume)
+        self.assertIn(
+            'generic_url="https://generic.cloudsmith.io/omnilyzer/platform-spike/${filepath}"',
+            consume,
+        )
+        self.assertIn(
+            'local filepath="task008/evidence/${RELEASE_VERSION}/${filename}"',
+            consume,
+        )
         self.assertIn('--user "token:${CLOUDSMITH_API_KEY}"', consume)
+        self.assertNotIn("--location-trusted", consume)
         self.assertIn("evidence archive does not match exact twelve-file allowlist", consume)
         self.assertIn("not member.isfile()", consume)
         self.assertIn("downloaded wheel does not match evidence", consume)
@@ -689,9 +704,72 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn('--certificate-identity "$SIGNER_IDENTITY"', consume)
         self.assertIn('--certificate-oidc-issuer "$OIDC_ISSUER"', consume)
         self.assertIn('"$OCI_REFERENCE"', consume)
-        self.assertIn('--no-index --no-deps "$WHEEL_PATH"', consume)
-        self.assertIn('"$NPM_TARBALL_PATH"', consume)
+        self.assertIn('name: task008-verified-execution-${{ github.run_id }}', consume)
+        self.assertIn('path: ${{ runner.temp }}/task008-verified-execution', consume)
+        self.assertIn("if-no-files-found: error", consume)
+        self.assertIn("retention-days: 1", consume)
+        self.assertIn("include-hidden-files: false", consume)
+        self.assertIn('"verified-execution-manifest.json"', consume)
+        self.assertIn("verified execution handoff is not exactly three files", consume)
+        self.assertNotIn("omnilyzer_supply_chain_spike as p", consume)
+        self.assertNotIn('import { report } from "@omnilyzer/supply-chain-spike"', consume)
+        self.assertNotRegex(consume, r"(?m)^\s*(?:\S+/)?python\S*.*-m pip install\b")
+        self.assertNotRegex(consume, r"(?m)^\s*npm install\b")
         self.assertNotRegex(consume, r"(?m)^\s*docker run(?:\s|$)")
+
+    def test_execute_verified_job_is_unprivileged_local_execution_only(self) -> None:
+        execute = self.job(self.consume, "execute-verified")
+        permissions = execute.split("    permissions:", 1)[1].split(
+            "    runs-on:", 1
+        )[0]
+        self.assertEqual(permissions.strip(), "{}")
+        self.assertIn("- gate", execute)
+        self.assertIn("- consume", execute)
+        self.assertIn("if: needs.gate.outputs.mode == 'release'", execute)
+        self.assertIn(
+            "uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+            execute,
+        )
+        self.assertIn("name: task008-verified-execution-${{ github.run_id }}", execute)
+        self.assertNotIn("github-token:", execute)
+        self.assertIn("verified execution handoff does not contain exactly three files", execute)
+        self.assertIn('set(manifest) != {"release_version", "wheel", "npm"}', execute)
+        self.assertIn('r"[0-9]+\\.[0-9]+\\.[0-9]+"', execute)
+        self.assertIn("hashlib.sha256(path.read_bytes()).hexdigest()", execute)
+        self.assertIn('--no-index --no-deps "$WHEEL_PATH"', execute)
+        self.assertIn("npm install --prefix", execute)
+        self.assertIn("--ignore-scripts --no-audit --no-fund", execute)
+        self.assertIn("omnilyzer_supply_chain_spike as p", execute)
+        self.assertIn('import { report } from "@omnilyzer/supply-chain-spike"', execute)
+        for prohibited in (
+            "id-token: write",
+            "actions/checkout",
+            "cloudsmith-io/",
+            "CLOUDSMITH_API_KEY",
+            "cloudsmith ",
+            "cosign",
+            "docker",
+            "PIP_INDEX_URL",
+            "pip download",
+            "npm pack",
+            "registry=",
+        ):
+            self.assertNotIn(prohibited, execute)
+        self.assertEqual(self.consume.count("omnilyzer_supply_chain_spike as p"), 1)
+        self.assertEqual(
+            self.consume.count('import { report } from "@omnilyzer/supply-chain-spike"'),
+            1,
+        )
+
+    def test_consumer_validates_provenance_invocation_and_empty_internal_parameters(self) -> None:
+        consume = self.job(self.consume, "consume")
+        self.assertIn('definition.get("internalParameters") != {}', consume)
+        self.assertIn('f\'{github["run_id"]}/attempts/{github["run_attempt"]}\'', consume)
+        self.assertIn(
+            'run_details.get("metadata") != {"invocationId": expected_invocation}',
+            consume,
+        )
+        self.assertIn("provenance invocation does not match signed run metadata", consume)
 
     def test_release_publisher_verifies_handoff_before_oidc_without_rebuilding_packages(self) -> None:
         publish = self.job(self.publish, "publish")
@@ -779,7 +857,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                 for line in workflow.splitlines()
                 if line.strip().startswith("uses: ")
             ]
-            expected_count = 10 if workflow is self.publish else 7
+            expected_count = 10 if workflow is self.publish else 11
             self.assertEqual(len(uses_lines), expected_count)
             for use in uses_lines:
                 action, revision = use.split("@", 1)

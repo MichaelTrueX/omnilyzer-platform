@@ -231,8 +231,7 @@ jobs:
             cloudsmith list packages omnilyzer/platform-spike \
               --query "format:generic AND filename:${filename} AND version:${RELEASE_VERSION}" \
               --output-format json > "$listing"
-            local cdn_url
-            cdn_url="$(python - "$listing" "$filename" "$filepath" "$RELEASE_VERSION" <<'PY'
+            python - "$listing" "$filename" "$filepath" "$RELEASE_VERSION" <<'PY'
           import json
           from pathlib import Path
           import sys
@@ -250,15 +249,11 @@ jobs:
           ]
           if len(matches) != 1:
               raise SystemExit("expected exactly one versioned evidence package")
-          url = matches[0].get("cdn_url")
-          if not isinstance(url, str) or not url.startswith("https://"):
-              raise SystemExit("evidence package has no HTTPS cdn_url")
-          print(url)
           PY
-            )"
-            curl --fail --silent --show-error --location \
+            generic_url="https://generic.cloudsmith.io/omnilyzer/platform-spike/${filepath}"
+            curl --fail --silent --show-error \
               --user "token:${CLOUDSMITH_API_KEY}" \
-              --output "$evidence_download/$filename" "$cdn_url"
+              --output "$evidence_download/$filename" "$generic_url"
           }
           download_generic "$archive_name"
           download_generic "$bundle_name"
@@ -439,9 +434,18 @@ jobs:
               "digest": {"gitCommit": source_sha},
           }]:
               raise SystemExit("provenance Git dependency does not match publisher source")
-          builder = provenance.get("predicate", {}).get("runDetails", {}).get("builder", {})
+          if definition.get("internalParameters") != {}:
+              raise SystemExit("provenance internal parameters must be empty")
+          run_details = provenance.get("predicate", {}).get("runDetails", {})
+          builder = run_details.get("builder", {})
           if builder.get("id") != "https://github.com/actions/runner/github-hosted":
               raise SystemExit("unexpected provenance builder")
+          expected_invocation = (
+              "https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/"
+              f'{github["run_id"]}/attempts/{github["run_attempt"]}'
+          )
+          if run_details.get("metadata") != {"invocationId": expected_invocation}:
+              raise SystemExit("provenance invocation does not match signed run metadata")
           PY
 
       - name: Verify all release signatures before code execution
@@ -465,6 +469,158 @@ jobs:
             --certificate-identity "$SIGNER_IDENTITY" \
             --certificate-oidc-issuer "$OIDC_ISSUER" \
             "$OCI_REFERENCE"
+
+      - name: Create exact verified execution handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          handoff_dir="$RUNNER_TEMP/task008-verified-execution"
+          mkdir "$handoff_dir"
+          wheel_filename="$(basename "$WHEEL_PATH")"
+          npm_filename="$(basename "$NPM_TARBALL_PATH")"
+          cp -- "$WHEEL_PATH" "$handoff_dir/$wheel_filename"
+          cp -- "$NPM_TARBALL_PATH" "$handoff_dir/$npm_filename"
+          python - "$handoff_dir" "$RELEASE_VERSION" "$wheel_filename" "$npm_filename" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import re
+          import sys
+
+          root = Path(sys.argv[1])
+          release_version, wheel_filename, npm_filename = sys.argv[2:]
+          if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release_version) is None:
+              raise SystemExit("invalid verified execution release version")
+
+          def record(filename: str) -> dict[str, str]:
+              path = root / filename
+              if path.is_symlink() or not path.is_file():
+                  raise SystemExit(f"verified execution input is not regular: {filename}")
+              return {
+                  "filename": filename,
+                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+              }
+
+          manifest = {
+              "release_version": release_version,
+              "wheel": record(wheel_filename),
+              "npm": record(npm_filename),
+          }
+          (root / "verified-execution-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          if {path.name for path in root.iterdir()} != {
+              wheel_filename, npm_filename, "verified-execution-manifest.json"
+          }:
+              raise SystemExit("verified execution handoff is not exactly three files")
+          PY
+
+      - name: Upload verified execution handoff after all verification
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: task008-verified-execution-${{ github.run_id }}
+          path: ${{ runner.temp }}/task008-verified-execution
+          if-no-files-found: error
+          retention-days: 1
+          include-hidden-files: false
+
+      - name: Record verified immutable release
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'Cryptographically verified OCI digest: `%s`\n' \
+            "$OCI_REFERENCE" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log out from Cloudsmith Docker registry
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/task008-docker-login" ]]; then
+            docker logout docker.cloudsmith.io
+          fi
+
+  execute-verified:
+    needs:
+      - gate
+      - consume
+    if: needs.gate.outputs.mode == 'release'
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Set up Python
+        # actions/setup-python v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.20.0'
+
+      - name: Download same-run verified execution handoff
+        # actions/download-artifact v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: task008-verified-execution-${{ github.run_id }}
+          path: ${{ runner.temp }}/task008-verified-execution
+
+      - name: Validate exact verified execution handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          handoff_dir="$RUNNER_TEMP/task008-verified-execution"
+          python - "$handoff_dir" "$GITHUB_ENV" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import re
+          import sys
+
+          root = Path(sys.argv[1])
+          environment_path = Path(sys.argv[2])
+          manifest_path = root / "verified-execution-manifest.json"
+          if manifest_path.is_symlink() or not manifest_path.is_file():
+              raise SystemExit("verified execution manifest is not a regular file")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          if set(manifest) != {"release_version", "wheel", "npm"}:
+              raise SystemExit("verified execution manifest has unexpected fields")
+          release_version = manifest["release_version"]
+          if not isinstance(release_version, str) or re.fullmatch(
+              r"[0-9]+\.[0-9]+\.[0-9]+", release_version
+          ) is None:
+              raise SystemExit("invalid verified execution release version")
+          expected = {
+              "wheel": f"omnilyzer_supply_chain_spike-{release_version}-py3-none-any.whl",
+              "npm": f"omnilyzer-supply-chain-spike-{release_version}.tgz",
+          }
+          expected_files = {"verified-execution-manifest.json", *expected.values()}
+          actual_files = {path.name for path in root.iterdir()}
+          if actual_files != expected_files:
+              raise SystemExit("verified execution handoff does not contain exactly three files")
+          verified = {}
+          for kind, filename in expected.items():
+              record = manifest[kind]
+              if not isinstance(record, dict) or set(record) != {"filename", "sha256"}:
+                  raise SystemExit(f"invalid verified {kind} record")
+              if record["filename"] != filename or re.fullmatch(
+                  r"[0-9a-f]{64}", record["sha256"]
+              ) is None:
+                  raise SystemExit(f"invalid verified {kind} identity")
+              path = root / filename
+              if path.is_symlink() or not path.is_file():
+                  raise SystemExit(f"verified {kind} is not a regular file")
+              if hashlib.sha256(path.read_bytes()).hexdigest() != record["sha256"]:
+                  raise SystemExit(f"verified {kind} checksum mismatch")
+              verified[kind] = path
+          with environment_path.open("a", encoding="utf-8") as environment:
+              environment.write(f"RELEASE_VERSION={release_version}\n")
+              environment.write(f"WHEEL_PATH={verified['wheel']}\n")
+              environment.write(f"NPM_TARBALL_PATH={verified['npm']}\n")
+          PY
 
       - name: Install and execute verified local Python wheel
         shell: bash
@@ -491,21 +647,6 @@ jobs:
             node --input-type=module -e \
               'import { report } from "@omnilyzer/supply-chain-spike"; if (report() !== process.env.RELEASE_VERSION) process.exit(1)'
           )
-
-      - name: Record verified immutable release
-        shell: bash
-        run: |
-          set -euo pipefail
-          printf 'Cryptographically verified OCI digest: `%s`\n' \
-            "$OCI_REFERENCE" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Log out from Cloudsmith Docker registry
-        if: ${{ always() }}
-        shell: bash
-        run: |
-          if [[ -f "$RUNNER_TEMP/task008-docker-login" ]]; then
-            docker logout docker.cloudsmith.io
-          fi
 
   consumer-permission-probe:
     needs: gate
