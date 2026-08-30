@@ -1,1 +1,1 @@
-task008b-publisher-permission-probe-v1
+task008b-publisher-permission-probe-v2
