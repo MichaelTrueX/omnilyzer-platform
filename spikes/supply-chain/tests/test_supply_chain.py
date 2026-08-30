@@ -141,12 +141,18 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(publish_trigger.read_text(encoding="utf-8"), "0.8.1\n")
         consume_trigger = SPIKE_ROOT / "control/consume.trigger"
         self.assertEqual(consume_trigger.read_text(encoding="utf-8"), "0.8.1\n")
-        for absent_trigger in (
-            SPIKE_ROOT / "control/publisher-permissions.trigger",
-            SPIKE_ROOT / "control/consumer-permissions.trigger",
-        ):
-            with self.subTest(trigger=absent_trigger):
-                self.assertFalse(absent_trigger.exists())
+        self.assertEqual(
+            (SPIKE_ROOT / "control/publisher-permissions.trigger").read_text(
+                encoding="utf-8"
+            ),
+            "task008b-publisher-permission-probe-v1\n",
+        )
+        self.assertEqual(
+            (SPIKE_ROOT / "control/consumer-permissions.trigger").read_text(
+                encoding="utf-8"
+            ),
+            "task008b-consumer-permission-probe-v1\n",
+        )
 
     def test_publish_trigger_accepts_only_one_strict_version_plus_newline(self) -> None:
         self.assertIsNotNone(TRIGGER_VERSION_PATTERN.fullmatch("0.8.1\n"))
@@ -240,8 +246,10 @@ class WorkflowPolicyTests(unittest.TestCase):
                 self.assertIn('"${#changed_paths[@]}" -eq 1', gate)
                 self.assertIn(f'"{release_trigger}"', gate)
                 self.assertIn(f"$'M\\t{release_trigger}'", gate)
+                self.assertNotIn(f"$'A\\t{release_trigger}'", gate)
                 self.assertIn(f'"{permission_trigger}"', gate)
                 self.assertIn(f"$'A\\t{permission_trigger}'", gate)
+                self.assertIn(f"$'M\\t{permission_trigger}'", gate)
                 self.assertNotIn("github.event.head_commit", gate)
                 self.assertNotIn("cloudsmith", gate.lower())
                 self.assertIn("mode=release", gate)
@@ -337,6 +345,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         probe = self.job(self.publish, "publisher-permission-probe")
         self.assertIn("oidc-service-slug: gha-publisher-u76y", probe)
         self.assertIn('probe_filename="task008b-publisher-${GITHUB_RUN_ID}.txt"', probe)
+        self.assertIn('probe_version="0.0.${GITHUB_RUN_ID}"', probe)
         self.assertIn(
             'probe_filepath="task008b/permissions/publisher/${GITHUB_RUN_ID}/${probe_filename}"',
             probe,
@@ -344,6 +353,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn('probe_file="$RUNNER_TEMP/$probe_filename"', probe)
         self.assertNotIn("--name", probe)
         self.assertEqual(probe.count("cloudsmith push generic"), 2)
+        self.assertEqual(probe.count('--version "$probe_version"'), 2)
         first_upload = probe.index("cloudsmith push generic")
         denial_handling = probe.index("set +e", first_upload)
         replacement = probe.index("--republish")
@@ -352,11 +362,13 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("for attempt in 1 2 3 4 5", probe)
         self.assertIn("sleep 3", probe)
         self.assertIn(
-            '--query "format:generic AND filename:${probe_filename}"', probe
+            '--query "format:generic AND filename:${probe_filename} AND version:${probe_version}"',
+            probe,
         )
         self.assertIn('package.get("format") == "generic"', probe)
         self.assertIn('package.get("filename") == sys.argv[2]', probe)
         self.assertIn('package.get("filepath") == sys.argv[3]', probe)
+        self.assertIn('package.get("version") == sys.argv[4]', probe)
         self.assertIn("len(matches) != 1", probe)
         self.assertIn('matches[0].get("slug_perm")', probe)
         self.assertNotIn('get("slug")', probe)
@@ -366,10 +378,20 @@ class WorkflowPolicyTests(unittest.TestCase):
             '"$original_cloudsmith_sha256" != "$original_local_sha256"', probe
         )
         self.assertIn("replace_status=${PIPESTATUS[0]}", probe)
-        self.assertIn("Publisher unexpectedly replaced", probe)
-        self.assertIn(
-            'require_authorization_denial "$replace_log" "publisher replacement"',
-            probe,
+        self.assertIn('replace_result="$(classify_authorization_denial "$replace_log")"', probe)
+        self.assertIn("replace_result=FAIL", probe)
+        replace_success_block = probe.split(
+            'if [[ "$replace_status" -eq 0 ]]; then', 1
+        )[1].split("          fi", 1)[0]
+        self.assertIn("SECURITY FAILURE", replace_success_block)
+        self.assertIn("exit 1", replace_success_block)
+        replace_inconclusive_block = probe.split(
+            'if [[ "$replace_result" == "INCONCLUSIVE" ]]; then', 1
+        )[1].split("          fi", 1)[0]
+        self.assertNotIn("exit 1", replace_inconclusive_block)
+        self.assertLess(
+            probe.index('replace_result="$(classify_authorization_denial'),
+            probe.index("cloudsmith delete"),
         )
         self.assertIn("replacement_slug_perm", probe)
         self.assertIn("replacement_sha256", probe)
@@ -379,13 +401,34 @@ class WorkflowPolicyTests(unittest.TestCase):
             '"$CLOUDSMITH_REPOSITORY/$original_slug_perm" --yes', probe
         )
         self.assertIn("delete_status=${PIPESTATUS[0]}", probe)
-        self.assertIn("Publisher unexpectedly deleted", probe)
-        self.assertIn(
-            'require_authorization_denial "$delete_log" "publisher delete"', probe
-        )
+        self.assertIn("delete_result=FAIL", probe)
+        self.assertIn('delete_result="$(classify_authorization_denial "$delete_log")"', probe)
+        delete_success_block = probe.split(
+            'if [[ "$delete_status" -eq 0 ]]; then', 1
+        )[1].split("          fi", 1)[0]
+        self.assertIn("SECURITY FAILURE", delete_success_block)
+        self.assertIn("exit 1", delete_success_block)
         self.assertIn("delete_slug_perm", probe)
         self.assertIn("delete_sha256", probe)
         self.assertIn('"$delete_sha256" != "$original_local_sha256"', probe)
+        self.assertIn('[[ "$replace_result" != "PASS" ]]', probe)
+        self.assertIn('[[ "$delete_result" != "PASS" ]]', probe)
+        self.assertIn(
+            "replace_result=$replace_result delete_result=$delete_result", probe
+        )
+        summary = probe.split("          write_probe_summary() {", 1)[1].split(
+            "          }", 1
+        )[0]
+        for field in (
+            "Run ID",
+            "Probe version",
+            "Create: PASS",
+            "Replace: $replace_result",
+            "Delete: $delete_result",
+            "Original package remained unchanged: $original_unchanged",
+        ):
+            self.assertIn(field, summary)
+        self.assertNotIn("CLOUDSMITH_API_KEY", summary)
         self.assertNotIn("0.8.1", probe)
         for release_target in (
             "omnilyzer-supply-chain-spike",
