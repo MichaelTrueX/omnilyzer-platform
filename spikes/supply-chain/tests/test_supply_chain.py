@@ -138,9 +138,9 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertTrue(PUBLISH_WORKFLOW.is_file())
         self.assertTrue(CONSUME_WORKFLOW.is_file())
         publish_trigger = SPIKE_ROOT / "control/publish.trigger"
-        self.assertEqual(publish_trigger.read_text(encoding="utf-8"), "0.8.2\n")
+        self.assertEqual(publish_trigger.read_text(encoding="utf-8"), "0.8.3\n")
         consume_trigger = SPIKE_ROOT / "control/consume.trigger"
-        self.assertEqual(consume_trigger.read_text(encoding="utf-8"), "0.8.2\n")
+        self.assertEqual(consume_trigger.read_text(encoding="utf-8"), "0.8.3\n")
         self.assertEqual(
             (SPIKE_ROOT / "control/publisher-permissions.trigger").read_text(
                 encoding="utf-8"
