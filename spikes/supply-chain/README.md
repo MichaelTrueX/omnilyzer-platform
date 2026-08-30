@@ -25,7 +25,7 @@ The candidate private multi-format repository is `omnilyzer/platform-spike`. Pub
 - A missing, malformed, substituted, unauthorized, or unexpectedly mutable artifact causes validation to fail closed.
 - Local preparation and policy tests succeed without Cloudsmith or network access.
 
-The corrected publisher has now passed live validation, but until all three formats are independently consumed, the overall Task 008A outcome remains **INCONCLUSIVE / PUBLISHER PASS, CONSUMER PENDING**.
+**TASK 008A LIVE VALIDATION: PASS.** The publisher and the independently authenticated read-only consumer completed the exact-version, multi-format round trip.
 
 ## Security checks
 
@@ -42,36 +42,41 @@ The provider is `https://token.actions.githubusercontent.com`. The publisher rem
 
 The committed fixture version metadata uses only the harmless placeholder `0.0.0`. The scratch OCI fixture also contains one harmless synthetic text artifact so its image has a real filesystem layer while remaining non-executable and base-image-free. `scripts/prepare_release.py` accepts a strict release version and a new absolute output directory outside the spike source, copies all mutable inputs there, coordinates the Python, npm, and OCI versions, and records expected artifact names. Standard-library unit tests verify valid coordinated versions, malformed inputs, unsafe output use, the layered scratch-image contract, unchanged committed fixtures, exact workflow triggers and identities, action pins, credential policy, and ignored generated paths.
 
-The temporary feature-branch push trigger paths are used because GitHub cannot dispatch a new `workflow_dispatch` workflow until that workflow exists on the default branch. Publication is isolated to changes to `control/publish.trigger`; consumption is isolated to `control/consume.trigger`. The publisher trigger contains `0.8.1`; the consumer trigger remains absent. Production workflows should use protected release refs and/or protected environments rather than this temporary spike branch.
-
-The remaining live sequence is:
-
-1. Commit and push this documentation and test-state update without changing either trigger, so it triggers no workflow.
-2. In a separate reviewed change, add `consume.trigger` containing exactly `0.8.1` plus a newline.
-3. Push that change to trigger the read-only consumer.
-4. Review independent Python, npm, and OCI retrieval.
-5. Only then conclude Task 008A.
+The temporary feature-branch push trigger paths are used because GitHub cannot dispatch a new `workflow_dispatch` workflow until that workflow exists on the default branch. Publication is isolated to changes to `control/publish.trigger`; consumption is isolated to `control/consume.trigger`. Both triggers contain `0.8.1`, and both live runs have completed. Production workflows should use protected release refs and/or protected environments rather than this temporary spike branch.
 
 ## Findings
 
-**PUBLISHER LIVE VALIDATION: PASS.** The successful publisher retry ran from commit `f844573eb7c48e005ef4bc40e730a5b4982a3c40` in GitHub Actions run `33287331610` for release `0.8.1`.
+**TASK 008A LIVE VALIDATION: PASS.**
 
-Observed passes:
+The successful publisher retry ran from commit `f844573eb7c48e005ef4bc40e730a5b4982a3c40` in GitHub Actions run `33287331610` for release `0.8.1`, authenticated as `gha-publisher-u76y`.
 
-- The exact feature-branch/path publisher trigger worked.
-- The GitHub OIDC to Cloudsmith exchange worked.
-- The exact authenticated publisher identity `gha-publisher-u76y` was observed.
-- Cloudsmith CLI `1.26.0` was installed and verified.
+Publisher passes:
+
+- GitHub OIDC authentication succeeded.
 - Python `0.8.1` publication succeeded.
 - npm `0.8.1` publication succeeded.
 - Docker registry authentication succeeded.
 - OCI `0.8.1` publication succeeded.
 - The immutable OCI digest resolved to `sha256:614acfc6b461bbe279b7848f78d9fa0623bfabda9aa146864e2ec5d67b66a4ce`.
-- The release record succeeded.
-- Credentials remained masked in GitHub logs.
+- The release summary succeeded.
+- Credentials remained masked.
 - Docker logout cleanup succeeded.
 
-The overall Task 008A result remains **INCONCLUSIVE / PUBLISHER PASS, CONSUMER PENDING** because the separate read-only consumer has not yet run.
+The independent consumer ran from commit `1624b2ecfaa8a5a1822cde2c6227d09152aca987` in GitHub Actions run `33287727843` for release `0.8.1`, authenticated as `gha-consumer`.
+
+Consumer passes:
+
+- GitHub OIDC authentication succeeded.
+- Exact Python `0.8.1` was downloaded from Cloudsmith and its package report/version assertion passed.
+- Exact npm `0.8.1` was downloaded from Cloudsmith and its package report/version assertion passed.
+- Docker registry authentication succeeded.
+- Exact OCI `0.8.1` was pulled from Cloudsmith and its version label assertion passed.
+- Immutable OCI digest validation succeeded.
+- Docker logout cleanup succeeded.
+
+The consumed OCI digest was `sha256:614acfc6b461bbe279b7848f78d9fa0623bfabda9aa146864e2ec5d67b66a4ce`, exactly matching the publisher digest.
+
+Task 008A validates private multi-format Cloudsmith hosting; Python, npm, and OCI publication; GitHub Actions OIDC; separate publisher and consumer identities; exact-version consumption; an immutable OCI digest round trip; and the absence of long-lived Cloudsmith credentials in GitHub Actions.
 
 Task 008B still must validate:
 
@@ -88,4 +93,4 @@ Task 008B still must validate:
 
 ## Recommendation
 
-**INCONCLUSIVE / PUBLISHER PASS, CONSUMER PENDING.** Retain Cloudsmith as a candidate only. Run independent consumer validation for release `0.8.1` from the constrained GitHub feature-branch workflow. Cloudsmith is not yet an **ACCEPTED DIRECTION**; do not write ADR 0007 or change the package-registry/trusted-publishing decision from **TO VALIDATE** until complete live evidence and the remaining Task 008B controls have been reviewed.
+Task 008A passed. Retain Cloudsmith as a validated candidate, not yet an **ACCEPTED DIRECTION**, pending Task 008B. Do not write ADR 0007 or change the package-registry/trusted-publishing decision from **TO VALIDATE** until Task 008B has validated publisher inability to replace or delete, consumer inability to publish, Sigstore/Cosign signatures, provenance, SBOMs, vulnerability scanning and policy, tamper/substitution rejection, retention and rollback, provider operations/cost/disaster recovery, and build/publish job isolation.
