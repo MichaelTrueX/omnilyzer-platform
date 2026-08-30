@@ -78,6 +78,27 @@ The consumed OCI digest was `sha256:614acfc6b461bbe279b7848f78d9fa0623bfabda9aa1
 
 Task 008A validates private multi-format Cloudsmith hosting; Python, npm, and OCI publication; GitHub Actions OIDC; separate publisher and consumer identities; exact-version consumption; an immutable OCI digest round trip; and the absence of long-lived Cloudsmith credentials in GitHub Actions.
 
+## Task 008B permission boundaries
+
+**PHASE 1 PRE-LIVE / TO VALIDATE.** The existing publisher and consumer workflows now contain isolated negative-permission probe jobs, but neither permission trigger exists and no live probe has run.
+
+Planned negative evidence:
+
+- the consumer `Read` identity cannot upload;
+- the publisher `Write` identity can create;
+- the publisher `Write` identity cannot republish or replace;
+- the publisher `Write` identity cannot delete;
+- all probes use disposable Generic artifacts under unique `GITHUB_RUN_ID`-derived filepaths and filenames;
+- the validated Python, npm, and OCI release `0.8.1` is never mutated.
+
+Cloudsmith Generic identity is the unique filepath and filename, not a separate package name. The consumer probe attempts only its unique sacrificial Generic upload, requires both a nonzero exit and recognizable authorization-denial output, then performs an authenticated JSON list and proves that no exact format/filename/filepath match was created. Any failure without explicit denial evidence is inconclusive and fails closed.
+
+The publisher probe first creates one sacrificial Generic artifact and uses a small bounded list retry while Cloudsmith makes it visible. It requires exactly one format/filename/filepath match, a valid non-empty `slug_perm`, and a Cloudsmith SHA-256 equal to the original local file SHA-256. It then changes the local content and requires explicit authorization-denial evidence from `--republish`; the following read must show the same `slug_perm`, filepath, and original checksum. Deletion targets only that validated `slug_perm`, requires explicit authorization-denial evidence, and is followed by the same exact state and checksum verification. `slug_perm` is the sole package identifier used for the destructive-operation probe. Sacrificial publisher artifacts may remain in `omnilyzer/platform-spike` as evidence.
+
+Each workflow starts with a pre-authentication gate that has only `contents: read`, has no OIDC authority, checks out full history without persisted credentials, validates `github.event.before` and `github.sha`, and classifies the complete net `before`-to-`after` Git diff. Only a one-file modification of the existing release trigger emits `release`; only a one-file addition of the respective permission trigger emits `permission`; all mixed, unrelated, removed, renamed, type-changed, or ambiguous states emit `none` and cannot enter a Cloudsmith job. The release and permission jobs alone receive job-scoped `id-token: write`. For the controlled live tests, each trigger commit must contain only its respective permission trigger file. The existing release triggers remain `0.8.1`.
+
+Cloudsmith repository action thresholds and Self Privileges must be established through observed create, replace, delete, upload, and read behavior rather than inferred from `Read`, `Write`, or other labels. Cloudsmith remains a validated candidate, not an **ACCEPTED DIRECTION**.
+
 Task 008B still must validate:
 
 - separation of build and publisher jobs so build execution does not receive the job-scoped `id-token: write` permission;
