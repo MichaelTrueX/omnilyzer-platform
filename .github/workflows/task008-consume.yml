@@ -10,6 +10,7 @@ on:
     paths:
       - spikes/supply-chain/control/consume.trigger
       - spikes/supply-chain/control/consumer-permissions.trigger
+      - spikes/supply-chain/control/tamper-negative.trigger
 
 permissions: {}
 
@@ -75,6 +76,11 @@ jobs:
                   [[ "$changed_status" == \
                      $'M\tspikes/supply-chain/control/consumer-permissions.trigger' ]]); then
               mode=permission
+            elif [[ "${changed_paths[0]}" == \
+                    "spikes/supply-chain/control/tamper-negative.trigger" ]] && \
+                 [[ "$changed_status" == \
+                    $'M\tspikes/supply-chain/control/tamper-negative.trigger' ]]; then
+              mode=tamper
             fi
           fi
           printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
@@ -758,6 +764,400 @@ jobs:
             node --input-type=module -e \
               'import { report } from "@omnilyzer/supply-chain-spike"; if (report() !== process.env.RELEASE_VERSION) process.exit(1)'
           )
+
+  tamper-negative-probe:
+    needs: gate
+    if: needs.gate.outputs.mode == 'tamper'
+    permissions:
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_VERSION: 0.8.4
+      SIGNER_IDENTITY: https://github.com/MichaelTrueX/omnilyzer-platform/.github/workflows/task008-publish.yml@refs/heads/spike/008-supply-chain
+      OIDC_ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - name: Set up Python without repository checkout
+        # actions/setup-python v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node without repository checkout
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.20.0'
+
+      - name: Authenticate short-lived read-only Cloudsmith consumer
+        # cloudsmith-io/cloudsmith-cli-action v3.1.0
+        uses: cloudsmith-io/cloudsmith-cli-action@ad73fafb92e3e29a5166c529464c2df7658a608e
+        with:
+          oidc-namespace: omnilyzer
+          oidc-service-slug: gha-consumer
+          cli-version: '1.26.0'
+          verify-auth: true
+          export-auth-token: true
+
+      - name: Install exact Cosign verifier
+        # sigstore/cosign-installer v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.1.2
+
+      - name: Verify exact Cosign installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign_version="$({ cosign version; } 2>&1)"
+          python -c \
+            'import re, sys; raise SystemExit(0 if re.search(r"\bv?3\.1\.2\b", sys.stdin.read()) else "unexpected Cosign version")' \
+            <<< "$cosign_version"
+
+      - name: Download legitimate release artifacts without installing or executing
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/task008b-negative-source"
+          mkdir "$source_dir"
+          export PIP_INDEX_URL="https://token:${CLOUDSMITH_API_KEY}@dl.cloudsmith.io/basic/omnilyzer/platform-spike/python/simple/"
+          python -m pip download --disable-pip-version-check \
+            --only-binary=:all: --no-deps --dest "$source_dir" \
+            "omnilyzer-supply-chain-spike==${RELEASE_VERSION}"
+          wheel_filename="omnilyzer_supply_chain_spike-${RELEASE_VERSION}-py3-none-any.whl"
+          test -f "$source_dir/$wheel_filename"
+          test "$(find "$source_dir" -maxdepth 1 -type f -name '*.whl' | wc -l)" -eq 1
+
+          npm_config="$RUNNER_TEMP/task008b-negative-npmrc"
+          printf '%s\n' \
+            '@omnilyzer:registry=https://npm.cloudsmith.io/omnilyzer/platform-spike/' \
+            '//npm.cloudsmith.io/omnilyzer/platform-spike/:_authToken=${CLOUDSMITH_API_KEY}' \
+            > "$npm_config"
+          NPM_CONFIG_USERCONFIG="$npm_config" npm pack \
+            --ignore-scripts \
+            --pack-destination "$source_dir" \
+            "@omnilyzer/supply-chain-spike@${RELEASE_VERSION}"
+          npm_filename="omnilyzer-supply-chain-spike-${RELEASE_VERSION}.tgz"
+          test -f "$source_dir/$npm_filename"
+          test "$(find "$source_dir" -maxdepth 1 -type f -name '*.tgz' | wc -l)" -eq 1
+          printf 'NEGATIVE_SOURCE_DIR=%s\n' "$source_dir" >> "$GITHUB_ENV"
+          printf 'WHEEL_PATH=%s\n' "$source_dir/$wheel_filename" >> "$GITHUB_ENV"
+          printf 'NPM_TARBALL_PATH=%s\n' "$source_dir/$npm_filename" >> "$GITHUB_ENV"
+
+      - name: Download legitimate signed evidence archive and external bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_download="$RUNNER_TEMP/task008b-negative-evidence-download"
+          mkdir "$evidence_download"
+          archive_name="omnilyzer-supply-chain-spike-${RELEASE_VERSION}-evidence.tar.gz"
+          bundle_name="${archive_name}.sigstore.json"
+          download_generic() {
+            local filename="$1"
+            local filepath="task008/evidence/${RELEASE_VERSION}/${filename}"
+            local listing="$RUNNER_TEMP/task008b-negative-${filename}.json"
+            cloudsmith list packages omnilyzer/platform-spike \
+              --query "format:generic AND filename:${filename} AND version:${RELEASE_VERSION}" \
+              --output-format json > "$listing"
+            python - "$listing" "$filename" "$filepath" "$RELEASE_VERSION" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          records = payload.get("data")
+          if not isinstance(records, list):
+              raise SystemExit("Cloudsmith package list has no data list")
+          matches = [
+              item for item in records
+              if item.get("format") == "generic"
+              and item.get("filename") == sys.argv[2]
+              and item.get("filepath") == sys.argv[3]
+              and item.get("version") == sys.argv[4]
+          ]
+          if len(matches) != 1:
+              raise SystemExit("expected exactly one versioned evidence package")
+          PY
+            generic_url="https://generic.cloudsmith.io/omnilyzer/platform-spike/${filepath}"
+            curl --fail --silent --show-error \
+              --location \
+              --proto '=https' \
+              --proto-redir '=https' \
+              --max-redirs 3 \
+              --user "token:${CLOUDSMITH_API_KEY}" \
+              --output "$evidence_download/$filename" "$generic_url"
+          }
+          download_generic "$archive_name"
+          download_generic "$bundle_name"
+          printf 'EVIDENCE_ARCHIVE=%s\n' "$evidence_download/$archive_name" >> "$GITHUB_ENV"
+          printf 'EVIDENCE_ARCHIVE_BUNDLE=%s\n' "$evidence_download/$bundle_name" >> "$GITHUB_ENV"
+
+      - name: Prove tampered signed evidence archive is rejected before extraction
+        shell: bash
+        run: |
+          set -euo pipefail
+          tampered_archive="$RUNNER_TEMP/task008b-tampered-evidence.tar.gz"
+          tampered_destination="$RUNNER_TEMP/task008b-tampered-evidence-extraction"
+          cp -- "$EVIDENCE_ARCHIVE" "$tampered_archive"
+          printf 'task008b-archive-tamper' >> "$tampered_archive"
+          set +e
+          cosign verify-blob \
+            --bundle "$EVIDENCE_ARCHIVE_BUNDLE" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$tampered_archive" \
+            > "$RUNNER_TEMP/task008b-tampered-archive-verification.log" 2>&1
+          verification_status=$?
+          set -e
+          if [[ "$verification_status" -eq 0 ]]; then
+            echo "SECURITY FAILURE: tampered evidence archive verified" >&2
+            exit 1
+          fi
+          if [[ -e "$tampered_destination" ]]; then
+            echo "SECURITY FAILURE: tampered evidence archive was extracted" >&2
+            exit 1
+          fi
+
+      - name: Establish legitimate signed evidence baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign verify-blob \
+            --bundle "$EVIDENCE_ARCHIVE_BUNDLE" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$EVIDENCE_ARCHIVE"
+          evidence_dir="$RUNNER_TEMP/task008b-negative-legitimate-evidence"
+          mkdir "$evidence_dir"
+          python - "$EVIDENCE_ARCHIVE" "$evidence_dir" <<'PY'
+          from pathlib import Path, PurePosixPath
+          import sys
+          import tarfile
+
+          archive_path, destination = Path(sys.argv[1]), Path(sys.argv[2])
+          expected = {
+              "python-sbom.cdx.json", "npm-sbom.cdx.json", "oci-sbom.cdx.json",
+              "python-vulnerabilities.grype.json", "npm-vulnerabilities.grype.json",
+              "oci-vulnerabilities.grype.json", "grype-db-status.json",
+              "vulnerability-policy-result.json",
+              "release-provenance.json", "evidence-manifest.json",
+              "python-wheel.sigstore.json", "npm-tarball.sigstore.json",
+              "python-sbom.sigstore.json", "npm-sbom.sigstore.json",
+              "oci-sbom.sigstore.json", "release-provenance.sigstore.json",
+              "evidence-manifest.sigstore.json",
+          }
+          with tarfile.open(archive_path, mode="r:gz") as archive:
+              members = archive.getmembers()
+              if len(members) != len(expected) or {member.name for member in members} != expected:
+                  raise SystemExit("legitimate evidence archive does not match exact allowlist")
+              for member in members:
+                  path = PurePosixPath(member.name)
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit("legitimate evidence archive contains an unsafe path")
+                  if not member.isfile() or member.issym() or member.islnk():
+                      raise SystemExit("legitimate evidence archive contains a non-regular entry")
+              archive.extractall(destination, filter="data")
+          PY
+          cosign verify-blob \
+            --bundle "$evidence_dir/evidence-manifest.sigstore.json" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$evidence_dir/evidence-manifest.json"
+          python - "$evidence_dir/evidence-manifest.json" "$WHEEL_PATH" "$NPM_TARBALL_PATH" "$RELEASE_VERSION" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+
+          manifest_path, wheel, npm_tarball = map(Path, sys.argv[1:4])
+          release_version = sys.argv[4]
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          if manifest.get("release_version") != release_version:
+              raise SystemExit("legitimate signed evidence release mismatch")
+          artifacts = manifest.get("artifacts")
+          expected = {
+              "wheel": {"filename": wheel.name, "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest()},
+              "npm": {"filename": npm_tarball.name, "sha256": hashlib.sha256(npm_tarball.read_bytes()).hexdigest()},
+          }
+          if not isinstance(artifacts, dict) or artifacts.get("wheel") != expected["wheel"] or artifacts.get("npm") != expected["npm"]:
+              raise SystemExit("legitimate artifacts do not match signed evidence")
+          PY
+          cosign verify-blob \
+            --bundle "$evidence_dir/python-wheel.sigstore.json" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$WHEEL_PATH"
+          printf 'NEGATIVE_EVIDENCE_DIR=%s\n' "$evidence_dir" >> "$GITHUB_ENV"
+
+      - name: Prove tampered Python artifact is rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+          tampered_wheel="$RUNNER_TEMP/task008b-tampered-python.whl"
+          cp -- "$WHEEL_PATH" "$tampered_wheel"
+          printf 'task008b-wheel-tamper' >> "$tampered_wheel"
+          set +e
+          cosign verify-blob \
+            --bundle "$NEGATIVE_EVIDENCE_DIR/python-wheel.sigstore.json" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$tampered_wheel" \
+            > "$RUNNER_TEMP/task008b-tampered-wheel-verification.log" 2>&1
+          verification_status=$?
+          set -e
+          if [[ "$verification_status" -eq 0 ]]; then
+            echo "SECURITY FAILURE: tampered Python artifact verified" >&2
+            exit 1
+          fi
+          test ! -e "$RUNNER_TEMP/task008b-negative-accepted-handoff"
+
+      - name: Prove signed release metadata rejects version substitution
+        shell: bash
+        run: |
+          set -euo pipefail
+          substituted_request_version=0.8.5
+          set +e
+          python - "$NEGATIVE_EVIDENCE_DIR/evidence-manifest.json" "$substituted_request_version" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if manifest.get("release_version") != sys.argv[2]:
+              raise SystemExit("signed release_version rejects substituted release material")
+          PY
+          substitution_status=$?
+          set -e
+          if [[ "$substitution_status" -eq 0 ]]; then
+            echo "SECURITY FAILURE: different-version material passed release binding" >&2
+            exit 1
+          fi
+          test ! -e "$RUNNER_TEMP/task008b-negative-accepted-handoff"
+
+      - name: Prove mutated verified-execution handoff is rejected before execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_handoff="$RUNNER_TEMP/task008b-negative-candidate-handoff"
+          candidate_environment="$RUNNER_TEMP/task008b-negative-candidate-environment"
+          mkdir "$candidate_handoff"
+          wheel_filename="$(basename "$WHEEL_PATH")"
+          npm_filename="$(basename "$NPM_TARBALL_PATH")"
+          cp -- "$WHEEL_PATH" "$candidate_handoff/$wheel_filename"
+          cp -- "$NPM_TARBALL_PATH" "$candidate_handoff/$npm_filename"
+          python - "$candidate_handoff" "$RELEASE_VERSION" "$wheel_filename" "$npm_filename" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1])
+          release_version, wheel_filename, npm_filename = sys.argv[2:]
+          manifest = {
+              "release_version": release_version,
+              "wheel": {"filename": wheel_filename, "sha256": hashlib.sha256((root / wheel_filename).read_bytes()).hexdigest()},
+              "npm": {"filename": npm_filename, "sha256": hashlib.sha256((root / npm_filename).read_bytes()).hexdigest()},
+          }
+          (root / "verified-execution-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+          python - "$candidate_handoff" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1])
+          manifest = json.loads(
+              (root / "verified-execution-manifest.json").read_text(encoding="utf-8")
+          )
+          expected_files = {
+              "verified-execution-manifest.json",
+              manifest["wheel"]["filename"],
+              manifest["npm"]["filename"],
+          }
+          if {path.name for path in root.iterdir()} != expected_files:
+              raise SystemExit("candidate handoff is not exactly three files")
+          for kind in ("wheel", "npm"):
+              record = manifest[kind]
+              if hashlib.sha256((root / record["filename"]).read_bytes()).hexdigest() != record["sha256"]:
+                  raise SystemExit("candidate handoff is invalid before mutation")
+          PY
+          printf 'task008b-handoff-tamper' >> "$candidate_handoff/$wheel_filename"
+
+          set +e
+          python - "$candidate_handoff" "$candidate_environment" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import re
+          import sys
+
+          root = Path(sys.argv[1])
+          environment_path = Path(sys.argv[2])
+          manifest_path = root / "verified-execution-manifest.json"
+          if manifest_path.is_symlink() or not manifest_path.is_file():
+              raise SystemExit("verified execution manifest is not a regular file")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          if set(manifest) != {"release_version", "wheel", "npm"}:
+              raise SystemExit("verified execution manifest has unexpected fields")
+          release_version = manifest["release_version"]
+          if not isinstance(release_version, str) or re.fullmatch(
+              r"[0-9]+\.[0-9]+\.[0-9]+", release_version
+          ) is None:
+              raise SystemExit("invalid verified execution release version")
+          expected = {
+              "wheel": f"omnilyzer_supply_chain_spike-{release_version}-py3-none-any.whl",
+              "npm": f"omnilyzer-supply-chain-spike-{release_version}.tgz",
+          }
+          expected_files = {"verified-execution-manifest.json", *expected.values()}
+          if {path.name for path in root.iterdir()} != expected_files:
+              raise SystemExit("verified execution handoff does not contain exactly three files")
+          verified = {}
+          for kind, filename in expected.items():
+              record = manifest[kind]
+              if not isinstance(record, dict) or set(record) != {"filename", "sha256"}:
+                  raise SystemExit(f"invalid verified {kind} record")
+              if record["filename"] != filename or re.fullmatch(
+                  r"[0-9a-f]{64}", record["sha256"]
+              ) is None:
+                  raise SystemExit(f"invalid verified {kind} identity")
+              path = root / filename
+              if path.is_symlink() or not path.is_file():
+                  raise SystemExit(f"verified {kind} is not a regular file")
+              if hashlib.sha256(path.read_bytes()).hexdigest() != record["sha256"]:
+                  raise SystemExit(f"verified {kind} checksum mismatch")
+              verified[kind] = path
+          with environment_path.open("a", encoding="utf-8") as environment:
+              environment.write(f"RELEASE_VERSION={release_version}\n")
+              environment.write(f"WHEEL_PATH={verified['wheel']}\n")
+              environment.write(f"NPM_TARBALL_PATH={verified['npm']}\n")
+          PY
+          handoff_status=$?
+          set -e
+          if [[ "$handoff_status" -eq 0 ]]; then
+            echo "SECURITY FAILURE: mutated execution handoff passed validation" >&2
+            exit 1
+          fi
+          if [[ -e "$candidate_environment" ]]; then
+            echo "SECURITY FAILURE: mutated handoff reached the execution environment" >&2
+            exit 1
+          fi
+          test ! -e "$RUNNER_TEMP/task008b-negative-accepted-handoff"
+
+      - name: Record expected negative-validation results
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '## Task 008B Phase 4B negative validation'
+            echo
+            echo '- Tampered Python artifact: rejected'
+            echo '- Tampered signed evidence archive: rejected before extraction'
+            echo '- Different-version substitution: rejected by signed release metadata'
+            echo '- Mutated verified-execution handoff: rejected before execution'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   consumer-permission-probe:
     needs: gate

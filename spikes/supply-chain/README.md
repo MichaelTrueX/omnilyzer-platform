@@ -149,7 +149,7 @@ Python execution used only the local wheel with `pip --no-index --no-deps`; `rep
 
 ## Task 008B vulnerability policy gate
 
-**TASK 008B PHASE 4A — PRE-LIVE / TO VALIDATE.** The proposed release gate installs Grype `0.118.0` only in the non-OIDC build job through the pinned `anchore/scan-action/download-grype` sub-action. It verifies the exact CLI version, explicitly updates the public Grype vulnerability database once, captures sanitized non-secret database identity/status metadata, disables automatic updates for the scans, and scans exactly the three already-built CycloneDX 1.6 SBOMs in explicit `sbom:` input mode. It does not recatalog source, pull an OCI image, or execute release artifacts.
+**TASK 008B PHASE 4A — PASS.** Publisher GitHub Actions run `33294828516` and consumer run `33295062156` validated release `0.8.4`, including immutable OCI digest `sha256:44cdf2855105c824fcad999723ed7cc4f4a0ba276c8b953882413a1c61004967`. The validated release gate installs Grype `0.118.0` only in the non-OIDC build job through the pinned `anchore/scan-action/download-grype` sub-action. It verifies the exact CLI version, explicitly updates the public Grype vulnerability database once, captures sanitized non-secret database identity/status metadata, disables automatic updates for the scans, and scans exactly the three already-built CycloneDX 1.6 SBOMs in explicit `sbom:` input mode. It does not recatalog source, pull an OCI image, or execute release artifacts.
 
 The initial version-controlled policy is:
 
@@ -164,14 +164,19 @@ The standard-library Python evaluator receives the current UTC date explicitly, 
 
 A BLOCK decision returns nonzero inside the build job before handoff-manifest creation and upload. The dependent publisher therefore cannot start, request its OIDC token, authenticate to Cloudsmith, publish artifacts, or sign release evidence. A PASS expands the exact same-run build handoff from seven to twelve files with three Grype JSON reports, sanitized Grype DB status, and the policy result. The handoff records hashes for all five files, Grype `0.118.0`, and the vulnerability-policy SHA-256. The publisher still performs no checkout, build, or scan; its pre-OIDC verifier independently binds the handoff policy SHA to the reviewed hash embedded in the workflow source.
 
-The five vulnerability evidence files are not individually signed. Their hashes are incorporated into the signed evidence manifest, and the files are covered by both the evidence-manifest signature and deterministic evidence-archive signature. The proposed archive allowlist therefore expands from twelve to exactly seventeen files, without including the policy source, Grype binary/database, runner cache, credentials, repository source, package artifacts, or OCI archive.
+The five vulnerability evidence files are not individually signed. Their hashes are incorporated into the signed evidence manifest, and the files are covered by both the evidence-manifest signature and deterministic evidence-archive signature. The archive allowlist contains exactly seventeen files, without including the policy source, Grype binary/database, runner cache, credentials, repository source, package artifacts, or OCI archive.
 
 The OIDC consumer verifies the signed vulnerability report, database-status, and policy-result hashes; scanner version; exact Critical/High blocking policy; PASS decision; policy binding; structurally valid severity counts; and absence of blocking findings before it can create the existing exact three-file execution handoff. It does not rerun Grype. The `execute-verified` job remains `permissions: {}` and receives only the verified wheel, npm tarball, and execution manifest; it receives no scanner, database, or vulnerability evidence.
 
+## Task 008B tamper and substitution negative validation
+
+**TASK 008B PHASE 4B — PRE-LIVE / TO VALIDATE.** A dedicated trigger and `tamper-negative-probe` job are scaffolded independently from the normal release consumer. The probe uses only the existing read-only `gha-consumer` OIDC relationship to retrieve immutable release `0.8.4`; it has no publisher service identity, publishing command, signing operation, Docker operation, checkout, or artifact upload. The normal `consume` and no-OIDC `execute-verified` jobs remain release-only and do not run in tamper mode.
+
+The probe performs four explicit expected-failure validations on temporary local copies: a modified wheel must fail its legitimate blob-signature verification; a modified signed evidence archive must fail against its legitimate external bundle before any extraction; legitimate signed `0.8.4` evidence presented for a different requested release must fail the signed `release_version` binding; and a three-file candidate execution handoff whose wheel is modified after manifest creation must fail checksum validation before any pip or npm execution. Each probe treats unexpected validation success as a security failure. No Phase 4B live result is recorded yet, and the legitimate `0.8.4` registry state is not mutated.
+
 Remaining Task 008B work:
 
-- live validation of the Phase 4A vulnerability/scanning policy;
-- tamper/substitution negative validation;
+- live validation of the Phase 4B tamper/substitution probes;
 - retention and rollback validation;
 - provider operations, cost, and disaster-recovery analysis;
 - the final architecture decision;
@@ -179,4 +184,4 @@ Remaining Task 008B work:
 
 ## Recommendation
 
-Task 008A and Task 008B Phases 1, 2, and 3 passed, with the documented Generic-republish provider caveat. Cloudsmith remains a **VALIDATED CANDIDATE**, **NOT ACCEPTED DIRECTION**. Do not write ADR 0007 or make the final package-registry/trusted-publishing architecture decision until the remaining evidence is reviewed.
+Task 008A and Task 008B Phases 1, 2, 3, and 4A passed, with the documented Generic-republish provider caveat. Cloudsmith remains a **VALIDATED CANDIDATE**, **NOT ACCEPTED DIRECTION**. Do not write ADR 0007 or make the final package-registry/trusted-publishing architecture decision until the remaining evidence is reviewed.

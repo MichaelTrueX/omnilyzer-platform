@@ -139,9 +139,9 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertTrue(PUBLISH_WORKFLOW.is_file())
         self.assertTrue(CONSUME_WORKFLOW.is_file())
         publish_trigger = SPIKE_ROOT / "control/publish.trigger"
-        self.assertEqual(publish_trigger.read_text(encoding="utf-8"), "0.8.3\n")
+        self.assertEqual(publish_trigger.read_text(encoding="utf-8"), "0.8.4\n")
         consume_trigger = SPIKE_ROOT / "control/consume.trigger"
-        self.assertEqual(consume_trigger.read_text(encoding="utf-8"), "0.8.3\n")
+        self.assertEqual(consume_trigger.read_text(encoding="utf-8"), "0.8.4\n")
         self.assertEqual(
             (SPIKE_ROOT / "control/publisher-permissions.trigger").read_text(
                 encoding="utf-8"
@@ -153,6 +153,12 @@ class WorkflowPolicyTests(unittest.TestCase):
                 encoding="utf-8"
             ),
             "task008b-consumer-permission-probe-v1\n",
+        )
+        self.assertEqual(
+            (SPIKE_ROOT / "control/tamper-negative.trigger").read_text(
+                encoding="utf-8"
+            ),
+            "task008b-phase4b-tamper-negative-v1\n",
         )
 
     def test_publish_trigger_accepts_only_one_strict_version_plus_newline(self) -> None:
@@ -201,6 +207,11 @@ class WorkflowPolicyTests(unittest.TestCase):
                 self.assertEqual(trigger.count("- spike/008-supply-chain"), 1)
                 self.assertEqual(trigger.count(f"- {release_trigger}"), 1)
                 self.assertEqual(trigger.count(f"- {permission_trigger}"), 1)
+                tamper_trigger = "spikes/supply-chain/control/tamper-negative.trigger"
+                self.assertEqual(
+                    trigger.count(f"- {tamper_trigger}"),
+                    1 if workflow is self.consume else 0,
+                )
                 for prohibited in ("workflow_dispatch", "pull_request", "schedule"):
                     self.assertNotIn(prohibited, trigger)
 
@@ -255,6 +266,14 @@ class WorkflowPolicyTests(unittest.TestCase):
                 self.assertNotIn("cloudsmith", gate.lower())
                 self.assertIn("mode=release", gate)
                 self.assertIn("mode=permission", gate)
+                tamper_trigger = "spikes/supply-chain/control/tamper-negative.trigger"
+                if workflow is self.consume:
+                    self.assertIn(f'"{tamper_trigger}"', gate)
+                    self.assertIn(f"$'M\\t{tamper_trigger}'", gate)
+                    self.assertNotIn(f"$'A\\t{tamper_trigger}'", gate)
+                    self.assertIn("mode=tamper", gate)
+                else:
+                    self.assertNotIn(tamper_trigger, gate)
 
         combined = self.publish + self.consume
         for unsafe in (
@@ -279,6 +298,9 @@ class WorkflowPolicyTests(unittest.TestCase):
             with self.subTest(job=permission_job):
                 self.assertIn("needs: gate", permission)
                 self.assertIn("if: needs.gate.outputs.mode == 'permission'", permission)
+        tamper = self.job(self.consume, "tamper-negative-probe")
+        self.assertIn("needs: gate", tamper)
+        self.assertIn("if: needs.gate.outputs.mode == 'tamper'", tamper)
 
     def test_permissions_and_oidc_identities_are_narrow(self) -> None:
         for workflow in (self.publish, self.consume):
@@ -315,12 +337,18 @@ class WorkflowPolicyTests(unittest.TestCase):
         )[0]
         self.assertEqual(execute_permissions.strip(), "{}")
         self.assertNotIn("id-token: write", execute)
+        tamper = self.job(self.consume, "tamper-negative-probe")
+        tamper_permissions = tamper.split("    permissions:\n", 1)[1].split(
+            "    runs-on:", 1
+        )[0]
+        self.assertEqual(tamper_permissions.strip(), "id-token: write")
         self.assertIn("oidc-service-slug: gha-publisher-u76y", self.publish)
         self.assertIn("oidc-service-slug: gha-consumer", self.consume)
         for workflow in (self.publish, self.consume):
             self.assertIn("oidc-namespace: omnilyzer", workflow)
             self.assertIn("omnilyzer/platform-spike", workflow)
-            self.assertEqual(workflow.count("cli-version: '1.26.0'"), 2)
+            expected_cli_count = 2 if workflow is self.publish else 3
+            self.assertEqual(workflow.count("cli-version: '1.26.0'"), expected_cli_count)
             self.assertIn("export-auth-token: true", workflow)
             self.assertIn("verify-auth: true", workflow)
 
@@ -456,7 +484,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertNotRegex(combined, r"(?m)(?:^|[ |])jq(?:[ |]|$)")
         self.assertIn("import json", self.publish)
         self.assertIn("import json", self.consume)
-        self.assertEqual(combined.count("--output-format json"), 3)
+        self.assertEqual(combined.count("--output-format json"), 4)
 
     def test_release_build_job_has_no_oidc_or_cloudsmith_authority(self) -> None:
         build = self.job(self.publish, "build")
@@ -781,6 +809,118 @@ class WorkflowPolicyTests(unittest.TestCase):
             1,
         )
 
+    def test_tamper_probe_has_read_only_consumer_authority_and_cannot_publish(self) -> None:
+        probe = self.job(self.consume, "tamper-negative-probe")
+        self.assertIn("RELEASE_VERSION: 0.8.4", probe)
+        self.assertIn("oidc-service-slug: gha-consumer", probe)
+        self.assertNotIn("gha-publisher", probe)
+        self.assertNotIn("actions/checkout", probe)
+        self.assertNotIn("contents: read", probe)
+        for prohibited in (
+            "cloudsmith push",
+            "npm publish",
+            "docker push",
+            "cosign sign",
+            "--republish",
+            "--location-trusted",
+            "actions/upload-artifact",
+            "CLOUDSMITH_API_KEY:",
+        ):
+            self.assertNotIn(prohibited, probe)
+        self.assertEqual(probe.count("cloudsmith-io/cloudsmith-cli-action@"), 1)
+        self.assertIn("verify-auth: true", probe)
+        self.assertIn("export-auth-token: true", probe)
+
+    def test_tamper_probe_expected_failures_are_fail_closed(self) -> None:
+        probe = self.job(self.consume, "tamper-negative-probe")
+        self.assertEqual(probe.count("          set +e\n"), 4)
+        for status in (
+            "verification_status",
+            "substitution_status",
+            "handoff_status",
+        ):
+            self.assertIn(f'if [[ "${status}" -eq 0 ]]; then', probe)
+        self.assertEqual(probe.count('if [[ "$verification_status" -eq 0 ]]; then'), 2)
+        self.assertEqual(probe.count("SECURITY FAILURE:"), 6)
+        self.assertNotIn("|| true", probe)
+        self.assertNotIn("continue-on-error", probe)
+        self.assertEqual(
+            probe.count('test ! -e "$RUNNER_TEMP/task008b-negative-accepted-handoff"'),
+            3,
+        )
+
+    def test_tampered_wheel_is_rejected_without_execution(self) -> None:
+        probe = self.job(self.consume, "tamper-negative-probe")
+        case = probe.split("      - name: Prove tampered Python artifact is rejected", 1)[1].split(
+            "      - name: Prove signed release metadata rejects version substitution", 1
+        )[0]
+        self.assertLess(case.index("task008b-wheel-tamper"), case.index("cosign verify-blob"))
+        self.assertIn("python-wheel.sigstore.json", case)
+        self.assertIn("tampered Python artifact verified", case)
+        for prohibited in (
+            "pip install",
+            "npm install",
+            "omnilyzer_supply_chain_spike as p",
+            'import { report } from "@omnilyzer/supply-chain-spike"',
+        ):
+            self.assertNotIn(prohibited, probe)
+
+    def test_tampered_evidence_archive_is_rejected_before_any_extraction(self) -> None:
+        probe = self.job(self.consume, "tamper-negative-probe")
+        tamper = probe.index("Prove tampered signed evidence archive is rejected before extraction")
+        baseline = probe.index("Establish legitimate signed evidence baseline")
+        self.assertLess(tamper, baseline)
+        case = probe[tamper:baseline]
+        self.assertLess(case.index("task008b-archive-tamper"), case.index("cosign verify-blob"))
+        self.assertIn("tampered evidence archive verified", case)
+        self.assertIn("tampered evidence archive was extracted", case)
+        self.assertNotIn("tarfile", case)
+        self.assertNotIn("extractall", case)
+
+    def test_signed_release_version_rejects_local_substitution(self) -> None:
+        probe = self.job(self.consume, "tamper-negative-probe")
+        baseline = probe.index("Establish legitimate signed evidence baseline")
+        substitution = probe.index("Prove signed release metadata rejects version substitution")
+        self.assertLess(baseline, substitution)
+        self.assertIn("evidence-manifest.sigstore.json", probe[baseline:substitution])
+        case = probe[substitution:]
+        self.assertIn("substituted_request_version=0.8.5", case)
+        self.assertIn('manifest.get("release_version") != sys.argv[2]', case)
+        self.assertIn("signed release_version rejects substituted release material", case)
+        self.assertIn("different-version material passed release binding", case)
+
+    def test_mutated_execution_handoff_is_rejected_before_execution(self) -> None:
+        probe = self.job(self.consume, "tamper-negative-probe")
+        case = probe.split(
+            "      - name: Prove mutated verified-execution handoff is rejected before execution",
+            1,
+        )[1].split("      - name: Record expected negative-validation results", 1)[0]
+        creation = case.index('"verified-execution-manifest.json").write_text')
+        baseline = case.index("candidate handoff is invalid before mutation")
+        mutation = case.index("task008b-handoff-tamper")
+        checksum = case.index('hashlib.sha256(path.read_bytes()).hexdigest()')
+        self.assertLess(creation, mutation)
+        self.assertLess(baseline, mutation)
+        self.assertLess(mutation, checksum)
+        self.assertIn("verified execution handoff does not contain exactly three files", case)
+        self.assertIn("verified {kind} checksum mismatch", case)
+        self.assertIn("mutated execution handoff passed validation", case)
+        self.assertIn("mutated handoff reached the execution environment", case)
+        self.assertNotRegex(probe, r"(?m)^\s*(?:\S+/)?python\S*.*-m pip install\b")
+        self.assertNotRegex(probe, r"(?m)^\s*npm install\b")
+        self.assertNotRegex(probe, r"(?m)^\s*docker run(?:\s|$)")
+
+    def test_normal_successful_consumer_jobs_remain_release_only(self) -> None:
+        consume = self.job(self.consume, "consume")
+        execute = self.job(self.consume, "execute-verified")
+        self.assertIn("if: needs.gate.outputs.mode == 'release'", consume)
+        self.assertIn("if: needs.gate.outputs.mode == 'release'", execute)
+        self.assertNotIn("mode == 'tamper'", consume)
+        self.assertNotIn("mode == 'tamper'", execute)
+        self.assertIn("Create exact verified execution handoff", consume)
+        self.assertIn("Validate exact verified execution handoff", execute)
+        self.assertIn("permissions: {}", execute)
+
     def test_consumer_validates_provenance_invocation_and_empty_internal_parameters(self) -> None:
         consume = self.job(self.consume, "consume")
         self.assertIn('definition.get("internalParameters") != {}', consume)
@@ -1041,7 +1181,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                 for line in workflow.splitlines()
                 if line.strip().startswith("uses: ")
             ]
-            expected_count = 11
+            expected_count = 11 if workflow is self.publish else 15
             self.assertEqual(len(uses_lines), expected_count)
             for use in uses_lines:
                 action, revision = use.split("@", 1)
