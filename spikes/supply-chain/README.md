@@ -25,7 +25,7 @@ The candidate private multi-format repository is `omnilyzer/platform-spike`. Pub
 - A missing, malformed, substituted, unauthorized, or unexpectedly mutable artifact causes validation to fail closed.
 - Local preparation and policy tests succeed without Cloudsmith or network access.
 
-Until a corrected OCI fixture is published and all three formats are independently consumed, the outcome remains **INCONCLUSIVE / PARTIAL LIVE SUCCESS**.
+The corrected publisher has now passed live validation, but until all three formats are independently consumed, the overall Task 008A outcome remains **INCONCLUSIVE / PUBLISHER PASS, CONSUMER PENDING**.
 
 ## Security checks
 
@@ -42,39 +42,36 @@ The provider is `https://token.actions.githubusercontent.com`. The publisher rem
 
 The committed fixture version metadata uses only the harmless placeholder `0.0.0`. The scratch OCI fixture also contains one harmless synthetic text artifact so its image has a real filesystem layer while remaining non-executable and base-image-free. `scripts/prepare_release.py` accepts a strict release version and a new absolute output directory outside the spike source, copies all mutable inputs there, coordinates the Python, npm, and OCI versions, and records expected artifact names. Standard-library unit tests verify valid coordinated versions, malformed inputs, unsafe output use, the layered scratch-image contract, unchanged committed fixtures, exact workflow triggers and identities, action pins, credential policy, and ignored generated paths.
 
-The temporary feature-branch push trigger paths are used because GitHub cannot dispatch a new `workflow_dispatch` workflow until that workflow exists on the default branch. Publication is isolated to changes to `control/publish.trigger`; consumption is isolated to `control/consume.trigger`. The publisher trigger now contains `0.8.0`; the consumer trigger remains absent. Production workflows should use protected release refs and/or protected environments rather than this temporary spike branch.
+The temporary feature-branch push trigger paths are used because GitHub cannot dispatch a new `workflow_dispatch` workflow until that workflow exists on the default branch. Publication is isolated to changes to `control/publish.trigger`; consumption is isolated to `control/consume.trigger`. The publisher trigger contains `0.8.1`; the consumer trigger remains absent. Production workflows should use protected release refs and/or protected environments rather than this temporary spike branch.
 
 The remaining live sequence is:
 
-1. Commit and push the reviewed layer correction without changing `publish.trigger`.
-2. In a separate reviewed retry change, update `publish.trigger` to the new coordinated version `0.8.1`.
-3. Push the retry change to trigger the corrected publisher run, then review all three package identities, hashes, and the OCI digest.
-4. Intentionally add `consume.trigger` with that exact version in a later reviewed change.
-5. Review independent read-only consumption of all three registry artifacts.
+1. Commit and push this documentation and test-state update without changing either trigger, so it triggers no workflow.
+2. In a separate reviewed change, add `consume.trigger` containing exactly `0.8.1` plus a newline.
+3. Push that change to trigger the read-only consumer.
+4. Review independent Python, npm, and OCI retrieval.
+5. Only then conclude Task 008A.
 
 ## Findings
 
-**INCONCLUSIVE / PARTIAL LIVE SUCCESS.** The first live publication attempt ran from commit `e97d84bbcb6b544e7dd060f596741a02c9e8ada2` in GitHub Actions run `33250670547`.
+**PUBLISHER LIVE VALIDATION: PASS.** The successful publisher retry ran from commit `f844573eb7c48e005ef4bc40e730a5b4982a3c40` in GitHub Actions run `33287331610` for release `0.8.1`.
 
 Observed passes:
 
-- The feature-branch/path trigger worked.
+- The exact feature-branch/path publisher trigger worked.
 - The GitHub OIDC to Cloudsmith exchange worked.
 - The exact authenticated publisher identity `gha-publisher-u76y` was observed.
 - Cloudsmith CLI `1.26.0` was installed and verified.
-- Python `0.8.0` publication succeeded.
-- npm `0.8.0` publication succeeded.
+- Python `0.8.1` publication succeeded.
+- npm `0.8.1` publication succeeded.
 - Docker registry authentication succeeded.
+- OCI `0.8.1` publication succeeded.
+- The immutable OCI digest resolved to `sha256:614acfc6b461bbe279b7848f78d9fa0623bfabda9aa146864e2ec5d67b66a4ce`.
+- The release record succeeded.
 - Credentials remained masked in GitHub logs.
 - Docker logout cleanup succeeded.
 
-Observed failure:
-
-- The OCI `0.8.0` push failed before publication.
-- Cloudsmith returned `Missing layers`.
-- The root cause was the intentionally minimal, layerless `FROM scratch` fixture, which carried labels but no filesystem content.
-
-The next retry must use a new coordinated version, `0.8.1`, because the Python and npm `0.8.0` packages already exist and the Write publisher is intentionally not allowed to replace released packages. This correction does not change `publish.trigger` from `0.8.0`; a separately reviewed retry change must do so.
+The overall Task 008A result remains **INCONCLUSIVE / PUBLISHER PASS, CONSUMER PENDING** because the separate read-only consumer has not yet run.
 
 Task 008B still must validate:
 
@@ -91,4 +88,4 @@ Task 008B still must validate:
 
 ## Recommendation
 
-**INCONCLUSIVE / PARTIAL LIVE SUCCESS.** Retain Cloudsmith as a candidate only. Retry publication with the corrected layered OCI fixture under the new coordinated version `0.8.1`, then run independent consumer validation from the constrained GitHub feature-branch workflow. Cloudsmith is not yet an **ACCEPTED DIRECTION**; do not write an acceptance ADR or change the package-registry/trusted-publishing decision from **TO VALIDATE** until complete live evidence and the remaining Task 008B controls have been reviewed.
+**INCONCLUSIVE / PUBLISHER PASS, CONSUMER PENDING.** Retain Cloudsmith as a candidate only. Run independent consumer validation for release `0.8.1` from the constrained GitHub feature-branch workflow. Cloudsmith is not yet an **ACCEPTED DIRECTION**; do not write ADR 0007 or change the package-registry/trusted-publishing decision from **TO VALIDATE** until complete live evidence and the remaining Task 008B controls have been reviewed.
