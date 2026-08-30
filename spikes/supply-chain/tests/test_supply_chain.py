@@ -18,6 +18,7 @@ SPIKE_ROOT = REPOSITORY_ROOT / "spikes" / "supply-chain"
 PUBLISH_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/task008-publish.yml"
 CONSUME_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/task008-consume.yml"
 PREPARE_SCRIPT = SPIKE_ROOT / "scripts/prepare_release.py"
+TRIGGER_VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\n")
 
 spec = importlib.util.spec_from_file_location("task008_prepare_release", PREPARE_SCRIPT)
 if spec is None or spec.loader is None:
@@ -64,6 +65,41 @@ class ReleasePreparationTests(unittest.TestCase):
         }
         self.assertEqual(before, after)
 
+    def test_oci_fixture_is_layered_scratch_data_with_coordinated_version(self) -> None:
+        oci_fixture = SPIKE_ROOT / "fixtures/oci"
+        dockerfile = (oci_fixture / "Dockerfile").read_text(encoding="utf-8")
+
+        instructions = [
+            line.split(maxsplit=1)[0].upper()
+            for line in dockerfile.splitlines()
+            if line and not line.startswith("#") and not line[0].isspace()
+        ]
+        self.assertEqual(instructions.count("FROM"), 1)
+        self.assertRegex(dockerfile, r"(?m)^FROM\s+scratch\s*$")
+        self.assertRegex(
+            dockerfile,
+            r"(?m)^COPY\s+artifact\.txt\s+/artifact\.txt\s*$",
+        )
+        self.assertTrue((oci_fixture / "artifact.txt").is_file())
+        for prohibited in ("RUN", "CMD", "ENTRYPOINT"):
+            self.assertNotRegex(
+                dockerfile,
+                rf"(?im)^[ \t]*{prohibited}\b",
+            )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory) / "prepared"
+            prepare_module.prepare_release("0.8.1", output)
+            prepared_dockerfile = (output / "oci/Dockerfile").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn(
+                'org.opencontainers.image.version="0.8.1"',
+                prepared_dockerfile,
+            )
+            self.assertNotIn(prepare_module.PLACEHOLDER, prepared_dockerfile)
+            self.assertTrue((output / "oci/artifact.txt").is_file())
+
     def test_malformed_versions_are_rejected(self) -> None:
         for malformed in ("0.8", "v0.8.0", "0.8.0-dev", "0.8.0\n1.0.0", ""):
             with self.subTest(version=malformed):
@@ -93,8 +129,26 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertTrue(CONSUME_WORKFLOW.is_file())
         publish_trigger = SPIKE_ROOT / "control/publish.trigger"
         if publish_trigger.exists():
-            self.assertEqual(publish_trigger.read_text(encoding="utf-8"), "0.8.0\n")
+            self.assertIsNotNone(
+                TRIGGER_VERSION_PATTERN.fullmatch(
+                    publish_trigger.read_text(encoding="utf-8")
+                ),
+                "publish.trigger must contain exactly one X.Y.Z version plus newline",
+            )
         self.assertFalse((SPIKE_ROOT / "control/consume.trigger").exists())
+
+    def test_publish_trigger_accepts_only_one_strict_version_plus_newline(self) -> None:
+        self.assertIsNotNone(TRIGGER_VERSION_PATTERN.fullmatch("0.8.1\n"))
+        for malformed in (
+            "0.8.1",
+            "v0.8.1\n",
+            "0.8\n",
+            "0.8.1-dev\n",
+            "0.8.1\n1.0.0\n",
+            "",
+        ):
+            with self.subTest(content=malformed):
+                self.assertIsNone(TRIGGER_VERSION_PATTERN.fullmatch(malformed))
 
     def test_triggers_are_exact_and_consumer_is_dormant(self) -> None:
         cases = (
