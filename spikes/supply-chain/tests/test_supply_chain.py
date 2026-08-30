@@ -272,6 +272,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn('"omnilyzer-supply-chain-spike==${RELEASE_VERSION}"', self.consume)
         self.assertIn('"@omnilyzer/supply-chain-spike@${RELEASE_VERSION}"', self.consume)
         self.assertIn("${CLOUDSMITH_API_KEY}", self.consume)
+        self.assertNotIn("always-auth=true", self.consume)
 
     def test_release_preparation_and_generated_paths_are_controlled(self) -> None:
         self.assertIn("prepare_release.py", self.publish)

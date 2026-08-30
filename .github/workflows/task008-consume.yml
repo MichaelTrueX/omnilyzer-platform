@@ -94,7 +94,7 @@ jobs:
           printf '%s\n' \
             '@omnilyzer:registry=https://npm.cloudsmith.io/omnilyzer/platform-spike/' \
             '//npm.cloudsmith.io/omnilyzer/platform-spike/:_authToken=${CLOUDSMITH_API_KEY}' \
-            'always-auth=true' > "$npm_config"
+            > "$npm_config"
           NPM_CONFIG_USERCONFIG="$npm_config" npm install \
             --prefix "$npm_project" --save-exact --ignore-scripts \
             "@omnilyzer/supply-chain-spike@${RELEASE_VERSION}"
