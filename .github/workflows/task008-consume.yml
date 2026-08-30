@@ -1,0 +1,1788 @@
+# File: .github/workflows/task008-consume.yml
+# Purpose: Consumes exact Task 008 artifacts using a separate read-only OIDC identity.
+
+name: Task 008 consume
+
+on:
+  push:
+    branches:
+      - spike/008-supply-chain
+    paths:
+      - spikes/supply-chain/control/consume.trigger
+      - spikes/supply-chain/control/consumer-permissions.trigger
+      - spikes/supply-chain/control/tamper-negative.trigger
+      - spikes/supply-chain/control/rollback-retention.trigger
+
+permissions: {}
+
+jobs:
+  gate:
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/spike/008-supply-chain'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.classify.outputs.mode }}
+    steps:
+      - name: Check out complete push history without credentials
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify complete push range
+        id: classify
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]] || \
+             [[ ! "$AFTER_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Push range contains an invalid commit SHA" >&2
+            exit 1
+          fi
+          if [[ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            echo "An all-zero before SHA is invalid for this existing-branch spike" >&2
+            exit 1
+          fi
+          git cat-file -e "${BEFORE_SHA}^{commit}"
+          git cat-file -e "${AFTER_SHA}^{commit}"
+
+          changed_paths_file="$RUNNER_TEMP/task008-consume-changed-paths.txt"
+          changed_status_file="$RUNNER_TEMP/task008-consume-changed-status.txt"
+          git diff --name-only --no-renames --diff-filter=ACDMRTUXB \
+            "$BEFORE_SHA" "$AFTER_SHA" > "$changed_paths_file"
+          git diff --name-status --no-renames --diff-filter=ACDMRTUXB \
+            "$BEFORE_SHA" "$AFTER_SHA" > "$changed_status_file"
+          mapfile -t changed_paths < "$changed_paths_file"
+
+          mode=none
+          if [[ "${#changed_paths[@]}" -eq 1 ]]; then
+            changed_status="$(<"$changed_status_file")"
+            if [[ "${changed_paths[0]}" == \
+                  "spikes/supply-chain/control/consume.trigger" ]] && \
+               [[ "$changed_status" == \
+                  $'M\tspikes/supply-chain/control/consume.trigger' ]]; then
+              mode=release
+            elif [[ "${changed_paths[0]}" == \
+                    "spikes/supply-chain/control/consumer-permissions.trigger" ]] && \
+                 ([[ "$changed_status" == \
+                     $'A\tspikes/supply-chain/control/consumer-permissions.trigger' ]] || \
+                  [[ "$changed_status" == \
+                     $'M\tspikes/supply-chain/control/consumer-permissions.trigger' ]]); then
+              mode=permission
+            elif [[ "${changed_paths[0]}" == \
+                    "spikes/supply-chain/control/tamper-negative.trigger" ]] && \
+                 [[ "$changed_status" == \
+                    $'M\tspikes/supply-chain/control/tamper-negative.trigger' ]]; then
+              mode=tamper
+            elif [[ "${changed_paths[0]}" == \
+                    "spikes/supply-chain/control/rollback-retention.trigger" ]] && \
+                 [[ "$changed_status" == \
+                    $'M\tspikes/supply-chain/control/rollback-retention.trigger' ]]; then
+              mode=rollback
+            fi
+          fi
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+
+  consume:
+    needs: gate
+    if: needs.gate.outputs.mode == 'release'
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IMAGE_REPOSITORY: docker.cloudsmith.io/omnilyzer/platform-spike/omnilyzer-supply-chain-spike
+      SIGNER_IDENTITY: https://github.com/MichaelTrueX/omnilyzer-platform/.github/workflows/task008-publish.yml@refs/heads/spike/008-supply-chain
+      OIDC_ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - name: Check out repository
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Read and validate coordinated release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_version="$(python - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          content = Path("spikes/supply-chain/control/consume.trigger").read_text(
+              encoding="utf-8"
+          )
+          if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+\n?", content) is None:
+              print("consume.trigger must contain exactly an X.Y.Z version", file=sys.stderr)
+              raise SystemExit(1)
+          print(content.rstrip("\n"))
+          PY
+          )"
+          printf 'RELEASE_VERSION=%s\n' "$release_version" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        # actions/setup-python v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.20.0'
+
+      - name: Authenticate short-lived read-only Cloudsmith consumer
+        # cloudsmith-io/cloudsmith-cli-action v3.1.0
+        uses: cloudsmith-io/cloudsmith-cli-action@ad73fafb92e3e29a5166c529464c2df7658a608e
+        with:
+          oidc-namespace: omnilyzer
+          oidc-service-slug: gha-consumer
+          cli-version: '1.26.0'
+          verify-auth: true
+          export-auth-token: true
+
+      - name: Install exact Cosign
+        # sigstore/cosign-installer v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.1.2
+
+      - name: Verify exact Cosign installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign_version="$({ cosign version; } 2>&1)"
+          printf '%s\n' "$cosign_version"
+          python -c \
+            'import re, sys; raise SystemExit(0 if re.search(r"\bv?3\.1\.2\b", sys.stdin.read()) else "unexpected Cosign version")' \
+            <<< "$cosign_version"
+
+      - name: Download exact Python wheel without installing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          download_dir="$RUNNER_TEMP/task008-downloads"
+          mkdir "$download_dir"
+          export PIP_INDEX_URL="https://token:${CLOUDSMITH_API_KEY}@dl.cloudsmith.io/basic/omnilyzer/platform-spike/python/simple/"
+          python -m pip download --disable-pip-version-check \
+            --only-binary=:all: --no-deps --dest "$download_dir" \
+            "omnilyzer-supply-chain-spike==${RELEASE_VERSION}"
+          expected_wheel="omnilyzer_supply_chain_spike-${RELEASE_VERSION}-py3-none-any.whl"
+          test -f "$download_dir/$expected_wheel"
+          test "$(find "$download_dir" -maxdepth 1 -type f -name '*.whl' | wc -l)" -eq 1
+          printf 'WHEEL_PATH=%s\n' "$download_dir/$expected_wheel" >> "$GITHUB_ENV"
+
+      - name: Download exact npm tarball without installing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm_config="$RUNNER_TEMP/task008-npmrc"
+          printf '%s\n' \
+            '@omnilyzer:registry=https://npm.cloudsmith.io/omnilyzer/platform-spike/' \
+            '//npm.cloudsmith.io/omnilyzer/platform-spike/:_authToken=${CLOUDSMITH_API_KEY}' \
+            > "$npm_config"
+          NPM_CONFIG_USERCONFIG="$npm_config" npm pack \
+            --ignore-scripts \
+            --pack-destination "$RUNNER_TEMP/task008-downloads" \
+            "@omnilyzer/supply-chain-spike@${RELEASE_VERSION}"
+          expected_tarball="omnilyzer-supply-chain-spike-${RELEASE_VERSION}.tgz"
+          test -f "$RUNNER_TEMP/task008-downloads/$expected_tarball"
+          test "$(find "$RUNNER_TEMP/task008-downloads" -maxdepth 1 -type f -name '*.tgz' | wc -l)" -eq 1
+          printf 'NPM_TARBALL_PATH=%s\n' \
+            "$RUNNER_TEMP/task008-downloads/$expected_tarball" >> "$GITHUB_ENV"
+
+      - name: Authenticate Docker with short-lived Cloudsmith identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$CLOUDSMITH_API_KEY" | docker login docker.cloudsmith.io \
+            --username token --password-stdin
+          touch "$RUNNER_TEMP/task008-docker-login"
+
+      - name: Pull and inspect exact OCI artifact without running it
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE_REPOSITORY}:${RELEASE_VERSION}"
+          docker pull "$image_ref"
+          observed_version="$(docker image inspect "$image_ref" \
+            --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+          test "$observed_version" = "$RELEASE_VERSION"
+          oci_reference="$(docker image inspect "$image_ref" \
+            --format '{{index .RepoDigests 0}}')"
+          if [[ ! "$oci_reference" =~ @sha256:[0-9a-f]{64}$ ]]; then
+            echo "Pulled image has no valid immutable digest" >&2
+            exit 1
+          fi
+          printf 'OCI_REFERENCE=%s\n' "$oci_reference" >> "$GITHUB_ENV"
+          printf 'OCI_DIGEST=%s\n' "${oci_reference##*@}" >> "$GITHUB_ENV"
+
+      - name: Download exact versioned evidence archive and bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_download="$RUNNER_TEMP/task008-evidence-download"
+          mkdir "$evidence_download"
+          archive_name="omnilyzer-supply-chain-spike-${RELEASE_VERSION}-evidence.tar.gz"
+          bundle_name="${archive_name}.sigstore.json"
+          download_generic() {
+            local filename="$1"
+            local filepath="task008/evidence/${RELEASE_VERSION}/${filename}"
+            local listing="$RUNNER_TEMP/task008-${filename}.json"
+            cloudsmith list packages omnilyzer/platform-spike \
+              --query "format:generic AND filename:${filename} AND version:${RELEASE_VERSION}" \
+              --output-format json > "$listing"
+            python - "$listing" "$filename" "$filepath" "$RELEASE_VERSION" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          records = payload.get("data")
+          if not isinstance(records, list):
+              raise SystemExit("Cloudsmith package list has no data list")
+          matches = [
+              item for item in records
+              if item.get("format") == "generic"
+              and item.get("filename") == sys.argv[2]
+              and item.get("filepath") == sys.argv[3]
+              and item.get("version") == sys.argv[4]
+          ]
+          if len(matches) != 1:
+              raise SystemExit("expected exactly one versioned evidence package")
+          PY
+            generic_url="https://generic.cloudsmith.io/omnilyzer/platform-spike/${filepath}"
+            curl --fail --silent --show-error \
+              --location \
+              --proto '=https' \
+              --proto-redir '=https' \
+              --max-redirs 3 \
+              --user "token:${CLOUDSMITH_API_KEY}" \
+              --output "$evidence_download/$filename" "$generic_url"
+          }
+          download_generic "$archive_name"
+          download_generic "$bundle_name"
+          printf 'EVIDENCE_ARCHIVE=%s\n' "$evidence_download/$archive_name" >> "$GITHUB_ENV"
+          printf 'EVIDENCE_ARCHIVE_BUNDLE=%s\n' "$evidence_download/$bundle_name" >> "$GITHUB_ENV"
+
+      - name: Verify evidence archive signature before extraction
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign verify-blob \
+            --bundle "$EVIDENCE_ARCHIVE_BUNDLE" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$EVIDENCE_ARCHIVE"
+
+      - name: Safely extract exact evidence allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/task008-verified-evidence"
+          mkdir "$evidence_dir"
+          python - "$EVIDENCE_ARCHIVE" "$evidence_dir" <<'PY'
+          from pathlib import Path, PurePosixPath
+          import sys
+          import tarfile
+
+          archive_path, destination = Path(sys.argv[1]), Path(sys.argv[2])
+          expected = {
+              "python-sbom.cdx.json", "npm-sbom.cdx.json", "oci-sbom.cdx.json",
+              "python-vulnerabilities.grype.json", "npm-vulnerabilities.grype.json",
+              "oci-vulnerabilities.grype.json", "grype-db-status.json",
+              "vulnerability-policy-result.json",
+              "release-provenance.json", "evidence-manifest.json",
+              "python-wheel.sigstore.json", "npm-tarball.sigstore.json",
+              "python-sbom.sigstore.json", "npm-sbom.sigstore.json",
+              "oci-sbom.sigstore.json", "release-provenance.sigstore.json",
+              "evidence-manifest.sigstore.json",
+          }
+          with tarfile.open(archive_path, mode="r:gz") as archive:
+              members = archive.getmembers()
+              names = {member.name for member in members}
+              if len(members) != len(expected) or names != expected:
+                  raise SystemExit("evidence archive does not match exact seventeen-file allowlist")
+              for member in members:
+                  path = PurePosixPath(member.name)
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit("evidence archive contains an unsafe path")
+                  if not member.isfile() or member.issym() or member.islnk():
+                      raise SystemExit("evidence archive contains a non-regular entry")
+              archive.extractall(destination, filter="data")
+          PY
+          printf 'EVIDENCE_DIR=%s\n' "$evidence_dir" >> "$GITHUB_ENV"
+
+      - name: Verify evidence manifest signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign verify-blob \
+            --bundle "$EVIDENCE_DIR/evidence-manifest.sigstore.json" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$EVIDENCE_DIR/evidence-manifest.json"
+
+      - name: Validate evidence hashes SBOMs and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$EVIDENCE_DIR" "$WHEEL_PATH" "$NPM_TARBALL_PATH" "$OCI_REFERENCE" <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import sys
+
+          root, wheel, npm_tarball = map(Path, sys.argv[1:4])
+          oci_reference = sys.argv[4]
+          sha256 = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+          manifest = json.loads((root / "evidence-manifest.json").read_text(encoding="utf-8"))
+          if set(manifest) != {
+              "release_version", "publisher_source_sha", "github", "signer",
+              "tools", "artifacts", "sboms", "provenance", "vulnerability_scanning",
+              "signature_bundles",
+          }:
+              raise SystemExit("evidence manifest has unexpected fields")
+          if manifest.get("release_version") != os.environ["RELEASE_VERSION"]:
+              raise SystemExit("evidence release version mismatch")
+          source_sha = manifest.get("publisher_source_sha")
+          if not isinstance(source_sha, str) or re.fullmatch(r"[0-9a-f]{40}", source_sha) is None:
+              raise SystemExit("invalid publisher source SHA")
+          if manifest.get("signer") != {
+              "identity": os.environ["SIGNER_IDENTITY"],
+              "oidc_issuer": os.environ["OIDC_ISSUER"],
+              "transparency": "public-sigstore",
+          }:
+              raise SystemExit("unexpected signer identity metadata")
+          if manifest.get("tools") != {
+              "cosign": "3.1.2", "grype": "0.118.0", "syft": "1.51.0"
+          }:
+              raise SystemExit("unexpected evidence tool versions")
+          github = manifest.get("github")
+          if not isinstance(github, dict) or set(github) != {"run_id", "run_attempt"}:
+              raise SystemExit("invalid publisher run metadata")
+          if not all(isinstance(github[key], str) and github[key].isdigit() for key in github):
+              raise SystemExit("invalid publisher run identity")
+          if manifest.get("signature_bundles") != {
+              "wheel": "python-wheel.sigstore.json",
+              "npm": "npm-tarball.sigstore.json",
+              "python_sbom": "python-sbom.sigstore.json",
+              "npm_sbom": "npm-sbom.sigstore.json",
+              "oci_sbom": "oci-sbom.sigstore.json",
+              "provenance": "release-provenance.sigstore.json",
+          }:
+              raise SystemExit("unexpected release signature bundle inventory")
+          artifacts = manifest.get("artifacts")
+          if not isinstance(artifacts, dict) or set(artifacts) != {"wheel", "npm", "oci"}:
+              raise SystemExit("invalid artifact evidence inventory")
+          if artifacts["wheel"] != {"filename": wheel.name, "sha256": sha256(wheel)}:
+              raise SystemExit("downloaded wheel does not match evidence")
+          if artifacts["npm"] != {"filename": npm_tarball.name, "sha256": sha256(npm_tarball)}:
+              raise SystemExit("downloaded npm tarball does not match evidence")
+          if artifacts["oci"] != {"image": oci_reference, "digest": oci_reference.split("@", 1)[1]}:
+              raise SystemExit("pulled OCI digest does not match evidence")
+
+          expected_sboms = {
+              "python": "python-sbom.cdx.json",
+              "npm": "npm-sbom.cdx.json",
+              "oci": "oci-sbom.cdx.json",
+          }
+          sboms = manifest.get("sboms")
+          if not isinstance(sboms, dict) or set(sboms) != set(expected_sboms):
+              raise SystemExit("invalid SBOM inventory")
+          for kind, filename in expected_sboms.items():
+              path = root / filename
+              if sboms[kind] != {
+                  "filename": filename,
+                  "sha256": sha256(path),
+                  "format": "cyclonedx-json",
+                  "spec_version": "1.6",
+              }:
+                  raise SystemExit(f"{kind} SBOM metadata mismatch")
+              document = json.loads(path.read_text(encoding="utf-8"))
+              if document.get("bomFormat") != "CycloneDX" or document.get("specVersion") != "1.6":
+                  raise SystemExit(f"{kind} SBOM schema mismatch")
+
+          vulnerability = manifest.get("vulnerability_scanning")
+          if not isinstance(vulnerability, dict) or set(vulnerability) != {
+              "scanner", "policy", "database", "reports", "policy_result"
+          }:
+              raise SystemExit("invalid signed vulnerability evidence inventory")
+          if vulnerability["scanner"] != {"name": "grype", "version": "0.118.0"}:
+              raise SystemExit("unexpected signed vulnerability scanner")
+          policy = vulnerability.get("policy")
+          if not isinstance(policy, dict) or policy.get("decision") != "PASS" or policy.get("block_severities") != ["Critical", "High"]:
+              raise SystemExit("signed vulnerability policy did not pass exact blocking policy")
+          policy_sha256 = policy.get("sha256")
+          if not isinstance(policy_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", policy_sha256) is None:
+              raise SystemExit("invalid signed vulnerability policy SHA-256")
+
+          database_status_path = root / "grype-db-status.json"
+          database = vulnerability.get("database")
+          if not isinstance(database, dict) or set(database) != {"metadata", "status_file"}:
+              raise SystemExit("invalid signed vulnerability database evidence")
+          if database.get("status_file") != {
+              "filename": database_status_path.name,
+              "sha256": sha256(database_status_path),
+          }:
+              raise SystemExit("Grype DB status hash mismatch")
+          database_status = json.loads(database_status_path.read_text(encoding="utf-8"))
+          if database.get("metadata") != database_status:
+              raise SystemExit("Grype DB metadata mismatch")
+          if not isinstance(database_status, dict) or set(database_status) != {
+              "built", "checksum", "schema_version", "valid"
+          }:
+              raise SystemExit("invalid sanitized Grype DB status")
+          if not isinstance(database_status["built"], str) or not database_status["built"].strip():
+              raise SystemExit("invalid sanitized Grype DB build identity")
+          if not isinstance(database_status["schema_version"], str) or not database_status["schema_version"].strip():
+              raise SystemExit("invalid sanitized Grype DB schema version")
+          if not isinstance(database_status["checksum"], str) or re.fullmatch(r"sha256:[0-9a-f]{64}", database_status["checksum"]) is None:
+              raise SystemExit("invalid sanitized Grype DB checksum")
+          if database_status["valid"] is not True:
+              raise SystemExit("sanitized Grype DB is not valid")
+
+          expected_reports = {
+              "python": "python-vulnerabilities.grype.json",
+              "npm": "npm-vulnerabilities.grype.json",
+              "oci": "oci-vulnerabilities.grype.json",
+          }
+          reports = vulnerability.get("reports")
+          if not isinstance(reports, dict) or set(reports) != set(expected_reports):
+              raise SystemExit("invalid signed Grype report inventory")
+          for kind, filename in expected_reports.items():
+              if reports[kind] != {"filename": filename, "sha256": sha256(root / filename)}:
+                  raise SystemExit(f"{kind} Grype report hash mismatch")
+
+          policy_result_path = root / "vulnerability-policy-result.json"
+          if vulnerability.get("policy_result") != {
+              "filename": policy_result_path.name,
+              "sha256": sha256(policy_result_path),
+          }:
+              raise SystemExit("vulnerability policy result hash mismatch")
+          policy_result = json.loads(policy_result_path.read_text(encoding="utf-8"))
+          if not isinstance(policy_result, dict) or set(policy_result) != {
+              "schema_version", "policy", "scanner", "database", "targets",
+              "decision", "evaluated_at_date",
+          }:
+              raise SystemExit("invalid vulnerability policy result structure")
+          if policy_result.get("schema_version") != 1 or policy_result.get("decision") != "PASS":
+              raise SystemExit("vulnerability policy result is not PASS")
+          if policy_result.get("scanner") != vulnerability["scanner"]:
+              raise SystemExit("vulnerability policy result scanner mismatch")
+          if policy_result.get("policy") != {
+              "block_severities": ["Critical", "High"],
+              "policy_sha256": policy_sha256,
+          }:
+              raise SystemExit("vulnerability policy result policy binding mismatch")
+          if policy_result.get("database") != database_status:
+              raise SystemExit("vulnerability policy result DB metadata mismatch")
+          targets = policy_result.get("targets")
+          if not isinstance(targets, dict) or set(targets) != set(expected_reports):
+              raise SystemExit("invalid vulnerability policy result targets")
+          expected_severities = {"Critical", "High", "Medium", "Low", "Negligible", "Unknown"}
+          for kind, filename in expected_reports.items():
+              target = targets[kind]
+              if not isinstance(target, dict) or set(target) != {
+                  "scan_report_filename", "scan_report_sha256", "total_matches",
+                  "severity_counts", "blocking_findings", "excepted_findings",
+              }:
+                  raise SystemExit(f"invalid {kind} vulnerability target result")
+              if target["scan_report_filename"] != filename or target["scan_report_sha256"] != reports[kind]["sha256"]:
+                  raise SystemExit(f"{kind} vulnerability target hash mismatch")
+              counts = target.get("severity_counts")
+              if not isinstance(counts, dict) or set(counts) != expected_severities or any(
+                  not isinstance(count, int) or isinstance(count, bool) or count < 0
+                  for count in counts.values()
+              ):
+                  raise SystemExit(f"invalid {kind} vulnerability severity counts")
+              if not isinstance(target.get("total_matches"), int) or isinstance(target["total_matches"], bool) or sum(counts.values()) != target["total_matches"]:
+                  raise SystemExit(f"inconsistent {kind} vulnerability match count")
+              if target.get("blocking_findings") != []:
+                  raise SystemExit(f"{kind} vulnerability PASS result retains blocking findings")
+              if not isinstance(target.get("excepted_findings"), list):
+                  raise SystemExit(f"invalid {kind} vulnerability exceptions evidence")
+
+          provenance_path = root / "release-provenance.json"
+          provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+          if manifest.get("provenance") != {
+              "filename": provenance_path.name,
+              "sha256": sha256(provenance_path),
+              "predicate_type": "https://slsa.dev/provenance/v1",
+          }:
+              raise SystemExit("provenance manifest record mismatch")
+          if provenance.get("_type") != "https://in-toto.io/Statement/v1" or provenance.get("predicateType") != "https://slsa.dev/provenance/v1":
+              raise SystemExit("invalid provenance statement type")
+          expected_subjects = {
+              (wheel.name, sha256(wheel)),
+              (npm_tarball.name, sha256(npm_tarball)),
+              (oci_reference, oci_reference.split("sha256:", 1)[1]),
+          }
+          subjects = provenance.get("subject")
+          if not isinstance(subjects, list) or len(subjects) != 3:
+              raise SystemExit("provenance must contain exactly three subjects")
+          observed_subjects = {
+              (subject.get("name"), subject.get("digest", {}).get("sha256"))
+              for subject in subjects if isinstance(subject, dict)
+          }
+          if observed_subjects != expected_subjects:
+              raise SystemExit("provenance subjects do not match retrieved artifacts")
+          definition = provenance.get("predicate", {}).get("buildDefinition", {})
+          if definition.get("buildType") != "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1":
+              raise SystemExit("unexpected provenance build type")
+          if definition.get("externalParameters") != {
+              "repository": "https://github.com/MichaelTrueX/omnilyzer-platform",
+              "workflow_path": ".github/workflows/task008-publish.yml",
+              "ref": "refs/heads/spike/008-supply-chain",
+              "release_version": os.environ["RELEASE_VERSION"],
+              "vulnerability_policy_sha256": policy_sha256,
+          }:
+              raise SystemExit("unexpected provenance external parameters")
+          dependencies = definition.get("resolvedDependencies")
+          if dependencies != [{
+              "uri": "git+https://github.com/MichaelTrueX/omnilyzer-platform@refs/heads/spike/008-supply-chain",
+              "digest": {"gitCommit": source_sha},
+          }]:
+              raise SystemExit("provenance Git dependency does not match publisher source")
+          if definition.get("internalParameters") != {}:
+              raise SystemExit("provenance internal parameters must be empty")
+          run_details = provenance.get("predicate", {}).get("runDetails", {})
+          builder = run_details.get("builder", {})
+          if builder.get("id") != "https://github.com/actions/runner/github-hosted":
+              raise SystemExit("unexpected provenance builder")
+          expected_invocation = (
+              "https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/"
+              f'{github["run_id"]}/attempts/{github["run_attempt"]}'
+          )
+          if run_details.get("metadata") != {"invocationId": expected_invocation}:
+              raise SystemExit("provenance invocation does not match signed run metadata")
+          PY
+
+      - name: Verify all release signatures before code execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_blob() {
+            cosign verify-blob \
+              --bundle "$EVIDENCE_DIR/$2" \
+              --certificate-identity "$SIGNER_IDENTITY" \
+              --certificate-oidc-issuer "$OIDC_ISSUER" \
+              "$1"
+          }
+          verify_blob "$WHEEL_PATH" python-wheel.sigstore.json
+          verify_blob "$NPM_TARBALL_PATH" npm-tarball.sigstore.json
+          verify_blob "$EVIDENCE_DIR/python-sbom.cdx.json" python-sbom.sigstore.json
+          verify_blob "$EVIDENCE_DIR/npm-sbom.cdx.json" npm-sbom.sigstore.json
+          verify_blob "$EVIDENCE_DIR/oci-sbom.cdx.json" oci-sbom.sigstore.json
+          verify_blob "$EVIDENCE_DIR/release-provenance.json" release-provenance.sigstore.json
+          cosign verify \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$OCI_REFERENCE"
+
+      - name: Create exact verified execution handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          handoff_dir="$RUNNER_TEMP/task008-verified-execution"
+          mkdir "$handoff_dir"
+          wheel_filename="$(basename "$WHEEL_PATH")"
+          npm_filename="$(basename "$NPM_TARBALL_PATH")"
+          cp -- "$WHEEL_PATH" "$handoff_dir/$wheel_filename"
+          cp -- "$NPM_TARBALL_PATH" "$handoff_dir/$npm_filename"
+          python - "$handoff_dir" "$RELEASE_VERSION" "$wheel_filename" "$npm_filename" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import re
+          import sys
+
+          root = Path(sys.argv[1])
+          release_version, wheel_filename, npm_filename = sys.argv[2:]
+          if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release_version) is None:
+              raise SystemExit("invalid verified execution release version")
+
+          def record(filename: str) -> dict[str, str]:
+              path = root / filename
+              if path.is_symlink() or not path.is_file():
+                  raise SystemExit(f"verified execution input is not regular: {filename}")
+              return {
+                  "filename": filename,
+                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+              }
+
+          manifest = {
+              "release_version": release_version,
+              "wheel": record(wheel_filename),
+              "npm": record(npm_filename),
+          }
+          (root / "verified-execution-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          if {path.name for path in root.iterdir()} != {
+              wheel_filename, npm_filename, "verified-execution-manifest.json"
+          }:
+              raise SystemExit("verified execution handoff is not exactly three files")
+          PY
+
+      - name: Upload verified execution handoff after all verification
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: task008-verified-execution-${{ github.run_id }}
+          path: ${{ runner.temp }}/task008-verified-execution
+          if-no-files-found: error
+          retention-days: 1
+          include-hidden-files: false
+
+      - name: Record verified immutable release
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'Cryptographically verified OCI digest: `%s`\n' \
+            "$OCI_REFERENCE" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log out from Cloudsmith Docker registry
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/task008-docker-login" ]]; then
+            docker logout docker.cloudsmith.io
+          fi
+
+  execute-verified:
+    needs:
+      - gate
+      - consume
+    if: needs.gate.outputs.mode == 'release'
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Set up Python
+        # actions/setup-python v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.20.0'
+
+      - name: Download same-run verified execution handoff
+        # actions/download-artifact v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: task008-verified-execution-${{ github.run_id }}
+          path: ${{ runner.temp }}/task008-verified-execution
+
+      - name: Validate exact verified execution handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          handoff_dir="$RUNNER_TEMP/task008-verified-execution"
+          python - "$handoff_dir" "$GITHUB_ENV" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import re
+          import sys
+
+          root = Path(sys.argv[1])
+          environment_path = Path(sys.argv[2])
+          manifest_path = root / "verified-execution-manifest.json"
+          if manifest_path.is_symlink() or not manifest_path.is_file():
+              raise SystemExit("verified execution manifest is not a regular file")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          if set(manifest) != {"release_version", "wheel", "npm"}:
+              raise SystemExit("verified execution manifest has unexpected fields")
+          release_version = manifest["release_version"]
+          if not isinstance(release_version, str) or re.fullmatch(
+              r"[0-9]+\.[0-9]+\.[0-9]+", release_version
+          ) is None:
+              raise SystemExit("invalid verified execution release version")
+          expected = {
+              "wheel": f"omnilyzer_supply_chain_spike-{release_version}-py3-none-any.whl",
+              "npm": f"omnilyzer-supply-chain-spike-{release_version}.tgz",
+          }
+          expected_files = {"verified-execution-manifest.json", *expected.values()}
+          actual_files = {path.name for path in root.iterdir()}
+          if actual_files != expected_files:
+              raise SystemExit("verified execution handoff does not contain exactly three files")
+          verified = {}
+          for kind, filename in expected.items():
+              record = manifest[kind]
+              if not isinstance(record, dict) or set(record) != {"filename", "sha256"}:
+                  raise SystemExit(f"invalid verified {kind} record")
+              if record["filename"] != filename or re.fullmatch(
+                  r"[0-9a-f]{64}", record["sha256"]
+              ) is None:
+                  raise SystemExit(f"invalid verified {kind} identity")
+              path = root / filename
+              if path.is_symlink() or not path.is_file():
+                  raise SystemExit(f"verified {kind} is not a regular file")
+              if hashlib.sha256(path.read_bytes()).hexdigest() != record["sha256"]:
+                  raise SystemExit(f"verified {kind} checksum mismatch")
+              verified[kind] = path
+          with environment_path.open("a", encoding="utf-8") as environment:
+              environment.write(f"RELEASE_VERSION={release_version}\n")
+              environment.write(f"WHEEL_PATH={verified['wheel']}\n")
+              environment.write(f"NPM_TARBALL_PATH={verified['npm']}\n")
+          PY
+
+      - name: Install and execute verified local Python wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/task008-python-consumer"
+          "$RUNNER_TEMP/task008-python-consumer/bin/python" -m pip install \
+            --disable-pip-version-check --no-index --no-deps "$WHEEL_PATH"
+          "$RUNNER_TEMP/task008-python-consumer/bin/python" -c \
+            'import os; import omnilyzer_supply_chain_spike as p; assert p.report() == os.environ["RELEASE_VERSION"]'
+
+      - name: Install and execute verified local npm tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm_project="$RUNNER_TEMP/task008-npm-consumer"
+          mkdir "$npm_project"
+          printf '%s\n' '{"name":"task008-consumer","private":true,"type":"module"}' \
+            > "$npm_project/package.json"
+          npm install --prefix "$npm_project" --ignore-scripts --no-audit --no-fund \
+            "$NPM_TARBALL_PATH"
+          (
+            cd "$npm_project"
+            node --input-type=module -e \
+              'import { report } from "@omnilyzer/supply-chain-spike"; if (report() !== process.env.RELEASE_VERSION) process.exit(1)'
+          )
+
+  tamper-negative-probe:
+    needs: gate
+    if: needs.gate.outputs.mode == 'tamper'
+    permissions:
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_VERSION: 0.8.4
+      SIGNER_IDENTITY: https://github.com/MichaelTrueX/omnilyzer-platform/.github/workflows/task008-publish.yml@refs/heads/spike/008-supply-chain
+      OIDC_ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - name: Set up Python without repository checkout
+        # actions/setup-python v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node without repository checkout
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.20.0'
+
+      - name: Authenticate short-lived read-only Cloudsmith consumer
+        # cloudsmith-io/cloudsmith-cli-action v3.1.0
+        uses: cloudsmith-io/cloudsmith-cli-action@ad73fafb92e3e29a5166c529464c2df7658a608e
+        with:
+          oidc-namespace: omnilyzer
+          oidc-service-slug: gha-consumer
+          cli-version: '1.26.0'
+          verify-auth: true
+          export-auth-token: true
+
+      - name: Install exact Cosign verifier
+        # sigstore/cosign-installer v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.1.2
+
+      - name: Verify exact Cosign installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign_version="$({ cosign version; } 2>&1)"
+          python -c \
+            'import re, sys; raise SystemExit(0 if re.search(r"\bv?3\.1\.2\b", sys.stdin.read()) else "unexpected Cosign version")' \
+            <<< "$cosign_version"
+
+      - name: Download legitimate release artifacts without installing or executing
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/task008b-negative-source"
+          mkdir "$source_dir"
+          export PIP_INDEX_URL="https://token:${CLOUDSMITH_API_KEY}@dl.cloudsmith.io/basic/omnilyzer/platform-spike/python/simple/"
+          python -m pip download --disable-pip-version-check \
+            --only-binary=:all: --no-deps --dest "$source_dir" \
+            "omnilyzer-supply-chain-spike==${RELEASE_VERSION}"
+          wheel_filename="omnilyzer_supply_chain_spike-${RELEASE_VERSION}-py3-none-any.whl"
+          test -f "$source_dir/$wheel_filename"
+          test "$(find "$source_dir" -maxdepth 1 -type f -name '*.whl' | wc -l)" -eq 1
+
+          npm_config="$RUNNER_TEMP/task008b-negative-npmrc"
+          printf '%s\n' \
+            '@omnilyzer:registry=https://npm.cloudsmith.io/omnilyzer/platform-spike/' \
+            '//npm.cloudsmith.io/omnilyzer/platform-spike/:_authToken=${CLOUDSMITH_API_KEY}' \
+            > "$npm_config"
+          NPM_CONFIG_USERCONFIG="$npm_config" npm pack \
+            --ignore-scripts \
+            --pack-destination "$source_dir" \
+            "@omnilyzer/supply-chain-spike@${RELEASE_VERSION}"
+          npm_filename="omnilyzer-supply-chain-spike-${RELEASE_VERSION}.tgz"
+          test -f "$source_dir/$npm_filename"
+          test "$(find "$source_dir" -maxdepth 1 -type f -name '*.tgz' | wc -l)" -eq 1
+          printf 'NEGATIVE_SOURCE_DIR=%s\n' "$source_dir" >> "$GITHUB_ENV"
+          printf 'WHEEL_PATH=%s\n' "$source_dir/$wheel_filename" >> "$GITHUB_ENV"
+          printf 'NPM_TARBALL_PATH=%s\n' "$source_dir/$npm_filename" >> "$GITHUB_ENV"
+
+      - name: Download legitimate signed evidence archive and external bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_download="$RUNNER_TEMP/task008b-negative-evidence-download"
+          mkdir "$evidence_download"
+          archive_name="omnilyzer-supply-chain-spike-${RELEASE_VERSION}-evidence.tar.gz"
+          bundle_name="${archive_name}.sigstore.json"
+          download_generic() {
+            local filename="$1"
+            local filepath="task008/evidence/${RELEASE_VERSION}/${filename}"
+            local listing="$RUNNER_TEMP/task008b-negative-${filename}.json"
+            cloudsmith list packages omnilyzer/platform-spike \
+              --query "format:generic AND filename:${filename} AND version:${RELEASE_VERSION}" \
+              --output-format json > "$listing"
+            python - "$listing" "$filename" "$filepath" "$RELEASE_VERSION" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          records = payload.get("data")
+          if not isinstance(records, list):
+              raise SystemExit("Cloudsmith package list has no data list")
+          matches = [
+              item for item in records
+              if item.get("format") == "generic"
+              and item.get("filename") == sys.argv[2]
+              and item.get("filepath") == sys.argv[3]
+              and item.get("version") == sys.argv[4]
+          ]
+          if len(matches) != 1:
+              raise SystemExit("expected exactly one versioned evidence package")
+          PY
+            generic_url="https://generic.cloudsmith.io/omnilyzer/platform-spike/${filepath}"
+            curl --fail --silent --show-error \
+              --location \
+              --proto '=https' \
+              --proto-redir '=https' \
+              --max-redirs 3 \
+              --user "token:${CLOUDSMITH_API_KEY}" \
+              --output "$evidence_download/$filename" "$generic_url"
+          }
+          download_generic "$archive_name"
+          download_generic "$bundle_name"
+          printf 'EVIDENCE_ARCHIVE=%s\n' "$evidence_download/$archive_name" >> "$GITHUB_ENV"
+          printf 'EVIDENCE_ARCHIVE_BUNDLE=%s\n' "$evidence_download/$bundle_name" >> "$GITHUB_ENV"
+
+      - name: Prove tampered signed evidence archive is rejected before extraction
+        shell: bash
+        run: |
+          set -euo pipefail
+          tampered_archive="$RUNNER_TEMP/task008b-tampered-evidence.tar.gz"
+          tampered_destination="$RUNNER_TEMP/task008b-tampered-evidence-extraction"
+          cp -- "$EVIDENCE_ARCHIVE" "$tampered_archive"
+          printf 'task008b-archive-tamper' >> "$tampered_archive"
+          set +e
+          cosign verify-blob \
+            --bundle "$EVIDENCE_ARCHIVE_BUNDLE" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$tampered_archive" \
+            > "$RUNNER_TEMP/task008b-tampered-archive-verification.log" 2>&1
+          verification_status=$?
+          set -e
+          if [[ "$verification_status" -eq 0 ]]; then
+            echo "SECURITY FAILURE: tampered evidence archive verified" >&2
+            exit 1
+          fi
+          if [[ -e "$tampered_destination" ]]; then
+            echo "SECURITY FAILURE: tampered evidence archive was extracted" >&2
+            exit 1
+          fi
+
+      - name: Establish legitimate signed evidence baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign verify-blob \
+            --bundle "$EVIDENCE_ARCHIVE_BUNDLE" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$EVIDENCE_ARCHIVE"
+          evidence_dir="$RUNNER_TEMP/task008b-negative-legitimate-evidence"
+          mkdir "$evidence_dir"
+          python - "$EVIDENCE_ARCHIVE" "$evidence_dir" <<'PY'
+          from pathlib import Path, PurePosixPath
+          import sys
+          import tarfile
+
+          archive_path, destination = Path(sys.argv[1]), Path(sys.argv[2])
+          expected = {
+              "python-sbom.cdx.json", "npm-sbom.cdx.json", "oci-sbom.cdx.json",
+              "python-vulnerabilities.grype.json", "npm-vulnerabilities.grype.json",
+              "oci-vulnerabilities.grype.json", "grype-db-status.json",
+              "vulnerability-policy-result.json",
+              "release-provenance.json", "evidence-manifest.json",
+              "python-wheel.sigstore.json", "npm-tarball.sigstore.json",
+              "python-sbom.sigstore.json", "npm-sbom.sigstore.json",
+              "oci-sbom.sigstore.json", "release-provenance.sigstore.json",
+              "evidence-manifest.sigstore.json",
+          }
+          with tarfile.open(archive_path, mode="r:gz") as archive:
+              members = archive.getmembers()
+              if len(members) != len(expected) or {member.name for member in members} != expected:
+                  raise SystemExit("legitimate evidence archive does not match exact allowlist")
+              for member in members:
+                  path = PurePosixPath(member.name)
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit("legitimate evidence archive contains an unsafe path")
+                  if not member.isfile() or member.issym() or member.islnk():
+                      raise SystemExit("legitimate evidence archive contains a non-regular entry")
+              archive.extractall(destination, filter="data")
+          PY
+          cosign verify-blob \
+            --bundle "$evidence_dir/evidence-manifest.sigstore.json" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$evidence_dir/evidence-manifest.json"
+          python - "$evidence_dir/evidence-manifest.json" "$WHEEL_PATH" "$NPM_TARBALL_PATH" "$RELEASE_VERSION" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+
+          manifest_path, wheel, npm_tarball = map(Path, sys.argv[1:4])
+          release_version = sys.argv[4]
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          if manifest.get("release_version") != release_version:
+              raise SystemExit("legitimate signed evidence release mismatch")
+          artifacts = manifest.get("artifacts")
+          expected = {
+              "wheel": {"filename": wheel.name, "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest()},
+              "npm": {"filename": npm_tarball.name, "sha256": hashlib.sha256(npm_tarball.read_bytes()).hexdigest()},
+          }
+          if not isinstance(artifacts, dict) or artifacts.get("wheel") != expected["wheel"] or artifacts.get("npm") != expected["npm"]:
+              raise SystemExit("legitimate artifacts do not match signed evidence")
+          PY
+          cosign verify-blob \
+            --bundle "$evidence_dir/python-wheel.sigstore.json" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$WHEEL_PATH"
+          printf 'NEGATIVE_EVIDENCE_DIR=%s\n' "$evidence_dir" >> "$GITHUB_ENV"
+
+      - name: Prove tampered Python artifact is rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+          tampered_wheel="$RUNNER_TEMP/task008b-tampered-python.whl"
+          cp -- "$WHEEL_PATH" "$tampered_wheel"
+          printf 'task008b-wheel-tamper' >> "$tampered_wheel"
+          set +e
+          cosign verify-blob \
+            --bundle "$NEGATIVE_EVIDENCE_DIR/python-wheel.sigstore.json" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$tampered_wheel" \
+            > "$RUNNER_TEMP/task008b-tampered-wheel-verification.log" 2>&1
+          verification_status=$?
+          set -e
+          if [[ "$verification_status" -eq 0 ]]; then
+            echo "SECURITY FAILURE: tampered Python artifact verified" >&2
+            exit 1
+          fi
+          test ! -e "$RUNNER_TEMP/task008b-negative-accepted-handoff"
+
+      - name: Prove signed release metadata rejects version substitution
+        shell: bash
+        run: |
+          set -euo pipefail
+          substituted_request_version=0.8.5
+          set +e
+          python - "$NEGATIVE_EVIDENCE_DIR/evidence-manifest.json" "$substituted_request_version" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if manifest.get("release_version") != sys.argv[2]:
+              raise SystemExit("signed release_version rejects substituted release material")
+          PY
+          substitution_status=$?
+          set -e
+          if [[ "$substitution_status" -eq 0 ]]; then
+            echo "SECURITY FAILURE: different-version material passed release binding" >&2
+            exit 1
+          fi
+          test ! -e "$RUNNER_TEMP/task008b-negative-accepted-handoff"
+
+      - name: Prove mutated verified-execution handoff is rejected before execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_handoff="$RUNNER_TEMP/task008b-negative-candidate-handoff"
+          candidate_environment="$RUNNER_TEMP/task008b-negative-candidate-environment"
+          mkdir "$candidate_handoff"
+          wheel_filename="$(basename "$WHEEL_PATH")"
+          npm_filename="$(basename "$NPM_TARBALL_PATH")"
+          cp -- "$WHEEL_PATH" "$candidate_handoff/$wheel_filename"
+          cp -- "$NPM_TARBALL_PATH" "$candidate_handoff/$npm_filename"
+          python - "$candidate_handoff" "$RELEASE_VERSION" "$wheel_filename" "$npm_filename" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1])
+          release_version, wheel_filename, npm_filename = sys.argv[2:]
+          manifest = {
+              "release_version": release_version,
+              "wheel": {"filename": wheel_filename, "sha256": hashlib.sha256((root / wheel_filename).read_bytes()).hexdigest()},
+              "npm": {"filename": npm_filename, "sha256": hashlib.sha256((root / npm_filename).read_bytes()).hexdigest()},
+          }
+          (root / "verified-execution-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+          python - "$candidate_handoff" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1])
+          manifest = json.loads(
+              (root / "verified-execution-manifest.json").read_text(encoding="utf-8")
+          )
+          expected_files = {
+              "verified-execution-manifest.json",
+              manifest["wheel"]["filename"],
+              manifest["npm"]["filename"],
+          }
+          if {path.name for path in root.iterdir()} != expected_files:
+              raise SystemExit("candidate handoff is not exactly three files")
+          for kind in ("wheel", "npm"):
+              record = manifest[kind]
+              if hashlib.sha256((root / record["filename"]).read_bytes()).hexdigest() != record["sha256"]:
+                  raise SystemExit("candidate handoff is invalid before mutation")
+          PY
+          printf 'task008b-handoff-tamper' >> "$candidate_handoff/$wheel_filename"
+
+          set +e
+          python - "$candidate_handoff" "$candidate_environment" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import re
+          import sys
+
+          root = Path(sys.argv[1])
+          environment_path = Path(sys.argv[2])
+          manifest_path = root / "verified-execution-manifest.json"
+          if manifest_path.is_symlink() or not manifest_path.is_file():
+              raise SystemExit("verified execution manifest is not a regular file")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          if set(manifest) != {"release_version", "wheel", "npm"}:
+              raise SystemExit("verified execution manifest has unexpected fields")
+          release_version = manifest["release_version"]
+          if not isinstance(release_version, str) or re.fullmatch(
+              r"[0-9]+\.[0-9]+\.[0-9]+", release_version
+          ) is None:
+              raise SystemExit("invalid verified execution release version")
+          expected = {
+              "wheel": f"omnilyzer_supply_chain_spike-{release_version}-py3-none-any.whl",
+              "npm": f"omnilyzer-supply-chain-spike-{release_version}.tgz",
+          }
+          expected_files = {"verified-execution-manifest.json", *expected.values()}
+          if {path.name for path in root.iterdir()} != expected_files:
+              raise SystemExit("verified execution handoff does not contain exactly three files")
+          verified = {}
+          for kind, filename in expected.items():
+              record = manifest[kind]
+              if not isinstance(record, dict) or set(record) != {"filename", "sha256"}:
+                  raise SystemExit(f"invalid verified {kind} record")
+              if record["filename"] != filename or re.fullmatch(
+                  r"[0-9a-f]{64}", record["sha256"]
+              ) is None:
+                  raise SystemExit(f"invalid verified {kind} identity")
+              path = root / filename
+              if path.is_symlink() or not path.is_file():
+                  raise SystemExit(f"verified {kind} is not a regular file")
+              if hashlib.sha256(path.read_bytes()).hexdigest() != record["sha256"]:
+                  raise SystemExit(f"verified {kind} checksum mismatch")
+              verified[kind] = path
+          with environment_path.open("a", encoding="utf-8") as environment:
+              environment.write(f"RELEASE_VERSION={release_version}\n")
+              environment.write(f"WHEEL_PATH={verified['wheel']}\n")
+              environment.write(f"NPM_TARBALL_PATH={verified['npm']}\n")
+          PY
+          handoff_status=$?
+          set -e
+          if [[ "$handoff_status" -eq 0 ]]; then
+            echo "SECURITY FAILURE: mutated execution handoff passed validation" >&2
+            exit 1
+          fi
+          if [[ -e "$candidate_environment" ]]; then
+            echo "SECURITY FAILURE: mutated handoff reached the execution environment" >&2
+            exit 1
+          fi
+          test ! -e "$RUNNER_TEMP/task008b-negative-accepted-handoff"
+
+      - name: Record expected negative-validation results
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '## Task 008B Phase 4B negative validation'
+            echo
+            echo '- Tampered Python artifact: rejected'
+            echo '- Tampered signed evidence archive: rejected before extraction'
+            echo '- Different-version substitution: rejected by signed release metadata'
+            echo '- Mutated verified-execution handoff: rejected before execution'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  rollback-retention-probe:
+    needs: gate
+    if: needs.gate.outputs.mode == 'rollback'
+    permissions:
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CURRENT_RELEASE_VERSION: 0.8.5
+      ROLLBACK_VERSION: 0.8.4
+      EXPECTED_ROLLBACK_OCI_DIGEST: sha256:44cdf2855105c824fcad999723ed7cc4f4a0ba276c8b953882413a1c61004967
+      EXPECTED_VULNERABILITY_POLICY_SHA256: f36c806af62c1920890b6c33ae5dc03aa738af860e73a08b6fea3543c03d6530
+      EXPECTED_PUBLISHER_RUN_ID: '33294828516'
+      IMAGE_REPOSITORY: docker.cloudsmith.io/omnilyzer/platform-spike/omnilyzer-supply-chain-spike
+      SIGNER_IDENTITY: https://github.com/MichaelTrueX/omnilyzer-platform/.github/workflows/task008-publish.yml@refs/heads/spike/008-supply-chain
+      OIDC_ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - name: Require explicit current and rollback release separation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CURRENT_RELEASE_VERSION" = "0.8.5"
+          test "$ROLLBACK_VERSION" = "0.8.4"
+          test "$CURRENT_RELEASE_VERSION" != "$ROLLBACK_VERSION"
+          test "$EXPECTED_ROLLBACK_OCI_DIGEST" = \
+            "sha256:44cdf2855105c824fcad999723ed7cc4f4a0ba276c8b953882413a1c61004967"
+
+      - name: Set up Python without repository checkout
+        # actions/setup-python v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node without repository checkout
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.20.0'
+
+      - name: Authenticate short-lived read-only Cloudsmith rollback consumer
+        # cloudsmith-io/cloudsmith-cli-action v3.1.0
+        uses: cloudsmith-io/cloudsmith-cli-action@ad73fafb92e3e29a5166c529464c2df7658a608e
+        with:
+          oidc-namespace: omnilyzer
+          oidc-service-slug: gha-consumer
+          cli-version: '1.26.0'
+          verify-auth: true
+          export-auth-token: true
+
+      - name: Install exact Cosign verifier
+        # sigstore/cosign-installer v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.1.2
+
+      - name: Verify exact Cosign installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign_version="$({ cosign version; } 2>&1)"
+          python -c \
+            'import re, sys; raise SystemExit(0 if re.search(r"\bv?3\.1\.2\b", sys.stdin.read()) else "unexpected Cosign version")' \
+            <<< "$cosign_version"
+
+      - name: Retrieve exact rollback Python wheel without installing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          rollback_dir="$RUNNER_TEMP/task008b-rollback-downloads"
+          mkdir "$rollback_dir"
+          export PIP_INDEX_URL="https://token:${CLOUDSMITH_API_KEY}@dl.cloudsmith.io/basic/omnilyzer/platform-spike/python/simple/"
+          python -m pip download --disable-pip-version-check \
+            --only-binary=:all: --no-deps --dest "$rollback_dir" \
+            "omnilyzer-supply-chain-spike==${ROLLBACK_VERSION}"
+          wheel_filename="omnilyzer_supply_chain_spike-${ROLLBACK_VERSION}-py3-none-any.whl"
+          test -f "$rollback_dir/$wheel_filename"
+          test "$(find "$rollback_dir" -maxdepth 1 -type f -name '*.whl' | wc -l)" -eq 1
+          printf 'ROLLBACK_DIR=%s\n' "$rollback_dir" >> "$GITHUB_ENV"
+          printf 'WHEEL_PATH=%s\n' "$rollback_dir/$wheel_filename" >> "$GITHUB_ENV"
+
+      - name: Retrieve exact rollback npm tarball without installing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm_config="$RUNNER_TEMP/task008b-rollback-npmrc"
+          printf '%s\n' \
+            '@omnilyzer:registry=https://npm.cloudsmith.io/omnilyzer/platform-spike/' \
+            '//npm.cloudsmith.io/omnilyzer/platform-spike/:_authToken=${CLOUDSMITH_API_KEY}' \
+            > "$npm_config"
+          NPM_CONFIG_USERCONFIG="$npm_config" npm pack \
+            --ignore-scripts \
+            --pack-destination "$ROLLBACK_DIR" \
+            "@omnilyzer/supply-chain-spike@${ROLLBACK_VERSION}"
+          npm_filename="omnilyzer-supply-chain-spike-${ROLLBACK_VERSION}.tgz"
+          test -f "$ROLLBACK_DIR/$npm_filename"
+          test "$(find "$ROLLBACK_DIR" -maxdepth 1 -type f -name '*.tgz' | wc -l)" -eq 1
+          printf 'NPM_TARBALL_PATH=%s\n' "$ROLLBACK_DIR/$npm_filename" >> "$GITHUB_ENV"
+
+      - name: Authenticate Docker with short-lived rollback consumer identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$CLOUDSMITH_API_KEY" | docker login docker.cloudsmith.io \
+            --username token --password-stdin
+          touch "$RUNNER_TEMP/task008b-rollback-docker-login"
+
+      - name: Pull and inspect exact rollback OCI artifact without running it
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE_REPOSITORY}:${ROLLBACK_VERSION}"
+          expected_reference="${IMAGE_REPOSITORY}@${EXPECTED_ROLLBACK_OCI_DIGEST}"
+          docker pull "$image_ref"
+          observed_version="$(docker image inspect "$image_ref" \
+            --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+          test "$observed_version" = "$ROLLBACK_VERSION"
+          oci_reference="$(docker image inspect "$image_ref" \
+            --format '{{index .RepoDigests 0}}')"
+          if [[ "$oci_reference" != "$expected_reference" ]]; then
+            echo "rollback OCI reference does not match the reviewed immutable digest" >&2
+            exit 1
+          fi
+          printf 'OCI_REFERENCE=%s\n' "$oci_reference" >> "$GITHUB_ENV"
+
+      - name: Retrieve exact versioned rollback evidence from Cloudsmith Generic
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_download="$RUNNER_TEMP/task008b-rollback-evidence-download"
+          mkdir "$evidence_download"
+          archive_name="omnilyzer-supply-chain-spike-${ROLLBACK_VERSION}-evidence.tar.gz"
+          bundle_name="${archive_name}.sigstore.json"
+          download_generic() {
+            local filename="$1"
+            local filepath="task008/evidence/${ROLLBACK_VERSION}/${filename}"
+            local listing="$RUNNER_TEMP/task008b-rollback-${filename}.json"
+            cloudsmith list packages omnilyzer/platform-spike \
+              --query "format:generic AND filename:${filename} AND version:${ROLLBACK_VERSION}" \
+              --output-format json > "$listing"
+            python - "$listing" "$filename" "$filepath" "$ROLLBACK_VERSION" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          records = payload.get("data")
+          if not isinstance(records, list):
+              raise SystemExit("Cloudsmith package list has no data list")
+          matches = [
+              item for item in records
+              if item.get("format") == "generic"
+              and item.get("filename") == sys.argv[2]
+              and item.get("filepath") == sys.argv[3]
+              and item.get("version") == sys.argv[4]
+          ]
+          if len(matches) != 1:
+              raise SystemExit("expected exactly one versioned rollback evidence package")
+          PY
+            generic_url="https://generic.cloudsmith.io/omnilyzer/platform-spike/${filepath}"
+            curl --fail --silent --show-error \
+              --location \
+              --proto '=https' \
+              --proto-redir '=https' \
+              --max-redirs 3 \
+              --user "token:${CLOUDSMITH_API_KEY}" \
+              --output "$evidence_download/$filename" "$generic_url"
+          }
+          download_generic "$archive_name"
+          download_generic "$bundle_name"
+          printf 'EVIDENCE_ARCHIVE=%s\n' "$evidence_download/$archive_name" >> "$GITHUB_ENV"
+          printf 'EVIDENCE_ARCHIVE_BUNDLE=%s\n' "$evidence_download/$bundle_name" >> "$GITHUB_ENV"
+
+      - name: Verify rollback evidence archive signature before extraction
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign verify-blob \
+            --bundle "$EVIDENCE_ARCHIVE_BUNDLE" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$EVIDENCE_ARCHIVE"
+
+      - name: Safely extract exact seventeen-file rollback evidence allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/task008b-rollback-verified-evidence"
+          mkdir "$evidence_dir"
+          python - "$EVIDENCE_ARCHIVE" "$evidence_dir" <<'PY'
+          from pathlib import Path, PurePosixPath
+          import sys
+          import tarfile
+
+          archive_path, destination = Path(sys.argv[1]), Path(sys.argv[2])
+          expected = {
+              "python-sbom.cdx.json", "npm-sbom.cdx.json", "oci-sbom.cdx.json",
+              "python-vulnerabilities.grype.json", "npm-vulnerabilities.grype.json",
+              "oci-vulnerabilities.grype.json", "grype-db-status.json",
+              "vulnerability-policy-result.json",
+              "release-provenance.json", "evidence-manifest.json",
+              "python-wheel.sigstore.json", "npm-tarball.sigstore.json",
+              "python-sbom.sigstore.json", "npm-sbom.sigstore.json",
+              "oci-sbom.sigstore.json", "release-provenance.sigstore.json",
+              "evidence-manifest.sigstore.json",
+          }
+          with tarfile.open(archive_path, mode="r:gz") as archive:
+              members = archive.getmembers()
+              if len(members) != 17 or {member.name for member in members} != expected:
+                  raise SystemExit("rollback evidence archive does not match exact seventeen-file allowlist")
+              for member in members:
+                  path = PurePosixPath(member.name)
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit("rollback evidence archive contains an unsafe path")
+                  if not member.isfile() or member.issym() or member.islnk():
+                      raise SystemExit("rollback evidence archive contains a non-regular entry")
+              archive.extractall(destination, filter="data")
+          PY
+          printf 'EVIDENCE_DIR=%s\n' "$evidence_dir" >> "$GITHUB_ENV"
+
+      - name: Verify rollback evidence manifest signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign verify-blob \
+            --bundle "$EVIDENCE_DIR/evidence-manifest.sigstore.json" \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$EVIDENCE_DIR/evidence-manifest.json"
+
+      - name: Validate exact rollback evidence hashes SBOMs policy and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$EVIDENCE_DIR" "$WHEEL_PATH" "$NPM_TARBALL_PATH" "$OCI_REFERENCE" <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import sys
+
+          root, wheel, npm_tarball = map(Path, sys.argv[1:4])
+          oci_reference = sys.argv[4]
+          sha256 = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+          manifest = json.loads((root / "evidence-manifest.json").read_text(encoding="utf-8"))
+          if set(manifest) != {
+              "release_version", "publisher_source_sha", "github", "signer",
+              "tools", "artifacts", "sboms", "provenance", "vulnerability_scanning",
+              "signature_bundles",
+          }:
+              raise SystemExit("rollback evidence manifest has unexpected fields")
+          if manifest.get("release_version") != os.environ["ROLLBACK_VERSION"]:
+              raise SystemExit("rollback evidence release version mismatch")
+          source_sha = manifest.get("publisher_source_sha")
+          if not isinstance(source_sha, str) or re.fullmatch(r"[0-9a-f]{40}", source_sha) is None:
+              raise SystemExit("invalid rollback publisher source SHA")
+          if manifest.get("signer") != {
+              "identity": os.environ["SIGNER_IDENTITY"],
+              "oidc_issuer": os.environ["OIDC_ISSUER"],
+              "transparency": "public-sigstore",
+          }:
+              raise SystemExit("unexpected rollback signer metadata")
+          if manifest.get("tools") != {
+              "cosign": "3.1.2", "grype": "0.118.0", "syft": "1.51.0"
+          }:
+              raise SystemExit("unexpected rollback evidence tool versions")
+          github = manifest.get("github")
+          if not isinstance(github, dict) or set(github) != {"run_id", "run_attempt"}:
+              raise SystemExit("invalid rollback publisher run metadata")
+          if github.get("run_id") != os.environ["EXPECTED_PUBLISHER_RUN_ID"]:
+              raise SystemExit("rollback evidence publisher run mismatch")
+          if not isinstance(github.get("run_attempt"), str) or not github["run_attempt"].isdigit():
+              raise SystemExit("invalid rollback publisher run attempt")
+          if manifest.get("signature_bundles") != {
+              "wheel": "python-wheel.sigstore.json",
+              "npm": "npm-tarball.sigstore.json",
+              "python_sbom": "python-sbom.sigstore.json",
+              "npm_sbom": "npm-sbom.sigstore.json",
+              "oci_sbom": "oci-sbom.sigstore.json",
+              "provenance": "release-provenance.sigstore.json",
+          }:
+              raise SystemExit("unexpected rollback signature bundle inventory")
+
+          expected_oci_reference = (
+              f'{os.environ["IMAGE_REPOSITORY"]}@'
+              f'{os.environ["EXPECTED_ROLLBACK_OCI_DIGEST"]}'
+          )
+          if oci_reference != expected_oci_reference:
+              raise SystemExit("retrieved rollback OCI reference changed after resolution")
+          artifacts = manifest.get("artifacts")
+          if not isinstance(artifacts, dict) or set(artifacts) != {"wheel", "npm", "oci"}:
+              raise SystemExit("invalid rollback artifact inventory")
+          if artifacts["wheel"] != {"filename": wheel.name, "sha256": sha256(wheel)}:
+              raise SystemExit("rollback wheel does not match signed evidence")
+          if artifacts["npm"] != {"filename": npm_tarball.name, "sha256": sha256(npm_tarball)}:
+              raise SystemExit("rollback npm tarball does not match signed evidence")
+          if artifacts["oci"] != {
+              "image": expected_oci_reference,
+              "digest": os.environ["EXPECTED_ROLLBACK_OCI_DIGEST"],
+          }:
+              raise SystemExit("rollback OCI does not match signed evidence and reviewed digest")
+
+          expected_sboms = {
+              "python": "python-sbom.cdx.json",
+              "npm": "npm-sbom.cdx.json",
+              "oci": "oci-sbom.cdx.json",
+          }
+          sboms = manifest.get("sboms")
+          if not isinstance(sboms, dict) or set(sboms) != set(expected_sboms):
+              raise SystemExit("invalid rollback SBOM inventory")
+          for kind, filename in expected_sboms.items():
+              path = root / filename
+              if sboms[kind] != {
+                  "filename": filename,
+                  "sha256": sha256(path),
+                  "format": "cyclonedx-json",
+                  "spec_version": "1.6",
+              }:
+                  raise SystemExit(f"{kind} rollback SBOM metadata mismatch")
+              document = json.loads(path.read_text(encoding="utf-8"))
+              if document.get("bomFormat") != "CycloneDX" or document.get("specVersion") != "1.6":
+                  raise SystemExit(f"{kind} rollback SBOM schema mismatch")
+
+          vulnerability = manifest.get("vulnerability_scanning")
+          if not isinstance(vulnerability, dict) or set(vulnerability) != {
+              "scanner", "policy", "database", "reports", "policy_result"
+          }:
+              raise SystemExit("invalid rollback vulnerability evidence inventory")
+          if vulnerability["scanner"] != {"name": "grype", "version": "0.118.0"}:
+              raise SystemExit("unexpected rollback vulnerability scanner")
+          policy = vulnerability.get("policy")
+          expected_policy_sha256 = os.environ["EXPECTED_VULNERABILITY_POLICY_SHA256"]
+          if policy != {
+              "sha256": expected_policy_sha256,
+              "decision": "PASS",
+              "block_severities": ["Critical", "High"],
+          }:
+              raise SystemExit("rollback vulnerability policy binding mismatch")
+
+          database_status_path = root / "grype-db-status.json"
+          database = vulnerability.get("database")
+          if not isinstance(database, dict) or set(database) != {"metadata", "status_file"}:
+              raise SystemExit("invalid rollback vulnerability database evidence")
+          if database.get("status_file") != {
+              "filename": database_status_path.name,
+              "sha256": sha256(database_status_path),
+          }:
+              raise SystemExit("rollback Grype DB status hash mismatch")
+          database_status = json.loads(database_status_path.read_text(encoding="utf-8"))
+          if database.get("metadata") != database_status:
+              raise SystemExit("rollback Grype DB metadata mismatch")
+          if not isinstance(database_status, dict) or set(database_status) != {
+              "built", "checksum", "schema_version", "valid"
+          }:
+              raise SystemExit("invalid rollback sanitized Grype DB status")
+          if not isinstance(database_status["built"], str) or not database_status["built"].strip():
+              raise SystemExit("invalid rollback Grype DB build identity")
+          if not isinstance(database_status["schema_version"], str) or not database_status["schema_version"].strip():
+              raise SystemExit("invalid rollback Grype DB schema version")
+          if not isinstance(database_status["checksum"], str) or re.fullmatch(r"sha256:[0-9a-f]{64}", database_status["checksum"]) is None:
+              raise SystemExit("invalid rollback Grype DB checksum")
+          if database_status["valid"] is not True:
+              raise SystemExit("rollback Grype DB status is not valid")
+
+          expected_reports = {
+              "python": "python-vulnerabilities.grype.json",
+              "npm": "npm-vulnerabilities.grype.json",
+              "oci": "oci-vulnerabilities.grype.json",
+          }
+          reports = vulnerability.get("reports")
+          if not isinstance(reports, dict) or set(reports) != set(expected_reports):
+              raise SystemExit("invalid rollback Grype report inventory")
+          for kind, filename in expected_reports.items():
+              if reports[kind] != {"filename": filename, "sha256": sha256(root / filename)}:
+                  raise SystemExit(f"{kind} rollback Grype report hash mismatch")
+
+          policy_result_path = root / "vulnerability-policy-result.json"
+          if vulnerability.get("policy_result") != {
+              "filename": policy_result_path.name,
+              "sha256": sha256(policy_result_path),
+          }:
+              raise SystemExit("rollback vulnerability policy result hash mismatch")
+          policy_result = json.loads(policy_result_path.read_text(encoding="utf-8"))
+          if not isinstance(policy_result, dict) or set(policy_result) != {
+              "schema_version", "policy", "scanner", "database", "targets",
+              "decision", "evaluated_at_date",
+          }:
+              raise SystemExit("invalid rollback vulnerability policy result structure")
+          if policy_result.get("schema_version") != 1 or policy_result.get("decision") != "PASS":
+              raise SystemExit("rollback vulnerability policy result is not PASS")
+          if policy_result.get("scanner") != vulnerability["scanner"]:
+              raise SystemExit("rollback policy result scanner mismatch")
+          if policy_result.get("policy") != {
+              "block_severities": ["Critical", "High"],
+              "policy_sha256": expected_policy_sha256,
+          }:
+              raise SystemExit("rollback policy result binding mismatch")
+          if policy_result.get("database") != database_status:
+              raise SystemExit("rollback policy result DB metadata mismatch")
+          targets = policy_result.get("targets")
+          if not isinstance(targets, dict) or set(targets) != set(expected_reports):
+              raise SystemExit("invalid rollback vulnerability targets")
+          expected_severities = {"Critical", "High", "Medium", "Low", "Negligible", "Unknown"}
+          for kind, filename in expected_reports.items():
+              target = targets[kind]
+              if not isinstance(target, dict) or set(target) != {
+                  "scan_report_filename", "scan_report_sha256", "total_matches",
+                  "severity_counts", "blocking_findings", "excepted_findings",
+              }:
+                  raise SystemExit(f"invalid {kind} rollback vulnerability target")
+              if target["scan_report_filename"] != filename or target["scan_report_sha256"] != reports[kind]["sha256"]:
+                  raise SystemExit(f"{kind} rollback vulnerability report mismatch")
+              counts = target.get("severity_counts")
+              if not isinstance(counts, dict) or set(counts) != expected_severities or any(
+                  not isinstance(count, int) or isinstance(count, bool) or count < 0
+                  for count in counts.values()
+              ):
+                  raise SystemExit(f"invalid {kind} rollback severity counts")
+              if not isinstance(target.get("total_matches"), int) or isinstance(target["total_matches"], bool) or sum(counts.values()) != target["total_matches"]:
+                  raise SystemExit(f"inconsistent {kind} rollback match count")
+              if target.get("blocking_findings") != []:
+                  raise SystemExit(f"{kind} rollback PASS result retains blocking findings")
+              if not isinstance(target.get("excepted_findings"), list):
+                  raise SystemExit(f"invalid {kind} rollback exception evidence")
+
+          provenance_path = root / "release-provenance.json"
+          provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+          if manifest.get("provenance") != {
+              "filename": provenance_path.name,
+              "sha256": sha256(provenance_path),
+              "predicate_type": "https://slsa.dev/provenance/v1",
+          }:
+              raise SystemExit("rollback provenance manifest record mismatch")
+          if provenance.get("_type") != "https://in-toto.io/Statement/v1" or provenance.get("predicateType") != "https://slsa.dev/provenance/v1":
+              raise SystemExit("invalid rollback provenance statement type")
+          expected_subjects = {
+              (wheel.name, sha256(wheel)),
+              (npm_tarball.name, sha256(npm_tarball)),
+              (expected_oci_reference, os.environ["EXPECTED_ROLLBACK_OCI_DIGEST"].split(":", 1)[1]),
+          }
+          subjects = provenance.get("subject")
+          if not isinstance(subjects, list) or len(subjects) != 3:
+              raise SystemExit("rollback provenance must contain exactly three subjects")
+          observed_subjects = {
+              (subject.get("name"), subject.get("digest", {}).get("sha256"))
+              for subject in subjects if isinstance(subject, dict)
+          }
+          if observed_subjects != expected_subjects:
+              raise SystemExit("rollback provenance subjects do not match retrieved artifacts")
+          definition = provenance.get("predicate", {}).get("buildDefinition", {})
+          if definition.get("buildType") != "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1":
+              raise SystemExit("unexpected rollback provenance build type")
+          if definition.get("externalParameters") != {
+              "repository": "https://github.com/MichaelTrueX/omnilyzer-platform",
+              "workflow_path": ".github/workflows/task008-publish.yml",
+              "ref": "refs/heads/spike/008-supply-chain",
+              "release_version": os.environ["ROLLBACK_VERSION"],
+              "vulnerability_policy_sha256": expected_policy_sha256,
+          }:
+              raise SystemExit("unexpected rollback provenance external parameters")
+          if definition.get("resolvedDependencies") != [{
+              "uri": "git+https://github.com/MichaelTrueX/omnilyzer-platform@refs/heads/spike/008-supply-chain",
+              "digest": {"gitCommit": source_sha},
+          }]:
+              raise SystemExit("rollback provenance Git dependency does not match signed source")
+          if definition.get("internalParameters") != {}:
+              raise SystemExit("rollback provenance internal parameters must be empty")
+          run_details = provenance.get("predicate", {}).get("runDetails", {})
+          if run_details.get("builder", {}).get("id") != "https://github.com/actions/runner/github-hosted":
+              raise SystemExit("unexpected rollback provenance builder")
+          expected_invocation = (
+              "https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/"
+              f'{github["run_id"]}/attempts/{github["run_attempt"]}'
+          )
+          if run_details.get("metadata") != {"invocationId": expected_invocation}:
+              raise SystemExit("rollback provenance invocation does not match signed run metadata")
+          PY
+
+      - name: Verify all rollback release signatures without execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_blob() {
+            cosign verify-blob \
+              --bundle "$EVIDENCE_DIR/$2" \
+              --certificate-identity "$SIGNER_IDENTITY" \
+              --certificate-oidc-issuer "$OIDC_ISSUER" \
+              "$1"
+          }
+          verify_blob "$WHEEL_PATH" python-wheel.sigstore.json
+          verify_blob "$NPM_TARBALL_PATH" npm-tarball.sigstore.json
+          verify_blob "$EVIDENCE_DIR/python-sbom.cdx.json" python-sbom.sigstore.json
+          verify_blob "$EVIDENCE_DIR/npm-sbom.cdx.json" npm-sbom.sigstore.json
+          verify_blob "$EVIDENCE_DIR/oci-sbom.cdx.json" oci-sbom.sigstore.json
+          verify_blob "$EVIDENCE_DIR/release-provenance.json" release-provenance.sigstore.json
+          cosign verify \
+            --certificate-identity "$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            "$OCI_REFERENCE"
+
+      - name: Record registry-only rollback verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '## Task 008B Phase 5 registry-only rollback verification'
+            echo
+            printf -- '- Current release: `%s`\n' "$CURRENT_RELEASE_VERSION"
+            printf -- '- Explicit rollback release: `%s`\n' "$ROLLBACK_VERSION"
+            printf -- '- Verified immutable OCI reference: `%s`\n' "$OCI_REFERENCE"
+            echo '- Source: Cloudsmith packages and signed Generic evidence only'
+            echo '- Result: retrieval and cryptographic verification complete; package content not executed'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log out from Cloudsmith Docker registry
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/task008b-rollback-docker-login" ]]; then
+            docker logout docker.cloudsmith.io
+          fi
+
+  consumer-permission-probe:
+    needs: gate
+    if: needs.gate.outputs.mode == 'permission'
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDSMITH_REPOSITORY: omnilyzer/platform-spike
+    steps:
+      - name: Authenticate short-lived read-only Cloudsmith consumer for permission probe
+        # cloudsmith-io/cloudsmith-cli-action v3.1.0
+        uses: cloudsmith-io/cloudsmith-cli-action@ad73fafb92e3e29a5166c529464c2df7658a608e
+        with:
+          oidc-namespace: omnilyzer
+          oidc-service-slug: gha-consumer
+          cli-version: '1.26.0'
+          verify-auth: true
+          export-auth-token: true
+
+      - name: Prove consumer upload is denied and repository read still succeeds
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe_filename="task008b-consumer-${GITHUB_RUN_ID}.txt"
+          probe_filepath="task008b/permissions/consumer/${GITHUB_RUN_ID}/${probe_filename}"
+          probe_file="$RUNNER_TEMP/$probe_filename"
+          denial_log="$RUNNER_TEMP/task008b-consumer-denial.log"
+          package_json="$RUNNER_TEMP/task008b-consumer-read.json"
+
+          require_authorization_denial() {
+            python - "$1" "$2" <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          output = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+          denial = re.compile(
+              r"(?:\bhttp(?:/\d(?:\.\d)?)?\s*403\b|"
+              r"\b403\b[^\n]*\bforbidden\b|\bforbidden\b|"
+              r"do not have permission|permission denied|"
+              r"insufficient permissions?)",
+              re.IGNORECASE,
+          )
+          if denial.search(output) is None:
+              print(
+                  f"INCONCLUSIVE: {sys.argv[2]} failed without recognizable "
+                  "authorization-denial evidence",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+          PY
+          }
+
+          printf 'Task 008B consumer write-denial probe for run %s\n' "$GITHUB_RUN_ID" \
+            > "$probe_file"
+
+          set +e
+          cloudsmith push generic "$CLOUDSMITH_REPOSITORY" "$probe_file" \
+            --filepath "$probe_filepath" \
+            2>&1 | tee "$denial_log"
+          upload_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$upload_status" -eq 0 ]]; then
+            echo "Consumer unexpectedly uploaded a sacrificial Generic artifact" >&2
+            exit 1
+          fi
+          require_authorization_denial "$denial_log" "consumer upload"
+
+          # A successful authenticated read distinguishes authorization denial
+          # from an expired credential or a Cloudsmith/network outage.
+          cloudsmith list packages "$CLOUDSMITH_REPOSITORY" \
+            --query "format:generic AND filename:${probe_filename}" \
+            --output-format json > "$package_json"
+          python - "$package_json" "$probe_filename" "$probe_filepath" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          records = payload.get("data")
+          if not isinstance(records, list):
+              print("Cloudsmith package list did not return a data list", file=sys.stderr)
+              raise SystemExit(1)
+          matches = [
+              package
+              for package in records
+              if package.get("format") == "generic"
+              and package.get("filename") == sys.argv[2]
+              and package.get("filepath") == sys.argv[3]
+          ]
+          if matches:
+              print(
+                  f"consumer upload left {len(matches)} exact artifact(s)",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+          PY

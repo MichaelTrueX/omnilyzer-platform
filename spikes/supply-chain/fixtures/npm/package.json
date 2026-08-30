@@ -1,0 +1,13 @@
+{
+  "name": "@omnilyzer/supply-chain-spike",
+  "version": "0.0.0",
+  "description": "Synthetic private-registry validation fixture.",
+  "type": "module",
+  "exports": "./index.js",
+  "files": [
+    "index.js"
+  ],
+  "engines": {
+    "node": ">=24.15.0 <25"
+  }
+}
