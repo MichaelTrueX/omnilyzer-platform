@@ -37,6 +37,7 @@ def config(
     batch: int = 8,
     delay: int = 10,
     trust_incoming_request_id: bool = False,
+    trust_incoming_trace_context: bool = False,
 ) -> ObservabilityConfig:
     """Create a fully bounded test configuration."""
 
@@ -46,6 +47,7 @@ def config(
         product=METADATA.product,
         environment=METADATA.environment,
         trust_incoming_request_id=trust_incoming_request_id,
+        trust_incoming_trace_context=trust_incoming_trace_context,
         otlp_endpoint=endpoint,
         export_timeout_millis=timeout,
         schedule_delay_millis=delay,

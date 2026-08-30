@@ -7,8 +7,9 @@ import time
 from typing import Callable
 
 from django.http import HttpRequest, HttpResponse
-from opentelemetry import propagate
+from opentelemetry.context import Context
 from opentelemetry.trace import SpanKind, Status, StatusCode
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from .context import (
     REQUEST_ID_HEADER,
@@ -22,6 +23,35 @@ from .structured_logging import event
 
 
 _LOGGER = logging.getLogger("omnilyzer.observability")
+TRACEPARENT_MAX_LENGTH = 512
+TRACESTATE_MAX_LENGTH = 512
+_TRACE_CONTEXT_PROPAGATOR = TraceContextTextMapPropagator()
+
+
+def _header_exceeds(value: str | None, limit: int) -> bool:
+    """Apply a byte-oriented bound before standard propagation parsing."""
+
+    return value is not None and len(value.encode("utf-8")) > limit
+
+
+def _incoming_trace_context(request: HttpRequest, *, trusted: bool) -> Context:
+    """Extract bounded W3C context only at an explicitly trusted boundary."""
+
+    if not trusted:
+        return Context()
+    traceparent = request.headers.get("traceparent")
+    tracestate = request.headers.get("tracestate")
+    if (
+        _header_exceeds(traceparent, TRACEPARENT_MAX_LENGTH)
+        or _header_exceeds(tracestate, TRACESTATE_MAX_LENGTH)
+    ):
+        return Context()
+    carrier = {
+        key: value
+        for key, value in (("traceparent", traceparent), ("tracestate", tracestate))
+        if value is not None
+    }
+    return _TRACE_CONTEXT_PROPAGATOR.extract(carrier=carrier, context=Context())
 
 
 class ObservabilityMiddleware:
@@ -45,12 +75,10 @@ class ObservabilityMiddleware:
                 return response
             finally:
                 reset_request_id(token)
-        carrier = {
-            key: request.headers[key]
-            for key in ("traceparent", "tracestate")
-            if key in request.headers
-        }
-        parent_context = propagate.extract(carrier=carrier)
+        parent_context = _incoming_trace_context(
+            request,
+            trusted=runtime.config.trust_incoming_trace_context,
+        )
         response: HttpResponse | None = None
         status_code = 500
         route: str | None = None

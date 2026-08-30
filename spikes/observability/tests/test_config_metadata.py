@@ -20,6 +20,7 @@ class ConfigurationTests(unittest.TestCase):
                 "OBSERVABILITY_PRODUCT": "valoria",
                 "OBSERVABILITY_ENVIRONMENT": "test",
                 "OBSERVABILITY_TRUST_INCOMING_REQUEST_ID": "true",
+                "OBSERVABILITY_TRUST_INCOMING_TRACE_CONTEXT": "true",
                 "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://127.0.0.1:4318/v1/traces",
                 "OTEL_EXPORT_TIMEOUT_MILLIS": "200",
                 "OTEL_BSP_SCHEDULE_DELAY_MILLIS": "25",
@@ -29,6 +30,7 @@ class ConfigurationTests(unittest.TestCase):
         )
         self.assertTrue(config.enabled)
         self.assertTrue(config.trust_incoming_request_id)
+        self.assertTrue(config.trust_incoming_trace_context)
         self.assertEqual(config.max_queue_size, 128)
         self.assertLessEqual(config.max_export_batch_size, config.max_queue_size)
 
@@ -36,6 +38,7 @@ class ConfigurationTests(unittest.TestCase):
         malformed = (
             {"OBSERVABILITY_ENABLED": "yes"},
             {"OBSERVABILITY_TRUST_INCOMING_REQUEST_ID": "yes"},
+            {"OBSERVABILITY_TRUST_INCOMING_TRACE_CONTEXT": "yes"},
             {"OBSERVABILITY_ENABLED": "true"},
             {
                 "OBSERVABILITY_ENABLED": "true",
@@ -57,6 +60,24 @@ class ConfigurationTests(unittest.TestCase):
         for values in malformed:
             with self.subTest(values=values), self.assertRaises(ValueError):
                 ObservabilityConfig.from_mapping(values)
+
+    def test_trace_and_request_id_trust_are_independent_and_default_false_in_prod(self) -> None:
+        production_default = ObservabilityConfig.from_mapping(
+            {"OBSERVABILITY_ENVIRONMENT": "prod"}
+        )
+        self.assertFalse(production_default.trust_incoming_request_id)
+        self.assertFalse(production_default.trust_incoming_trace_context)
+
+        request_only = ObservabilityConfig.from_mapping(
+            {"OBSERVABILITY_TRUST_INCOMING_REQUEST_ID": "true"}
+        )
+        trace_only = ObservabilityConfig.from_mapping(
+            {"OBSERVABILITY_TRUST_INCOMING_TRACE_CONTEXT": "true"}
+        )
+        self.assertTrue(request_only.trust_incoming_request_id)
+        self.assertFalse(request_only.trust_incoming_trace_context)
+        self.assertFalse(trace_only.trust_incoming_request_id)
+        self.assertTrue(trace_only.trust_incoming_trace_context)
 
     def test_malformed_configuration_disables_telemetry_without_crashing_app(self) -> None:
         previous = get_runtime()

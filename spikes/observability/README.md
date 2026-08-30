@@ -45,6 +45,8 @@ The spike passes only when all of the following are true:
   high-churn deployment metadata stays out of per-request metrics;
 - tests exercise request, database, and outbound HTTP spans and W3C propagation without
   recording sensitive customer or identity attributes;
+- inbound W3C context is ignored by default; independently configured trusted-boundary
+  mode applies bounded standard parsing without ingesting baggage;
 - no production infrastructure, credentials, collector, Prometheus server, or product
   package is required.
 
@@ -59,7 +61,9 @@ Django request
     |
     +-- generated request ID (or validated trusted-ingress ID) -> contextvars -> JSON log
     |
-    +-- OTel stable API spans -> bounded BatchSpanProcessor -> OTLP/HTTP
+    +-- local root trace by default
+    |      or bounded W3C parent from an independently trusted boundary
+    |          -> OTel stable API spans -> bounded BatchSpanProcessor -> OTLP/HTTP
     |                                                   |
     |                                                   +-- collector implementation TBD
     |
@@ -141,8 +145,31 @@ The stable OpenTelemetry API and SDK create:
 
 Default trace attributes exclude `workspace_id`, `user_id`, email, sessions, tokens,
 Authorization, request bodies, customer content, raw query strings, and raw arbitrary
-URLs. The middleware extracts only `traceparent` and `tracestate`; it does not ingest
-externally supplied baggage into application attributes.
+URLs. Outbound W3C propagation remains standard.
+
+Inbound propagation has a separate secure default. With
+`OBSERVABILITY_TRUST_INCOMING_TRACE_CONTEXT=false`, the middleware ignores
+`traceparent` and `tracestate` and starts from a new empty OpenTelemetry context. A public
+caller therefore cannot select the internal trace ID or remote parent, force sampling
+through a sampled remote parent, or suppress the independently sampled local root with a
+non-sampled parent. This setting is independent of request-ID trust and remains false in
+every environment, including production, unless explicitly configured.
+
+`OBSERVABILITY_TRUST_INCOMING_TRACE_CONTEXT=true` is only for a reviewed trusted ingress
+or service-to-service boundary that strips or sanitizes propagation headers. Before the
+standard OpenTelemetry W3C propagator parses them, `traceparent` and `tracestate` are each
+limited to 512 UTF-8 bytes. The bound accommodates the fixed current `traceparent` form
+and bounded future variation, matches the W3C `tracestate` size ceiling, and prevents
+absurd inputs reaching propagation parsing. If either header exceeds its limit, all
+incoming trace context is ignored and a local root is created. Malformed input likewise
+produces an empty extracted context. The exact trace-context propagator is used rather
+than the global baggage-capable composite, so W3C baggage is never ingested. No custom
+W3C parser or source-IP trust logic is introduced.
+
+Trace context is telemetry metadata only. It is never identity, authentication,
+authorization, tenant context, deduplication, or session state. This boundary matters
+because standard parent-based sampling can honor a remote parent's sampled flag; an
+arbitrary Internet caller must not automatically become that trusted parent.
 
 This spike intentionally does not add the beta `opentelemetry-instrumentation-django`
 package. The reusable middleware and explicit representative spans use stable OTel APIs.
@@ -265,13 +292,13 @@ is in [`results/benchmark.json`](results/benchmark.json).
 
 | Condition | Success | Mean | p50 | p95 | Throughput | CPU | Peak traced growth | Shutdown |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Observability disabled | 500/500 | 0.838 ms | 0.798 ms | 1.089 ms | 1189.4 req/s | 0.4203 s | 272,601 B | 0.001 ms |
-| OTLP accepting | 500/500 | 1.765 ms | 1.479 ms | 3.155 ms | 565.7 req/s | 0.8999 s | 830,232 B | 0.221 ms |
-| OTLP unavailable | 500/500 | 1.472 ms | 1.315 ms | 1.979 ms | 678.4 req/s | 0.7496 s | 1,082,375 B | 0.202 ms |
+| Observability disabled | 500/500 | 0.843 ms | 0.767 ms | 1.277 ms | 1182.2 req/s | 0.4229 s | 272,601 B | 0.002 ms |
+| OTLP accepting | 500/500 | 1.520 ms | 1.358 ms | 2.184 ms | 657.0 req/s | 0.7722 s | 840,581 B | 0.251 ms |
+| OTLP unavailable | 500/500 | 1.536 ms | 1.265 ms | 3.066 ms | 650.2 req/s | 0.7817 s | 1,385,185 B | 0.171 ms |
 
-Unavailable OTLP added 0.890 ms at p95 versus the disabled baseline, stayed below the
+Unavailable OTLP added 1.789 ms at p95 versus the disabled baseline, stayed below the
 8 MiB synthetic memory bound, and shut down below one second. The accepting receiver saw
-16 OTLP requests and 80,814 payload bytes. The roughly 43% synthetic throughput drop is
+11 OTLP requests and 57,453 payload bytes. The roughly 45% synthetic throughput drop is
 material evidence to carry forward, but the ratio is exaggerated by a sub-millisecond
 in-process baseline and cannot predict production throughput. Sampling, real WSGI/ASGI,
 networking, PostgreSQL, log I/O, multiprocess workers, and production load require later
@@ -287,6 +314,8 @@ measurement.
 | High-cardinality metrics | closed label set and raw-ID route attacks tested |
 | Exporter details/stack traces to callers | absent during exception and unavailable-endpoint cases |
 | Request-ID abuse | valid external ID ignored by default; trusted-ingress mode remains exact-format bounded; malformed and 4 KiB inputs replaced |
+| Trace-context abuse | sampled/non-sampled caller parents ignored by default; trusted mode uses standard W3C parsing after independent 512-byte header bounds |
+| Baggage ingestion | exact trace-context propagator accepts no inbound W3C baggage in either trust mode |
 | Queue/log storm | 600-request blocked-exporter burst emitted exactly one queue warning; unrelated OTel warning/error records remained visible |
 | Concurrent context leakage | eight synchronized Django requests retained distinct IDs |
 | Authentication/authorization | synthetic 401/403/200 outcomes unchanged by telemetry failure |
@@ -383,7 +412,9 @@ for reviewed event fields; arbitrary request capture remains prohibited. Request
 trace correlation is possible without customer identifiers. Route templates and closed
 labels kept three different object IDs in one time series. Build metadata needs two
 planes: bounded version identity in Prometheus and complete deployment identity in
-inventory/log evidence.
+inventory/log evidence. Public callers control neither the canonical request ID nor the
+internal remote-parent trace context by default. Request-ID trust and trace-context trust
+are independent deployment decisions; neither confers a security privilege.
 
 ## Limitations
 
@@ -420,6 +451,9 @@ inventory/log evidence.
 - Batch export with explicit queue, timeout, batch, diagnostic, and shutdown bounds.
 - Generated request IDs by default; optional incoming-ID trust only behind a reverse proxy
   that sanitizes and overwrites the external header before forwarding.
+- Locally rooted traces by default; independently configured incoming W3C propagation
+  only at a trusted ingress/service boundary that sanitizes propagation headers. Outbound
+  W3C propagation remains enabled normally.
 
 ### TO VALIDATE LATER
 
@@ -441,7 +475,8 @@ inventory/log evidence.
 - raw paths, queries, request/trace/user/Workspace IDs, secrets, or deployment digests as
   request labels;
 - request-body or authentication-header logging by default;
-- direct Internet control of canonical request IDs, arbitrary external request IDs,
+- direct Internet control of canonical request IDs or internal trace parents, arbitrary
+  external request IDs, unbounded propagation headers,
   bespoke metrics bearer tokens, vendor-specific product
   APIs, Kafka, Kubernetes, or production observability infrastructure in this task.
 

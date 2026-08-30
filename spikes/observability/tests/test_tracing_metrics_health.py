@@ -9,10 +9,16 @@ import unittest
 
 from django.http import HttpResponse
 from django.test import Client, RequestFactory, TestCase, override_settings
+from opentelemetry import baggage
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from contract.metrics import FORBIDDEN_REQUEST_LABELS, REQUEST_LABELS
-from contract.middleware import ObservabilityMiddleware
+from contract.middleware import (
+    TRACEPARENT_MAX_LENGTH,
+    TRACESTATE_MAX_LENGTH,
+    ObservabilityMiddleware,
+    _incoming_trace_context,
+)
 from contract.structured_logging import JsonFormatter
 from contract.telemetry import build_runtime
 
@@ -60,7 +66,22 @@ class TracingAndMetricsTests(TestCase):
         ):
             self.assertNotIn(sensitive, serialized.lower())
 
-    def test_incoming_w3c_trace_context_is_honored(self) -> None:
+    def trusted_trace_request(self, headers: dict[str, str]):
+        """Return spans from one explicitly trusted inbound trace-context request."""
+
+        exporter = InMemorySpanExporter()
+        runtime = build_runtime(
+            config(enabled=True, trust_incoming_trace_context=True),
+            METADATA,
+            exporter=exporter,
+        )
+        with installed_runtime(runtime):
+            response = self.client.get("/api/work/7", headers=headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(runtime.provider.force_flush(timeout_millis=500))
+        return exporter.get_finished_spans()
+
+    def test_default_ignores_valid_sampled_incoming_traceparent(self) -> None:
         trace_id = "1" * 32
         parent_span_id = "2" * 16
         response = self.client.get(
@@ -71,8 +92,84 @@ class TracingAndMetricsTests(TestCase):
         server = next(
             span for span in self.flush() if span.name == "http.server.request"
         )
+        self.assertNotEqual(f"{server.context.trace_id:032x}", trace_id)
+        self.assertIsNone(server.parent)
+
+    def test_default_non_sampled_remote_parent_cannot_suppress_local_root(self) -> None:
+        trace_id = "3" * 32
+        parent_span_id = "4" * 16
+        response = self.client.get(
+            "/api/work/7",
+            headers={"traceparent": f"00-{trace_id}-{parent_span_id}-00"},
+        )
+        self.assertEqual(response.status_code, 200)
+        server = next(
+            span for span in self.flush() if span.name == "http.server.request"
+        )
+        self.assertNotEqual(f"{server.context.trace_id:032x}", trace_id)
+        self.assertIsNone(server.parent)
+
+    def test_trusted_trace_context_honors_valid_w3c_parent(self) -> None:
+        trace_id = "5" * 32
+        parent_span_id = "6" * 16
+        spans = self.trusted_trace_request(
+            {"traceparent": f"00-{trace_id}-{parent_span_id}-01"}
+        )
+        server = next(span for span in spans if span.name == "http.server.request")
         self.assertEqual(f"{server.context.trace_id:032x}", trace_id)
         self.assertEqual(f"{server.parent.span_id:016x}", parent_span_id)
+        self.assertTrue(server.parent.is_remote)
+
+    def test_trusted_trace_context_ignores_malformed_traceparent(self) -> None:
+        spans = self.trusted_trace_request({"traceparent": "malformed"})
+        server = next(span for span in spans if span.name == "http.server.request")
+        self.assertIsNone(server.parent)
+
+    def test_oversized_trace_propagation_headers_fail_safely_to_local_root(self) -> None:
+        valid = "00-" + "7" * 32 + "-" + "8" * 16 + "-01"
+        cases = (
+            {"traceparent": "a" * (TRACEPARENT_MAX_LENGTH + 1)},
+            {"traceparent": "😀" * 129},
+            {
+                "traceparent": valid,
+                "tracestate": "a" * (TRACESTATE_MAX_LENGTH + 1),
+            },
+        )
+        for headers in cases:
+            with self.subTest(header=next(reversed(headers))):
+                spans = self.trusted_trace_request(headers)
+                server = next(
+                    span for span in spans if span.name == "http.server.request"
+                )
+                self.assertIsNone(server.parent)
+
+    def test_default_ignores_tracestate_and_no_baggage_is_ingested(self) -> None:
+        trace_id = "9" * 32
+        parent_span_id = "a" * 16
+        response = self.client.get(
+            "/api/work/7",
+            headers={
+                "traceparent": f"00-{trace_id}-{parent_span_id}-01",
+                "tracestate": "vendor=value",
+                "baggage": "workspace_id=caller-controlled",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        server = next(
+            span for span in self.flush() if span.name == "http.server.request"
+        )
+        self.assertIsNone(server.parent)
+        self.assertEqual(len(server.context.trace_state), 0)
+
+        request = RequestFactory().get(
+            "/synthetic",
+            headers={
+                "traceparent": f"00-{trace_id}-{parent_span_id}-01",
+                "baggage": "workspace_id=caller-controlled",
+            },
+        )
+        context = _incoming_trace_context(request, trusted=True)
+        self.assertEqual(baggage.get_all(context=context), {})
 
     def test_outbound_http_propagates_trace_context(self) -> None:
         with Receiver() as receiver, override_settings(
