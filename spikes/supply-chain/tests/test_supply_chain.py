@@ -158,7 +158,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             (SPIKE_ROOT / "control/tamper-negative.trigger").read_text(
                 encoding="utf-8"
             ),
-            "task008b-phase4b-tamper-negative-v1\n",
+            "task008b-phase4b-tamper-negative-v2\n",
         )
 
     def test_publish_trigger_accepts_only_one_strict_version_plus_newline(self) -> None:
