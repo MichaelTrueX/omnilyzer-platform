@@ -9,18 +9,84 @@ on:
       - spike/008-supply-chain
     paths:
       - spikes/supply-chain/control/publish.trigger
+      - spikes/supply-chain/control/publisher-permissions.trigger
 
-permissions:
-  contents: read
-  id-token: write
+permissions: {}
 
 concurrency:
   group: task008-publish-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  gate:
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/spike/008-supply-chain'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.classify.outputs.mode }}
+    steps:
+      - name: Check out complete push history without credentials
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify complete push range
+        id: classify
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]] || \
+             [[ ! "$AFTER_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Push range contains an invalid commit SHA" >&2
+            exit 1
+          fi
+          if [[ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            echo "An all-zero before SHA is invalid for this existing-branch spike" >&2
+            exit 1
+          fi
+          git cat-file -e "${BEFORE_SHA}^{commit}"
+          git cat-file -e "${AFTER_SHA}^{commit}"
+
+          changed_paths_file="$RUNNER_TEMP/task008-publish-changed-paths.txt"
+          changed_status_file="$RUNNER_TEMP/task008-publish-changed-status.txt"
+          git diff --name-only --no-renames --diff-filter=ACDMRTUXB \
+            "$BEFORE_SHA" "$AFTER_SHA" > "$changed_paths_file"
+          git diff --name-status --no-renames --diff-filter=ACDMRTUXB \
+            "$BEFORE_SHA" "$AFTER_SHA" > "$changed_status_file"
+          mapfile -t changed_paths < "$changed_paths_file"
+
+          mode=none
+          if [[ "${#changed_paths[@]}" -eq 1 ]]; then
+            changed_status="$(<"$changed_status_file")"
+            if [[ "${changed_paths[0]}" == \
+                  "spikes/supply-chain/control/publish.trigger" ]] && \
+               [[ "$changed_status" == \
+                  $'M\tspikes/supply-chain/control/publish.trigger' ]]; then
+              mode=release
+            elif [[ "${changed_paths[0]}" == \
+                    "spikes/supply-chain/control/publisher-permissions.trigger" ]] && \
+                 [[ "$changed_status" == \
+                    $'A\tspikes/supply-chain/control/publisher-permissions.trigger' ]]; then
+              mode=permission
+            fi
+          fi
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+
   publish:
-    if: github.ref == 'refs/heads/spike/008-supply-chain'
+    needs: gate
+    if: needs.gate.outputs.mode == 'release'
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -194,4 +260,186 @@ jobs:
         run: |
           if [[ -f "$RUNNER_TEMP/task008-docker-login" ]]; then
             docker logout docker.cloudsmith.io
+          fi
+
+  publisher-permission-probe:
+    needs: gate
+    if: needs.gate.outputs.mode == 'permission'
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDSMITH_REPOSITORY: omnilyzer/platform-spike
+    steps:
+      - name: Authenticate short-lived Cloudsmith publisher for permission probe
+        # cloudsmith-io/cloudsmith-cli-action v3.1.0
+        uses: cloudsmith-io/cloudsmith-cli-action@ad73fafb92e3e29a5166c529464c2df7658a608e
+        with:
+          oidc-namespace: omnilyzer
+          oidc-service-slug: gha-publisher-u76y
+          cli-version: '1.26.0'
+          verify-auth: true
+          export-auth-token: true
+
+      - name: Prove create succeeds while replace and delete are denied
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe_filename="task008b-publisher-${GITHUB_RUN_ID}.txt"
+          probe_filepath="task008b/permissions/publisher/${GITHUB_RUN_ID}/${probe_filename}"
+          probe_file="$RUNNER_TEMP/$probe_filename"
+          package_json="$RUNNER_TEMP/task008b-publisher-package.json"
+          replace_log="$RUNNER_TEMP/task008b-replace-denial.log"
+          delete_log="$RUNNER_TEMP/task008b-delete-denial.log"
+
+          require_authorization_denial() {
+            python - "$1" "$2" <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          output = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+          denial = re.compile(
+              r"(?:\bhttp(?:/\d(?:\.\d)?)?\s*403\b|"
+              r"\b403\b[^\n]*\bforbidden\b|\bforbidden\b|"
+              r"do not have permission|permission denied|"
+              r"insufficient permissions?)",
+              re.IGNORECASE,
+          )
+          if denial.search(output) is None:
+              print(
+                  f"INCONCLUSIVE: {sys.argv[2]} failed without recognizable "
+                  "authorization-denial evidence",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+          PY
+          }
+
+          list_exact_package() {
+            cloudsmith list packages "$CLOUDSMITH_REPOSITORY" \
+              --query "format:generic AND filename:${probe_filename}" \
+              --output-format json > "$package_json"
+          }
+
+          inspect_exact_package() {
+            python - "$package_json" "$probe_filename" "$probe_filepath" <<'PY'
+          import json
+          from pathlib import Path
+          import re
+          import sys
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          records = payload.get("data")
+          if not isinstance(records, list):
+              print("Cloudsmith package list did not return a data list", file=sys.stderr)
+              raise SystemExit(1)
+          matches = [
+              package
+              for package in records
+              if package.get("format") == "generic"
+              and package.get("filename") == sys.argv[2]
+              and package.get("filepath") == sys.argv[3]
+          ]
+          if not matches:
+              raise SystemExit(10)
+          if len(matches) != 1:
+              print(f"expected exactly one sacrificial package, found {len(matches)}", file=sys.stderr)
+              raise SystemExit(1)
+          slug_perm = matches[0].get("slug_perm")
+          if not isinstance(slug_perm, str) or re.fullmatch(r"[-A-Za-z0-9_]+", slug_perm) is None:
+              print("sacrificial package has no valid slug_perm", file=sys.stderr)
+              raise SystemExit(1)
+          checksum = matches[0].get("checksum_sha256")
+          if checksum is None or checksum == "":
+              raise SystemExit(10)
+          if not isinstance(checksum, str) or re.fullmatch(r"[0-9A-Fa-f]{64}", checksum) is None:
+              print("sacrificial package has no valid SHA-256 checksum", file=sys.stderr)
+              raise SystemExit(1)
+          print(f"{slug_perm}\t{checksum.lower()}")
+          PY
+          }
+
+          printf 'Task 008B publisher create probe for run %s\n' "$GITHUB_RUN_ID" \
+            > "$probe_file"
+          original_local_sha256="$(sha256sum "$probe_file" | cut -d ' ' -f 1)"
+          cloudsmith push generic "$CLOUDSMITH_REPOSITORY" "$probe_file" \
+            --filepath "$probe_filepath"
+
+          original_record=""
+          for attempt in 1 2 3 4 5; do
+            list_exact_package
+            set +e
+            original_record="$(inspect_exact_package)"
+            inspect_status=$?
+            set -e
+            if [[ "$inspect_status" -eq 0 ]]; then
+              break
+            fi
+            if [[ "$inspect_status" -ne 10 ]]; then
+              echo "Publisher create state validation failed" >&2
+              exit 1
+            fi
+            if [[ "$attempt" -eq 5 ]]; then
+              echo "Sacrificial package did not become fully visible" >&2
+              exit 1
+            fi
+            sleep 3
+          done
+          IFS=$'\t' read -r original_slug_perm original_cloudsmith_sha256 \
+            <<< "$original_record"
+          if [[ "$original_cloudsmith_sha256" != "$original_local_sha256" ]]; then
+            echo "Initial Cloudsmith checksum does not match local content" >&2
+            exit 1
+          fi
+
+          printf 'Task 008B publisher replacement probe for run %s\n' "$GITHUB_RUN_ID" \
+            > "$probe_file"
+          set +e
+          cloudsmith push generic "$CLOUDSMITH_REPOSITORY" "$probe_file" \
+            --filepath "$probe_filepath" \
+            --republish 2>&1 | tee "$replace_log"
+          replace_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$replace_status" -eq 0 ]]; then
+            echo "Publisher unexpectedly replaced the sacrificial Generic artifact" >&2
+            exit 1
+          fi
+          require_authorization_denial "$replace_log" "publisher replacement"
+
+          list_exact_package
+          replacement_record="$(inspect_exact_package)"
+          IFS=$'\t' read -r replacement_slug_perm replacement_sha256 \
+            <<< "$replacement_record"
+          if [[ "$replacement_slug_perm" != "$original_slug_perm" ]] || \
+             [[ "$replacement_sha256" != "$original_cloudsmith_sha256" ]] || \
+             [[ "$replacement_sha256" != "$original_local_sha256" ]]; then
+            echo "Denied replacement changed the sacrificial package state" >&2
+            exit 1
+          fi
+
+          set +e
+          cloudsmith delete \
+            "$CLOUDSMITH_REPOSITORY/$original_slug_perm" --yes \
+            2>&1 | tee "$delete_log"
+          delete_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$delete_status" -eq 0 ]]; then
+            echo "Publisher unexpectedly deleted the sacrificial Generic artifact" >&2
+            exit 1
+          fi
+          require_authorization_denial "$delete_log" "publisher delete"
+
+          # A successful authenticated read distinguishes authorization denials
+          # from an expired credential or a Cloudsmith/network outage.
+          list_exact_package
+          delete_record="$(inspect_exact_package)"
+          IFS=$'\t' read -r delete_slug_perm delete_sha256 <<< "$delete_record"
+          if [[ "$delete_slug_perm" != "$original_slug_perm" ]] || \
+             [[ "$delete_sha256" != "$original_cloudsmith_sha256" ]] || \
+             [[ "$delete_sha256" != "$original_local_sha256" ]]; then
+            echo "Denied delete changed or removed the sacrificial package" >&2
+            exit 1
           fi
