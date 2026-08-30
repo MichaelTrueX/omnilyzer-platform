@@ -135,9 +135,29 @@ class WorkflowPolicyTests(unittest.TestCase):
                 ),
                 "publish.trigger must contain exactly one X.Y.Z version plus newline",
             )
-        self.assertFalse((SPIKE_ROOT / "control/consume.trigger").exists())
+        consume_trigger = SPIKE_ROOT / "control/consume.trigger"
+        if consume_trigger.exists():
+            self.assertIsNotNone(
+                TRIGGER_VERSION_PATTERN.fullmatch(
+                    consume_trigger.read_text(encoding="utf-8")
+                ),
+                "consume.trigger must contain exactly one X.Y.Z version plus newline",
+            )
 
     def test_publish_trigger_accepts_only_one_strict_version_plus_newline(self) -> None:
+        self.assertIsNotNone(TRIGGER_VERSION_PATTERN.fullmatch("0.8.1\n"))
+        for malformed in (
+            "0.8.1",
+            "v0.8.1\n",
+            "0.8\n",
+            "0.8.1-dev\n",
+            "0.8.1\n1.0.0\n",
+            "",
+        ):
+            with self.subTest(content=malformed):
+                self.assertIsNone(TRIGGER_VERSION_PATTERN.fullmatch(malformed))
+
+    def test_consume_trigger_accepts_only_one_strict_version_plus_newline(self) -> None:
         self.assertIsNotNone(TRIGGER_VERSION_PATTERN.fullmatch("0.8.1\n"))
         for malformed in (
             "0.8.1",
