@@ -145,7 +145,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             (SPIKE_ROOT / "control/publisher-permissions.trigger").read_text(
                 encoding="utf-8"
             ),
-            "task008b-publisher-permission-probe-v1\n",
+            "task008b-publisher-permission-probe-v2\n",
         )
         self.assertEqual(
             (SPIKE_ROOT / "control/consumer-permissions.trigger").read_text(
@@ -272,7 +272,8 @@ class WorkflowPolicyTests(unittest.TestCase):
             release = self.job(workflow, release_job)
             permission = self.job(workflow, permission_job)
             with self.subTest(job=release_job):
-                self.assertIn("needs: gate", release)
+                gate_dependency = "- gate" if workflow is self.publish else "needs: gate"
+                self.assertIn(gate_dependency, release)
                 self.assertIn("if: needs.gate.outputs.mode == 'release'", release)
             with self.subTest(job=permission_job):
                 self.assertIn("needs: gate", permission)
@@ -301,6 +302,12 @@ class WorkflowPolicyTests(unittest.TestCase):
                     permissions.strip().splitlines(),
                     ["contents: read", "      id-token: write"],
                 )
+        build = self.job(self.publish, "build")
+        build_permissions = build.split("    permissions:\n", 1)[1].split(
+            "    runs-on:", 1
+        )[0]
+        self.assertEqual(build_permissions.strip(), "contents: read")
+        self.assertNotIn("id-token: write", build)
         self.assertIn("oidc-service-slug: gha-publisher-u76y", self.publish)
         self.assertIn("oidc-service-slug: gha-consumer", self.consume)
         for workflow in (self.publish, self.consume):
@@ -444,25 +451,113 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("import json", self.consume)
         self.assertEqual(combined.count("--output-format json"), 2)
 
-    def test_publisher_build_contract_precedes_cloudsmith_authentication(self) -> None:
-        self.assertIn("python -m build --wheel --no-isolation", self.publish)
-        authentication = self.publish.index(
+    def test_release_build_job_has_no_oidc_or_cloudsmith_authority(self) -> None:
+        build = self.job(self.publish, "build")
+        self.assertIn("needs: gate", build)
+        self.assertIn("if: needs.gate.outputs.mode == 'release'", build)
+        self.assertIn("persist-credentials: false", build)
+        self.assertIn("python-version: '3.12'", build)
+        self.assertIn("node-version: '24.20.0'", build)
+        self.assertIn("prepare_release.py", build)
+        self.assertIn("build==1.6.0 hatchling==1.32.0", build)
+        self.assertIn("python -m build --wheel --no-isolation", build)
+        self.assertIn("npm pack", build)
+        self.assertIn("--ignore-scripts", build)
+        self.assertIn("docker build --tag", build)
+        self.assertIn('local_image_ref="task008-oci-handoff:${RELEASE_VERSION}"', build)
+        self.assertIn("docker save", build)
+        self.assertIn("task008-oci-image.tar", build)
+        self.assertIn('"sha256": sha256("task008-oci-image.tar")', build)
+        self.assertNotIn("id-token: write", build)
+        self.assertNotIn("cloudsmith-io/", build.lower())
+        self.assertNotRegex(build.lower(), r"(?m)^\s*cloudsmith\s")
+        self.assertNotIn("CLOUDSMITH_API_KEY", build)
+        self.assertNotIn("docker login", build)
+
+    def test_release_handoff_is_minimal_checksummed_and_short_lived(self) -> None:
+        build = self.job(self.publish, "build")
+        self.assertIn(
+            "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+            build,
+        )
+        self.assertIn("name: task008-release-${{ github.run_id }}", build)
+        self.assertIn("path: ${{ runner.temp }}/task008-handoff", build)
+        self.assertIn("if-no-files-found: error", build)
+        self.assertIn("include-hidden-files: false", build)
+        self.assertIn("retention-days: 1", build)
+        for manifest_field in (
+            '"release_version"',
+            '"source_sha"',
+            '"filename"',
+            '"sha256"',
+            '"archive_format": "docker-image-archive"',
+            '"image_reference": f"task008-oci-handoff:{release_version}"',
+            '"version_label": release_version',
+            '"handoff-manifest.json"',
+        ):
+            self.assertIn(manifest_field, build)
+        upload = build.split("      - name: Upload minimal release handoff", 1)[1]
+        for prohibited in (
+            "CLOUDSMITH_API_KEY",
+            "GITHUB_TOKEN",
+            "credentials",
+            ".git",
+            "spikes/supply-chain",
+        ):
+            self.assertNotIn(prohibited, upload)
+
+    def test_release_publisher_verifies_handoff_before_oidc_without_rebuilding_packages(self) -> None:
+        publish = self.job(self.publish, "publish")
+        self.assertIn("- gate", publish)
+        self.assertIn("- build", publish)
+        self.assertIn("if: needs.gate.outputs.mode == 'release'", publish)
+        self.assertIn(
+            "uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+            publish,
+        )
+        self.assertIn("name: task008-release-${{ github.run_id }}", publish)
+        self.assertIn("path: ${{ runner.temp }}/task008-handoff", publish)
+        verification = publish.index("- name: Verify handoff manifest and checksums before OIDC")
+        authentication = publish.index(
             "- name: Authenticate short-lived Cloudsmith publisher"
         )
-        local_steps = (
-            "- name: Read and validate coordinated release version",
-            "- name: Set up Python",
-            "- name: Set up Node",
-            "- name: Prepare coordinated build inputs",
-            "- name: Install exact Python build tooling",
-            "- name: Build standard Python wheel",
-            "- name: Build standard npm tarball",
-            "- name: Verify prepared artifact names",
-            "- name: Build OCI fixture",
-        )
-        for step in local_steps:
-            with self.subTest(step=step):
-                self.assertLess(self.publish.index(step), authentication)
+        self.assertLess(verification, authentication)
+        self.assertLess(publish.index("hashlib.sha256"), authentication)
+        self.assertLess(publish.index("handoff checksum mismatch"), authentication)
+        self.assertLess(publish.index("OCI_IMAGE_SHA256"), authentication)
+        load_step = publish.index("- name: Load and inspect already-built OCI image")
+        self.assertLess(load_step, authentication)
+        self.assertLess(publish.index("docker load --input"), authentication)
+        self.assertLess(publish.index("docker image inspect"), authentication)
+        self.assertIn("actual_entries != expected_files", publish)
+        self.assertIn('"archive_format": "docker-image-archive"', publish)
+        self.assertIn("loaded OCI image is missing its expected local reference", publish)
+        self.assertIn("loaded OCI image has an unexpected version label", publish)
+        self.assertIn('docker tag "$LOCAL_IMAGE_REF" "$image_ref"', publish)
+        self.assertIn('docker push "$IMAGE_REF"', publish)
+        self.assertNotRegex(publish, r"(?m)^\s*docker run(?:\s|$)")
+        self.assertNotRegex(publish, r"(?m)^\s*docker build(?:\s|$)")
+        self.assertNotRegex(publish, r"(?m)^\s*docker buildx build(?:\s|$)")
+        self.assertNotRegex(publish, r"(?m)^\s*(?:buildah|podman) build(?:\s|$)")
+        self.assertNotRegex(publish, r"(?m)^\s*npm pack(?:\s|$)")
+        for prohibited in (
+            "python -m build",
+            "prepare_release.py",
+            "build==1.6.0",
+            "hatchling==1.32.0",
+        ):
+            self.assertNotIn(prohibited, publish)
+
+    def test_all_oci_image_construction_is_confined_to_non_oidc_build_job(self) -> None:
+        build = self.job(self.publish, "build")
+        publish = self.job(self.publish, "publish")
+        probe = self.job(self.publish, "publisher-permission-probe")
+        image_build_pattern = r"(?m)^\s*(?:docker|docker buildx|buildah|podman) build(?:\s|$)"
+        self.assertEqual(len(re.findall(image_build_pattern, build)), 1)
+        self.assertEqual(len(re.findall(image_build_pattern, self.publish)), 1)
+        self.assertNotRegex(publish, image_build_pattern)
+        self.assertNotRegex(probe, image_build_pattern)
+        self.assertNotIn("id-token: write", build)
 
     def test_oci_digest_extraction_is_json_safe(self) -> None:
         self.assertIn("--format '{{json .Manifest.Digest}}'", self.publish)
@@ -478,6 +573,12 @@ class WorkflowPolicyTests(unittest.TestCase):
             "cloudsmith-io/cloudsmith-cli-action": (
                 "ad73fafb92e3e29a5166c529464c2df7658a608e"
             ),
+            "actions/upload-artifact": (
+                "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+            ),
+            "actions/download-artifact": (
+                "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+            ),
         }
         for workflow in (self.publish, self.consume):
             uses_lines = [
@@ -485,7 +586,8 @@ class WorkflowPolicyTests(unittest.TestCase):
                 for line in workflow.splitlines()
                 if line.strip().startswith("uses: ")
             ]
-            self.assertEqual(len(uses_lines), 6)
+            expected_count = 8 if workflow is self.publish else 6
+            self.assertEqual(len(uses_lines), expected_count)
             for use in uses_lines:
                 action, revision = use.split("@", 1)
                 self.assertEqual(revision, expected[action])

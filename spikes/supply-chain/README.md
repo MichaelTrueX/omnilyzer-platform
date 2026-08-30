@@ -80,13 +80,15 @@ Task 008A validates private multi-format Cloudsmith hosting; Python, npm, and OC
 
 ## Task 008B permission boundaries
 
-**PHASE 1 IN PROGRESS / TO VALIDATE.** The consumer boundary is validated; the publisher replace/delete boundary requires a v2 retry.
+**TASK 008B PHASE 1 — PASS WITH PROVIDER CAVEAT.** The consumer cannot publish; the publisher can create new artifacts but cannot replace or delete them; and the exact sacrificial artifact remained byte-identical after both blocked operations.
 
 **TASK 008B PHASE 1A CONSUMER PERMISSION VALIDATION: PASS.** GitHub Actions run `33289391416` authenticated `gha-consumer` through OIDC. Its Generic write attempt was explicitly denied with `403 Forbidden` and "You do not have permission to perform this action." An authenticated repository read remained available, and exact JSON state verification found zero probe artifacts.
 
 **TASK 008B PHASE 1B PUBLISHER PERMISSION VALIDATION: INCONCLUSIVE / RETRY REQUIRED.** GitHub Actions run `33289502031` authenticated `gha-publisher-u76y`, and its sacrificial Generic create succeeded. The `--republish` attempt failed with `400 Bad Request` and an existing-package message referring to an unknown version attribute, rather than recognizable authorization-denial evidence. The workflow correctly declined to accept that failure as proof, and the delete test was not reached. Cloudsmith was then manually confirmed to require `Admin` for replacement and deletion, while the publisher has `Write`, Self Privilege deletion is disabled, and replace-by-default is disabled; these settings were not changed.
 
-Planned negative evidence:
+Publisher v2 GitHub Actions run `33290050894`, from commit `e8087f95d2516336ae889ad88325860625f21b26`, authenticated `gha-publisher-u76y` through OIDC. Its explicitly versioned sacrificial Generic create succeeded, the exact package/version/path became visible, and Cloudsmith's SHA-256 matched the local SHA-256. Replacement using the same filepath/version and `--republish` was blocked with `400 Bad Request`; the exact `slug_perm` and original checksum remained unchanged. Deletion of that validated `slug_perm` was explicitly denied with `403 Forbidden` and "You do not have permission to perform this action"; the exact package and checksum again remained unchanged. The workflow reported `replace_result=INCONCLUSIVE` and `delete_result=PASS` because replacement did not produce permission-specific denial text.
+
+Validated negative evidence:
 
 - the consumer `Read` identity cannot upload;
 - the publisher `Write` identity can create;
@@ -101,21 +103,27 @@ The publisher v2 probe adds an explicit `0.0.<GITHUB_RUN_ID>` Generic version to
 
 Each workflow starts with a pre-authentication gate that has only `contents: read`, has no OIDC authority, checks out full history without persisted credentials, validates `github.event.before` and `github.sha`, and classifies the complete net `before`-to-`after` Git diff. Only a one-file modification of the existing release trigger emits `release`; a one-file addition or modification of the respective permission trigger emits `permission`; all mixed, unrelated, removed, renamed, type-changed, or ambiguous states emit `none` and cannot enter a Cloudsmith job. The release and permission jobs alone receive job-scoped `id-token: write`. For every controlled rerun, the trigger commit must contain only its respective permission trigger file. The existing release triggers remain `0.8.1`.
 
-Cloudsmith repository action thresholds and Self Privileges must be established through observed create, replace, delete, upload, and read behavior rather than inferred from `Read`, `Write`, or other labels. Cloudsmith remains a validated candidate, not an **ACCEPTED DIRECTION**.
+Cloudsmith repository action thresholds and Self Privileges must be established through observed create, replace, delete, upload, and read behavior rather than inferred from `Read`, `Write`, or other labels. The provider caveat is that Generic `--republish` returns duplicate/existing-package `400` behavior for this restricted publisher rather than a permission-specific `403`, despite blocking the operation and preserving byte-identical state. No further live runs will attempt to force a `403` replacement response. Cloudsmith remains a validated candidate, not an **ACCEPTED DIRECTION**.
+
+## Task 008B build/publish OIDC isolation
+
+**TASK 008B PHASE 2 — PRE-LIVE / TO VALIDATE.** GitHub's `id-token: write` permission is job-scoped, so placing Cloudsmith authentication after build steps in one job does not prevent those earlier build steps from requesting GitHub OIDC credentials. The normal release path is therefore split into a `contents: read` build job with no ID-token authority and a dependent publisher job with `contents: read` plus `id-token: write`.
+
+The build job prepares the coordinated release and builds all three releasable artifact types: the exact Python wheel, npm tarball, and final synthetic OCI image. It exports the already-built OCI image as a Docker image archive and records filenames, SHA-256 values, release version, source commit, archive format, expected local image reference, and expected OCI version label in a machine-readable manifest. Only the wheel, npm tarball, OCI image archive, and manifest cross the job boundary in a short-retention, run-unique GitHub Actions artifact. This is temporary transport of already-built immutable release artifacts, not a release registry or provenance mechanism.
+
+The OIDC-enabled publisher does not build. It rejects unrelated handoff entries, verifies every manifest field and checksum, loads the already-built OCI archive, and inspects the expected local image reference and version label without executing the image. Only after those checks does it authenticate to Cloudsmith, publish Python and npm, retag and push the already-built OCI image, and resolve its registry digest. This preserves the broader Omnilyzer build-once principle. Sigstore/Cosign signing, SBOMs, and provenance are intentionally deferred to Phase 3. Cloudsmith remains a candidate release registry, not an accepted direction.
 
 Task 008B still must validate:
 
-- separation of build and publisher jobs so build execution does not receive the job-scoped `id-token: write` permission;
+- live validation of the Phase 2 build/publisher job isolation and handoff;
 - Sigstore/Cosign keyless signing;
 - signed release provenance;
 - SBOM attachment and verification;
 - vulnerability scanning and a policy gate;
 - tamper/substitution failure;
-- publisher inability to replace or delete;
-- consumer inability to publish;
 - retention and rollback retrieval;
 - provider operational, cost, and disaster-recovery findings.
 
 ## Recommendation
 
-Task 008A passed. Retain Cloudsmith as a validated candidate, not yet an **ACCEPTED DIRECTION**, pending Task 008B. Do not write ADR 0007 or change the package-registry/trusted-publishing decision from **TO VALIDATE** until Task 008B has validated publisher inability to replace or delete, consumer inability to publish, Sigstore/Cosign signatures, provenance, SBOMs, vulnerability scanning and policy, tamper/substitution rejection, retention and rollback, provider operations/cost/disaster recovery, and build/publish job isolation.
+Task 008A and the Task 008B Phase 1 permission boundaries passed, with the documented Generic-republish provider caveat. Retain Cloudsmith as a validated candidate, not yet an **ACCEPTED DIRECTION**. Do not write ADR 0007 or change the package-registry/trusted-publishing decision from **TO VALIDATE** until the Phase 2 build/publish isolation is live-validated and later phases validate Sigstore/Cosign signatures, provenance, SBOMs, vulnerability scanning and policy, tamper/substitution rejection, retention and rollback, and provider operations/cost/disaster recovery.

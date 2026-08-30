@@ -83,24 +83,31 @@ jobs:
           fi
           printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
 
-  publish:
+  build:
     needs: gate
     if: needs.gate.outputs.mode == 'release'
     permissions:
       contents: read
-      id-token: write
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      CLOUDSMITH_NAMESPACE: omnilyzer
-      CLOUDSMITH_REPOSITORY: platform-spike
-      IMAGE_REPOSITORY: docker.cloudsmith.io/omnilyzer/platform-spike/omnilyzer-supply-chain-spike
+    timeout-minutes: 15
     steps:
       - name: Check out repository
         # actions/checkout v7.0.1
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+
+      - name: Set up Python
+        # actions/setup-python v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.20.0'
 
       - name: Read and validate coordinated release version
         shell: bash
@@ -122,27 +129,13 @@ jobs:
           )"
           printf 'RELEASE_VERSION=%s\n' "$release_version" >> "$GITHUB_ENV"
 
-      - name: Set up Python
-        # actions/setup-python v7.0.0
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-        with:
-          python-version: '3.12'
-
-      - name: Set up Node
-        # actions/setup-node v7.0.0
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: '24.20.0'
-
       - name: Prepare coordinated build inputs
         shell: bash
         run: |
           set -euo pipefail
           python spikes/supply-chain/scripts/prepare_release.py \
             "$RELEASE_VERSION" "$RUNNER_TEMP/task008-release"
-          mkdir -p \
-            "$RUNNER_TEMP/task008-artifacts/python" \
-            "$RUNNER_TEMP/task008-artifacts/npm"
+          mkdir -p "$RUNNER_TEMP/task008-handoff"
 
       - name: Install exact Python build tooling
         shell: bash
@@ -156,7 +149,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m build --wheel --no-isolation \
-            --outdir "$RUNNER_TEMP/task008-artifacts/python" \
+            --outdir "$RUNNER_TEMP/task008-handoff" \
             "$RUNNER_TEMP/task008-release/python"
 
       - name: Build standard npm tarball
@@ -165,27 +158,222 @@ jobs:
           set -euo pipefail
           npm pack "$RUNNER_TEMP/task008-release/npm" \
             --ignore-scripts \
-            --pack-destination "$RUNNER_TEMP/task008-artifacts/npm"
+            --pack-destination "$RUNNER_TEMP/task008-handoff"
 
-      - name: Verify prepared artifact names
+      - name: Build and export OCI image
+        shell: bash
+        run: |
+          set -euo pipefail
+          local_image_ref="task008-oci-handoff:${RELEASE_VERSION}"
+          docker build --tag "$local_image_ref" "$RUNNER_TEMP/task008-release/oci"
+          observed_version="$(docker image inspect "$local_image_ref" \
+            --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+          test "$observed_version" = "$RELEASE_VERSION"
+          docker save \
+            --output "$RUNNER_TEMP/task008-handoff/task008-oci-image.tar" \
+            "$local_image_ref"
+
+      - name: Create machine-readable handoff manifest
         shell: bash
         run: |
           set -euo pipefail
           expected_wheel="omnilyzer_supply_chain_spike-${RELEASE_VERSION}-py3-none-any.whl"
           expected_tarball="omnilyzer-supply-chain-spike-${RELEASE_VERSION}.tgz"
-          test -f "$RUNNER_TEMP/task008-artifacts/python/$expected_wheel"
-          test -f "$RUNNER_TEMP/task008-artifacts/npm/$expected_tarball"
-          printf 'WHEEL_PATH=%s\n' \
-            "$RUNNER_TEMP/task008-artifacts/python/$expected_wheel" >> "$GITHUB_ENV"
-          printf 'NPM_TARBALL_PATH=%s\n' \
-            "$RUNNER_TEMP/task008-artifacts/npm/$expected_tarball" >> "$GITHUB_ENV"
+          handoff_dir="$RUNNER_TEMP/task008-handoff"
+          test -f "$handoff_dir/$expected_wheel"
+          test -f "$handoff_dir/$expected_tarball"
+          test -f "$handoff_dir/task008-oci-image.tar"
+          python - \
+            "$handoff_dir" \
+            "$RELEASE_VERSION" \
+            "$GITHUB_SHA" \
+            "$expected_wheel" \
+            "$expected_tarball" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import re
+          import sys
 
-      - name: Build OCI fixture
+          root = Path(sys.argv[1])
+          release_version, source_sha = sys.argv[2:4]
+          wheel_filename, npm_filename = sys.argv[4:6]
+          if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release_version) is None:
+              raise SystemExit("invalid handoff release version")
+          if re.fullmatch(r"[0-9a-f]{40}", source_sha) is None:
+              raise SystemExit("invalid handoff source SHA")
+
+          def sha256(filename: str) -> str:
+              digest = hashlib.sha256()
+              with (root / filename).open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          manifest = {
+              "release_version": release_version,
+              "source_sha": source_sha,
+              "python": {
+                  "filename": wheel_filename,
+                  "sha256": sha256(wheel_filename),
+              },
+              "npm": {
+                  "filename": npm_filename,
+                  "sha256": sha256(npm_filename),
+              },
+              "oci": {
+                  "archive_format": "docker-image-archive",
+                  "filename": "task008-oci-image.tar",
+                  "image_reference": f"task008-oci-handoff:{release_version}",
+                  "sha256": sha256("task008-oci-image.tar"),
+                  "version_label": release_version,
+              },
+          }
+          (root / "handoff-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload minimal release handoff
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: task008-release-${{ github.run_id }}
+          path: ${{ runner.temp }}/task008-handoff
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 1
+
+  publish:
+    needs:
+      - gate
+      - build
+    if: needs.gate.outputs.mode == 'release'
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDSMITH_NAMESPACE: omnilyzer
+      CLOUDSMITH_REPOSITORY: platform-spike
+      IMAGE_REPOSITORY: docker.cloudsmith.io/omnilyzer/platform-spike/omnilyzer-supply-chain-spike
+    steps:
+      - name: Download exact release handoff
+        # actions/download-artifact v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: task008-release-${{ github.run_id }}
+          path: ${{ runner.temp }}/task008-handoff
+
+      - name: Verify handoff manifest and checksums before OIDC
         shell: bash
         run: |
           set -euo pipefail
+          handoff_dir="$RUNNER_TEMP/task008-handoff"
+          python - "$handoff_dir" "$GITHUB_SHA" "$GITHUB_ENV" <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import sys
+
+          root = Path(sys.argv[1])
+          source_sha = sys.argv[2]
+          environment_path = Path(sys.argv[3])
+          manifest_path = root / "handoff-manifest.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          if set(manifest) != {"release_version", "source_sha", "python", "npm", "oci"}:
+              raise SystemExit("handoff manifest has unexpected top-level fields")
+          release_version = manifest["release_version"]
+          if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release_version) is None:
+              raise SystemExit("handoff manifest has an invalid release version")
+          if manifest["source_sha"] != source_sha:
+              raise SystemExit("handoff source SHA does not match this workflow run")
+
+          expected_wheel = f"omnilyzer_supply_chain_spike-{release_version}-py3-none-any.whl"
+          expected_npm = f"omnilyzer-supply-chain-spike-{release_version}.tgz"
+          expected = {
+              "python": (expected_wheel, {}),
+              "npm": (expected_npm, {}),
+              "oci": (
+                  "task008-oci-image.tar",
+                  {
+                      "archive_format": "docker-image-archive",
+                      "image_reference": f"task008-oci-handoff:{release_version}",
+                      "version_label": release_version,
+                  },
+              ),
+          }
+          expected_files = {"handoff-manifest.json"}
+          verified = {}
+          for key, (expected_filename, expected_metadata) in expected.items():
+              record = manifest[key]
+              required_fields = {"filename", "sha256"} | set(expected_metadata)
+              if not isinstance(record, dict) or set(record) != required_fields:
+                  raise SystemExit(f"invalid {key} handoff record")
+              if record["filename"] != expected_filename:
+                  raise SystemExit(f"unexpected {key} handoff filename")
+              for field, expected_value in expected_metadata.items():
+                  if record[field] != expected_value:
+                      raise SystemExit(f"unexpected {key} {field}")
+              expected_files.add(expected_filename)
+              artifact_path = root / expected_filename
+              if artifact_path.is_symlink() or not artifact_path.is_file():
+                  raise SystemExit(f"missing regular handoff file: {expected_filename}")
+              digest = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+              if not re.fullmatch(r"[0-9a-f]{64}", record["sha256"]):
+                  raise SystemExit(f"invalid {key} SHA-256")
+              if digest != record["sha256"]:
+                  raise SystemExit(f"{key} handoff checksum mismatch")
+              verified[key] = (artifact_path, digest)
+
+          actual_entries = {path.name for path in root.iterdir()}
+          if actual_entries != expected_files:
+              raise SystemExit("handoff contains missing or unrelated files")
+          with environment_path.open("a", encoding="utf-8") as environment:
+              environment.write(f"RELEASE_VERSION={release_version}\n")
+              environment.write(f"WHEEL_PATH={verified['python'][0]}\n")
+              environment.write(f"WHEEL_SHA256={verified['python'][1]}\n")
+              environment.write(f"NPM_TARBALL_PATH={verified['npm'][0]}\n")
+              environment.write(f"NPM_SHA256={verified['npm'][1]}\n")
+              environment.write(f"OCI_IMAGE_ARCHIVE={verified['oci'][0]}\n")
+              environment.write(f"OCI_IMAGE_SHA256={verified['oci'][1]}\n")
+              environment.write(f"LOCAL_IMAGE_REF={manifest['oci']['image_reference']}\n")
+              environment.write(f"OCI_VERSION_LABEL={manifest['oci']['version_label']}\n")
+          PY
+
+      - name: Load and inspect already-built OCI image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker load --input "$OCI_IMAGE_ARCHIVE"
+          image_inspect_json="$RUNNER_TEMP/task008-oci-image-inspect.json"
+          docker image inspect "$LOCAL_IMAGE_REF" > "$image_inspect_json"
+          python - "$image_inspect_json" "$LOCAL_IMAGE_REF" \
+            "$OCI_VERSION_LABEL" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if not isinstance(payload, list) or len(payload) != 1:
+              raise SystemExit("docker inspect did not return exactly one image")
+          image = payload[0]
+          repo_tags = image.get("RepoTags")
+          if not isinstance(repo_tags, list) or sys.argv[2] not in repo_tags:
+              raise SystemExit("loaded OCI image is missing its expected local reference")
+          config = image.get("Config")
+          labels = config.get("Labels") if isinstance(config, dict) else None
+          if not isinstance(labels, dict) or labels.get(
+              "org.opencontainers.image.version"
+          ) != sys.argv[3]:
+              raise SystemExit("loaded OCI image has an unexpected version label")
+          PY
           image_ref="${IMAGE_REPOSITORY}:${RELEASE_VERSION}"
-          docker build --tag "$image_ref" "$RUNNER_TEMP/task008-release/oci"
+          docker tag "$LOCAL_IMAGE_REF" "$image_ref"
           printf 'IMAGE_REF=%s\n' "$image_ref" >> "$GITHUB_ENV"
 
       - name: Authenticate short-lived Cloudsmith publisher
@@ -240,17 +428,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          wheel_sha256="$(sha256sum "$WHEEL_PATH" | cut -d ' ' -f 1)"
-          npm_sha256="$(sha256sum "$NPM_TARBALL_PATH" | cut -d ' ' -f 1)"
           {
             echo '## Task 008A private registry publication'
             echo
             echo "- Source commit SHA: \`$GITHUB_SHA\`"
             echo "- Release version: \`$RELEASE_VERSION\`"
             echo '- Python package: `omnilyzer-supply-chain-spike`'
-            echo "- Python wheel SHA-256: \`$wheel_sha256\`"
+            echo "- Python wheel SHA-256: \`$WHEEL_SHA256\`"
             echo '- npm package: `@omnilyzer/supply-chain-spike`'
-            echo "- npm tarball SHA-256: \`$npm_sha256\`"
+            echo "- npm tarball SHA-256: \`$NPM_SHA256\`"
+            echo "- OCI image archive SHA-256: \`$OCI_IMAGE_SHA256\`"
             echo "- OCI image: \`$IMAGE_REF\`"
             echo "- OCI immutable digest: \`$OCI_DIGEST\`"
             echo "- Cloudsmith namespace/repository: \`$CLOUDSMITH_NAMESPACE/$CLOUDSMITH_REPOSITORY\`"
