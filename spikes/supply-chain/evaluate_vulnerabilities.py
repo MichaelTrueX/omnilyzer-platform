@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import date
+from datetime import date, datetime
 import hashlib
 import json
 from pathlib import Path
 import re
 import sys
 from typing import Any, Mapping, Sequence
+from urllib.parse import parse_qs, urlparse
 
 
 SCHEMA_VERSION = 1
@@ -30,7 +31,13 @@ TARGET_FILENAMES = {
     "npm": "npm-vulnerabilities.grype.json",
     "oci": "oci-vulnerabilities.grype.json",
 }
+RAW_DATABASE_STATUS_FIELDS = {"schemaVersion", "from", "built", "path", "valid"}
+SANITIZED_DATABASE_STATUS_FIELDS = {"built", "checksum", "schema_version", "valid"}
 PATTERN_MARKERS = re.compile(r"[*?\[\]{}()|^$\\]")
+RFC3339_PATTERN = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})"
+)
 
 
 class EvaluationError(ValueError):
@@ -146,39 +153,89 @@ def validate_policy(document: Any, evaluated_on: date) -> dict[str, Any]:
     }
 
 
-def validate_database_status(document: Any) -> dict[str, Any]:
-    """Extract non-secret Grype DB identity metadata while excluding runner-local paths."""
+def sanitize_raw_database_status(document: Any) -> dict[str, Any]:
+    """Convert a Grype v0.118 ProviderStatus into canonical path-free evidence."""
 
     if not isinstance(document, dict):
-        raise EvaluationError("Grype DB status must be a JSON object")
-    schema_version = document.get("schemaVersion", document.get("schema_version"))
+        raise EvaluationError("raw Grype DB status must be a JSON object")
+    fields = set(document)
+    if fields != RAW_DATABASE_STATUS_FIELDS and fields != RAW_DATABASE_STATUS_FIELDS | {"error"}:
+        raise EvaluationError("raw Grype DB status has unexpected fields")
+    schema_version = document.get("schemaVersion")
     built = document.get("built")
-    checksum = document.get("checksum")
-    if not isinstance(schema_version, (str, int)) or isinstance(schema_version, bool):
-        raise EvaluationError("Grype DB status has no valid schema version")
-    if not isinstance(built, str) or not built.strip():
-        raise EvaluationError("Grype DB status has no build identity")
-    if not isinstance(checksum, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", checksum) is None:
-        raise EvaluationError("Grype DB status has no checksum")
+    source = document.get("from")
+    database_path = document.get("path")
+    if not isinstance(schema_version, str) or not schema_version.strip():
+        raise EvaluationError("raw Grype DB status has no schemaVersion")
+    if not isinstance(built, str) or RFC3339_PATTERN.fullmatch(built) is None:
+        raise EvaluationError("raw Grype DB status built is not RFC3339")
+    try:
+        timestamp = built.removesuffix("Z") + ("+00:00" if built.endswith("Z") else "")
+        parsed_built = datetime.fromisoformat(timestamp)
+    except ValueError as error:
+        raise EvaluationError("raw Grype DB status built is not RFC3339") from error
+    if parsed_built.tzinfo is None:
+        raise EvaluationError("raw Grype DB status built has no timezone")
+    if not isinstance(database_path, str) or not database_path.strip():
+        raise EvaluationError("raw Grype DB status has no path")
+    if document.get("valid") is not True:
+        raise EvaluationError("raw Grype DB status is not valid")
     if document.get("error") not in (None, ""):
-        raise EvaluationError("Grype DB status reports an error")
-    if "valid" in document and not isinstance(document["valid"], bool):
-        raise EvaluationError("Grype DB status has a malformed valid flag")
-    if document.get("valid") is False:
-        raise EvaluationError("Grype DB status reports an invalid database")
-    status = document.get("status")
-    if not isinstance(status, str) or status.lower() != "valid":
-        raise EvaluationError("Grype DB status is not valid")
-
-    result: dict[str, Any] = {
+        raise EvaluationError("raw Grype DB status reports an error")
+    if not isinstance(source, str):
+        raise EvaluationError("raw Grype DB status has no from URL")
+    parsed_source = urlparse(source)
+    if parsed_source.scheme != "https" or not parsed_source.netloc:
+        raise EvaluationError("raw Grype DB status from must be an HTTPS URL")
+    try:
+        query = parse_qs(parsed_source.query, keep_blank_values=True, strict_parsing=True)
+    except ValueError as error:
+        raise EvaluationError("raw Grype DB status from has a malformed query") from error
+    checksums = query.get("checksum")
+    if not isinstance(checksums, list) or len(checksums) != 1:
+        raise EvaluationError("raw Grype DB status must contain exactly one checksum")
+    checksum = checksums[0]
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", checksum) is None:
+        raise EvaluationError("raw Grype DB status checksum is malformed")
+    return {
         "built": built,
         "checksum": checksum,
         "schema_version": schema_version,
+        "valid": True,
     }
-    result["status"] = status
-    if isinstance(document.get("valid"), bool):
-        result["valid"] = document["valid"]
-    return result
+
+
+def validate_database_status(document: Any) -> dict[str, Any]:
+    """Require the exact canonical sanitized Grype database evidence structure."""
+
+    if not isinstance(document, dict) or set(document) != SANITIZED_DATABASE_STATUS_FIELDS:
+        raise EvaluationError("sanitized Grype DB status has unexpected fields")
+    schema_version = document.get("schema_version")
+    built = document.get("built")
+    checksum = document.get("checksum")
+    if not isinstance(schema_version, str) or not schema_version.strip():
+        raise EvaluationError("sanitized Grype DB status has no schema version")
+    if not isinstance(built, str) or not built.strip():
+        raise EvaluationError("sanitized Grype DB status has no build identity")
+    if not isinstance(checksum, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", checksum) is None:
+        raise EvaluationError("sanitized Grype DB status has no valid checksum")
+    if document.get("valid") is not True:
+        raise EvaluationError("sanitized Grype DB status is not valid")
+    return dict(document)
+
+
+def sanitize_database_status_file(raw_path: Path, output_path: Path) -> None:
+    """Read raw ProviderStatus JSON and write deterministic canonical evidence."""
+
+    if output_path.exists():
+        raise EvaluationError("refusing to overwrite sanitized Grype DB status")
+    sanitized = sanitize_raw_database_status(_load_json(raw_path, "raw Grype DB status"))
+    try:
+        output_path.write_text(
+            json.dumps(sanitized, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    except OSError as error:
+        raise EvaluationError("unable to write sanitized Grype DB status") from error
 
 
 def _validate_finding(match: Any, target: str) -> dict[str, str]:
@@ -335,7 +392,23 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Evaluate CLI inputs, write evidence for PASS/BLOCK, and fail closed on BLOCK."""
 
-    arguments = _parser().parse_args(argv)
+    arguments_list = list(sys.argv[1:] if argv is None else argv)
+    if arguments_list[:1] == ["sanitize-db-status"]:
+        if len(arguments_list) != 3:
+            print(
+                "usage: evaluate_vulnerabilities.py sanitize-db-status RAW OUTPUT",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            sanitize_database_status_file(
+                Path(arguments_list[1]), Path(arguments_list[2])
+            )
+        except EvaluationError as error:
+            print(f"Grype DB status sanitization failed: {error}", file=sys.stderr)
+            return 2
+        return 0
+    arguments = _parser().parse_args(arguments_list)
     try:
         result = evaluate(
             arguments.policy,

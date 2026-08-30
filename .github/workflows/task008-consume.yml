@@ -430,10 +430,18 @@ jobs:
           database_status = json.loads(database_status_path.read_text(encoding="utf-8"))
           if database.get("metadata") != database_status:
               raise SystemExit("Grype DB metadata mismatch")
-          if not isinstance(database_status, dict) or set(database_status) - {
-              "built", "checksum", "schema_version", "status", "valid"
-          } or not {"built", "checksum", "schema_version"} <= set(database_status):
+          if not isinstance(database_status, dict) or set(database_status) != {
+              "built", "checksum", "schema_version", "valid"
+          }:
               raise SystemExit("invalid sanitized Grype DB status")
+          if not isinstance(database_status["built"], str) or not database_status["built"].strip():
+              raise SystemExit("invalid sanitized Grype DB build identity")
+          if not isinstance(database_status["schema_version"], str) or not database_status["schema_version"].strip():
+              raise SystemExit("invalid sanitized Grype DB schema version")
+          if not isinstance(database_status["checksum"], str) or re.fullmatch(r"sha256:[0-9a-f]{64}", database_status["checksum"]) is None:
+              raise SystemExit("invalid sanitized Grype DB checksum")
+          if database_status["valid"] is not True:
+              raise SystemExit("sanitized Grype DB is not valid")
 
           expected_reports = {
               "python": "python-vulnerabilities.grype.json",

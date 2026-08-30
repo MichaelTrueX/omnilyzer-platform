@@ -912,7 +912,17 @@ class WorkflowPolicyTests(unittest.TestCase):
         )[0]
         self.assertNotIn("GRYPE_DB_VALIDATE_AGE", update_step)
         self.assertNotIn("GRYPE_DB_VALIDATE_BY_HASH_ON_START", update_step)
-        self.assertNotIn("location", update_step.split("evidence = {", 1)[1])
+        self.assertIn('raw_status="$RUNNER_TEMP/task008-grype-db-status-raw.json"', update_step)
+        self.assertIn('> "$raw_status"', update_step)
+        self.assertIn("sanitize-db-status", update_step)
+        self.assertIn(
+            '"$RUNNER_TEMP/task008-handoff/grype-db-status.json"', update_step
+        )
+        status_command = update_step.split('"$GRYPE_COMMAND" db status -o json', 1)[1].split(
+            "python spikes/supply-chain/evaluate_vulnerabilities.py", 1
+        )[0]
+        self.assertNotIn("|| true", status_command)
+        self.assertNotIn("grype-db-status.json", status_command)
 
     def test_vulnerability_gate_extends_exact_build_handoff_before_oidc(self) -> None:
         build = self.job(self.publish, "build")
@@ -986,6 +996,20 @@ class WorkflowPolicyTests(unittest.TestCase):
             "actions/checkout",
         ):
             self.assertNotIn(prohibited, execute.lower())
+
+    def test_publisher_and_consumer_require_canonical_four_field_database_evidence(self) -> None:
+        publish = self.job(self.publish, "publish")
+        consume = self.job(self.consume, "consume")
+        expected_fields = '"built", "checksum", "schema_version", "valid"'
+        for job in (publish, consume):
+            self.assertIn(expected_fields, job)
+            self.assertIn('database_status["valid"] is not True', job)
+            self.assertIn('r"sha256:[0-9a-f]{64}"', job)
+            database_validation = job.split(
+                'database_status = json.loads(', 1
+            )[1].split('policy_result', 1)[0]
+            for prohibited in ('"status"', '"path"', '"from"', '"error"'):
+                self.assertNotIn(prohibited, database_validation)
 
     def test_actions_are_exactly_pinned(self) -> None:
         expected = {
