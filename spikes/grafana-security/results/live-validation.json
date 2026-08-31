@@ -1,0 +1,204 @@
+{
+  "anonymous_and_browser_surface": {
+    "anonymous_auth": false,
+    "anonymous_datasource_query_status": 401,
+    "api_statuses": {
+      "/api/admin/settings": 401,
+      "/api/dashboards/uid/task011-operations": 401,
+      "/api/datasources": 401,
+      "/api/ds/query": 401,
+      "/api/search": 401
+    },
+    "basic_auth": false,
+    "content_security_policy_present": true,
+    "embedding": false,
+    "external_snapshots": false,
+    "local_login_form": false,
+    "public_dashboards": false,
+    "wildcard_cors": false,
+    "x_frame_options": "deny"
+  },
+  "auditability": {
+    "authentication_related_records_present": true,
+    "dashboard_or_datasource_request_records_present": true,
+    "dedicated_audit_event_schema": false,
+    "finding": "OSS operational logs are diagnostically useful but are not equivalent to Enterprise audit logs",
+    "ordinary_request_completion_records": 37,
+    "tamper_resistant_audit_trail": false
+  },
+  "authorization": {
+    "capabilities": {
+      "editor": {
+        "dashboard_edit": true,
+        "dashboard_read": true,
+        "datasource_create": false,
+        "datasource_edit": false
+      },
+      "organization_admin": {
+        "dashboard_read": true,
+        "datasource_create": true,
+        "grafana_server_admin": false,
+        "provisioned_datasource_delete": false,
+        "provisioned_datasource_edit": false
+      },
+      "viewer": {
+        "dashboard_edit": false,
+        "dashboard_read": true,
+        "datasource_create": false,
+        "datasource_edit": false
+      }
+    },
+    "datasource_create_statuses": {
+      "editor": 403,
+      "organization_admin": 200,
+      "viewer": 403
+    },
+    "public_dashboard_enable_status": 404,
+    "roles": {
+      "admin": {
+        "is_grafana_admin": false,
+        "org_role": "Admin"
+      },
+      "editor": {
+        "is_grafana_admin": false,
+        "org_role": "Editor"
+      },
+      "viewer": {
+        "is_grafana_admin": false,
+        "org_role": "Viewer"
+      }
+    },
+    "server_admin_endpoint_statuses": {
+      "editor": 403,
+      "organization_admin": 403,
+      "viewer": 403
+    },
+    "ssrf_finding": "organization Admin can create a server-side datasource; non-admin roles cannot",
+    "unmapped_user": {
+      "api_status": 401,
+      "callback_status": 200,
+      "login_denied": true
+    },
+    "viewer_arbitrary_promql": {
+      "boundary": "dashboard visibility is not metric-data authorization",
+      "dashboard_expression": "sum by (product, environment) (omnilyzer_http_requests_total{product=\"valoria\"})",
+      "different_expression": "sum(omnilyzer_telemetry_export_failures_total)",
+      "query_succeeded": true,
+      "status": 200
+    }
+  },
+  "classification": "TASK 011 - PASS WITH EXPLICIT AUTHORIZATION BOUNDARY",
+  "grafana_outage": {
+    "application_requests_succeeded": 5,
+    "application_restarted": false,
+    "grafana_restart_seconds": 3.007,
+    "metrics_count_increased": true,
+    "prometheus_restarted": false,
+    "prometheus_target_up": 1,
+    "query_recovered": true
+  },
+  "keycloak_outage": {
+    "existing_session_status": 200,
+    "new_login_failed_cleanly": true,
+    "new_login_recovered": true,
+    "recovery_seconds": 7.442
+  },
+  "limitations": [
+    "Grafana's loopback HTTP endpoint did not validate production HTTPS or Secure Grafana session cookies; Keycloak used a runtime-generated test certificate",
+    "OSS cannot restrict Viewer PromQL within one shared organization datasource",
+    "OSS dedicated audit logging, granular datasource permissions, and advanced RBAC were not available",
+    "organization Admin datasource creation creates a privileged server-side egress/SSRF surface requiring network policy",
+    "production Grafana database, HA, backup, disaster recovery, upgrades, ingress, CSP integration, and capacity remain unvalidated",
+    "the brief Keycloak outage does not establish long-term session or refresh-token behavior"
+  ],
+  "network": {
+    "grafana_host_binding": "127.0.0.1:19130",
+    "grafana_server_side_datasource": "http://prometheus:9090",
+    "keycloak_host_binding": "127.0.0.1:19180 (HTTPS synthetic certificate)",
+    "prometheus_host_published_ports": 0,
+    "synthetic_app_host_published_ports": 0
+  },
+  "oss_boundaries": {
+    "advanced_rbac": "Enterprise or Cloud",
+    "datasource_permissions": "Enterprise or Cloud",
+    "dedicated_audit_logging": "Enterprise or Cloud",
+    "license_review": "AGPLv3 requires separate architecture/legal review; no legal conclusion made",
+    "oss_evidence": "ordinary server logs and database history are not equivalent to tamper-resistant governance audit records",
+    "shared_datasource_fine_grained_isolation": "not provided by Grafana OSS",
+    "trusted_operator_population": "suitable candidate"
+  },
+  "prometheus_outage": {
+    "application_domain_status": 200,
+    "grafana_restarted": false,
+    "grafana_session_status": 200,
+    "livez_status": 200,
+    "query_failed_visibly": true,
+    "query_recovered": true,
+    "readyz_status": 200,
+    "recovery_seconds": 0.6
+  },
+  "provisioning": {
+    "dashboard_uid": "task011-operations",
+    "datasource_editable": false,
+    "datasource_server_side_url": "http://prometheus:9090",
+    "datasource_uid": "omnilyzer-prometheus",
+    "folder_uid": "omnilyzer-operations",
+    "fresh_database_recreated_from_files": true,
+    "recreate_to_ready_seconds": 4.071
+  },
+  "resources": {
+    "grafana_cpu": "1.22%",
+    "grafana_memory": "238.4MiB",
+    "oauth_login_seconds": {
+      "admin": 0.188,
+      "editor": 0.185,
+      "viewer": 0.937
+    },
+    "representative_query_latency_ms": 14.504
+  },
+  "schema_version": 1,
+  "security": {
+    "committed_credentials": false,
+    "datasource_credentials_forwarded": false,
+    "downloaded_third_party_plugins": 0,
+    "grafana_server_admin_assignment_from_oidc": false,
+    "runtime_secret_file_modes": {
+      "rendered_realm": "0600",
+      "runtime_directory": "0700",
+      "runtime_env": "0600",
+      "tls_certificate": "0644",
+      "tls_private_key": "0600"
+    },
+    "runtime_secret_response_leaks": 0,
+    "workspace_or_tenant_claims": false
+  },
+  "session": {
+    "browser_oauth_token_storage_introduced": false,
+    "cookie_name": "grafana_session",
+    "expires": "bounded persistent",
+    "http_only": true,
+    "same_site": "Lax",
+    "secure_in_loopback_http_test": false
+  },
+  "startup": {
+    "compose_to_ready_seconds": 22.194,
+    "grafana_ready_seconds_after_wait_start": 0.002,
+    "keycloak_ready_seconds_after_wait_start": 18.793
+  },
+  "technology": {
+    "grafana": {
+      "digest": "sha256:3fd54ae1214669f8355f065ec9f6445d5279a3d77095ab048ca045685272429b",
+      "edition": "OSS",
+      "image": "grafana/grafana:13.2.0",
+      "license": "AGPL-3.0-only",
+      "version": "13.2.0"
+    },
+    "keycloak": {
+      "version": "26.7.2"
+    },
+    "prometheus": {
+      "version": "3.14.0"
+    }
+  },
+  "validated_at_date": "2026-08-31"
+}

@@ -37,5 +37,6 @@ Recommendations that settle major choices must proceed through an ADR. Productio
 7. **Supply chain** (`supply-chain/`): validate private Python, npm, and OCI delivery through separate GitHub OIDC publisher and consumer identities, with signing and stronger policy evidence deferred to Task 008B.
 8. **Observability contract** (`observability/`): validate secure structured logging, correlation IDs, OpenTelemetry tracing, bounded Prometheus-compatible metrics, health semantics, deployment metadata, and failure isolation without selecting production collector infrastructure.
 9. **Prometheus metrics** (`prometheus-metrics/`): validate real Prometheus scraping and queries, closed cardinality, private metrics networking, monitoring failure isolation, recovery, build-info behavior, and Python multiprocess lifecycle semantics without accepting production monitoring infrastructure.
+10. **Grafana operator security** (`grafana-security/`): validate Grafana OSS as a private operator interface over Prometheus, including real Keycloak OIDC, fail-closed roles, datasource/query authorization boundaries, reproducible provisioning, failure isolation, and runtime-only secrets without accepting a visualization architecture.
 
 Task 001 creates only these isolated locations and governance. It does not implement any spike.
