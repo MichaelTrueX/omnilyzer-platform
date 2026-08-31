@@ -52,6 +52,16 @@ class ContainerPolicyTests(unittest.TestCase):
         self.assertNotIn("admin/admin", COMPOSE.lower())
         self.assertNotRegex(COMPOSE, r"(?i)(password|client_secret):\s+[A-Za-z0-9_-]{16,}")
 
+    def test_runtime_artifact_modes_are_exact_and_fail_closed(self) -> None:
+        self.assertIn("os.chmod(runtime, 0o700)", VALIDATOR)
+        self.assertIn("os.chmod(realm, 0o600)", VALIDATOR)
+        self.assertIn("os.chmod(env_file, 0o600)", VALIDATOR)
+        self.assertIn("os.chmod(private_key, 0o600)", VALIDATOR)
+        self.assertNotIn("os.chmod(private_key, 0o644)", VALIDATOR)
+        self.assertIn("os.chmod(certificate, 0o644)", VALIDATOR)
+        self.assertIn("stat.S_IMODE(path.stat().st_mode)", VALIDATOR)
+        self.assertIn("runtime artifact modes fail closed", VALIDATOR)
+
 
 class GrafanaSecurityPolicyTests(unittest.TestCase):
     def test_authentication_fails_closed(self) -> None:

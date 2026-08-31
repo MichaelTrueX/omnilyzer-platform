@@ -144,17 +144,17 @@
     "datasource_uid": "omnilyzer-prometheus",
     "folder_uid": "omnilyzer-operations",
     "fresh_database_recreated_from_files": true,
-    "recreate_to_ready_seconds": 4.156
+    "recreate_to_ready_seconds": 4.071
   },
   "resources": {
-    "grafana_cpu": "0.98%",
-    "grafana_memory": "235.3MiB",
+    "grafana_cpu": "1.22%",
+    "grafana_memory": "238.4MiB",
     "oauth_login_seconds": {
-      "admin": 0.175,
-      "editor": 0.194,
-      "viewer": 0.825
+      "admin": 0.188,
+      "editor": 0.185,
+      "viewer": 0.937
     },
-    "representative_query_latency_ms": 14.36
+    "representative_query_latency_ms": 14.504
   },
   "schema_version": 1,
   "security": {
@@ -162,7 +162,13 @@
     "datasource_credentials_forwarded": false,
     "downloaded_third_party_plugins": 0,
     "grafana_server_admin_assignment_from_oidc": false,
-    "runtime_secret_files_mode": "0600",
+    "runtime_secret_file_modes": {
+      "rendered_realm": "0600",
+      "runtime_directory": "0700",
+      "runtime_env": "0600",
+      "tls_certificate": "0644",
+      "tls_private_key": "0600"
+    },
     "runtime_secret_response_leaks": 0,
     "workspace_or_tenant_claims": false
   },
@@ -175,9 +181,9 @@
     "secure_in_loopback_http_test": false
   },
   "startup": {
-    "compose_to_ready_seconds": 22.204,
+    "compose_to_ready_seconds": 22.194,
     "grafana_ready_seconds_after_wait_start": 0.002,
-    "keycloak_ready_seconds_after_wait_start": 18.756
+    "keycloak_ready_seconds_after_wait_start": 18.793
   },
   "technology": {
     "grafana": {

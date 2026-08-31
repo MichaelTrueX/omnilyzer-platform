@@ -120,8 +120,9 @@ The validator completed real Keycloak Authorization Code login with Grafana's Ge
 OAuth provider and PKCE. Anonymous access, Grafana local sign-up, Basic authentication,
 and the local login form were disabled. The randomized Grafana bootstrap administrator,
 Keycloak bootstrap credential, OAuth secret, user passwords, Grafana secret key, and TLS
-key existed only in a mode-0700 temporary directory; the environment/realm files were
-mode 0600 and cleanup removed the directory.
+key existed only in a mode-0700 temporary directory. The secret-bearing runtime env,
+rendered realm, and TLS private key were mode 0600; the public TLS certificate was mode
+0644. Cleanup removed the directory and every runtime artifact.
 
 Keycloak groups mapped independently and strictly:
 
@@ -211,7 +212,7 @@ Version-controlled files provision one Prometheus datasource with deterministic 
 `omnilyzer-prometheus`, folder UID `omnilyzer-operations`, and dashboard UID
 `task011-operations`. Grafana's embedded SQLite state was disposable. After Grafana's
 container and temporary database were removed, a fresh container recreated all three
-resources and queries resumed in 4.156 seconds without administrator API setup or UI
+resources and queries resumed in 4.071 seconds without administrator API setup or UI
 clicks.
 
 `allowUiUpdates=true` permits the role test to prove Editor behavior, but file
@@ -284,14 +285,14 @@ One local run on 2026-08-31 observed:
 
 | Measurement | Result |
 |---|---:|
-| Compose start to Grafana + Keycloak ready | 22.204 s |
-| Grafana memory | 235.3 MiB |
-| Grafana CPU snapshot | 0.98% |
-| representative server-side query | 14.360 ms |
-| Viewer/Editor/Admin OAuth flow | 0.825 / 0.194 / 0.175 s |
+| Compose start to Grafana + Keycloak ready | 22.194 s |
+| Grafana memory | 238.4 MiB |
+| Grafana CPU snapshot | 1.22% |
+| representative server-side query | 14.504 ms |
+| Viewer/Editor/Admin OAuth flow | 0.937 / 0.185 / 0.188 s |
 | Prometheus query recovery | 0.600 s |
 | Grafana restart to health | 3.007 s |
-| fresh Grafana recreation/provisioning | 4.156 s |
+| fresh Grafana recreation/provisioning | 4.071 s |
 
 These modest synthetic observations reject an obvious suitability problem. They do not
 predict production concurrency, capacity, memory sizing, latency objectives, or 10,000/
