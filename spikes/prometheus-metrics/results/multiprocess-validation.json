@@ -1,0 +1,220 @@
+{
+  "after_clean_worker_exit": {
+    "builds": [
+      {
+        "labels": {
+          "app_version": "1.0.0",
+          "environment": "test",
+          "platform_version": "1.8.0",
+          "product": "multiprocess-fixture",
+          "service": "multiprocess-api"
+        },
+        "value": 1.0
+      }
+    ],
+    "counter": 12.0,
+    "histogram_count": 12.0
+  },
+  "after_mark_process_dead": {
+    "builds": [
+      {
+        "labels": {
+          "app_version": "2.0.0",
+          "environment": "test",
+          "platform_version": "1.8.0",
+          "product": "multiprocess-fixture",
+          "service": "multiprocess-api"
+        },
+        "value": 1.0
+      }
+    ],
+    "counter": 17.0,
+    "histogram_count": 17.0
+  },
+  "after_worker_restart": {
+    "builds": [
+      {
+        "labels": {
+          "app_version": "1.0.0",
+          "environment": "test",
+          "platform_version": "1.8.0",
+          "product": "multiprocess-fixture",
+          "service": "multiprocess-api"
+        },
+        "value": 1.0
+      }
+    ],
+    "counter": 15.0,
+    "histogram_count": 15.0
+  },
+  "clean_new_deployment_after_directory_wipe": {
+    "builds": [
+      {
+        "labels": {
+          "app_version": "3.0.0",
+          "environment": "test",
+          "platform_version": "1.8.0",
+          "product": "multiprocess-fixture",
+          "service": "multiprocess-api"
+        },
+        "value": 1.0
+      }
+    ],
+    "counter": 2.0,
+    "histogram_count": 2.0
+  },
+  "client": "prometheus-client 0.26.0",
+  "counter_persists_across_worker_exit": true,
+  "cross_deployment_contamination_without_directory_wipe": {
+    "builds": [
+      {
+        "labels": {
+          "app_version": "3.0.0",
+          "environment": "test",
+          "platform_version": "1.8.0",
+          "product": "multiprocess-fixture",
+          "service": "multiprocess-api"
+        },
+        "value": 1.0
+      }
+    ],
+    "counter": 19.0,
+    "histogram_count": 19.0
+  },
+  "decision": "PASS_WITH_LIFECYCLE_REQUIREMENTS",
+  "initial_aggregate": {
+    "builds": [
+      {
+        "labels": {
+          "app_version": "1.0.0",
+          "environment": "test",
+          "platform_version": "1.8.0",
+          "product": "multiprocess-fixture",
+          "service": "multiprocess-api"
+        },
+        "value": 1.0
+      }
+    ],
+    "counter": 12.0,
+    "histogram_count": 12.0
+  },
+  "safe_candidate_gauge_mode": "livemax",
+  "schema_version": 1,
+  "stale_gauge_before_mark_process_dead": {
+    "builds": [
+      {
+        "labels": {
+          "app_version": "1.0.0",
+          "environment": "test",
+          "platform_version": "1.8.0",
+          "product": "multiprocess-fixture",
+          "service": "multiprocess-api"
+        },
+        "value": 1.0
+      },
+      {
+        "labels": {
+          "app_version": "2.0.0",
+          "environment": "test",
+          "platform_version": "1.8.0",
+          "product": "multiprocess-fixture",
+          "service": "multiprocess-api"
+        },
+        "value": 1.0
+      }
+    ],
+    "counter": 17.0,
+    "histogram_count": 17.0
+  },
+  "unsafe_default_all_mode": {
+    "after_mark_process_dead_both_workers": {
+      "builds": [
+        {
+          "labels": {
+            "app_version": "1.0.0",
+            "environment": "test",
+            "pid": "<worker-pid-1>",
+            "platform_version": "1.8.0",
+            "product": "multiprocess-fixture",
+            "service": "multiprocess-api"
+          },
+          "value": 1.0
+        },
+        {
+          "labels": {
+            "app_version": "1.0.0",
+            "environment": "test",
+            "pid": "<worker-pid-2>",
+            "platform_version": "1.8.0",
+            "product": "multiprocess-fixture",
+            "service": "multiprocess-api"
+          },
+          "value": 1.0
+        }
+      ],
+      "counter": 0.0,
+      "histogram_count": 0.0
+    },
+    "after_mark_process_dead_one_worker": {
+      "builds": [
+        {
+          "labels": {
+            "app_version": "1.0.0",
+            "environment": "test",
+            "pid": "<worker-pid-1>",
+            "platform_version": "1.8.0",
+            "product": "multiprocess-fixture",
+            "service": "multiprocess-api"
+          },
+          "value": 1.0
+        },
+        {
+          "labels": {
+            "app_version": "1.0.0",
+            "environment": "test",
+            "pid": "<worker-pid-2>",
+            "platform_version": "1.8.0",
+            "product": "multiprocess-fixture",
+            "service": "multiprocess-api"
+          },
+          "value": 1.0
+        }
+      ],
+      "counter": 0.0,
+      "histogram_count": 0.0
+    },
+    "mark_process_dead_removed_default_series": false,
+    "per_process_series": 2,
+    "pid_label_present": true,
+    "two_live_workers": {
+      "builds": [
+        {
+          "labels": {
+            "app_version": "1.0.0",
+            "environment": "test",
+            "pid": "<worker-pid-1>",
+            "platform_version": "1.8.0",
+            "product": "multiprocess-fixture",
+            "service": "multiprocess-api"
+          },
+          "value": 1.0
+        },
+        {
+          "labels": {
+            "app_version": "1.0.0",
+            "environment": "test",
+            "pid": "<worker-pid-2>",
+            "platform_version": "1.8.0",
+            "product": "multiprocess-fixture",
+            "service": "multiprocess-api"
+          },
+          "value": 1.0
+        }
+      ],
+      "counter": 0.0,
+      "histogram_count": 0.0
+    }
+  },
+  "workers": 2
+}
+

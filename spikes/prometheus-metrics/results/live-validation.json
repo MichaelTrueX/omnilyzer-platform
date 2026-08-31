@@ -1,0 +1,128 @@
+{
+  "build_info": {
+    "current_series": 3,
+    "current_versions": [
+      "0.0.1",
+      "1.3.0",
+      "2.4.2"
+    ],
+    "high_churn_labels_on_request_metrics": false,
+    "historical_series_after_transition": 4,
+    "historical_versions": [
+      "0.0.1",
+      "1.3.0",
+      "2.4.1",
+      "2.4.2"
+    ]
+  },
+  "cardinality": {
+    "actual_base_request_label_sets": 22,
+    "actual_request_metric_series_including_histogram_mechanics": 352,
+    "actual_route_label_values": [
+      "/api/documents/{id}",
+      "/api/orders/{id}",
+      "/api/secure",
+      "/api/users/{id}",
+      "/livez",
+      "/metrics",
+      "/readyz",
+      "unmatched"
+    ],
+    "configured_theoretical_base_bound": 1152,
+    "configured_theoretical_request_series_bound": 18432,
+    "expected_from_actual_base_and_mechanics": 352,
+    "histogram_buckets_per_label_set": 11,
+    "mechanics": {
+      "counter_created": 22,
+      "counter_total": 22,
+      "histogram_bucket": 242,
+      "histogram_count": 22,
+      "histogram_created": 22,
+      "histogram_sum": 22
+    },
+    "prohibited_request_labels_found": [],
+    "unmatched_route_label_series": 2
+  },
+  "decision": "PASS",
+  "distinct_raw_ids": 11300,
+  "failed_target_isolation": {
+    "detection_seconds": 0.506,
+    "healthy_target_up": 1,
+    "malformed_target_up": 0,
+    "normal_mode_recovery_seconds": 0.506,
+    "restart_recovery_seconds": 0.757,
+    "slow_target_detection_seconds": 1.513,
+    "slow_target_pid_acceptance_bound": 8,
+    "slow_target_pids_after_repeated_timeouts": 4,
+    "slow_target_up": 0,
+    "stopped_target_up": 0
+  },
+  "network_boundary": {
+    "runtime_prometheus_port_binding": "127.0.0.1:19090",
+    "runtime_target_host_port_bindings": 0,
+    "runtime_target_networks": {
+      "target-alpha": [
+        "task010-prometheus-metrics_metrics-internal"
+      ],
+      "target-beta": [
+        "task010-prometheus-metrics_metrics-internal"
+      ],
+      "target-flaky": [
+        "task010-prometheus-metrics_metrics-internal"
+      ]
+    }
+  },
+  "prometheus": {
+    "digest": "sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0",
+    "image": "prom/prometheus:v3.14.0",
+    "version": "3.14.0"
+  },
+  "prometheus_outage": {
+    "application_container_restarted": false,
+    "authorization_behavior_unchanged": true,
+    "livez_passed": true,
+    "outage_request_count": 503,
+    "outage_request_failures": 0,
+    "readyz_passed": true,
+    "request_loop_seconds": 27.453,
+    "scrape_recovery_seconds": 5.791
+  },
+  "prometheus_ready_seconds": 5.31,
+  "prometheus_resource_observation": {
+    "BlockIO": "0B / 0B",
+    "CPUPerc": "0.77%",
+    "MemPerc": "0.22%",
+    "MemUsage": "34.16MiB / 15.25GiB",
+    "NetIO": "150kB / 21.8kB",
+    "PIDs": "13"
+  },
+  "queries": {
+    "build_info": 3.0,
+    "export_failures": 4.0,
+    "histogram_count": 11404.0,
+    "request_count": 11404.0,
+    "targets_up": 3.0
+  },
+  "representative_query_latency_ms": 1.069,
+  "representative_request_rate_per_second": 0.16015,
+  "request_generation_seconds": 16.375,
+  "schema_version": 1,
+  "scrape_duration_seconds": {
+    "target-alpha:8000": 0.005735215,
+    "target-beta:8000": 0.001551864,
+    "target-flaky:8000": 0.001624703
+  },
+  "sensitive_data": {
+    "found": [],
+    "searched_fixture_values": 9
+  },
+  "synthetic_requests": 11314,
+  "topology": {
+    "docker_network_internal": true,
+    "prometheus_host_binding": "127.0.0.1:19090",
+    "scrape_interval_seconds": 1.0,
+    "scrape_timeout_seconds": 0.5,
+    "target_host_ports": 0,
+    "targets": 3
+  }
+}

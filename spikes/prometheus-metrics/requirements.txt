@@ -1,0 +1,5 @@
+# File: spikes/prometheus-metrics/requirements.txt
+# Purpose: Exact, hash-verified Python dependency for the isolated Task 010 fixture.
+
+prometheus-client==0.26.0 \
+    --hash=sha256:fa93d06737aa02bacd05794768508bb97d2fbee28cb3bca04eaae92f0ca953d6

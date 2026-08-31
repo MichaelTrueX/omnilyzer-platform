@@ -1,0 +1,17 @@
+# File: spikes/prometheus-metrics/prometheus/prometheus.yml
+# Purpose: Uses explicit bounded scrape settings for isolated Task 010 targets.
+
+global:
+  scrape_interval: 1s
+  scrape_timeout: 500ms
+  evaluation_interval: 1s
+
+scrape_configs:
+  - job_name: omnilyzer
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets:
+          - target-alpha:8000
+          - target-beta:8000
+          - target-flaky:8000
