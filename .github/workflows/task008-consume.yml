@@ -1864,8 +1864,9 @@ jobs:
             echo "SECURITY FAILURE: Forgejo consumer JWT published package material (HTTP $write_status)" >&2
             exit 1
           fi
-          if [[ "$write_status" != "403" ]]; then
-            echo "INCONCLUSIVE: Forgejo consumer PUT returned HTTP $write_status, expected explicit 403 denial" >&2
+          # Accept 401 only because this same JWT authenticated and read the private baseline immediately above.
+          if [[ ! "$write_status" =~ ^(401|403)$ ]]; then
+            echo "INCONCLUSIVE: Forgejo consumer PUT returned HTTP $write_status, expected explicit 401 or 403 denial" >&2
             exit 1
           fi
 
@@ -1873,5 +1874,5 @@ jobs:
             echo '## Task 008C Forgejo consumer permission probe'
             echo
             echo '- Authenticated baseline read: PASS'
-            echo '- Consumer write: PASS (HTTP 403 denied)'
+            echo "- Consumer write: PASS (HTTP $write_status denied)"
           } >> "$GITHUB_STEP_SUMMARY"

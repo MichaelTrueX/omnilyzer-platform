@@ -190,10 +190,19 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         self.assertIn("task008c-publisher-ok", probe)
         self.assertIn("cmp --silent", probe)
         self.assertIn("--request PUT", probe)
+        baseline_read = probe.index('--output "$baseline_download" "$baseline_url"')
+        write_attempt = probe.index("--request PUT")
+        self.assertLess(baseline_read, write_attempt)
         self.assertIn('if [[ "$write_status" =~ ^2[0-9]{2}$ ]]', probe)
         self.assertIn("SECURITY FAILURE", probe)
-        self.assertIn('if [[ "$write_status" != "403" ]]', probe)
+        self.assertIn('if [[ ! "$write_status" =~ ^(401|403)$ ]]', probe)
+        self.assertIn(
+            "Accept 401 only because this same JWT authenticated and read the private baseline immediately above.",
+            probe,
+        )
         self.assertIn("INCONCLUSIVE:", probe)
+        self.assertIn('HTTP $write_status denied', probe)
+        self.assertNotIn("HTTP 403 denied", probe)
         self.assertNotIn("--request DELETE", probe)
 
 
