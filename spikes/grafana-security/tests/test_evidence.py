@@ -68,6 +68,15 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(RESULT["security"]["downloaded_third_party_plugins"], 0)
         self.assertEqual(RESULT["oss_boundaries"]["dedicated_audit_logging"], "Enterprise or Cloud")
 
+    def test_runtime_artifact_modes_are_precise(self) -> None:
+        self.assertEqual(RESULT["security"]["runtime_secret_file_modes"], {
+            "runtime_directory": "0700",
+            "runtime_env": "0600",
+            "rendered_realm": "0600",
+            "tls_private_key": "0600",
+            "tls_certificate": "0644",
+        })
+
 
 if __name__ == "__main__":
     unittest.main()

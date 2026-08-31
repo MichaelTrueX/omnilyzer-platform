@@ -15,6 +15,7 @@ import re
 import secrets
 import shutil
 import ssl
+import stat
 import subprocess
 import tempfile
 import time
@@ -130,7 +131,7 @@ def wait_http(opener: Any, url: str, expected: set[int], *, seconds: float = 120
 
 
 def make_runtime() -> tuple[Path, Path, dict[str, str]]:
-    """Create mode-0600 runtime credentials and a rendered synthetic realm."""
+    """Create a private runtime directory containing synthetic credentials and TLS."""
 
     runtime = Path(tempfile.mkdtemp(prefix="task011-grafana-"))
     os.chmod(runtime, 0o700)
@@ -166,13 +167,39 @@ def make_runtime() -> tuple[Path, Path, dict[str, str]]:
         "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
     ])
     os.chmod(certificate, 0o644)
-    os.chmod(private_key, 0o644)
+    os.chmod(private_key, 0o600)
     values["TASK011_TLS_CERT_FILE"] = str(certificate)
     values["TASK011_TLS_KEY_FILE"] = str(private_key)
     env_file = runtime / "runtime.env"
     env_file.write_text("".join(f"{key}={value}\n" for key, value in sorted(values.items())))
     os.chmod(env_file, 0o600)
     return runtime, env_file, values
+
+
+def verified_runtime_modes(runtime: Path, env_file: Path, values: dict[str, str]) -> dict[str, str]:
+    """Observe and fail closed on every runtime credential artifact's exact mode."""
+
+    paths = {
+        "runtime_directory": runtime,
+        "runtime_env": env_file,
+        "rendered_realm": Path(values["TASK011_REALM_FILE"]),
+        "tls_private_key": Path(values["TASK011_TLS_KEY_FILE"]),
+        "tls_certificate": Path(values["TASK011_TLS_CERT_FILE"]),
+    }
+    observed = {
+        name: f"{stat.S_IMODE(path.stat().st_mode):04o}"
+        for name, path in paths.items()
+    }
+    expected = {
+        "runtime_directory": "0700",
+        "runtime_env": "0600",
+        "rendered_realm": "0600",
+        "tls_private_key": "0600",
+        "tls_certificate": "0644",
+    }
+    if observed != expected:
+        raise ValidationError(f"runtime artifact modes fail closed: {observed}")
+    return observed
 
 
 def oauth_login(username: str, password: str) -> tuple[Any, http.cookiejar.CookieJar, float, Response]:
@@ -295,6 +322,7 @@ def main() -> int:
     """Execute all live acceptance gates and emit sanitized deterministic evidence."""
 
     runtime, env_file, secret_values = make_runtime()
+    runtime_modes = verified_runtime_modes(runtime, env_file, secret_values)
     test_tls = ssl.create_default_context()
     test_tls.check_hostname = False
     test_tls.verify_mode = ssl.CERT_NONE
@@ -628,7 +656,7 @@ def main() -> int:
             if len(marker) >= 16 and any(marker in body for body in captured_bodies):
                 raise ValidationError("runtime secret leaked into captured Grafana response")
         evidence["security"] = {
-            "runtime_secret_files_mode": "0600",
+            "runtime_secret_file_modes": runtime_modes,
             "committed_credentials": False,
             "runtime_secret_response_leaks": 0,
             "datasource_credentials_forwarded": False,
