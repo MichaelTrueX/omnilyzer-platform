@@ -1,0 +1,43 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "omnilyzer-prometheus"},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "omnilyzer-prometheus"}, "editorMode": "code", "expr": "sum by (product, environment) (omnilyzer_http_requests_total{product=\"valoria\"})", "legendFormat": "{{product}}/{{environment}}", "range": true, "refId": "A"}
+      ],
+      "title": "Valoria request activity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "omnilyzer-prometheus"},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "omnilyzer-prometheus"}, "editorMode": "code", "expr": "count(omnilyzer_build_info)", "range": false, "refId": "A"}
+      ],
+      "title": "Current synthetic builds",
+      "type": "stat"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 42,
+  "tags": ["task011", "synthetic"],
+  "templating": {"list": []},
+  "time": {"from": "now-15m", "to": "now"},
+  "timezone": "browser",
+  "title": "Omnilyzer Operations Fixture",
+  "uid": "task011-operations",
+  "version": 1
+}

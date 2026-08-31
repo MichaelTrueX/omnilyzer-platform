@@ -1,0 +1,14 @@
+# File: spikes/grafana-security/prometheus/prometheus.yml
+# Purpose: Scrapes only the isolated internal Task 011 metrics fixture.
+
+global:
+  scrape_interval: 1s
+  scrape_timeout: 500ms
+  evaluation_interval: 1s
+
+scrape_configs:
+  - job_name: omnilyzer-task011
+    metrics_path: /metrics
+    static_configs:
+      - targets: [synthetic-app:8000]
+

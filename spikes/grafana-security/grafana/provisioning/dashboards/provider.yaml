@@ -1,0 +1,16 @@
+# File: spikes/grafana-security/grafana/provisioning/dashboards/provider.yaml
+apiVersion: 1
+
+providers:
+  - name: task011-operations
+    orgId: 1
+    folder: Omnilyzer Operations
+    folderUid: omnilyzer-operations
+    type: file
+    disableDeletion: true
+    allowUiUpdates: true
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/task011-dashboards
+      foldersFromFilesStructure: false
+
