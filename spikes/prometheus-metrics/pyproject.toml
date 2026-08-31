@@ -1,0 +1,14 @@
+# File: spikes/prometheus-metrics/pyproject.toml
+# Purpose: Declares the isolated Task 010 Python fixture dependency.
+
+[project]
+name = "omnilyzer-prometheus-metrics-spike"
+version = "0.0.0"
+description = "Removable validation fixture for Prometheus server and multiprocess metrics."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "prometheus-client==0.26.0",
+]
+
+[tool.setuptools]
+py-modules = ["target_app", "target_probe", "validate_live", "multiprocess_probe"]

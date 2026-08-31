@@ -1,0 +1,94 @@
+# File: spikes/prometheus-metrics/compose.yaml
+# Purpose: Defines the isolated Task 010 private scrape topology.
+
+name: task010-prometheus-metrics
+
+x-target: &target
+  build:
+    context: .
+    dockerfile: Dockerfile.target
+  read_only: true
+  init: true
+  user: "65534:65534"
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:size=16m,mode=1777
+  expose:
+    - "8000"
+  networks:
+    - metrics-internal
+  healthcheck:
+    test: ["CMD", "python", "/app/target_probe.py", "health"]
+    interval: 2s
+    timeout: 1s
+    retries: 10
+
+services:
+  target-alpha:
+    <<: *target
+    environment:
+      SERVICE: valoria-api
+      PRODUCT: valoria
+      ENVIRONMENT: dev
+      APP_VERSION: 2.4.1
+      PLATFORM_VERSION: 1.8.0
+      INITIAL_EXPORT_FAILURES: "2"
+
+  target-beta:
+    <<: *target
+    environment:
+      SERVICE: chronicle-api
+      PRODUCT: chronicle
+      ENVIRONMENT: staging
+      APP_VERSION: 1.3.0
+      PLATFORM_VERSION: 1.8.0
+      INITIAL_EXPORT_FAILURES: "1"
+
+  target-flaky:
+    <<: *target
+    environment:
+      SERVICE: synthetic-slow-api
+      PRODUCT: synthetic-monitoring-test
+      ENVIRONMENT: test
+      APP_VERSION: 0.0.1
+      PLATFORM_VERSION: 1.8.0
+      INITIAL_EXPORT_FAILURES: "1"
+
+  prometheus:
+    image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
+    read_only: true
+    user: "65534:65534"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /prometheus:size=128m,mode=1777
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30m
+      - --storage.tsdb.retention.size=64MB
+      - --web.listen-address=0.0.0.0:9090
+    ports:
+      - "127.0.0.1:${TASK010_PROMETHEUS_PORT:-19090}:9090"
+    networks:
+      - metrics-internal
+      - validation-loopback
+    depends_on:
+      target-alpha:
+        condition: service_healthy
+      target-beta:
+        condition: service_healthy
+      target-flaky:
+        condition: service_healthy
+
+networks:
+  metrics-internal:
+    internal: true
+  validation-loopback:

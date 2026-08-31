@@ -1,0 +1,6 @@
+# Limit the synthetic image build context to its four reviewed inputs.
+*
+!Dockerfile.target
+!requirements.txt
+!target_app.py
+!target_probe.py
