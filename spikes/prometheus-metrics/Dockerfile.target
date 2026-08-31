@@ -1,0 +1,13 @@
+# File: spikes/prometheus-metrics/Dockerfile.target
+# Purpose: Builds the synthetic, internal-only metrics target used by Task 010.
+
+FROM python:3.12.3-slim-bookworm@sha256:afc139a0a640942491ec481ad8dda10f2c5b753f5c969393b12480155fe15a63
+
+WORKDIR /app
+COPY requirements.txt /app/requirements.txt
+RUN python -m pip install --no-cache-dir --require-hashes -r /app/requirements.txt
+COPY target_app.py target_probe.py /app/
+
+USER 65534:65534
+EXPOSE 8000
+ENTRYPOINT ["python", "/app/target_app.py"]
