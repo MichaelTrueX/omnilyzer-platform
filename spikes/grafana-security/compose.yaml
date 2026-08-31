@@ -1,0 +1,102 @@
+# File: spikes/grafana-security/compose.yaml
+# Purpose: Defines the isolated Task 011 Grafana, Prometheus, Keycloak, and target topology.
+
+name: task011-grafana-security
+
+services:
+  synthetic-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.target
+    read_only: true
+    init: true
+    user: "65534:65534"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    expose: ["8000"]
+    networks: [application-metrics]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/livez', timeout=1).read()"]
+      interval: 2s
+      timeout: 1s
+      retries: 20
+
+  prometheus:
+    image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
+    read_only: true
+    user: "65534:65534"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /prometheus:size=64m,mode=1777
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30m
+      - --storage.tsdb.retention.size=32MB
+      - --web.listen-address=0.0.0.0:9090
+    expose: ["9090"]
+    networks: [application-metrics, metrics-visualization]
+    depends_on:
+      synthetic-app:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:13.2.0@sha256:3fd54ae1214669f8355f065ec9f6445d5279a3d77095ab048ca045685272429b
+    read_only: true
+    user: "472:0"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /var/lib/grafana:size=128m,uid=472,gid=0,mode=0770
+      - /tmp:size=32m,uid=472,gid=0,mode=1777
+    volumes:
+      - ./grafana/grafana.ini:/etc/grafana/grafana.ini:ro
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/task011-dashboards:ro
+    environment:
+      GF_SECURITY_ADMIN_USER: ${TASK011_GRAFANA_ADMIN_USER:?runtime secret required}
+      GF_SECURITY_ADMIN_PASSWORD: ${TASK011_GRAFANA_ADMIN_PASSWORD:?runtime secret required}
+      GF_SECURITY_SECRET_KEY: ${TASK011_GRAFANA_SECRET_KEY:?runtime secret required}
+      GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: ${TASK011_OAUTH_CLIENT_SECRET:?runtime secret required}
+      TASK011_GRAFANA_PORT: ${TASK011_GRAFANA_PORT:-19130}
+      TASK011_KEYCLOAK_PORT: ${TASK011_KEYCLOAK_PORT:-19180}
+    ports:
+      - "127.0.0.1:${TASK011_GRAFANA_PORT:-19130}:3000"
+    networks: [metrics-visualization, identity-backchannel, validation-loopback]
+    depends_on: [prometheus, keycloak]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.2@sha256:9d1f1b2b7261ff53c66cb1092dfcdc34a5fb77e81f9e6a6e75b8b6a795de8067
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${TASK011_KEYCLOAK_ADMIN_USER:?runtime secret required}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${TASK011_KEYCLOAK_ADMIN_PASSWORD:?runtime secret required}
+      KC_HOSTNAME: https://127.0.0.1:${TASK011_KEYCLOAK_PORT:-19180}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTPS_CERTIFICATE_FILE: /run/task011/tls.crt
+      KC_HTTPS_CERTIFICATE_KEY_FILE: /run/task011/tls.key
+    command: ["start-dev", "--import-realm"]
+    volumes:
+      - ${TASK011_REALM_FILE:?runtime realm required}:/opt/keycloak/data/import/task011-grafana-realm.json:ro
+      - ${TASK011_TLS_CERT_FILE:?runtime TLS certificate required}:/run/task011/tls.crt:ro
+      - ${TASK011_TLS_KEY_FILE:?runtime TLS key required}:/run/task011/tls.key:ro
+    ports:
+      - "127.0.0.1:${TASK011_KEYCLOAK_PORT:-19180}:8443"
+    networks: [identity-backchannel, validation-loopback]
+
+networks:
+  application-metrics:
+    internal: true
+  metrics-visualization:
+    internal: true
+  identity-backchannel:
+    internal: true
+  validation-loopback:

@@ -1,0 +1,12 @@
+[project]
+name = "omnilyzer-task011-grafana-security"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[tool.task011]
+grafana_version = "13.2.0"
+grafana_image = "grafana/grafana:13.2.0@sha256:3fd54ae1214669f8355f065ec9f6445d5279a3d77095ab048ca045685272429b"
+keycloak_version = "26.7.2"
+prometheus_version = "3.14.0"
+

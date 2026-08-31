@@ -1,0 +1,88 @@
+{
+  "realm": "task011-grafana",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "loginWithEmailAllowed": false,
+  "clients": [
+    {
+      "clientId": "task011-grafana",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "__TASK011_OAUTH_CLIENT_SECRET__",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://127.0.0.1:19130/login/generic_oauth"],
+      "webOrigins": [],
+      "attributes": {"pkce.code.challenge.method": "S256"},
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "true",
+            "claim.name": "groups",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "groups": [
+    {"name": "grafana-viewers"},
+    {"name": "grafana-editors"},
+    {"name": "grafana-admins"},
+    {"name": "unmapped-operators"}
+  ],
+  "users": [
+    {
+      "username": "task011-viewer",
+      "enabled": true,
+      "email": "viewer@example.invalid",
+      "emailVerified": true,
+      "firstName": "Synthetic",
+      "lastName": "Viewer",
+      "groups": ["/grafana-viewers"],
+      "credentials": [{"type": "password", "value": "__TASK011_VIEWER_PASSWORD__", "temporary": false}]
+    },
+    {
+      "username": "task011-editor",
+      "enabled": true,
+      "email": "editor@example.invalid",
+      "emailVerified": true,
+      "firstName": "Synthetic",
+      "lastName": "Editor",
+      "groups": ["/grafana-editors"],
+      "credentials": [{"type": "password", "value": "__TASK011_EDITOR_PASSWORD__", "temporary": false}]
+    },
+    {
+      "username": "task011-org-admin",
+      "enabled": true,
+      "email": "org-admin@example.invalid",
+      "emailVerified": true,
+      "firstName": "Synthetic",
+      "lastName": "OrgAdmin",
+      "groups": ["/grafana-admins"],
+      "credentials": [{"type": "password", "value": "__TASK011_ORG_ADMIN_PASSWORD__", "temporary": false}]
+    },
+    {
+      "username": "task011-unmapped",
+      "enabled": true,
+      "email": "unmapped@example.invalid",
+      "emailVerified": true,
+      "firstName": "Synthetic",
+      "lastName": "Unmapped",
+      "groups": ["/unmapped-operators"],
+      "credentials": [{"type": "password", "value": "__TASK011_UNMAPPED_PASSWORD__", "temporary": false}]
+    }
+  ]
+}
+
