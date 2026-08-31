@@ -1,0 +1,19 @@
+# File: spikes/grafana-security/grafana/provisioning/datasources/prometheus.yaml
+apiVersion: 1
+prune: true
+
+datasources:
+  - name: Omnilyzer Prometheus
+    uid: omnilyzer-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      manageAlerts: false
+      prometheusType: Prometheus
+      prometheusVersion: 3.14.0
+      timeInterval: 1s
+
