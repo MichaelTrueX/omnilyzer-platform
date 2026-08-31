@@ -1,1 +1,1 @@
-task008b-publisher-permission-probe-v2
+task008c-forgejo-publisher-permission-probe-v1
