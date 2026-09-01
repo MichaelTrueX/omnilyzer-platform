@@ -158,7 +158,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             (SPIKE_ROOT / "control/pypi-permissions.trigger").read_text(
                 encoding="utf-8"
             ),
-            "task008c-forgejo-pypi-permission-probe-v1\n",
+            "task008c-forgejo-pypi-permission-probe-v2\n",
         )
         self.assertEqual(
             (SPIKE_ROOT / "control/tamper-negative.trigger").read_text(

@@ -225,6 +225,90 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         self.assertIn("--no-deps", script)
         self.assertIn("report())", script)
 
+    def test_current_user_403_continues_to_bearer_publication(self) -> None:
+        """Treat REST identity denial as optional, not a PyPI prerequisite."""
+
+        script = (
+            REPOSITORY_ROOT
+            / "spikes/supply-chain/scripts/forgejo_pypi_probe.py"
+        ).read_text(encoding="utf-8")
+        current_user = script.split("    def current_user", 1)[1].split(
+            "    def twine_upload", 1
+        )[0]
+        run = script.split("    def run(self)", 1)[1].split(
+            "\n\ndef parse_arguments", 1
+        )[0]
+        self.assertIn("response.status_code in (401, 403)", current_user)
+        self.assertIn('f"FAIL (HTTP {response.status_code})"', current_user)
+        self.assertIn("return None", current_user)
+        self.assertIn("unexpected HTTP", current_user)
+        self.assertIn("FAIL (malformed response)", current_user)
+        no_login = run.index("if login is None:")
+        bearer_fallback = run.index("if not twine_passed and not baseline_exists:")
+        bearer_upload = run.index("response = self.bearer_upload()", bearer_fallback)
+        self.assertLess(no_login, bearer_fallback)
+        self.assertLess(bearer_fallback, bearer_upload)
+        self.assertNotIn("raise", run[no_login:run.index("else:", no_login)])
+
+    def test_unavailable_login_makes_standard_clients_inconclusive(self) -> None:
+        """Do not guess a Basic-auth username when current-user API is forbidden."""
+
+        script = (
+            REPOSITORY_ROOT
+            / "spikes/supply-chain/scripts/forgejo_pypi_probe.py"
+        ).read_text(encoding="utf-8")
+        run = script.split("    def run(self)", 1)[1].split(
+            "\n\ndef parse_arguments", 1
+        )[0]
+        self.assertIn(
+            'unavailable = "INCONCLUSIVE (Forgejo login unavailable)"', run
+        )
+        self.assertIn(
+            'self.results["Standard Twine + OIDC JWT"] = unavailable', run
+        )
+        self.assertIn(
+            'self.results["Standard pip + OIDC JWT"] = unavailable', run
+        )
+        self.assertIn("if login is not None and not twine_passed:", run)
+        self.assertIn("if login is not None:\n            self.results", run)
+        self.assertNotRegex(script, r"TWINE_USERNAME[\"']?\s*:\s*[\"'][^\"']+")
+
+    def test_package_bearer_pass_requires_a_successful_registry_operation(self) -> None:
+        """JWT issuance alone must not prove package-registry authentication."""
+
+        script = (
+            REPOSITORY_ROOT
+            / "spikes/supply-chain/scripts/forgejo_pypi_probe.py"
+        ).read_text(encoding="utf-8")
+        initialization = script.split("    def verify_handoff", 1)[0]
+        current_user = script.split("    def current_user", 1)[1].split(
+            "    def twine_upload", 1
+        )[0]
+        bearer_upload = script.split("    def bearer_upload", 1)[1].split(
+            "    def exact_wheel_url", 1
+        )[0]
+        simple_read = script.split("    def exact_wheel_url", 1)[1].split(
+            "    def download_exact", 1
+        )[0]
+        self.assertIn('"GitHub OIDC JWT acquisition": "FAIL"', initialization)
+        self.assertIn(
+            'self.results["GitHub OIDC JWT acquisition"] = "PASS"',
+            initialization,
+        )
+        self.assertIn('"Package Bearer authentication": "FAIL"', initialization)
+        self.assertNotIn('"Package Bearer authentication"] = "PASS"', current_user)
+        self.assertIn("if 200 <= response.status_code < 300:", bearer_upload)
+        self.assertIn(
+            'self.results["Package Bearer authentication"] = "PASS"',
+            bearer_upload,
+        )
+        self.assertLess(
+            simple_read.index("require_status(response, 200"),
+            simple_read.index(
+                'self.results["Package Bearer authentication"] = "PASS"'
+            ),
+        )
+
     def test_pypi_duplicate_delete_and_integrity_fail_closed(self) -> None:
         """Require duplicate denial, exact hashes, REST DELETE 403, and rereads."""
 
@@ -243,7 +327,9 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         self.assertIn('self.results["Post-DELETE integrity"] = "PASS"', script)
         for label in (
             "Task 008C Forgejo PyPI probe",
-            "GitHub OIDC",
+            "GitHub OIDC JWT acquisition",
+            "Package Bearer authentication",
+            "Current-user API",
             "PyPI publish",
             "Standard Twine + OIDC JWT",
             "Standard pip + OIDC JWT",

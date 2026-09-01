@@ -85,7 +85,9 @@ class Probe:
         self.summary_path = Path(arguments.summary)
         self.temp_root = Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
         self.results = {
-            "GitHub OIDC": "FAIL",
+            "GitHub OIDC JWT acquisition": "FAIL",
+            "Package Bearer authentication": "FAIL",
+            "Current-user API": "FAIL (not attempted)",
             "PyPI publish": "FAIL",
             "PyPI Simple API read": "FAIL",
             "Wheel SHA-256 round trip": "FAIL",
@@ -95,13 +97,14 @@ class Probe:
             "DELETE": "FAIL (not attempted)",
             "Post-DELETE retrieval": "FAIL",
             "Post-DELETE integrity": "FAIL",
-            "Standard Twine + OIDC JWT": "FAIL",
-            "Standard pip + OIDC JWT": "FAIL",
+            "Standard Twine + OIDC JWT": "INCONCLUSIVE (not attempted)",
+            "Standard pip + OIDC JWT": "INCONCLUSIVE (not attempted)",
         }
         self.token = self.token_file.read_text(encoding="utf-8").strip()
         self.token_file.unlink()
         if not self.token:
             raise RuntimeError("OIDC token file was empty")
+        self.results["GitHub OIDC JWT acquisition"] = "PASS"
         self.manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         self.package = self.manifest["package_name"]
         self.version = self.manifest["version"]
@@ -144,14 +147,37 @@ class Probe:
         if package.safe_name != PACKAGE_NAME or package.version != self.version:
             raise RuntimeError("wheel metadata does not match the handoff")
 
-    def current_user(self) -> str:
-        """Resolve the Authorized Integration's Forgejo identity via Bearer auth."""
+    def current_user(self) -> str | None:
+        """Optionally resolve a login for standard Basic-auth client probes."""
 
-        response = self.session.get(f"{self.base_url}/api/v1/user", timeout=30)
-        require_status(response, 200, "Forgejo current-user API")
-        login = response.json().get("login")
+        try:
+            response = self.session.get(f"{self.base_url}/api/v1/user", timeout=30)
+        except requests.RequestException as error:
+            self.results["Current-user API"] = "FAIL (request error)"
+            raise RuntimeError("Forgejo current-user API request failed") from error
+        if response.status_code in (401, 403):
+            self.results["Current-user API"] = f"FAIL (HTTP {response.status_code})"
+            return None
+        if response.status_code != 200:
+            self.results["Current-user API"] = f"FAIL (HTTP {response.status_code})"
+            raise RuntimeError(
+                f"Forgejo current-user API returned unexpected HTTP {response.status_code}"
+            )
+        try:
+            payload = response.json()
+        except requests.exceptions.JSONDecodeError as error:
+            self.results["Current-user API"] = "FAIL (malformed response)"
+            raise RuntimeError(
+                "Forgejo current-user API returned malformed JSON"
+            ) from error
+        if not isinstance(payload, dict):
+            self.results["Current-user API"] = "FAIL (malformed response)"
+            raise RuntimeError("Forgejo current-user API returned malformed JSON")
+        login = payload.get("login")
         if not isinstance(login, str) or re.fullmatch(r"[A-Za-z0-9_.-]+", login) is None:
+            self.results["Current-user API"] = "FAIL (malformed response)"
             raise RuntimeError("Forgejo current-user API returned no safe login")
+        self.results["Current-user API"] = "PASS"
         return login
 
     def twine_upload(self, login: str) -> bool:
@@ -194,7 +220,10 @@ class Probe:
         repository.session.headers["Authorization"] = f"Bearer {self.token}"
         repository.session.auth = BearerAuth(self.token)
         try:
-            return repository.upload(package, max_redirects=1)
+            response = repository.upload(package, max_redirects=1)
+            if 200 <= response.status_code < 300:
+                self.results["Package Bearer authentication"] = "PASS"
+            return response
         finally:
             repository.close()
 
@@ -203,6 +232,7 @@ class Probe:
 
         response = self.session.get(self.simple_url, timeout=30)
         require_status(response, 200, "PyPI Simple API")
+        self.results["Package Bearer authentication"] = "PASS"
         parser = SimpleLinks()
         parser.feed(response.text)
         matches = []
@@ -321,7 +351,9 @@ class Probe:
         """Always preserve protocol, client, and append-only results separately."""
 
         labels = (
-            "GitHub OIDC",
+            "GitHub OIDC JWT acquisition",
+            "Package Bearer authentication",
+            "Current-user API",
             "PyPI publish",
             "PyPI Simple API read",
             "Wheel SHA-256 round trip",
@@ -354,12 +386,19 @@ class Probe:
     def run(self) -> None:
         self.verify_handoff()
         login = self.current_user()
-        self.results["GitHub OIDC"] = "PASS"
 
-        twine_passed = self.twine_upload(login)
-        self.results["Standard Twine + OIDC JWT"] = "PASS" if twine_passed else "FAIL"
+        twine_passed = False
         baseline_exists = False
-        if not twine_passed:
+        if login is None:
+            unavailable = "INCONCLUSIVE (Forgejo login unavailable)"
+            self.results["Standard Twine + OIDC JWT"] = unavailable
+            self.results["Standard pip + OIDC JWT"] = unavailable
+        else:
+            twine_passed = self.twine_upload(login)
+            self.results["Standard Twine + OIDC JWT"] = (
+                "PASS" if twine_passed else "FAIL"
+            )
+        if login is not None and not twine_passed:
             try:
                 candidate = self.temp_root / "task008c-after-twine.whl"
                 self.download_exact(candidate)
@@ -382,9 +421,10 @@ class Probe:
         self.install_wheel(initial)
         self.results["Wheel install"] = "PASS"
 
-        self.results["Standard pip + OIDC JWT"] = (
-            "PASS" if self.pip_compatibility(login) else "FAIL"
-        )
+        if login is not None:
+            self.results["Standard pip + OIDC JWT"] = (
+                "PASS" if self.pip_compatibility(login) else "FAIL"
+            )
 
         duplicate = self.bearer_upload()
         duplicate_text = f"{duplicate.reason}\n{duplicate.text[:4096]}"
