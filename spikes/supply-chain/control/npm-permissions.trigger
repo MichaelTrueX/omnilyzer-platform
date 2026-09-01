@@ -1,1 +1,1 @@
-task008c-forgejo-npm-permission-probe-v1
+task008c-forgejo-npm-permission-probe-v2
