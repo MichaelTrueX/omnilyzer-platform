@@ -12,6 +12,7 @@ on:
       - spikes/supply-chain/control/publish.trigger
       - spikes/supply-chain/control/publisher-permissions.trigger
       - spikes/supply-chain/control/pypi-permissions.trigger
+      - spikes/supply-chain/control/npm-permissions.trigger
 
 permissions: {}
 
@@ -74,6 +75,13 @@ jobs:
             if [[ "$CURRENT_REF" == \
                   "refs/heads/spike/008c-forgejo-registry" ]] && \
                [[ "${changed_paths[0]}" == \
+                  "spikes/supply-chain/control/npm-permissions.trigger" ]] && \
+               [[ "$changed_status" == \
+                  $'M\tspikes/supply-chain/control/npm-permissions.trigger' ]]; then
+              mode=npm-permission
+            elif [[ "$CURRENT_REF" == \
+                    "refs/heads/spike/008c-forgejo-registry" ]] && \
+               [[ "${changed_paths[0]}" == \
                   "spikes/supply-chain/control/pypi-permissions.trigger" ]] && \
                [[ "$changed_status" == \
                   $'M\tspikes/supply-chain/control/pypi-permissions.trigger' ]]; then
@@ -104,6 +112,103 @@ jobs:
             fi
           fi
           printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+
+  npm-probe-build:
+    needs: gate
+    if: needs.gate.outputs.mode == 'npm-permission'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        # actions/setup-python v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.20.0'
+
+      - name: Build different-byte npm probe tarballs with identical identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="0.0.${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}"
+          release_dir="$RUNNER_TEMP/task008c-npm-release"
+          replacement_source="$RUNNER_TEMP/task008c-npm-replacement-source"
+          handoff_dir="$RUNNER_TEMP/task008c-npm-handoff"
+          baseline_dir="$handoff_dir/baseline"
+          replacement_dir="$handoff_dir/replacement"
+          python spikes/supply-chain/scripts/prepare_release.py \
+            "$version" "$release_dir"
+          mkdir -p "$baseline_dir" "$replacement_dir"
+
+          npm pack "$release_dir/npm" --ignore-scripts \
+            --pack-destination "$baseline_dir"
+          cp -a "$release_dir/npm" "$replacement_source"
+          printf '\nexport const replacementProbe = "task008c-replacement";\n' \
+            >> "$replacement_source/index.js"
+          npm pack "$replacement_source" --ignore-scripts \
+            --pack-destination "$replacement_dir"
+
+          python - "$handoff_dir" "$version" "$GITHUB_SHA" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+
+          handoff, version, source_commit = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+          baseline_files = list((handoff / "baseline").glob("*.tgz"))
+          replacement_files = list((handoff / "replacement").glob("*.tgz"))
+          if len(baseline_files) != 1 or len(replacement_files) != 1:
+              raise SystemExit("expected exactly one tarball in each handoff directory")
+          baseline, replacement = baseline_files[0], replacement_files[0]
+          if baseline.name != replacement.name:
+              raise SystemExit("baseline and replacement tarball filenames differ")
+
+          def digest(path: Path, algorithm: str) -> str:
+              value = hashlib.new(algorithm)
+              value.update(path.read_bytes())
+              return value.hexdigest()
+
+          baseline_sha256 = digest(baseline, "sha256")
+          replacement_sha256 = digest(replacement, "sha256")
+          if baseline_sha256 == replacement_sha256:
+              raise SystemExit("baseline and replacement tarballs are byte-identical")
+          manifest = {
+              "package_name": "@omnilyzer/supply-chain-spike",
+              "version": version,
+              "tarball_filename": baseline.name,
+              "baseline_sha256": baseline_sha256,
+              "replacement_sha256": replacement_sha256,
+              "baseline_sha1": digest(baseline, "sha1"),
+              "baseline_sha512": digest(baseline, "sha512"),
+              "source_commit": source_commit,
+          }
+          (handoff / "handoff.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload the minimal npm probe handoff
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: task008c-npm-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/task008c-npm-handoff
+          if-no-files-found: error
+          retention-days: 1
 
   pypi-probe-build:
     needs: gate
@@ -1647,5 +1752,149 @@ jobs:
             --forgejo-url "$FORGEJO_URL" \
             --owner "$FORGEJO_OWNER" \
             --handoff "$RUNNER_TEMP/task008c-pypi-handoff" \
+            --token-file "$token_file" \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+  npm-permission-probe:
+    needs:
+      - gate
+      - npm-probe-build
+    if: needs.gate.outputs.mode == 'npm-permission'
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FORGEJO_URL: https://registry-dev.omnilyzer.ai
+      FORGEJO_OWNER: omnilyzer
+      FORGEJO_OIDC_AUDIENCE: u:2:316bec9a-53e4-4807-9557-7febdc979d0a
+    steps:
+      - name: Check out repository
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        # actions/setup-python v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.20.0'
+
+      - name: Download the isolated npm probe handoff
+        # actions/download-artifact v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: task008c-npm-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/task008c-npm-handoff
+
+      - name: Verify npm handoff before OIDC authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$RUNNER_TEMP/task008c-npm-handoff" "$GITHUB_SHA" \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import re
+          import sys
+          import tarfile
+
+          handoff = Path(sys.argv[1]).resolve(strict=True)
+          source_commit, run_id, run_attempt = sys.argv[2:]
+          manifest = json.loads(
+              (handoff / "handoff.json").read_text(encoding="utf-8")
+          )
+          fields = {
+              "package_name", "version", "tarball_filename",
+              "baseline_sha256", "replacement_sha256", "baseline_sha1",
+              "baseline_sha512", "source_commit",
+          }
+          if set(manifest) != fields:
+              raise SystemExit("npm handoff manifest fields are not exact")
+          if manifest["package_name"] != "@omnilyzer/supply-chain-spike":
+              raise SystemExit("npm handoff package name is unexpected")
+          if manifest["version"] != f"0.0.{run_id}{run_attempt}":
+              raise SystemExit("npm handoff version is unexpected")
+          if manifest["source_commit"] != source_commit:
+              raise SystemExit("npm handoff source commit is unexpected")
+          baseline_files = list((handoff / "baseline").glob("*.tgz"))
+          replacement_files = list((handoff / "replacement").glob("*.tgz"))
+          if len(baseline_files) != 1 or len(replacement_files) != 1:
+              raise SystemExit("npm handoff tarball count is not exact")
+          baseline, replacement = baseline_files[0], replacement_files[0]
+          if baseline.name != manifest["tarball_filename"]:
+              raise SystemExit("npm baseline tarball filename is unexpected")
+          if replacement.name != baseline.name:
+              raise SystemExit("npm replacement tarball filename differs")
+
+          def digest(path: Path, algorithm: str) -> str:
+              value = hashlib.new(algorithm)
+              value.update(path.read_bytes())
+              return value.hexdigest()
+
+          expected = {
+              "baseline_sha256": digest(baseline, "sha256"),
+              "replacement_sha256": digest(replacement, "sha256"),
+              "baseline_sha1": digest(baseline, "sha1"),
+              "baseline_sha512": digest(baseline, "sha512"),
+          }
+          for field, observed in expected.items():
+              if re.fullmatch(r"[0-9a-f]+", manifest[field]) is None:
+                  raise SystemExit(f"npm handoff {field} is malformed")
+              if observed != manifest[field]:
+                  raise SystemExit(f"npm handoff {field} mismatch")
+          if expected["baseline_sha256"] == expected["replacement_sha256"]:
+              raise SystemExit("npm baseline and replacement tarballs are identical")
+          for tarball in (baseline, replacement):
+              with tarfile.open(tarball, "r:gz") as archive:
+                  package = json.load(archive.extractfile("package/package.json"))
+              if package.get("name") != manifest["package_name"]:
+                  raise SystemExit("npm tarball package name mismatch")
+              if package.get("version") != manifest["version"]:
+                  raise SystemExit("npm tarball package version mismatch")
+          PY
+
+      - name: Probe Forgejo npm publication and append-only behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          encoded_audience="$(python3 - "$FORGEJO_OIDC_AUDIENCE" <<'PY'
+          import sys
+          from urllib.parse import quote
+
+          print(quote(sys.argv[1], safe=""))
+          PY
+          )"
+          token_response="$(curl --fail --silent --show-error \
+            --header "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${encoded_audience}")"
+          jwt="$(python3 -c \
+            'import json, sys; value=json.load(sys.stdin).get("value"); assert isinstance(value, str) and value; print(value)' \
+            <<< "$token_response")"
+          echo "::add-mask::$jwt"
+          unset token_response
+
+          token_file="$RUNNER_TEMP/task008c-forgejo-npm-oidc.jwt"
+          cleanup() {
+            rm -f "$token_file"
+          }
+          trap cleanup EXIT
+          umask 077
+          printf '%s' "$jwt" > "$token_file"
+          unset jwt
+
+          python spikes/supply-chain/scripts/forgejo_npm_probe.py \
+            --forgejo-url "$FORGEJO_URL" \
+            --owner "$FORGEJO_OWNER" \
+            --handoff "$RUNNER_TEMP/task008c-npm-handoff" \
             --token-file "$token_file" \
             --summary "$GITHUB_STEP_SUMMARY"

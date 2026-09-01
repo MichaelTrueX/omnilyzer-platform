@@ -98,9 +98,9 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         """Verify runner OIDC credentials stay scoped, masked, and ephemeral."""
 
         combined = PUBLISH + CONSUME
-        self.assertEqual(combined.count("ACTIONS_ID_TOKEN_REQUEST_URL"), 3)
-        self.assertEqual(combined.count("ACTIONS_ID_TOKEN_REQUEST_TOKEN"), 3)
-        self.assertEqual(combined.count('echo "::add-mask::$jwt"'), 3)
+        self.assertEqual(combined.count("ACTIONS_ID_TOKEN_REQUEST_URL"), 4)
+        self.assertEqual(combined.count("ACTIONS_ID_TOKEN_REQUEST_TOKEN"), 4)
+        self.assertEqual(combined.count('echo "::add-mask::$jwt"'), 4)
 
         for workflow, name in (
             (PUBLISH, "publisher-permission-probe"),
@@ -135,6 +135,146 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         self.assertNotIn("id-token: write", pypi_build)
         self.assertNotIn("ACTIONS_ID_TOKEN_REQUEST_", pypi_build)
         self.assertNotIn("FORGEJO_", pypi_build)
+
+        npm_build = job(PUBLISH, "npm-probe-build")
+        self.assertNotIn("id-token: write", npm_build)
+        self.assertNotIn("ACTIONS_ID_TOKEN_REQUEST_", npm_build)
+        self.assertNotIn("FORGEJO_", npm_build)
+
+    def test_npm_trigger_and_gate_are_distinct_and_fail_closed(self) -> None:
+        """Grant npm OIDC authority only for one modified trigger path."""
+
+        trigger = "spikes/supply-chain/control/npm-permissions.trigger"
+        header = PUBLISH.split("permissions: {}", 1)[0]
+        gate = job(PUBLISH, "gate")
+        self.assertEqual(header.count(f"- {trigger}"), 1)
+        self.assertIn('"${#changed_paths[@]}" -eq 1', gate)
+        self.assertIn("--no-renames", gate)
+        self.assertIn(f'"{trigger}"', gate)
+        self.assertIn(f"$'M\\t{trigger}'", gate)
+        self.assertNotIn(f"$'A\\t{trigger}'", gate)
+        self.assertIn("mode=npm-permission", gate)
+        self.assertIn("mode=pypi-permission", gate)
+        self.assertIn("mode=permission", gate)
+
+    def test_npm_build_is_non_oidc_and_constructs_different_exact_identities(self) -> None:
+        """Build two same-identity tarballs with deliberately different bytes."""
+
+        build = job(PUBLISH, "npm-probe-build")
+        permissions = build.split("    permissions:\n", 1)[1].split(
+            "    runs-on:", 1
+        )[0]
+        self.assertEqual(permissions.strip(), "contents: read")
+        self.assertNotIn("id-token: write", build)
+        self.assertIn("prepare_release.py", build)
+        self.assertIn("node-version: '24.20.0'", build)
+        self.assertIn('version="0.0.${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}"', build)
+        self.assertEqual(build.count("npm pack"), 2)
+        self.assertEqual(build.count("--ignore-scripts"), 2)
+        self.assertIn("task008c-replacement", build)
+        self.assertIn("baseline.name != replacement.name", build)
+        self.assertIn("baseline_sha256 == replacement_sha256", build)
+        for field in (
+            "package_name",
+            "version",
+            "tarball_filename",
+            "baseline_sha256",
+            "replacement_sha256",
+            "baseline_sha1",
+            "baseline_sha512",
+            "source_commit",
+        ):
+            self.assertIn(f'"{field}"', build)
+        artifact = build.split("Upload the minimal npm probe handoff", 1)[1]
+        self.assertIn("task008c-npm-handoff", artifact)
+
+    def test_npm_oidc_job_permissions_and_pre_auth_handoff_gate_are_narrow(self) -> None:
+        """Validate both tarballs completely before npm OIDC acquisition."""
+
+        probe = job(PUBLISH, "npm-permission-probe")
+        permissions = probe.split("    permissions:\n", 1)[1].split(
+            "    runs-on:", 1
+        )[0]
+        self.assertEqual(
+            permissions.strip().splitlines(),
+            ["contents: read", "      id-token: write"],
+        )
+        self.assertIn("needs:\n      - gate\n      - npm-probe-build", probe)
+        self.assertIn("if: needs.gate.outputs.mode == 'npm-permission'", probe)
+        self.assertIn("node-version: '24.20.0'", probe)
+        verification = probe.index("Verify npm handoff before OIDC authentication")
+        oidc = probe.index("ACTIONS_ID_TOKEN_REQUEST_URL")
+        self.assertLess(verification, oidc)
+        self.assertIn("replacement.name != baseline.name", probe)
+        self.assertIn('package.get("name") != manifest["package_name"]', probe)
+        self.assertIn('package.get("version") != manifest["version"]', probe)
+        self.assertIn('echo "::add-mask::$jwt"', probe)
+        self.assertIn('token_file="$RUNNER_TEMP/task008c-forgejo-npm-oidc.jwt"', probe)
+        self.assertNotIn("secrets.", probe)
+        self.assertNotRegex(probe, r"https?://[^\s\"']*\$jwt")
+
+    def test_npm_probe_uses_scoped_token_without_public_fallback(self) -> None:
+        """Use normal npm Bearer token auth without credentialed URLs."""
+
+        script = (
+            REPOSITORY_ROOT / "spikes/supply-chain/scripts/forgejo_npm_probe.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('f"@omnilyzer:registry={self.registry}\\n"', script)
+        self.assertIn('f"{auth_scope}={self.token}\\n"', script)
+        self.assertIn('"NPM_CONFIG_USERCONFIG": str(self.npmrc)', script)
+        self.assertIn('"NPM_CONFIG_LOGS_MAX": "0"', script)
+        self.assertIn("self.npmrc.chmod(0o600)", script)
+        self.assertIn("if self.token in combined_output:", script)
+        self.assertIn("SECURITY FAILURE: npm output contained the OIDC JWT", script)
+        self.assertNotIn("registry.npmjs.org", script)
+        self.assertNotRegex(script, r"https?://[^\s\"']*\{self\.token\}")
+        self.assertIn('"--provenance=false"', script)
+        self.assertIn('"--ignore-scripts"', script)
+        self.assertIn('"--offline"', script)
+        self.assertIn('"Standard npm + OIDC JWT"] = "PASS"', script)
+
+    def test_npm_round_trip_replacement_and_delete_fail_closed(self) -> None:
+        """Require exact bytes, real install, strong replacement, and DELETE 403."""
+
+        script = (
+            REPOSITORY_ROOT / "spikes/supply-chain/scripts/forgejo_npm_probe.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Path(parsed.path).name != self.tarball_name", script)
+        self.assertIn("destination_directory / self.tarball_name", script)
+        self.assertIn('headers={"Authorization": f"Bearer {self.token}"}', script)
+        self.assertIn("quote(self.package_name, safe='')", script)
+        self.assertIn('file_digest(tarball, "sha256")', script)
+        self.assertIn("observed != self.baseline_sha256", script)
+        self.assertIn("observed == self.replacement_sha256", script)
+        run = script.split("    def run(self)", 1)[1].split(
+            "\n\n    def close", 1
+        )[0]
+        self.assertLess(run.index("self.download("), run.index("self.install_downloaded"))
+        self.assertLess(
+            run.index("self.require_baseline_integrity(initial)"),
+            run.index("self.install_downloaded(initial"),
+        )
+        self.assertIn("SECURITY FAILURE: npm same-version replacement succeeded", script)
+        self.assertIn("REPLACEMENT_PATTERN.search", script)
+        self.assertIn("SECURITY FAILURE: npm unpublish succeeded", script)
+        self.assertIn("UNPUBLISH_DENIAL_PATTERN.search", script)
+        self.assertIn("status == 403", script)
+        self.assertIn("SECURITY FAILURE: npm package-version DELETE succeeded", script)
+        self.assertIn("INCONCLUSIVE: npm package-version DELETE", script)
+        self.assertIn('"post-replacement integrity"', script)
+        self.assertIn('"post-DELETE integrity"', script)
+        for label in (
+            "Task 008C Forgejo npm probe",
+            "npm metadata SHA-1",
+            "npm metadata SHA-512 integrity",
+            "standard npm pack/download",
+            "same-version replacement",
+            "npm unpublish denied",
+            "REST DELETE",
+            "STANDARD_NPM_OIDC_AUTH =",
+            "Core npm append-only",
+        ):
+            self.assertIn(label, script)
 
     def test_pypi_trigger_and_gate_are_distinct_and_fail_closed(self) -> None:
         """Grant PyPI OIDC authority only for one modified trigger path."""
