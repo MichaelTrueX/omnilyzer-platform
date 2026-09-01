@@ -1,1 +1,1 @@
-task008c-forgejo-pypi-permission-probe-v1
+task008c-forgejo-pypi-permission-probe-v2
