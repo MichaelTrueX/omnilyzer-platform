@@ -309,6 +309,46 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
             ),
         )
 
+    def test_registry_downloads_preserve_exact_wheel_filename(self) -> None:
+        """Keep each downloaded copy isolated with pip-valid original basename."""
+
+        script = (
+            REPOSITORY_ROOT
+            / "spikes/supply-chain/scripts/forgejo_pypi_probe.py"
+        ).read_text(encoding="utf-8")
+        download = script.split("    def download_exact", 1)[1].split(
+            "    def wheel_destination", 1
+        )[0]
+        destination = script.split("    def wheel_destination", 1)[1].split(
+            "    def require_integrity", 1
+        )[0]
+        run = script.split("    def run(self)", 1)[1].split(
+            "\n\ndef parse_arguments", 1
+        )[0]
+        self.assertIn("destination.name != self.wheel_name", download)
+        self.assertIn("destination_directory.mkdir()", destination)
+        self.assertIn("return destination_directory / self.wheel_name", destination)
+        for probe_name in (
+            "after-twine",
+            "initial",
+            "after-duplicate",
+            "after-delete",
+        ):
+            self.assertIn(f'self.wheel_destination("{probe_name}")', run)
+        initial = run.index('initial = self.wheel_destination("initial")')
+        downloaded = run.index("self.download_exact(initial)")
+        integrity = run.index("self.require_integrity(initial)")
+        install = run.index("self.install_wheel(initial)")
+        self.assertLess(initial, downloaded)
+        self.assertLess(downloaded, integrity)
+        self.assertLess(integrity, install)
+        for invalid_name in (
+            "task008c-initial-wheel.whl",
+            "task008c-after-duplicate.whl",
+            "task008c-after-delete.whl",
+        ):
+            self.assertNotIn(invalid_name, script)
+
     def test_pypi_duplicate_delete_and_integrity_fail_closed(self) -> None:
         """Require duplicate denial, exact hashes, REST DELETE 403, and rereads."""
 

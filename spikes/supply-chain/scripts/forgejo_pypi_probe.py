@@ -251,9 +251,18 @@ class Probe:
     def download_exact(self, destination: Path) -> None:
         """Download the exact Simple API wheel and require HTTP 200."""
 
+        if destination.name != self.wheel_name:
+            raise RuntimeError("download destination does not preserve wheel filename")
         response = self.session.get(self.exact_wheel_url(), timeout=60)
         require_status(response, 200, "exact PyPI wheel retrieval")
         destination.write_bytes(response.content)
+
+    def wheel_destination(self, probe_name: str) -> Path:
+        """Create an isolated download directory preserving the wheel basename."""
+
+        destination_directory = self.temp_root / f"task008c-{probe_name}"
+        destination_directory.mkdir()
+        return destination_directory / self.wheel_name
 
     def require_integrity(self, destination: Path) -> None:
         if sha256(destination) != self.expected_sha:
@@ -400,7 +409,7 @@ class Probe:
             )
         if login is not None and not twine_passed:
             try:
-                candidate = self.temp_root / "task008c-after-twine.whl"
+                candidate = self.wheel_destination("after-twine")
                 self.download_exact(candidate)
                 self.require_integrity(candidate)
                 baseline_exists = True
@@ -414,7 +423,7 @@ class Probe:
                 )
         self.results["PyPI publish"] = "PASS"
 
-        initial = self.temp_root / "task008c-initial-wheel.whl"
+        initial = self.wheel_destination("initial")
         self.download_exact(initial)
         self.require_integrity(initial)
         self.results["Wheel SHA-256 round trip"] = "PASS"
@@ -437,7 +446,7 @@ class Probe:
             )
         self.results["Duplicate same-version publish"] = "PASS"
 
-        after_duplicate = self.temp_root / "task008c-after-duplicate.whl"
+        after_duplicate = self.wheel_destination("after-duplicate")
         self.download_exact(after_duplicate)
         self.require_integrity(after_duplicate)
         self.results["Post-duplicate integrity"] = "PASS"
@@ -459,7 +468,7 @@ class Probe:
                 f"INCONCLUSIVE: PyPI package-version DELETE returned HTTP {deleted.status_code}"
             )
 
-        after_delete = self.temp_root / "task008c-after-delete.whl"
+        after_delete = self.wheel_destination("after-delete")
         self.download_exact(after_delete)
         self.results["Post-DELETE retrieval"] = "PASS"
         self.require_integrity(after_delete)
