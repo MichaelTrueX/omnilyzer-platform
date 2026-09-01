@@ -98,9 +98,9 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         """Verify runner OIDC credentials stay scoped, masked, and ephemeral."""
 
         combined = PUBLISH + CONSUME
-        self.assertEqual(combined.count("ACTIONS_ID_TOKEN_REQUEST_URL"), 2)
-        self.assertEqual(combined.count("ACTIONS_ID_TOKEN_REQUEST_TOKEN"), 2)
-        self.assertEqual(combined.count('echo "::add-mask::$jwt"'), 2)
+        self.assertEqual(combined.count("ACTIONS_ID_TOKEN_REQUEST_URL"), 3)
+        self.assertEqual(combined.count("ACTIONS_ID_TOKEN_REQUEST_TOKEN"), 3)
+        self.assertEqual(combined.count('echo "::add-mask::$jwt"'), 3)
 
         for workflow, name in (
             (PUBLISH, "publisher-permission-probe"),
@@ -130,6 +130,127 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         self.assertNotIn("id-token: write", build)
         self.assertNotIn("ACTIONS_ID_TOKEN_REQUEST_", build)
         self.assertNotIn("FORGEJO_", build)
+
+        pypi_build = job(PUBLISH, "pypi-probe-build")
+        self.assertNotIn("id-token: write", pypi_build)
+        self.assertNotIn("ACTIONS_ID_TOKEN_REQUEST_", pypi_build)
+        self.assertNotIn("FORGEJO_", pypi_build)
+
+    def test_pypi_trigger_and_gate_are_distinct_and_fail_closed(self) -> None:
+        """Grant PyPI OIDC authority only for one modified trigger path."""
+
+        trigger = "spikes/supply-chain/control/pypi-permissions.trigger"
+        header = PUBLISH.split("permissions: {}", 1)[0]
+        gate = job(PUBLISH, "gate")
+        self.assertEqual(header.count(f"- {trigger}"), 1)
+        self.assertIn('"${#changed_paths[@]}" -eq 1', gate)
+        self.assertIn("--no-renames", gate)
+        self.assertIn(f'"{trigger}"', gate)
+        self.assertIn(f"$'M\\t{trigger}'", gate)
+        self.assertNotIn(f"$'A\\t{trigger}'", gate)
+        self.assertIn("mode=pypi-permission", gate)
+        self.assertNotEqual(
+            gate.index("mode=pypi-permission"), gate.index("mode=permission")
+        )
+
+    def test_pypi_build_is_non_oidc_and_handoff_is_minimal(self) -> None:
+        """Build one prepared fixture wheel before entering the OIDC job."""
+
+        build = job(PUBLISH, "pypi-probe-build")
+        probe = job(PUBLISH, "pypi-permission-probe")
+        build_permissions = build.split("    permissions:\n", 1)[1].split(
+            "    runs-on:", 1
+        )[0]
+        self.assertEqual(build_permissions.strip(), "contents: read")
+        self.assertIn("prepare_release.py", build)
+        self.assertIn('version="0.0.${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}"', build)
+        self.assertIn("build==1.6.0 hatchling==1.32.0", build)
+        self.assertIn('"${#wheels[@]}" -ne 1', build)
+        for field in (
+            "package_name",
+            "version",
+            "wheel_filename",
+            "sha256",
+            "source_commit",
+        ):
+            self.assertIn(f'"{field}"', build)
+        self.assertIn("task008c-pypi-handoff", build)
+        self.assertNotIn("id-token: write", build)
+        self.assertIn("needs:\n      - gate\n      - pypi-probe-build", probe)
+        self.assertIn("if: needs.gate.outputs.mode == 'pypi-permission'", probe)
+        self.assertLess(
+            probe.index("Verify handoff manifest and wheel"),
+            probe.index("ACTIONS_ID_TOKEN_REQUEST_URL"),
+        )
+
+    def test_pypi_probe_credentials_and_permissions_are_narrow(self) -> None:
+        """Keep the JWT masked, out of URLs/artifacts, and under RUNNER_TEMP."""
+
+        probe = job(PUBLISH, "pypi-permission-probe")
+        permissions = probe.split("    permissions:\n", 1)[1].split(
+            "    runs-on:", 1
+        )[0]
+        self.assertEqual(
+            permissions.strip().splitlines(),
+            ["contents: read", "      id-token: write"],
+        )
+        self.assertIn('echo "::add-mask::$jwt"', probe)
+        self.assertIn('token_file="$RUNNER_TEMP/task008c-forgejo-oidc.jwt"', probe)
+        self.assertIn("unset token_response", probe)
+        self.assertIn("unset jwt", probe)
+        self.assertNotIn("secrets.", probe)
+        self.assertNotRegex(probe, r"https?://[^\s\"']*\$jwt")
+        artifact_step = probe.split("Download the isolated PyPI probe handoff", 1)[1]
+        self.assertNotIn("upload-artifact", artifact_step)
+
+    def test_pypi_protocol_and_standard_clients_are_independent(self) -> None:
+        """Assert the probe distinguishes Bearer behavior from Basic clients."""
+
+        workflow_probe = job(PUBLISH, "pypi-permission-probe")
+        script = (
+            REPOSITORY_ROOT
+            / "spikes/supply-chain/scripts/forgejo_pypi_probe.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("twine==7.0.0", workflow_probe)
+        self.assertIn('f"{self.base_url}/api/v1/user"', script)
+        self.assertIn('"TWINE_USERNAME": login', script)
+        self.assertIn('"TWINE_PASSWORD": self.token', script)
+        self.assertIn('repository.session.headers["Authorization"]', script)
+        self.assertIn("repository.session.auth = BearerAuth(self.token)", script)
+        self.assertIn('request.headers["Authorization"]', script)
+        self.assertIn('"NETRC": str(netrc)', script)
+        self.assertIn('"PIP_INDEX_URL":', script)
+        self.assertNotIn("self.token}@", script)
+        self.assertIn("--no-index", script)
+        self.assertIn("--no-deps", script)
+        self.assertIn("report())", script)
+
+    def test_pypi_duplicate_delete_and_integrity_fail_closed(self) -> None:
+        """Require duplicate denial, exact hashes, REST DELETE 403, and rereads."""
+
+        script = (
+            REPOSITORY_ROOT
+            / "spikes/supply-chain/scripts/forgejo_pypi_probe.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("SECURITY FAILURE: duplicate PyPI publication succeeded", script)
+        self.assertIn("DUPLICATE_PATTERN.search", script)
+        self.assertIn('self.results["Post-duplicate integrity"] = "PASS"', script)
+        self.assertIn("/api/v1/packages/{quote(self.owner)}/pypi/", script)
+        self.assertIn("deleted.status_code == 403", script)
+        self.assertIn("SECURITY FAILURE: PyPI package-version DELETE succeeded", script)
+        self.assertIn("INCONCLUSIVE: PyPI package-version DELETE", script)
+        self.assertIn('self.results["Post-DELETE retrieval"] = "PASS"', script)
+        self.assertIn('self.results["Post-DELETE integrity"] = "PASS"', script)
+        for label in (
+            "Task 008C Forgejo PyPI probe",
+            "GitHub OIDC",
+            "PyPI publish",
+            "Standard Twine + OIDC JWT",
+            "Standard pip + OIDC JWT",
+            "STANDARD_TWINE_OIDC_AUTH =",
+            "STANDARD_PIP_OIDC_AUTH =",
+        ):
+            self.assertIn(label, script)
 
     def test_no_static_forgejo_credential_or_cloudsmith_migration(self) -> None:
         """Verify probes use no static Forgejo credential or Cloudsmith migration."""

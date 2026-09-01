@@ -146,13 +146,19 @@ class WorkflowPolicyTests(unittest.TestCase):
             (SPIKE_ROOT / "control/publisher-permissions.trigger").read_text(
                 encoding="utf-8"
             ),
-            "task008b-publisher-permission-probe-v2\n",
+            "task008c-forgejo-publisher-permission-probe-v2\n",
         )
         self.assertEqual(
             (SPIKE_ROOT / "control/consumer-permissions.trigger").read_text(
                 encoding="utf-8"
             ),
-            "task008b-consumer-permission-probe-v1\n",
+            "task008c-forgejo-consumer-permission-probe-v2\n",
+        )
+        self.assertEqual(
+            (SPIKE_ROOT / "control/pypi-permissions.trigger").read_text(
+                encoding="utf-8"
+            ),
+            "task008c-forgejo-pypi-permission-probe-v1\n",
         )
         self.assertEqual(
             (SPIKE_ROOT / "control/tamper-negative.trigger").read_text(
@@ -213,6 +219,11 @@ class WorkflowPolicyTests(unittest.TestCase):
                 self.assertEqual(trigger.count("- spike/008-supply-chain"), 1)
                 self.assertEqual(trigger.count(f"- {release_trigger}"), 1)
                 self.assertEqual(trigger.count(f"- {permission_trigger}"), 1)
+                pypi_trigger = "spikes/supply-chain/control/pypi-permissions.trigger"
+                self.assertEqual(
+                    trigger.count(f"- {pypi_trigger}"),
+                    1 if workflow is self.publish else 0,
+                )
                 tamper_trigger = "spikes/supply-chain/control/tamper-negative.trigger"
                 self.assertEqual(
                     trigger.count(f"- {tamper_trigger}"),
@@ -295,6 +306,13 @@ class WorkflowPolicyTests(unittest.TestCase):
                 else:
                     self.assertNotIn(tamper_trigger, gate)
                     self.assertNotIn("rollback-retention.trigger", gate)
+                    pypi_trigger = (
+                        "spikes/supply-chain/control/pypi-permissions.trigger"
+                    )
+                    self.assertIn(f'"{pypi_trigger}"', gate)
+                    self.assertIn(f"$'M\\t{pypi_trigger}'", gate)
+                    self.assertNotIn(f"$'A\\t{pypi_trigger}'", gate)
+                    self.assertIn("mode=pypi-permission", gate)
 
         combined = self.publish + self.consume
         for unsafe in (
@@ -1395,7 +1413,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                 for line in workflow.splitlines()
                 if line.strip().startswith("uses: ")
             ]
-            expected_count = 11 if workflow is self.publish else 19
+            expected_count = 17 if workflow is self.publish else 19
             self.assertEqual(len(uses_lines), expected_count)
             for use in uses_lines:
                 action, revision = use.split("@", 1)
