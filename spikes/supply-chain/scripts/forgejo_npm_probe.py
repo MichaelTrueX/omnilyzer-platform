@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tarfile
 from urllib.error import HTTPError
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -224,14 +224,44 @@ class Probe:
         return dist
 
     def validate_tarball_url(self, value: str) -> str:
+        """Confine Forgejo's server-controlled download URL to this package."""
+
         parsed_registry = urlparse(self.registry)
         parsed = urlparse(value)
-        if parsed.scheme != "https" or parsed.netloc != parsed_registry.netloc:
+        if parsed.scheme != "https":
             raise RuntimeError("npm metadata tarball URL escaped the Forgejo origin")
-        if not parsed.path.startswith(parsed_registry.path):
+        if parsed.username is not None or parsed.password is not None:
+            raise RuntimeError("npm metadata tarball URL contains credentials")
+        try:
+            configured_port = parsed_registry.port or 443
+            observed_port = parsed.port or 443
+        except ValueError as error:
+            raise RuntimeError("npm metadata tarball URL has an invalid port") from error
+        if (
+            parsed.hostname is None
+            or parsed_registry.hostname is None
+            or parsed.hostname.lower() != parsed_registry.hostname.lower()
+            or observed_port != configured_port
+        ):
+            raise RuntimeError("npm metadata tarball URL escaped the Forgejo origin")
+        if parsed.query or parsed.fragment:
+            raise RuntimeError("npm metadata tarball URL has unexpected suffix data")
+
+        decoded_registry_path = unquote(parsed_registry.path)
+        decoded_path = unquote(parsed.path)
+        if "\\" in decoded_path or "\x00" in decoded_path:
+            raise RuntimeError("npm metadata tarball URL contains an unsafe path")
+        path_parts = decoded_path.split("/")
+        if any(part in (".", "..") for part in path_parts):
+            raise RuntimeError("npm metadata tarball URL contains path traversal")
+        package_download_prefix = (
+            f"{decoded_registry_path}{self.package_name}/-/"
+        )
+        if not decoded_path.startswith(package_download_prefix):
             raise RuntimeError("npm metadata tarball URL escaped the Forgejo registry path")
-        if Path(parsed.path).name != self.tarball_name:
-            raise RuntimeError("npm metadata tarball filename mismatch")
+        server_filename = decoded_path.removeprefix(package_download_prefix)
+        if not server_filename or "/" in server_filename:
+            raise RuntimeError("npm metadata tarball URL has an unexpected download route")
         return value
 
     def download(self, tarball_url: str, label: str) -> Path:

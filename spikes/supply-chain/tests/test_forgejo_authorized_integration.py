@@ -10,6 +10,7 @@ Related:
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 import re
 import unittest
@@ -22,6 +23,7 @@ PUBLISH = (
 CONSUME = (
     REPOSITORY_ROOT / ".github/workflows/task008-consume.yml"
 ).read_text(encoding="utf-8")
+NPM_PROBE_PATH = REPOSITORY_ROOT / "spikes/supply-chain/scripts/forgejo_npm_probe.py"
 
 
 def job(workflow: str, name: str) -> str:
@@ -239,7 +241,7 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         script = (
             REPOSITORY_ROOT / "spikes/supply-chain/scripts/forgejo_npm_probe.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("Path(parsed.path).name != self.tarball_name", script)
+        self.assertNotIn("Path(parsed.path).name != self.tarball_name", script)
         self.assertIn("destination_directory / self.tarball_name", script)
         self.assertIn('headers={"Authorization": f"Bearer {self.token}"}', script)
         self.assertIn("quote(self.package_name, safe='')", script)
@@ -275,6 +277,44 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
             "Core npm append-only",
         ):
             self.assertIn(label, script)
+
+    def test_npm_tarball_url_accepts_server_filename_with_strict_confinement(self) -> None:
+        """Accept Forgejo's basename while binding origin, registry, and package."""
+
+        spec = importlib.util.spec_from_file_location("task008c_npm_probe", NPM_PROBE_PATH)
+        if spec is None or spec.loader is None:
+            raise AssertionError("unable to load Task 008C npm probe")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        probe = object.__new__(module.Probe)
+        probe.registry = (
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/"
+        )
+        probe.package_name = "@omnilyzer/supply-chain-spike"
+        probe.tarball_name = "omnilyzer-supply-chain-spike-0.0.123.tgz"
+
+        valid = (
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/"
+            "%40omnilyzer%2Fsupply-chain-spike/-/forgejo-storage-name.tgz"
+        )
+        self.assertEqual(probe.validate_tarball_url(valid), valid)
+        self.assertNotEqual(Path(valid).name, probe.tarball_name)
+
+        invalid = (
+            valid.replace("registry-dev.omnilyzer.ai", "packages.example.invalid"),
+            valid.replace("https://", "http://"),
+            valid.replace("/omnilyzer/npm/", "/another-owner/npm/"),
+            valid.replace("/omnilyzer/npm/", "/omnilyzer/generic/"),
+            valid.replace("supply-chain-spike", "another-package"),
+            valid.replace("https://", "https://user:password@"),
+            "https://registry-dev.omnilyzer.ai/outside/npm/package/-/file.tgz",
+            valid + "#unexpected-fragment",
+            valid.replace("forgejo-storage-name.tgz", "../escape.tgz"),
+        )
+        for value in invalid:
+            with self.subTest(value=value):
+                with self.assertRaises(RuntimeError):
+                    probe.validate_tarball_url(value)
 
     def test_pypi_trigger_and_gate_are_distinct_and_fail_closed(self) -> None:
         """Grant PyPI OIDC authority only for one modified trigger path."""
