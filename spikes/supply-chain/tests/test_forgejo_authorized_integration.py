@@ -11,8 +11,10 @@ Related:
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import re
+from types import SimpleNamespace
 import unittest
 
 
@@ -278,8 +280,8 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         ):
             self.assertIn(label, script)
 
-    def test_npm_tarball_url_accepts_server_filename_with_strict_confinement(self) -> None:
-        """Accept Forgejo's basename while binding origin, registry, and package."""
+    def test_npm_tarball_url_treats_registry_object_path_as_opaque(self) -> None:
+        """Accept opaque Forgejo storage routes within the exact npm registry."""
 
         spec = importlib.util.spec_from_file_location("task008c_npm_probe", NPM_PROBE_PATH)
         if spec is None or spec.loader is None:
@@ -294,27 +296,74 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         probe.tarball_name = "omnilyzer-supply-chain-spike-0.0.123.tgz"
 
         valid = (
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/package/123/file",
             "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/"
-            "%40omnilyzer%2Fsupply-chain-spike/-/forgejo-storage-name.tgz"
+            "internal/storage/object.tgz",
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/"
+            "@something/whatever",
         )
-        self.assertEqual(probe.validate_tarball_url(valid), valid)
-        self.assertNotEqual(Path(valid).name, probe.tarball_name)
+        for value in valid:
+            with self.subTest(value=value):
+                self.assertEqual(probe.validate_tarball_url(value), value)
 
         invalid = (
-            valid.replace("registry-dev.omnilyzer.ai", "packages.example.invalid"),
-            valid.replace("https://", "http://"),
-            valid.replace("/omnilyzer/npm/", "/another-owner/npm/"),
-            valid.replace("/omnilyzer/npm/", "/omnilyzer/generic/"),
-            valid.replace("supply-chain-spike", "another-package"),
-            valid.replace("https://", "https://user:password@"),
-            "https://registry-dev.omnilyzer.ai/outside/npm/package/-/file.tgz",
-            valid + "#unexpected-fragment",
-            valid.replace("forgejo-storage-name.tgz", "../escape.tgz"),
+            "http://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/object",
+            "https://packages.example.invalid/api/packages/omnilyzer/npm/object",
+            "https://registry-dev.omnilyzer.ai:444/api/packages/omnilyzer/npm/object",
+            "https://user@registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/object",
+            "https://user:password@registry-dev.omnilyzer.ai/"
+            "api/packages/omnilyzer/npm/object",
+            "https://registry-dev.omnilyzer.ai/api/packages/another-owner/npm/object",
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/generic/object",
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm-evil/object",
+            "https://registry-dev.omnilyzer.ai/outside/npm/object",
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/object?x=1",
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/object#fragment",
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/./object",
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/%2e%2e/object",
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/a\\object",
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/a%5cobject",
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/a%00object",
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm/",
+            "https://registry-dev.omnilyzer.ai/api/packages/omnilyzer/npm//",
         )
         for value in invalid:
             with self.subTest(value=value):
                 with self.assertRaises(RuntimeError):
                     probe.validate_tarball_url(value)
+
+    def test_npm_metadata_requires_exact_package_and_version_identity(self) -> None:
+        """Reject a tarball URL unless exact requested metadata identity precedes it."""
+
+        spec = importlib.util.spec_from_file_location("task008c_npm_probe", NPM_PROBE_PATH)
+        if spec is None or spec.loader is None:
+            raise AssertionError("unable to load Task 008C npm probe")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        probe = object.__new__(module.Probe)
+        probe.package_name = "@omnilyzer/supply-chain-spike"
+        probe.version = "0.0.123"
+        probe.results = {"npm metadata read": "FAIL"}
+
+        payload = {
+            "name": probe.package_name,
+            "version": probe.version,
+            "dist": {"tarball": "https://registry-dev.omnilyzer.ai/opaque"},
+        }
+
+        def metadata_for(candidate: dict[str, object]) -> dict[str, object]:
+            probe.npm = lambda *args, **kwargs: SimpleNamespace(
+                returncode=0, stdout=json.dumps(candidate)
+            )
+            return probe.metadata({}, "identity-test")
+
+        self.assertEqual(metadata_for(payload), payload["dist"])
+        for field, changed in (("name", "@omnilyzer/other"), ("version", "0.0.124")):
+            candidate = dict(payload)
+            candidate[field] = changed
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(RuntimeError, "metadata identity mismatch"):
+                    metadata_for(candidate)
 
     def test_pypi_trigger_and_gate_are_distinct_and_fail_closed(self) -> None:
         """Grant PyPI OIDC authority only for one modified trigger path."""

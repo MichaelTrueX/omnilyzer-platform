@@ -224,7 +224,7 @@ class Probe:
         return dist
 
     def validate_tarball_url(self, value: str) -> str:
-        """Confine Forgejo's server-controlled download URL to this package."""
+        """Confine Forgejo's opaque server-controlled URL to this npm registry."""
 
         parsed_registry = urlparse(self.registry)
         parsed = urlparse(value)
@@ -254,14 +254,13 @@ class Probe:
         path_parts = decoded_path.split("/")
         if any(part in (".", "..") for part in path_parts):
             raise RuntimeError("npm metadata tarball URL contains path traversal")
-        package_download_prefix = (
-            f"{decoded_registry_path}{self.package_name}/-/"
-        )
-        if not decoded_path.startswith(package_download_prefix):
+        if not decoded_registry_path.endswith("/"):
+            raise RuntimeError("configured Forgejo npm registry path is not canonical")
+        if not decoded_path.startswith(decoded_registry_path):
             raise RuntimeError("npm metadata tarball URL escaped the Forgejo registry path")
-        server_filename = decoded_path.removeprefix(package_download_prefix)
-        if not server_filename or "/" in server_filename:
-            raise RuntimeError("npm metadata tarball URL has an unexpected download route")
+        opaque_path = decoded_path.removeprefix(decoded_registry_path)
+        if not any(part for part in opaque_path.split("/")):
+            raise RuntimeError("npm metadata tarball URL has no registry object path")
         return value
 
     def download(self, tarball_url: str, label: str) -> Path:
