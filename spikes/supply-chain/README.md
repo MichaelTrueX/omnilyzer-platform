@@ -4,6 +4,7 @@ Purpose: Defines the governed Task 008 private-registry and GitHub OIDC validati
 Related:
 - docs/adr/0005-versioned-platform-packaging-and-distribution.md
 - docs/adr/0006-immutable-oci-deployment-and-promotion.md
+- docs/adr/0007-forgejo-and-zot-package-registries.md
 - .github/workflows/task008-publish.yml
 - .github/workflows/task008-consume.yml
 -->
@@ -209,26 +210,27 @@ The final Phase 5 classifications are:
 
 This proves retention across the tested multi-day interval and independence from expired GitHub Actions handoff artifacts. It does not claim indefinite retention.
 
-Remaining Task 008 work:
-
-- provider operations, cost, and disaster-recovery analysis;
-- reconcile the Cloudsmith evidence with the Task 008C Forgejo evidence currently maintained on `spike/008c-forgejo-registry`;
-- the final registry and trusted-publishing architecture decision;
-- ADR 0007 only after all evidence is reviewed.
+Remaining implementation work is operational: define production retention and capacity policy, backups and restore testing, disaster recovery, monitoring, and the controlled rollout of the selected services. ADR 0007 records the split-registry decision as Proposed pending repository review.
 
 ## Task 008D zot OCI immutable-release validation
 
-**Task 008D status: IMPLEMENTED / LIVE VALIDATION IN PROGRESS.** This branch contains the validation design for zot `v2.1.20` as the OCI-only component of a possible split registry architecture. It does not select zot and does not alter the existing Cloudsmith or Forgejo evidence. The candidate architecture to evaluate separately is Forgejo behind its protected ingress for Generic, PyPI, and npm, with zot serving only OCI.
+**TASK 008D — PASS.** Task 008D validated zot `v2.1.20` as the OCI component of the selected split registry architecture.
 
 The intended public endpoint is `https://oci-dev.omnilyzer.ai`, with TLS terminated by a transparent Nginx reverse proxy and zot bound only to `127.0.0.1:5000`. Nginx deliberately blocks neither PUT nor DELETE during Task 008D: zot's native authorization must prove immutability. GitHub OIDC workload tokens must use issuer `https://token.actions.githubusercontent.com`, audience `https://oci-dev.omnilyzer.ai`, the exact repository owner/repository claims, and one of the two exact branch-specific `workflow_ref` identities. No PAT, registry password, API key, or other static CI registry credential is designed into the test.
 
 For `omnilyzer/task008d-supply-chain-spike`, the publisher receives exactly `read` and `create`, not `update` or `delete`; the independent consumer receives exactly `read`. Unknown authenticated identities and anonymous clients receive no authority. Garbage collection is explicitly disabled so retention cleanup cannot obscure the authorization result or remove historical rollback material during the spike.
 
-The deterministic, non-executable OCI fixture contains distinct baseline A and replacement B manifests for the exact same version and tag. The publisher probe will calculate all digests before authentication, publish A, verify A by both tag and digest, attempt a same-tag PUT of B, require an exact HTTP 403 authorization denial, verify the tag and original digest remain A, require exact HTTP 403 denials for manifest DELETE by digest and tag, and reverify the manifest/config/layer bytes afterward. A 201 replacement is **FAIL**; an unrelated conflict or protocol error is **INCONCLUSIVE**, not PASS. The direct Distribution API Bearer probe is authoritative. Docker login with the short-lived OIDC token as the Basic password and a harmless non-empty username is a separate interoperability result; images are pulled but never executed.
+The deterministic, non-executable OCI fixture contains distinct baseline A and replacement B manifests for the exact same version and tag. The publisher probe calculated all digests before authentication, published A, verified A by both tag and digest, attempted a same-tag PUT of B, required an exact HTTP 403 authorization denial, verified the tag and original digest remained A, required exact HTTP 403 denials for manifest DELETE by digest and tag, and reverified the manifest/config/layer bytes afterward. The direct Distribution API Bearer probe is authoritative. Docker login with the short-lived OIDC token as the Basic password and a harmless non-empty username is a separate interoperability result; images were pulled but never executed.
 
-Publisher run `33814063124` passed the gate, fixture build, GitHub OIDC acquisition, and authoritative direct probe, establishing PASS for the native zot security semantics exercised by that probe. Its separate standard Docker step failed because the advertised Bearer realm was the relative value `zot`; Docker requires the realm to be an absolute token-service URL. zot exposes its OIDC registry token-service flow at `/zot/auth/token`, so the example realm is now the same-origin HTTPS URL `https://oci-dev.omnilyzer.ai/zot/auth/token`. This is an interoperability/configuration correction, not an immutability failure. Docker compatibility still requires a fresh live result, and restart persistence remains pending.
+Publisher run `33814063124` passed the gate, fixture build, GitHub OIDC acquisition, and authoritative direct probe, establishing PASS for the native zot security semantics exercised by that probe. Its separate standard Docker step failed because the advertised Bearer realm was the relative value `zot`; Docker requires the realm to be an absolute token-service URL. zot exposes its OIDC registry token-service flow at `/zot/auth/token`, so the example realm was corrected to the same-origin HTTPS URL `https://oci-dev.omnilyzer.ai/zot/auth/token`. This was an interoperability/configuration failure, not an immutability failure. Docker compatibility and restart persistence were still pending at that point; the subsequent runs below resolved both rows.
 
-The intended acceptance matrix remains pending:
+Publisher v2 run `33814874276`, from commit `25cc080f2298d48830ed480b54735ff28245b485`, passed its gate, fixture build, GitHub OIDC authentication, authoritative direct OCI probe, and standard Docker/OIDC interoperability check. The publisher created and read the baseline; same-tag replacement was denied with HTTP 403; both manifest DELETE by digest and DELETE by tag were denied with HTTP 403; and the original manifest, config, and layer remained byte-identical and retrievable by exact digest.
+
+The retained baseline is tag `task008d-33814874276-1`, manifest digest `sha256:869121fdf10de171eff2f2622fa4190939573abc1e5bb24e7502b8757d4f6059`, config digest `sha256:8ac6c44b9181a6d92469b5b701417f9ab13c5f0b8c462ffd68a7f4d098e9614d`, and layer digest `sha256:6747a1b2afcb45cb4e398e8f08158b305575e98f78fefee20c14e415dccfc89b`.
+
+After the publisher completed at approximately 22:50:43 UTC, systemd stopped and successfully restarted `zot.service` at 22:51:39 UTC. Consumer run `33815051427`, from commit `3284aa442310c172149efe76406fa9fa3a1f5630`, began at 22:52:16 UTC. Its independently authenticated read-only OIDC identity rebuilt the expected fixture, retrieved and verified the retained tag, manifest digest, config digest, and layer digest, and completed both standard Docker tag and exact-digest pulls. This proves persistence across the tested zot restart with garbage collection disabled; it does not prove indefinite retention.
+
+The final Task 008D matrix is:
 
 | Property | Status |
 |---|---|
@@ -239,12 +241,24 @@ The intended acceptance matrix remains pending:
 | Original digest retention | PASS |
 | Publisher DELETE prohibition | PASS |
 | Post-denial integrity | PASS |
-| Standard Docker client interoperability | PENDING |
-| Restart persistence | PENDING |
-| Exact-digest rollback | PENDING |
+| Standard Docker interoperability | PASS |
+| Restart persistence | PASS |
+| Independent read-only retrieval | PASS |
+| Exact-digest rollback readiness | PASS |
 
-After a future publisher run, its exact tag and locally calculated baseline manifest/config/layer digests must be recorded in a separate consumer-trigger-only commit. An operator must manually restart zot, after which only the read-only consumer workflow may retrieve and verify the baseline by tag and exact digest and perform non-executing Docker pulls. Restart persistence and exact-digest rollback must not be classified PASS before that separate live proof. Deployment examples, the verification lifecycle, and the pinned binary/container details are in [`zot/README.md`](zot/README.md).
+Deployment examples, the validation lifecycle, and the pinned binary/container details are in [`zot/README.md`](zot/README.md).
+
+## Selected registry architecture
+
+The selected open-source direction is:
+
+- **Forgejo behind the protected Nginx ingress** for Generic, PyPI, and npm packages. The append-only guarantee depends on public DELETE blocking and on publishers having no path that bypasses that ingress.
+- **zot** for OCI releases, using native `read`/`create` publisher authorization without `update` or `delete`, short-lived GitHub Actions OIDC identities, retained immutable digests, and exact-digest deployment references.
+
+Cloudsmith remains technically validated by Tasks 008A/B, including signed evidence and rollback after CI artifact expiry, but it is not selected because the recurring commercial plan cost required by this project is unacceptable. Forgejo OCI is not selected because the tested configuration accepted a different manifest PUT to an existing tag and subsequently made the original digest unavailable. Task 008D demonstrated that the tested zot configuration denied same-tag replacement and deletion, retained the original digest, interoperated with Docker through its OIDC token service, and retained exact bytes across a restart.
+
+This is a requirements-and-evidence-based selection, not a claim that zot is universally superior to other OCI registries. Production lifecycle, backup, restore, capacity, monitoring, and disaster-recovery controls remain operational work.
 
 ## Recommendation
 
-Task 008A and Task 008B Phases 1, 2, 3, 4A, and 4B passed. Phase 5 now passes rollback, registry-only architecture, and post-CI-artifact-expiry retention validation. The documented Generic-republish provider caveat remains. Cloudsmith remains a **VALIDATED CANDIDATE**, **NOT ACCEPTED DIRECTION**. Task 008 is not complete. Consolidate and reconcile the Cloudsmith and Task 008C Forgejo evidence before making the final package-registry/trusted-publishing architecture decision or writing ADR 0007.
+Adopt the split Forgejo-plus-zot registry direction through ADR 0007. Preserve exact-digest OCI promotion and rollback from ADR 0006, use only short-lived GitHub Actions OIDC workload identity in CI, and do not introduce long-lived registry credentials. Cloudsmith's technical evidence remains valid despite its cost-based non-selection, and the failed Forgejo OCI evidence remains part of the decision record.

@@ -10,17 +10,27 @@ The zot configuration validates GitHub's exact OIDC issuer and audience, require
 
 Garbage collection is explicitly disabled. Current zot GC can remove untagged manifests; disabling it isolates authorization and immutability from cleanup and preserves historical digest rollback material. Storage growth is accepted for this spike. Capacity and lifecycle policy require a separate decision after correctness is demonstrated.
 
-Publisher run `33814063124` passed the gate, fixture build, GitHub OIDC acquisition, and authoritative direct Distribution API security probe. The separate Docker compatibility step failed because zot advertised the relative Bearer realm `zot`; Docker treats `realm` as the token-service URL and rejected it as an unsupported empty URL scheme. The example now advertises zot's OIDC registry token service at the absolute same-origin HTTPS URL `https://oci-dev.omnilyzer.ai/zot/auth/token`. This corrects Docker interoperability configuration; it does not change or invalidate the direct probe's immutability result. Docker compatibility and restart persistence remain pending live validation.
+Publisher v1 run `33814063124` passed the gate, fixture build, GitHub OIDC acquisition, and authoritative direct Distribution API security probe. The separate Docker compatibility step failed because zot advertised the relative Bearer realm `zot`; Docker treats `realm` as the token-service URL and rejected it as an unsupported empty URL scheme. The example was corrected to advertise zot's OIDC registry token service at the absolute same-origin HTTPS URL `https://oci-dev.omnilyzer.ai/zot/auth/token`. This was an interoperability/configuration failure, not an immutability failure; this failed evidence remains recorded even though the subsequent run passed.
+
+**TASK 008D — PASS.** Publisher v2 run `33814874276`, from commit `25cc080f2298d48830ed480b54735ff28245b485`, passed GitHub OIDC, the authoritative direct OCI probe, and standard Docker/OIDC interoperability. The publisher created and read the baseline; zot denied same-tag update, DELETE by digest, and DELETE by tag with exact HTTP 403 responses; and the original manifest, config, and layer remained unchanged and retrievable.
+
+The retained baseline is:
+
+- tag `task008d-33814874276-1`;
+- manifest `sha256:869121fdf10de171eff2f2622fa4190939573abc1e5bb24e7502b8757d4f6059`;
+- config `sha256:8ac6c44b9181a6d92469b5b701417f9ab13c5f0b8c462ffd68a7f4d098e9614d`;
+- layer `sha256:6747a1b2afcb45cb4e398e8f08158b305575e98f78fefee20c14e415dccfc89b`.
+
+The publisher completed at approximately 22:50:43 UTC. systemd stopped and successfully restarted `zot.service` at 22:51:39 UTC. Consumer run `33815051427`, from commit `3284aa442310c172149efe76406fa9fa3a1f5630`, started at 22:52:16 UTC and independently authenticated with its read-only GitHub OIDC identity. It verified the retained tag, manifest, config, and layer and passed Docker pulls by both tag and exact digest. Restart persistence, independent read-only retrieval, and exact-digest rollback readiness therefore pass for the tested restart with `gc=false`. This is not a claim of indefinite retention.
 
 Before a future deployment, create the `zot` system account and `/etc/zot`, `/var/lib/zot`, and `/var/log/zot` with minimal ownership, install the reviewed config and unit, validate with `zot verify /etc/zot/config.json`, and install TLS/Nginx separately. Do not place secrets in this configuration.
 
 ## Live validation lifecycle
 
-1. Push the implementation commit: both newly added trigger paths classify as `none`, so privileged jobs skip.
-2. Review configuration, workflow, fixture, and probe locally.
-3. Modify only `zot-publish.trigger` in a separate authorized commit. Record the published baseline tag and all digests from the summary.
-4. Put those exact values into a trigger-only `zot-consume.trigger` modification.
-5. Manually restart zot with `sudo systemctl restart zot` and inspect `sudo systemctl status zot --no-pager`.
-6. Run only the read-only consumer workflow and require tag, digest, config, layer, and Docker exact-digest pulls to survive.
+1. The implementation commit added both trigger paths and classified as `none`, so privileged jobs skipped.
+2. The reviewed publisher trigger modification ran the publisher validation and recorded the baseline tag and digests.
+3. The exact values were placed in a consumer-trigger-only modification.
+4. zot was manually restarted and its successful systemd stop/start was observed.
+5. The read-only consumer workflow verified tag, digest, config, layer, and Docker exact-digest pulls after restart.
 
-Restart persistence and exact-digest rollback remain **PENDING** until those live steps succeed.
+All Task 008D acceptance rows pass. Production retention and lifecycle policy, backup/restore validation, capacity, monitoring, and disaster recovery remain separate operational decisions.
