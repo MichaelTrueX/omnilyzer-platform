@@ -1,4 +1,4 @@
-"""Local policy and fixture tests for the unexecuted Task 008D zot design."""
+"""Local policy, fixture, and final evidence tests for Task 008D zot."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ SCRIPTS = SPIKE / "scripts"
 ZOT = SPIKE / "zot"
 PUBLISH = ROOT / ".github/workflows/task008-zot-publish.yml"
 CONSUME = ROOT / ".github/workflows/task008-zot-consume.yml"
+ADR = ROOT / "docs/adr/0007-forgejo-and-zot-package-registries.md"
+TECHNOLOGY_DECISIONS = ROOT / "docs/architecture/technology-decisions.md"
 PUBLISH_ID = "MichaelTrueX/omnilyzer-platform/.github/workflows/task008-zot-publish.yml@refs/heads/spike/008d-zot-registry"
 CONSUME_ID = "MichaelTrueX/omnilyzer-platform/.github/workflows/task008-zot-consume.yml@refs/heads/spike/008d-zot-registry"
 ZERO_SHA = "0" * 40
@@ -63,9 +65,12 @@ class ZotConfigurationTests(unittest.TestCase):
         self.assertTrue(PUBLISH.is_file())
         self.assertTrue(CONSUME.is_file())
         self.assertEqual((SPIKE / "control/zot-publish.trigger").read_text(),
-                         "task008d-zot-publish-probe-v1\n")
+                         "task008d-zot-publish-probe-v2\n")
         self.assertEqual((SPIKE / "control/zot-consume.trigger").read_text(),
-                         '{"state":"task008d-zot-consume-implementation-v1"}\n')
+                         '{"state":"ready","tag":"task008d-33814874276-1",'
+                         '"manifest_digest":"sha256:869121fdf10de171eff2f2622fa4190939573abc1e5bb24e7502b8757d4f6059",'
+                         '"config_digest":"sha256:8ac6c44b9181a6d92469b5b701417f9ab13c5f0b8c462ffd68a7f4d098e9614d",'
+                         '"layer_digest":"sha256:6747a1b2afcb45cb4e398e8f08158b305575e98f78fefee20c14e415dccfc89b"}\n')
 
     def test_only_exact_trigger_modification_activates(self) -> None:
         for trigger in ("spikes/supply-chain/control/zot-publish.trigger",
@@ -328,13 +333,66 @@ class ZotProbeTests(unittest.TestCase):
         self.assertIn("ERROR_LIMIT = 512", source)
         self.assertIn('replace(self.token, "[REDACTED]")', source)
 
-    def test_restart_result_is_pending_in_documentation(self) -> None:
+    def test_final_live_results_are_documented(self) -> None:
         readme = (SPIKE / "README.md").read_text()
-        self.assertIn("Task 008D status: IMPLEMENTED / LIVE VALIDATION IN PROGRESS", readme)
+        self.assertIn("TASK 008D — PASS", readme)
         self.assertIn("Publisher run `33814063124`", readme)
-        self.assertIn("| Standard Docker client interoperability | PENDING |", readme)
-        self.assertIn("| Restart persistence | PENDING |", readme)
-        self.assertIn("must not be classified PASS before that separate live proof", readme)
+        self.assertIn("Publisher v2 run `33814874276`", readme)
+        self.assertIn("Consumer run `33815051427`", readme)
+        self.assertIn("sha256:869121fdf10de171eff2f2622fa4190939573abc1e5bb24e7502b8757d4f6059", readme)
+        self.assertIn("| Standard Docker interoperability | PASS |", readme)
+        self.assertIn("| Restart persistence | PASS |", readme)
+        self.assertIn("| Independent read-only retrieval | PASS |", readme)
+        self.assertIn("| Exact-digest rollback readiness | PASS |", readme)
+        self.assertIn("does not prove indefinite retention", readme)
+
+    def test_split_registry_decision_preserves_failed_and_cost_evidence(self) -> None:
+        self.assertTrue(ADR.is_file())
+        adr = ADR.read_text()
+        self.assertIn("- Status: Proposed", adr)
+        self.assertIn("Forgejo behind protected Nginx ingress", adr)
+        self.assertIn("Generic / PyPI / npm", adr)
+        self.assertRegex(adr, r"(?s)zot.*OCI")
+        self.assertIn("short-lived OIDC workload identity", adr)
+        self.assertIn("no long-lived registry password", adr)
+        self.assertIn("previously retrievable manifest digest returned `MANIFEST_UNKNOWN`", adr)
+        self.assertIn("recurring commercial cost is unacceptable", adr)
+        self.assertIn("garbage collection remains disabled for the Task 008D evidence", adr)
+        self.assertIn("not indefinite retention", adr)
+
+    def test_architecture_matrix_records_proposed_split_without_acceptance(self) -> None:
+        decisions = TECHNOLOGY_DECISIONS.read_text()
+        rows = [line for line in decisions.splitlines()
+                if line.startswith("| Package registry / trusted publishing |")]
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertIn("Forgejo + protected Nginx ingress for Generic, PyPI, and npm", row)
+        self.assertIn("zot for OCI", row)
+        self.assertIn("ADR 0007, Proposed", row)
+        self.assertIn("| TO VALIDATE |", row)
+        self.assertNotIn("ACCEPTED DIRECTION", row)
+        self.assertNotIn("provider TBD", row)
+        self.assertIn("Forgejo Generic, PyPI, and npm", row)
+        self.assertIn("same-tag replacement was accepted", row)
+        self.assertIn("original digest became unavailable", row)
+        self.assertIn("Task 008D passed zot OCI", row)
+        self.assertIn("GitHub OIDC publisher/consumer identities", row)
+        self.assertIn("Docker interoperability", row)
+        self.assertIn("restart persistence", row)
+        self.assertIn("exact-digest rollback readiness", row)
+        self.assertIn("Cloudsmith was technically validated", row)
+        self.assertIn("recurring commercial cost is unacceptable", row)
+        self.assertIn("does not prove indefinite retention", row)
+        self.assertIn("ADR 0007 review and acceptance", row)
+
+    def test_adr_date_status_and_supply_chain_related_link(self) -> None:
+        adr = ADR.read_text()
+        self.assertIn("- Status: Proposed", adr)
+        self.assertIn("- Date: 2026-09-04", adr)
+        related = (SPIKE / "README.md").read_text().split("-->", 1)[0]
+        self.assertIn("docs/adr/0005-versioned-platform-packaging-and-distribution.md", related)
+        self.assertIn("docs/adr/0006-immutable-oci-deployment-and-promotion.md", related)
+        self.assertIn("docs/adr/0007-forgejo-and-zot-package-registries.md", related)
 
 
 if __name__ == "__main__":
