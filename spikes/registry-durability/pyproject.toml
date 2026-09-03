@@ -1,0 +1,9 @@
+[project]
+name = "omnilyzer-task012-registry-durability"
+version = "0.0.0"
+description = "Isolated zot cold-backup and exact-digest recovery validation."
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[tool.setuptools]
+packages = ["durability"]

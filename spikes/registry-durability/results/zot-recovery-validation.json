@@ -1,0 +1,111 @@
+{
+  "backup": {
+    "directory_count": 5,
+    "file_count": 9,
+    "integrity_verified": true,
+    "manifest_complete": true,
+    "mode": "cold"
+  },
+  "claims": {
+    "application_deployment_rollback": false,
+    "indefinite_retention": false,
+    "production_rpo_or_rto": false,
+    "retained_exact_digest_recoverability_after_restore": true
+  },
+  "classification": "TASK 012A \u2014 PASS",
+  "cold_shutdown": {
+    "restored_clean": true,
+    "source_clean": true
+  },
+  "corruption_negative_results": {
+    "absolute_path_rejected": true,
+    "duplicate_path_rejected": true,
+    "missing_required_file_rejected": true,
+    "modified_payload_byte_rejected": true,
+    "nonempty_destination_rejected": true,
+    "path_traversal_rejected": true,
+    "symlink_rejected": true,
+    "truncated_archive_rejected": true,
+    "unexpected_file_rejected": true
+  },
+  "created_at_utc": "2026-09-03T23:43:51Z",
+  "durations_seconds": {
+    "backup": 0.004789,
+    "restore": 0.002574,
+    "verification": 0.015386
+  },
+  "isolation": {
+    "address": "127.0.0.1",
+    "authentication_in_scope": false,
+    "dynamic_ports": true,
+    "gc": false,
+    "live_registry_accessed": false,
+    "temporary_storage_only": true
+  },
+  "post_restore_exact_digest_verification": {
+    "CURRENT": {
+      "config": true,
+      "layer": true,
+      "manifest_by_digest": true,
+      "manifest_by_tag": true,
+      "tag": true
+    },
+    "ROLLBACK": {
+      "config": true,
+      "layer": true,
+      "manifest_by_digest": true,
+      "manifest_by_tag": true,
+      "tag": true
+    }
+  },
+  "pre_backup_validation": {
+    "CURRENT": {
+      "config": true,
+      "layer": true,
+      "manifest_by_digest": true,
+      "manifest_by_tag": true,
+      "tag": true
+    },
+    "ROLLBACK": {
+      "config": true,
+      "layer": true,
+      "manifest_by_digest": true,
+      "manifest_by_tag": true,
+      "tag": true
+    }
+  },
+  "releases": {
+    "CURRENT": {
+      "config_digest": "sha256:69e1504c8918c4b0a745f15988fa6f522f000ce8cdf945c02de79264fbd3b5c2",
+      "config_length": 423,
+      "layer_digest": "sha256:6570c741c1a5c135a381936e57fcff5a7afaa840be283d8d96227a3a8786dd2c",
+      "layer_length": 170,
+      "manifest_digest": "sha256:c7cb3abfa2e2f00d99acee6a9828dd76de0a74b2ad1b95abbd432828d5d563bb",
+      "manifest_length": 401,
+      "tag": "task012-current"
+    },
+    "ROLLBACK": {
+      "config_digest": "sha256:b84f8778476f448abc93cf2025cd38b99f026c497acc30e9b431c343e33c88b4",
+      "config_length": 425,
+      "layer_digest": "sha256:2b0f3a24df9ce504e0abb98572bf112c5b4f3e782dc77b37ad337a7985b83206",
+      "layer_length": 173,
+      "manifest_digest": "sha256:dea955007cc3c4212eb12179771094b2e1e2d066642f3ba85db4b697dda4ebcc",
+      "manifest_length": 401,
+      "tag": "task012-rollback"
+    }
+  },
+  "restore": {
+    "directory_count": 5,
+    "file_count": 9,
+    "restored": true
+  },
+  "source_destruction": {
+    "temporary_source_removed": true
+  },
+  "task": "012A",
+  "zot": {
+    "binary_sha256": "a32e42d042d1f17b5b1317e55cc1a415a744c873dcd05c25c56b665478258bcb",
+    "version": "v2.1.20",
+    "version_command_verified": true
+  }
+}
