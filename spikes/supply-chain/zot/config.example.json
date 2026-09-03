@@ -1,0 +1,78 @@
+{
+  "distSpecVersion": "1.1.1",
+  "storage": {
+    "rootDirectory": "/var/lib/zot",
+    "dedupe": true,
+    "gc": false
+  },
+  "http": {
+    "address": "127.0.0.1",
+    "port": "5000",
+    "externalUrl": "https://oci-dev.omnilyzer.ai",
+    "auth": {
+      "bearer": {
+        "realm": "https://oci-dev.omnilyzer.ai/zot/auth/token",
+        "service": "oci-dev.omnilyzer.ai",
+        "oidc": [
+          {
+            "issuer": "https://token.actions.githubusercontent.com",
+            "audiences": ["https://oci-dev.omnilyzer.ai"],
+            "claimMapping": {
+              "variables": [
+                {"name": "owner", "expression": "claims.repository_owner"},
+                {"name": "repository", "expression": "claims.repository"},
+                {"name": "workflow", "expression": "claims.workflow_ref"}
+              ],
+              "validations": [
+                {
+                  "expression": "vars.owner == 'MichaelTrueX'",
+                  "message": "repository owner is not authorized"
+                },
+                {
+                  "expression": "vars.repository == 'MichaelTrueX/omnilyzer-platform'",
+                  "message": "repository is not authorized"
+                },
+                {
+                  "expression": "vars.workflow in ['MichaelTrueX/omnilyzer-platform/.github/workflows/task008-zot-publish.yml@refs/heads/spike/008d-zot-registry', 'MichaelTrueX/omnilyzer-platform/.github/workflows/task008-zot-consume.yml@refs/heads/spike/008d-zot-registry']",
+                  "message": "workflow identity is not authorized"
+                }
+              ],
+              "username": "claims.workflow_ref"
+            }
+          }
+        ]
+      }
+    },
+    "accessControl": {
+      "repositories": {
+        "**": {
+          "defaultPolicy": [],
+          "anonymousPolicy": []
+        },
+        "omnilyzer/task008d-supply-chain-spike": {
+          "policies": [
+            {
+              "users": [
+                "MichaelTrueX/omnilyzer-platform/.github/workflows/task008-zot-publish.yml@refs/heads/spike/008d-zot-registry"
+              ],
+              "actions": ["read", "create"]
+            },
+            {
+              "users": [
+                "MichaelTrueX/omnilyzer-platform/.github/workflows/task008-zot-consume.yml@refs/heads/spike/008d-zot-registry"
+              ],
+              "actions": ["read"]
+            }
+          ],
+          "defaultPolicy": [],
+          "anonymousPolicy": []
+        }
+      }
+    }
+  },
+  "log": {
+    "level": "info",
+    "output": "/var/log/zot/zot.log",
+    "audit": "/var/log/zot/audit.log"
+  }
+}
