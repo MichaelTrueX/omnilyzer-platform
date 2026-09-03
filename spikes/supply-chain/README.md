@@ -216,6 +216,33 @@ Remaining Task 008 work:
 - the final registry and trusted-publishing architecture decision;
 - ADR 0007 only after all evidence is reviewed.
 
+## Task 008D zot OCI immutable-release validation
+
+**Task 008D status: IMPLEMENTED / LIVE VALIDATION PENDING.** This branch contains a local-only, unexecuted validation design for zot `v2.1.20` as the OCI-only component of a possible split registry architecture. It does not select zot and does not alter the existing Cloudsmith or Forgejo evidence. The candidate architecture to evaluate separately is Forgejo behind its protected ingress for Generic, PyPI, and npm, with zot serving only OCI.
+
+The intended public endpoint is `https://oci-dev.omnilyzer.ai`, with TLS terminated by a transparent Nginx reverse proxy and zot bound only to `127.0.0.1:5000`. Nginx deliberately blocks neither PUT nor DELETE during Task 008D: zot's native authorization must prove immutability. GitHub OIDC workload tokens must use issuer `https://token.actions.githubusercontent.com`, audience `https://oci-dev.omnilyzer.ai`, the exact repository owner/repository claims, and one of the two exact branch-specific `workflow_ref` identities. No PAT, registry password, API key, or other static CI registry credential is designed into the test.
+
+For `omnilyzer/task008d-supply-chain-spike`, the publisher receives exactly `read` and `create`, not `update` or `delete`; the independent consumer receives exactly `read`. Unknown authenticated identities and anonymous clients receive no authority. Garbage collection is explicitly disabled so retention cleanup cannot obscure the authorization result or remove historical rollback material during the spike.
+
+The deterministic, non-executable OCI fixture contains distinct baseline A and replacement B manifests for the exact same version and tag. The publisher probe will calculate all digests before authentication, publish A, verify A by both tag and digest, attempt a same-tag PUT of B, require an exact HTTP 403 authorization denial, verify the tag and original digest remain A, require exact HTTP 403 denials for manifest DELETE by digest and tag, and reverify the manifest/config/layer bytes afterward. A 201 replacement is **FAIL**; an unrelated conflict or protocol error is **INCONCLUSIVE**, not PASS. The direct Distribution API Bearer probe is authoritative. Docker login with the short-lived OIDC token as the Basic password and a harmless non-empty username is a separate interoperability result; images are pulled but never executed.
+
+The intended acceptance matrix remains pending:
+
+| Property | Status |
+|---|---|
+| GitHub OIDC authentication | PENDING |
+| Publisher create/read | PENDING |
+| Same-tag update prohibition | PENDING |
+| OCI tag immutability | PENDING |
+| Original digest retention | PENDING |
+| Publisher DELETE prohibition | PENDING |
+| Post-denial integrity | PENDING |
+| Standard Docker client interoperability | PENDING |
+| Restart persistence | PENDING |
+| Exact-digest rollback | PENDING |
+
+After a future publisher run, its exact tag and locally calculated baseline manifest/config/layer digests must be recorded in a separate consumer-trigger-only commit. An operator must manually restart zot, after which only the read-only consumer workflow may retrieve and verify the baseline by tag and exact digest and perform non-executing Docker pulls. Restart persistence and exact-digest rollback must not be classified PASS before that separate live proof. Deployment examples, the verification lifecycle, and the pinned binary/container details are in [`zot/README.md`](zot/README.md).
+
 ## Recommendation
 
 Task 008A and Task 008B Phases 1, 2, 3, 4A, and 4B passed. Phase 5 now passes rollback, registry-only architecture, and post-CI-artifact-expiry retention validation. The documented Generic-republish provider caveat remains. Cloudsmith remains a **VALIDATED CANDIDATE**, **NOT ACCEPTED DIRECTION**. Task 008 is not complete. Consolidate and reconcile the Cloudsmith and Task 008C Forgejo evidence before making the final package-registry/trusted-publishing architecture decision or writing ADR 0007.
