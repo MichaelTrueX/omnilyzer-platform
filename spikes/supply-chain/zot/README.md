@@ -23,7 +23,7 @@ The retained baseline is:
 
 The publisher completed at approximately 22:50:43 UTC. systemd stopped and successfully restarted `zot.service` at 22:51:39 UTC. Consumer run `33815051427`, from commit `3284aa442310c172149efe76406fa9fa3a1f5630`, started at 22:52:16 UTC and independently authenticated with its read-only GitHub OIDC identity. It verified the retained tag, manifest, config, and layer and passed Docker pulls by both tag and exact digest. Restart persistence, independent read-only retrieval, and exact-digest rollback readiness therefore pass for the tested restart with `gc=false`. This is not a claim of indefinite retention.
 
-Before a future deployment, create the `zot` system account and `/etc/zot`, `/var/lib/zot`, and `/var/log/zot` with minimal ownership, install the reviewed config and unit, validate with `zot verify /etc/zot/config.json`, and install TLS/Nginx separately. Do not place secrets in this configuration.
+For deployment or redeployment, create the `zot` system account and `/etc/zot`, `/var/lib/zot`, and `/var/log/zot` with minimal ownership, install the reviewed config and unit, validate with `zot verify /etc/zot/config.json`, and install TLS/Nginx separately. Do not place secrets in this configuration.
 
 ## Live validation lifecycle
 

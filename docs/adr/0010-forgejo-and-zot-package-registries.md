@@ -1,6 +1,6 @@
 # ADR 0010: Use Forgejo and zot as the Package Registry Architecture
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-04
 
 ## Context
@@ -46,7 +46,7 @@ Other registries may also satisfy the requirements, but none is selected without
 
 ## Decision
 
-Omnilyzer selects this open-source split registry architecture, subject to acceptance of this Proposed ADR:
+Omnilyzer selects this open-source split registry architecture:
 
 ```text
 GitHub Actions
