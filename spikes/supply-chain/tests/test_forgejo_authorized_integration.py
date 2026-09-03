@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 import re
 from types import SimpleNamespace
+import tempfile
 import unittest
 
 
@@ -26,6 +27,7 @@ CONSUME = (
     REPOSITORY_ROOT / ".github/workflows/task008-consume.yml"
 ).read_text(encoding="utf-8")
 NPM_PROBE_PATH = REPOSITORY_ROOT / "spikes/supply-chain/scripts/forgejo_npm_probe.py"
+OCI_PROBE_PATH = REPOSITORY_ROOT / "spikes/supply-chain/scripts/forgejo_oci_probe.py"
 
 
 def job(workflow: str, name: str) -> str:
@@ -102,9 +104,9 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         """Verify runner OIDC credentials stay scoped, masked, and ephemeral."""
 
         combined = PUBLISH + CONSUME
-        self.assertEqual(combined.count("ACTIONS_ID_TOKEN_REQUEST_URL"), 4)
-        self.assertEqual(combined.count("ACTIONS_ID_TOKEN_REQUEST_TOKEN"), 4)
-        self.assertEqual(combined.count('echo "::add-mask::$jwt"'), 4)
+        self.assertEqual(combined.count("ACTIONS_ID_TOKEN_REQUEST_URL"), 5)
+        self.assertEqual(combined.count("ACTIONS_ID_TOKEN_REQUEST_TOKEN"), 5)
+        self.assertEqual(combined.count('echo "::add-mask::$jwt"'), 5)
 
         for workflow, name in (
             (PUBLISH, "publisher-permission-probe"),
@@ -160,6 +162,274 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         self.assertIn("mode=npm-permission", gate)
         self.assertIn("mode=pypi-permission", gate)
         self.assertIn("mode=permission", gate)
+
+    def test_oci_trigger_and_gate_are_exact_single_modify_only(self) -> None:
+        """Activate OCI authority only for one modified OCI trigger."""
+
+        trigger = "spikes/supply-chain/control/oci-permissions.trigger"
+        header = PUBLISH.split("permissions: {}", 1)[0]
+        gate = job(PUBLISH, "gate")
+        self.assertEqual(header.count(f"- {trigger}"), 1)
+        self.assertIn('"${#changed_paths[@]}" -eq 1', gate)
+        self.assertIn("--no-renames", gate)
+        self.assertIn(f'"{trigger}"', gate)
+        self.assertIn(f"$'M\\t{trigger}'", gate)
+        self.assertNotIn(f"$'A\\t{trigger}'", gate)
+        self.assertIn("mode=oci-permission", gate)
+
+        def selects(paths: list[str], status: str) -> bool:
+            return len(paths) == 1 and paths[0] == trigger and status == f"M\t{trigger}"
+
+        cases = (
+            ("addition", [trigger], f"A\t{trigger}"),
+            ("deletion", [trigger], f"D\t{trigger}"),
+            ("rename", [trigger, "renamed.trigger"], f"D\t{trigger}"),
+            ("mixed", [trigger, "README.md"], f"M\t{trigger}"),
+            ("unrelated", ["README.md"], "M\tREADME.md"),
+        )
+        self.assertTrue(selects([trigger], f"M\t{trigger}"))
+        for name, paths, status in cases:
+            with self.subTest(name=name):
+                self.assertFalse(selects(paths, status))
+
+    def test_oci_build_is_non_oidc_and_exports_deterministic_components(self) -> None:
+        """Build A and B without credentials or a container daemon."""
+
+        build = job(PUBLISH, "oci-probe-build")
+        probe = job(PUBLISH, "oci-permission-probe")
+        permissions = build.split("    permissions:\n", 1)[1].split(
+            "    runs-on:", 1
+        )[0]
+        self.assertEqual(permissions.strip(), "contents: read")
+        self.assertNotIn("id-token: write", build)
+        self.assertNotIn("ACTIONS_ID_TOKEN_REQUEST_", build)
+        self.assertNotIn("docker", build.lower())
+        self.assertIn("forgejo_oci_probe.py build", build)
+        self.assertIn('--source-commit "$GITHUB_SHA"', build)
+        self.assertIn('--run-id "$GITHUB_RUN_ID"', build)
+        self.assertIn('--run-attempt "$GITHUB_RUN_ATTEMPT"', build)
+        self.assertIn("task008c-oci-handoff", build)
+        self.assertIn("needs:\n      - gate\n      - oci-probe-build", probe)
+        self.assertIn("if: needs.gate.outputs.mode == 'oci-permission'", probe)
+
+    def test_oci_probe_verifies_handoff_before_receiving_oidc_authority(self) -> None:
+        """Keep image construction outside the privileged OCI probe job."""
+
+        probe = job(PUBLISH, "oci-permission-probe")
+        permissions = probe.split("    permissions:\n", 1)[1].split(
+            "    runs-on:", 1
+        )[0]
+        self.assertEqual(
+            permissions.strip().splitlines(),
+            ["contents: read", "      id-token: write"],
+        )
+        verification = probe.index("Verify OCI handoff before OIDC authentication")
+        authentication = probe.index("ACTIONS_ID_TOKEN_REQUEST_URL")
+        self.assertLess(verification, authentication)
+        self.assertIn("forgejo_oci_probe.py validate", probe)
+        self.assertIn('echo "::add-mask::$jwt"', probe)
+        self.assertIn("unset token_response", probe)
+        self.assertIn("unset jwt", probe)
+        self.assertNotIn("secrets.", probe)
+        self.assertNotRegex(probe, r"https?://[^\s\"']*\$jwt")
+
+    def test_oci_handoff_is_deterministic_and_content_addressed(self) -> None:
+        """Construct exact valid A/B OCI components with one identity."""
+
+        spec = importlib.util.spec_from_file_location("task008c_oci_probe", OCI_PROBE_PATH)
+        if spec is None or spec.loader is None:
+            raise AssertionError("unable to load Task 008C OCI probe")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as root:
+            first = Path(root) / "first"
+            second = Path(root) / "second"
+            source = "a" * 40
+            one = module.build_handoff(first, source, "123", "1")
+            two = module.build_handoff(second, source, "123", "1")
+            checked = module.validate_handoff(first, source, "123", "1")
+            self.assertEqual(one, two)
+            self.assertEqual(checked["repository"], module.REPOSITORY)
+            self.assertEqual(checked["tag"], checked["version"])
+            self.assertEqual(checked["baseline"]["marker"], "baseline")
+            self.assertEqual(checked["replacement"]["marker"], "replacement")
+            self.assertNotEqual(
+                checked["baseline"]["manifest_digest"],
+                checked["replacement"]["manifest_digest"],
+            )
+            for name in ("baseline", "replacement"):
+                manifest = json.loads(checked[name]["bytes"]["manifest"])
+                self.assertEqual(
+                    manifest["config"]["digest"], checked[name]["config_digest"]
+                )
+                self.assertEqual(
+                    manifest["layers"][0]["digest"], checked[name]["layer_digest"]
+                )
+
+    def test_oci_core_auth_is_direct_bearer_and_upload_locations_are_confined(self) -> None:
+        """Use the JWT only as a same-origin Authorization Bearer value."""
+
+        script = OCI_PROBE_PATH.read_text(encoding="utf-8")
+        self.assertIn('{"Authorization": f"Bearer {self.token}"}', script)
+        self.assertNotIn("Basic ", script)
+        self.assertNotIn("docker login", script)
+        self.assertNotIn("/api/v1/user", script)
+        self.assertNotIn("PAT", script)
+        self.assertIn("NoRedirect", script)
+        self.assertIn("unsafe OCI blob upload Location", script)
+        self.assertNotRegex(script, r"https?://[^\s\"']*\{self\.token\}")
+
+        spec = importlib.util.spec_from_file_location("task008c_oci_probe", OCI_PROBE_PATH)
+        if spec is None or spec.loader is None:
+            raise AssertionError("unable to load Task 008C OCI probe")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        probe = object.__new__(module.Probe)
+        probe.base_url = "https://registry-dev.omnilyzer.ai"
+        probe.origin = ("https", "registry-dev.omnilyzer.ai", 443)
+        probe.registry_path = "/v2/omnilyzer/task008c-supply-chain-spike"
+        probe.token = "test-secret-jwt"
+
+        class Response:
+            status = 200
+            headers: dict[str, str] = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self) -> bytes:
+                return b""
+
+        class Opener:
+            request = None
+
+            def open(self, request, timeout):
+                self.request = request
+                return Response()
+
+        probe.opener = Opener()
+        probe.request("GET", "/v2/")
+        request = probe.opener.request
+        self.assertEqual(request.get_header("Authorization"), "Bearer test-secret-jwt")
+        self.assertNotIn("test-secret-jwt", request.full_url)
+
+        blob_digest = "sha256:" + "a" * 64
+        safe = probe.upload_url(
+            "/v2/omnilyzer/task008c-supply-chain-spike/blobs/uploads/id?_state=x",
+            blob_digest,
+        )
+        self.assertIn("digest=sha256%3A", safe)
+        for unsafe in (
+            "https://attacker.example/v2/omnilyzer/task008c-supply-chain-spike/blobs/uploads/id",
+            "/v2/omnilyzer/task008c-supply-chain-spike/blobs/uploads/%2e%2e/manifests/x",
+            "https://user:password@registry-dev.omnilyzer.ai/v2/omnilyzer/task008c-supply-chain-spike/blobs/uploads/id",
+        ):
+            with self.subTest(unsafe=unsafe):
+                with self.assertRaisesRegex(RuntimeError, "unsafe OCI blob upload Location"):
+                    probe.upload_url(unsafe, blob_digest)
+
+    def test_oci_summary_has_independent_security_classifications(self) -> None:
+        """Keep tag, digest, DELETE, and rollback outcomes distinct."""
+
+        script = OCI_PROBE_PATH.read_text(encoding="utf-8")
+        for row in (
+            "GitHub OIDC JWT acquisition",
+            "OCI Bearer authentication",
+            "baseline manifest integrity",
+            "same-tag replacement HTTP result",
+            "tag digest before replacement",
+            "tag digest after replacement",
+            "OCI tag immutability",
+            "original digest integrity",
+            "DELETE tag",
+            "DELETE manifest digest",
+            "DELETE blob",
+            "Public DELETE boundary",
+            "post-DELETE manifest integrity",
+            "exact-digest rollback after DELETE",
+            "Standard Docker/OCI client + OIDC JWT",
+            "OCI digest append-only / rollback",
+            "Exact-digest rollback",
+        ):
+            self.assertIn(f'"{row}"', script)
+
+    def test_oci_registry_deletes_require_exact_http_403(self) -> None:
+        """Distinguish explicit denial from success and inconclusive statuses."""
+
+        spec = importlib.util.spec_from_file_location("task008c_oci_probe", OCI_PROBE_PATH)
+        if spec is None or spec.loader is None:
+            raise AssertionError("unable to load Task 008C OCI probe")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        probe = object.__new__(module.Probe)
+
+        probe.rows = {"DELETE manifest digest": "NOT RUN"}
+        probe.failures = []
+        for status, expected in (
+            (403, "PASS"), (202, "SECURITY FAILURE"), (405, "INCONCLUSIVE")
+        ):
+            probe.request = lambda *args, observed=status, **kwargs: (observed, b"", {})
+            probe.delete("DELETE manifest digest", "/v2/example/manifests/value")
+            with self.subTest(status=status):
+                self.assertTrue(probe.rows["DELETE manifest digest"].startswith(expected))
+
+    def test_oci_successful_tag_movement_continues_through_digest_survival(self) -> None:
+        """Exercise the expected mutable-tag path through the final PASS result."""
+
+        spec = importlib.util.spec_from_file_location("task008c_oci_probe", OCI_PROBE_PATH)
+        if spec is None or spec.loader is None:
+            raise AssertionError("unable to load Task 008C OCI probe")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        probe = object.__new__(module.Probe)
+        digest_a, digest_b = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+        probe.repository = "omnilyzer/task008c-supply-chain-spike"
+        probe.registry_path = f"/v2/{probe.repository}"
+        probe.tag = "0.0.1231"
+        probe.record = {
+            "version": probe.tag,
+            "baseline": {
+                "manifest_digest": digest_a, "config_digest": "sha256:" + "c" * 64,
+                "layer_digest": "sha256:" + "d" * 64,
+                "bytes": {"manifest": b"a", "config": b"c", "layer": b"d"},
+            },
+            "replacement": {
+                "manifest_digest": digest_b, "config_digest": "sha256:" + "e" * 64,
+                "layer_digest": "sha256:" + "f" * 64,
+                "bytes": {"manifest": b"b", "config": b"e", "layer": b"f"},
+            },
+        }
+        probe.failures = []
+        probe.rows = probe.initial_rows()
+        observed: list[str] = []
+        resolutions = iter(
+            ((digest_a, b"a"), (digest_b, b"b"), (digest_b, b"b"))
+        )
+        probe.request = lambda *args, **kwargs: (200, b"", {})
+        probe.ensure_blob = lambda *args: observed.append("blob-upload")
+        pushes = iter(((201, {"Docker-Content-Digest": digest_a}),
+                       (201, {"Docker-Content-Digest": digest_b})))
+        probe.put_manifest = lambda *args: next(pushes)
+        probe.get_manifest = lambda *args: next(resolutions)
+        probe.verify_variant = lambda reference, name: observed.append(f"verify:{reference}")
+        def deny(row: str, path: str) -> None:
+            probe.rows[row] = "PASS (HTTP 403)"
+            observed.append(row)
+        probe.delete = deny
+
+        probe.run()
+
+        self.assertTrue(probe.rows["OCI tag immutability"].startswith("FAIL"))
+        self.assertEqual(probe.rows["OCI digest append-only / rollback"], "PASS")
+        self.assertEqual(probe.rows["Exact-digest rollback"], "PASS")
+        self.assertEqual(observed.count(f"verify:{digest_a}"), 3)
+        self.assertEqual(
+            [item for item in observed if item.startswith("DELETE")],
+            ["DELETE manifest digest", "DELETE tag", "DELETE blob"],
+        )
 
     def test_npm_build_is_non_oidc_and_constructs_different_exact_identities(self) -> None:
         """Build two same-identity tarballs with deliberately different bytes."""

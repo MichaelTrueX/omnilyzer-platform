@@ -164,7 +164,13 @@ class WorkflowPolicyTests(unittest.TestCase):
             (SPIKE_ROOT / "control/npm-permissions.trigger").read_text(
                 encoding="utf-8"
             ),
-            "task008c-forgejo-npm-permission-probe-v3\n",
+            "task008c-forgejo-npm-permission-probe-v4\n",
+        )
+        self.assertEqual(
+            (SPIKE_ROOT / "control/oci-permissions.trigger").read_text(
+                encoding="utf-8"
+            ),
+            "task008c-forgejo-oci-permission-probe-v1\n",
         )
         self.assertEqual(
             (SPIKE_ROOT / "control/tamper-negative.trigger").read_text(
@@ -233,6 +239,11 @@ class WorkflowPolicyTests(unittest.TestCase):
                 npm_trigger = "spikes/supply-chain/control/npm-permissions.trigger"
                 self.assertEqual(
                     trigger.count(f"- {npm_trigger}"),
+                    1 if workflow is self.publish else 0,
+                )
+                oci_trigger = "spikes/supply-chain/control/oci-permissions.trigger"
+                self.assertEqual(
+                    trigger.count(f"- {oci_trigger}"),
                     1 if workflow is self.publish else 0,
                 )
                 tamper_trigger = "spikes/supply-chain/control/tamper-negative.trigger"
@@ -331,6 +342,13 @@ class WorkflowPolicyTests(unittest.TestCase):
                     self.assertIn(f"$'M\\t{npm_trigger}'", gate)
                     self.assertNotIn(f"$'A\\t{npm_trigger}'", gate)
                     self.assertIn("mode=npm-permission", gate)
+                    oci_trigger = (
+                        "spikes/supply-chain/control/oci-permissions.trigger"
+                    )
+                    self.assertIn(f'"{oci_trigger}"', gate)
+                    self.assertIn(f"$'M\\t{oci_trigger}'", gate)
+                    self.assertNotIn(f"$'A\\t{oci_trigger}'", gate)
+                    self.assertIn("mode=oci-permission", gate)
 
         combined = self.publish + self.consume
         for unsafe in (
@@ -1225,14 +1243,20 @@ class WorkflowPolicyTests(unittest.TestCase):
 
     def test_all_oci_image_construction_is_confined_to_non_oidc_build_job(self) -> None:
         build = self.job(self.publish, "build")
+        oci_build = self.job(self.publish, "oci-probe-build")
         publish = self.job(self.publish, "publish")
         probe = self.job(self.publish, "publisher-permission-probe")
+        oci_probe = self.job(self.publish, "oci-permission-probe")
         image_build_pattern = r"(?m)^\s*(?:docker|docker buildx|buildah|podman) build(?:\s|$)"
         self.assertEqual(len(re.findall(image_build_pattern, build)), 1)
+        self.assertEqual(len(re.findall(image_build_pattern, oci_build)), 0)
         self.assertEqual(len(re.findall(image_build_pattern, self.publish)), 1)
+        self.assertIn("forgejo_oci_probe.py build", oci_build)
         self.assertNotRegex(publish, image_build_pattern)
         self.assertNotRegex(probe, image_build_pattern)
+        self.assertNotRegex(oci_probe, image_build_pattern)
         self.assertNotIn("id-token: write", build)
+        self.assertNotIn("id-token: write", oci_build)
 
     def test_oci_digest_extraction_is_json_safe(self) -> None:
         self.assertIn("--format '{{json .Manifest.Digest}}'", self.publish)
@@ -1431,7 +1455,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                 for line in workflow.splitlines()
                 if line.strip().startswith("uses: ")
             ]
-            expected_count = 25 if workflow is self.publish else 19
+            expected_count = 30 if workflow is self.publish else 19
             self.assertEqual(len(uses_lines), expected_count)
             for use in uses_lines:
                 action, revision = use.split("@", 1)
