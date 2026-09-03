@@ -185,7 +185,7 @@ The four live negative cases passed as follows:
 
 The fully verified reference release is `0.8.5`. Publisher run `33300665806`, from commit `431c984d3c3e81f358c0653d8d8d4041a31883e3`, and consumer run `33300905736`, from commit `d608ec5ebd5b85b9f17ef340b648538c14a7a362`, validated immutable OCI digest `sha256:b01299d6afe9f635a567347cc7617876ab90c024e1bfe644d71097eadcc184d1`.
 
-**TASK 008B PHASE 5 — ROLLBACK PASS / FINAL RETENTION PROOF PENDING.** GitHub Actions run `33301708289`, triggered by commit `5a19ab456891e2a15aa0694bb2f74d8674dc2b09`, completed the first live registry-only rollback validation. The explicit state remained **CURRENT = `0.8.5`** and **ROLLBACK TARGET = `0.8.4`**. The historical OCI image resolved to the reviewed immutable digest `sha256:44cdf2855105c824fcad999723ed7cc4f4a0ba276c8b953882413a1c61004967`.
+**TASK 008B PHASE 5 — PASS.** GitHub Actions run `33301708289`, triggered by commit `5a19ab456891e2a15aa0694bb2f74d8674dc2b09`, completed the first live registry-only rollback validation. The explicit state remained **CURRENT = `0.8.5`** and **ROLLBACK TARGET = `0.8.4`**. The historical OCI image resolved to the reviewed immutable digest `sha256:44cdf2855105c824fcad999723ed7cc4f4a0ba276c8b953882413a1c61004967`.
 
 The live job isolation passed: `gate` and `rollback-retention-probe` passed, while normal `consume`, `execute-verified`, `tamper-negative-probe`, and `consumer-permission-probe` were skipped. The probe authenticated only as the short-lived, read-only Cloudsmith OIDC identity `gha-consumer`. It retrieved the exact Python `0.8.4` wheel and npm `0.8.4` tarball from Cloudsmith, pulled OCI `0.8.4` without running it, and resolved it to the exact reviewed digest. It retrieved the exact versioned `0.8.4` evidence archive from Cloudsmith Generic and its external Sigstore bundle, verified the archive signature before extraction, safely extracted exactly seventeen regular evidence files, and verified the evidence-manifest signature.
 
@@ -193,15 +193,29 @@ The probe validated the artifact hashes; all three hash-bound CycloneDX JSON 1.6
 
 No historical GitHub Actions artifact was retrieved, and the rollback probe did not use `actions/download-artifact`. No rebuild, republish, floating version selection, verified-execution handoff, package installation, or rollback-artifact execution occurred.
 
-GitHub Actions release handoffs remain intentionally transient same-run trust-boundary transport with one-day retention; they are not the durable release archive. This first registry-only rollback verification passed while historical one-day GitHub Actions artifacts may still exist. Because the probe has no dependency on those artifacts, the **ROLLBACK** and **REGISTRY-ONLY ARCHITECTURE** classifications are **PASS**. **POST-CI-ARTIFACT-EXPIRY RETENTION VALIDATION remains PENDING**: a second live execution after the relevant one-day artifacts have actually expired is still required for the strongest empirical retention evidence.
+GitHub Actions release handoffs remain intentionally transient same-run trust-boundary transport with one-day retention; they are not the durable release archive.
+
+**POST-CI-ARTIFACT-EXPIRY RETENTION VALIDATION — PASS.** GitHub Actions run `33714831395`, from commit `d1d77cb565ffcfd4befe898adaaca70d1834ef6e`, repeated the registry-only rollback validation after the historical artifacts from run `33301708289` had expired. GitHub reported `total_count = 0` for that historical run's Actions artifacts before the post-expiry validation. The `0.8.4` rollback release and its signed evidence were therefore retrieved exclusively from Cloudsmith rather than from historical GitHub Actions artifact transport.
+
+The post-expiry probe authenticated as the short-lived, read-only Cloudsmith identity `gha-consumer`; downloaded the exact Python `0.8.4` wheel and npm `0.8.4` tarball; pulled exact OCI `0.8.4`; and resolved it to the expected immutable digest `sha256:44cdf2855105c824fcad999723ed7cc4f4a0ba276c8b953882413a1c61004967`. It retrieved the exact versioned evidence archive and external Sigstore bundle from Cloudsmith Generic, verified the archive signature before extraction, safely extracted exactly seventeen approved evidence files, and verified the evidence-manifest signature.
+
+It then verified the wheel and npm hashes; all three CycloneDX JSON 1.6 SBOMs; Grype evidence and database metadata; vulnerability-policy SHA-256 `f36c806af62c1920890b6c33ae5dc03aa738af860e73a08b6fea3543c03d6530`; the PASS decision with Critical/High blocking; SLSA v1 provenance and the exact retrieved subjects; publisher workflow/source binding; all six blob signatures; the immutable OCI digest signature; and transparency-log evidence. It performed no package execution, and Docker logout succeeded.
+
+The final Phase 5 classifications are:
+
+- **ROLLBACK — PASS**.
+- **REGISTRY-ONLY ARCHITECTURE — PASS**.
+- **POST-CI-ARTIFACT-EXPIRY RETENTION — PASS**.
+
+This proves retention across the tested multi-day interval and independence from expired GitHub Actions handoff artifacts. It does not claim indefinite retention.
 
 Remaining Task 008 work:
 
-- post-one-day-artifact-expiry retention rerun;
 - provider operations, cost, and disaster-recovery analysis;
-- the final Cloudsmith architecture decision;
+- reconcile the Cloudsmith evidence with the Task 008C Forgejo evidence currently maintained on `spike/008c-forgejo-registry`;
+- the final registry and trusted-publishing architecture decision;
 - ADR 0007 only after all evidence is reviewed.
 
 ## Recommendation
 
-Task 008A and Task 008B Phases 1, 2, 3, 4A, and 4B passed; the Phase 5 rollback and registry-only architecture checks passed, with final post-expiry retention proof pending. The documented Generic-republish provider caveat remains. Cloudsmith remains a **VALIDATED CANDIDATE**, **NOT ACCEPTED DIRECTION**. Task 008 is not complete. Do not write ADR 0007 or make the final package-registry/trusted-publishing architecture decision until all Task 008 evidence is reviewed.
+Task 008A and Task 008B Phases 1, 2, 3, 4A, and 4B passed. Phase 5 now passes rollback, registry-only architecture, and post-CI-artifact-expiry retention validation. The documented Generic-republish provider caveat remains. Cloudsmith remains a **VALIDATED CANDIDATE**, **NOT ACCEPTED DIRECTION**. Task 008 is not complete. Consolidate and reconcile the Cloudsmith and Task 008C Forgejo evidence before making the final package-registry/trusted-publishing architecture decision or writing ADR 0007.
