@@ -10,6 +10,7 @@ Related:
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 from pathlib import Path
@@ -338,6 +339,11 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         for row in (
             "GitHub OIDC JWT acquisition",
             "OCI Bearer authentication",
+            "baseline manifest PUT status",
+            "baseline tag HEAD status",
+            "baseline digest HEAD status",
+            "tags/list status",
+            "exact tag present in tags/list",
             "baseline manifest integrity",
             "same-tag replacement HTTP result",
             "tag digest before replacement",
@@ -355,6 +361,129 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
             "Exact-digest rollback",
         ):
             self.assertIn(f'"{row}"', script)
+
+    def test_oci_manifest_get_errors_are_contextual_bounded_and_redacted(self) -> None:
+        """Identify the exact failed reference without exposing credentials."""
+
+        spec = importlib.util.spec_from_file_location("task008c_oci_probe", OCI_PROBE_PATH)
+        if spec is None or spec.loader is None:
+            raise AssertionError("unable to load Task 008C OCI probe")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        probe = object.__new__(module.Probe)
+        probe.registry_path = "/v2/omnilyzer/task008c-supply-chain-spike"
+        probe.token = "secret-test-jwt"
+        reference = "sha256:" + "a" * 64
+        response = (
+            b'{"errors":[{"code":"MANIFEST_UNKNOWN","detail":"'
+            b"Authorization: Bearer secret-test-jwt "
+            + b"x" * 800
+            + b'"}]}'
+        )
+        probe.request = lambda *args, **kwargs: (404, response, {})
+        with self.assertRaises(RuntimeError) as raised:
+            probe.get_manifest(reference, "baseline digest A")
+        message = str(raised.exception)
+        self.assertIn(
+            f"baseline digest A: OCI manifest GET {reference} returned HTTP 404",
+            message,
+        )
+        self.assertNotIn("secret-test-jwt", message)
+        self.assertNotIn("Authorization: Bearer", message)
+        detail = message.split("registry response: ", 1)[1]
+        self.assertLessEqual(len(detail), module.ERROR_BODY_LIMIT + 1)
+
+    def test_every_oci_manifest_get_has_context_and_diagnostics_precede_gets(self) -> None:
+        """Keep HEAD and tag-list evidence while retaining all mandatory GETs."""
+
+        script = OCI_PROBE_PATH.read_text(encoding="utf-8")
+        tree = ast.parse(script)
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get_manifest"
+        ]
+        self.assertGreaterEqual(len(calls), 3)
+        self.assertTrue(all(len(call.args) == 2 for call in calls))
+        run = script.split("    def run(self)", 1)[1].split(
+            "\n    def write_summary", 1
+        )[0]
+        baseline_put = run.index("self.put_manifest(self.tag")
+        tag_head = run.index('self.head_manifest(\n            self.tag, "baseline tag"')
+        digest_head = run.index('a["manifest_digest"], "baseline digest A"')
+        tags_list = run.index("self.list_tags()")
+        tag_get = run.index('self.tag, "baseline tag after PUT"')
+        digest_get = run.index(
+            'a["manifest_digest"], "baseline", "baseline digest A"'
+        )
+        self.assertLess(baseline_put, tag_head)
+        self.assertLess(tag_head, tag_get)
+        self.assertLess(digest_head, digest_get)
+        self.assertLess(tags_list, tag_get)
+        self.assertIn('self.tag in tags', script)
+        self.assertIn("status != 201", run)
+        self.assertIn('"baseline manifest PUT status"', script)
+        self.assertIn('"same-tag replacement HTTP result"', script)
+
+    def test_oci_tags_list_validates_repository_and_exact_tag_presence(self) -> None:
+        """Record whether Forgejo made the exact newly published tag visible."""
+
+        spec = importlib.util.spec_from_file_location("task008c_oci_probe", OCI_PROBE_PATH)
+        if spec is None or spec.loader is None:
+            raise AssertionError("unable to load Task 008C OCI probe")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        probe = object.__new__(module.Probe)
+        probe.repository = "omnilyzer/task008c-supply-chain-spike"
+        probe.registry_path = f"/v2/{probe.repository}"
+        probe.tag = "0.0.1231"
+        probe.rows = {
+            "tags/list status": "NOT RUN",
+            "tags/list repository": "NOT RUN",
+            "exact tag present in tags/list": "NOT RUN",
+        }
+        probe.failures = []
+        probe.phase = lambda message: None
+        payload = json.dumps({"name": probe.repository, "tags": [probe.tag]}).encode()
+        probe.request = lambda *args, **kwargs: (200, payload, {})
+
+        self.assertEqual(probe.list_tags(), [probe.tag])
+        self.assertEqual(probe.rows["tags/list status"], "HTTP 200")
+        self.assertEqual(probe.rows["tags/list repository"], probe.repository)
+        self.assertEqual(probe.rows["exact tag present in tags/list"], "PASS")
+        self.assertEqual(probe.failures, [])
+
+        payload = json.dumps({"name": probe.repository, "tags": ["other"]}).encode()
+        self.assertEqual(probe.list_tags(), ["other"])
+        self.assertEqual(probe.rows["exact tag present in tags/list"], "FAIL")
+        self.assertIn("baseline exact tag was absent from tags/list", probe.failures)
+
+    def test_oci_phase_markers_are_non_secret_and_cover_live_boundaries(self) -> None:
+        """Make live progress visible without including the JWT."""
+
+        script = OCI_PROBE_PATH.read_text(encoding="utf-8")
+        run = script.split("    def run(self)", 1)[1].split(
+            "\n    def write_summary", 1
+        )[0]
+        self.assertNotIn("self.token", run)
+        self.assertNotIn("Authorization", run)
+        for marker in (
+            "registry API check passed",
+            "registry authentication passed",
+            "baseline config blob available",
+            "baseline layer blob available",
+            "publishing baseline manifest A",
+            "resolving baseline tag",
+            "resolving baseline digest A",
+            "uploading replacement B",
+            "replacement PUT",
+            "resolving tag after replacement",
+            "verifying original digest A",
+            "DELETE probes",
+            "post-DELETE verification",
+        ):
+            self.assertIn(marker, run)
 
     def test_oci_registry_deletes_require_exact_http_403(self) -> None:
         """Distinguish explicit denial from success and inconclusive statuses."""
@@ -410,11 +539,21 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         )
         probe.request = lambda *args, **kwargs: (200, b"", {})
         probe.ensure_blob = lambda *args: observed.append("blob-upload")
+        probe.phase = lambda message: observed.append(f"phase:{message}")
+        probe.head_manifest = lambda reference, context: (200, digest_a)
+        def list_tags() -> list[str]:
+            probe.rows["tags/list status"] = "HTTP 200"
+            probe.rows["tags/list repository"] = probe.repository
+            probe.rows["exact tag present in tags/list"] = "PASS"
+            return [probe.tag]
+        probe.list_tags = list_tags
         pushes = iter(((201, {"Docker-Content-Digest": digest_a}),
                        (201, {"Docker-Content-Digest": digest_b})))
         probe.put_manifest = lambda *args: next(pushes)
         probe.get_manifest = lambda *args: next(resolutions)
-        probe.verify_variant = lambda reference, name: observed.append(f"verify:{reference}")
+        probe.verify_variant = lambda reference, name, context: observed.append(
+            f"verify:{reference}:{context}"
+        )
         def deny(row: str, path: str) -> None:
             probe.rows[row] = "PASS (HTTP 403)"
             observed.append(row)
@@ -425,7 +564,10 @@ class ForgejoAuthorizedIntegrationPolicyTests(unittest.TestCase):
         self.assertTrue(probe.rows["OCI tag immutability"].startswith("FAIL"))
         self.assertEqual(probe.rows["OCI digest append-only / rollback"], "PASS")
         self.assertEqual(probe.rows["Exact-digest rollback"], "PASS")
-        self.assertEqual(observed.count(f"verify:{digest_a}"), 3)
+        self.assertEqual(
+            len([item for item in observed if item.startswith(f"verify:{digest_a}:")]),
+            3,
+        )
         self.assertEqual(
             [item for item in observed if item.startswith("DELETE")],
             ["DELETE manifest digest", "DELETE tag", "DELETE blob"],

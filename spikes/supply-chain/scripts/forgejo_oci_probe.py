@@ -27,6 +27,7 @@ FILES = {
     "baseline.manifest.json", "replacement.config.json",
     "replacement.layer.tar.gz", "replacement.manifest.json",
 }
+ERROR_BODY_LIMIT = 512
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -247,6 +248,15 @@ class Probe:
             "GitHub OIDC JWT acquisition": "PASS",
             "OCI Bearer authentication": "INCONCLUSIVE",
             "baseline blob upload": "NOT RUN", "baseline manifest push": "NOT RUN",
+            "baseline manifest PUT status": "NOT RUN",
+            "baseline manifest PUT digest header": "NOT EXPOSED",
+            "baseline manifest expected digest A": self.record["baseline"]["manifest_digest"],
+            "baseline tag HEAD status": "NOT RUN",
+            "baseline tag HEAD digest": "NOT EXPOSED",
+            "baseline digest HEAD status": "NOT RUN",
+            "baseline digest HEAD digest": "NOT EXPOSED",
+            "tags/list status": "NOT RUN", "tags/list repository": "NOT RUN",
+            "exact tag present in tags/list": "NOT RUN",
             "baseline digest": self.record["baseline"]["manifest_digest"],
             "pull by tag": "NOT RUN", "pull by digest": "NOT RUN",
             "baseline manifest integrity": "NOT RUN", "baseline config integrity": "NOT RUN",
@@ -278,6 +288,32 @@ class Probe:
     def header(headers: dict[str, str], name: str) -> str | None:
         return next((v for k, v in headers.items() if k.lower() == name.lower()), None)
 
+    @staticmethod
+    def phase(message: str) -> None:
+        """Emit a short, non-secret progress marker for Actions diagnostics."""
+
+        print(f"OCI PHASE: {message}", flush=True)
+
+    def safe_error_body(self, body: bytes) -> str:
+        """Return bounded, single-line registry error detail with JWT redaction."""
+
+        text = body.decode("utf-8", errors="replace").replace(self.token, "[REDACTED]")
+        text = re.sub(
+            r"(?i)\bauthorization\s*:\s*bearer\s+\S+",
+            "[REDACTED AUTHORIZATION]",
+            text,
+        )
+        text = re.sub(r"(?i)\bbearer\s+\S+", "Bearer [REDACTED]", text)
+        text = " ".join(text.split())
+        if len(text) > ERROR_BODY_LIMIT:
+            text = f"{text[:ERROR_BODY_LIMIT]}…"
+        return text
+
+    def http_failure(self, prefix: str, status: int, body: bytes) -> RuntimeError:
+        detail = self.safe_error_body(body)
+        suffix = f"; registry response: {detail}" if detail else ""
+        return RuntimeError(f"{prefix} returned HTTP {status}{suffix}")
+
     def request(self, method: str, target: str, *, body: bytes | None = None,
                 content_type: str | None = None,
                 accept: str | None = None) -> tuple[int, bytes, dict[str, str]]:
@@ -296,7 +332,11 @@ class Probe:
             with self.opener.open(request, timeout=60) as response:
                 return response.status, response.read(), dict(response.headers.items())
         except HTTPError as error:
-            return error.code, error.read(), dict(error.headers.items())
+            return (
+                error.code,
+                error.read(ERROR_BODY_LIMIT + 1),
+                dict(error.headers.items()),
+            )
 
     def upload_url(self, location: str, blob_digest: str) -> str:
         resolved = urljoin(f"{self.base_url}/", location)
@@ -356,22 +396,63 @@ class Probe:
         )
         return status, headers
 
-    def get_manifest(self, reference: str) -> tuple[str, bytes]:
+    def head_manifest(self, reference: str, context: str) -> tuple[int, str | None]:
+        self.phase(f"checking {context} HEAD")
+        status, _, headers = self.request(
+            "HEAD", f"{self.registry_path}/manifests/{quote(reference, safe=':')}",
+            accept=MANIFEST_TYPE,
+        )
+        self.phase(f"{context} HEAD HTTP {status}")
+        return status, self.header(headers, "Docker-Content-Digest")
+
+    def get_manifest(self, reference: str, context: str) -> tuple[str, bytes]:
         status, body, headers = self.request(
             "GET", f"{self.registry_path}/manifests/{quote(reference, safe=':')}",
             accept=MANIFEST_TYPE,
         )
         if status != 200:
-            raise RuntimeError(f"OCI manifest GET returned HTTP {status}")
+            raise self.http_failure(
+                f"{context}: OCI manifest GET {reference}", status, body
+            )
         observed = digest(body)
         exposed = self.header(headers, "Docker-Content-Digest")
         if exposed and exposed != observed:
-            raise RuntimeError("OCI manifest digest header disagrees with bytes")
+            raise RuntimeError(
+                f"{context}: OCI manifest GET {reference} digest header disagrees with bytes"
+            )
         return observed, body
 
-    def verify_variant(self, reference: str, name: str) -> None:
+    def list_tags(self) -> list[str]:
+        self.phase("querying baseline tags/list")
+        status, body, _ = self.request("GET", f"{self.registry_path}/tags/list")
+        self.phase(f"baseline tags/list HTTP {status}")
+        self.rows["tags/list status"] = f"HTTP {status}"
+        if status != 200:
+            self.failures.append(str(self.http_failure("baseline tags/list GET", status, body)))
+            return []
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError as error:
+            self.failures.append("baseline tags/list response was malformed JSON")
+            return []
+        if not isinstance(payload, dict) or payload.get("name") != self.repository:
+            self.failures.append("baseline tags/list repository identity was unexpected")
+            return []
+        self.rows["tags/list repository"] = self.repository
+        tags = payload.get("tags")
+        if tags is None:
+            tags = []
+        if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
+            self.failures.append("baseline tags/list tags value was malformed")
+            return []
+        self.rows["exact tag present in tags/list"] = "PASS" if self.tag in tags else "FAIL"
+        if self.tag not in tags:
+            self.failures.append("baseline exact tag was absent from tags/list")
+        return tags
+
+    def verify_variant(self, reference: str, name: str, context: str) -> None:
         variant = self.record[name]
-        observed, body = self.get_manifest(reference)
+        observed, body = self.get_manifest(reference, context)
         if observed != variant["manifest_digest"] or body != variant["bytes"]["manifest"]:
             raise RuntimeError(f"OCI {name} manifest integrity mismatch")
         self.verify_blob(variant["config_digest"], variant["bytes"]["config"], name)
@@ -398,41 +479,81 @@ class Probe:
         status, _, _ = self.request("GET", "/v2/")
         if status != 200:
             raise RuntimeError(f"OCI registry API check returned HTTP {status}")
+        self.phase("registry API check passed")
         a, b = self.record["baseline"], self.record["replacement"]
-        for kind in ("config", "layer"):
-            self.ensure_blob(a[f"{kind}_digest"], a["bytes"][kind])
+        self.ensure_blob(a["config_digest"], a["bytes"]["config"])
+        self.phase("baseline config blob available")
+        self.ensure_blob(a["layer_digest"], a["bytes"]["layer"])
+        self.phase("baseline layer blob available")
         self.rows["baseline blob upload"] = "PASS"
+        self.phase("publishing baseline manifest A")
         status, headers = self.put_manifest(self.tag, a["bytes"]["manifest"])
-        if not 200 <= status < 300:
-            raise RuntimeError(f"baseline manifest PUT returned HTTP {status}")
-        if self.header(headers, "Docker-Content-Digest") not in (None, a["manifest_digest"]):
+        put_digest = self.header(headers, "Docker-Content-Digest")
+        self.rows["baseline manifest PUT status"] = f"HTTP {status}"
+        self.rows["baseline manifest PUT digest header"] = put_digest or "NOT EXPOSED"
+        self.phase(f"baseline manifest PUT HTTP {status}")
+        if status != 201:
+            raise RuntimeError(f"baseline manifest PUT returned HTTP {status}; expected 201")
+        if put_digest not in (None, a["manifest_digest"]):
             raise RuntimeError("baseline manifest PUT returned the wrong digest")
         self.rows["OCI Bearer authentication"] = (
             "PASS (manifest PUT with direct GitHub OIDC JWT)"
         )
-        self.rows["baseline manifest push"] = f"PASS (HTTP {status})"
-        before, _ = self.get_manifest(self.tag)
+        self.phase("registry authentication passed")
+        self.rows["baseline manifest push"] = "PASS (HTTP 201)"
+
+        tag_head_status, tag_head_digest = self.head_manifest(
+            self.tag, "baseline tag"
+        )
+        self.rows["baseline tag HEAD status"] = f"HTTP {tag_head_status}"
+        self.rows["baseline tag HEAD digest"] = tag_head_digest or "NOT EXPOSED"
+        if tag_head_status != 200 or tag_head_digest not in (None, a["manifest_digest"]):
+            self.failures.append(
+                f"baseline tag HEAD {self.tag} returned HTTP {tag_head_status} "
+                "or did not prove digest A"
+            )
+        digest_head_status, digest_head_digest = self.head_manifest(
+            a["manifest_digest"], "baseline digest A"
+        )
+        self.rows["baseline digest HEAD status"] = f"HTTP {digest_head_status}"
+        self.rows["baseline digest HEAD digest"] = digest_head_digest or "NOT EXPOSED"
+        if digest_head_status != 200 or digest_head_digest not in (None, a["manifest_digest"]):
+            self.failures.append(
+                f"baseline digest A HEAD {a['manifest_digest']} returned HTTP "
+                f"{digest_head_status} or did not prove digest A"
+            )
+        self.list_tags()
+
+        self.phase("resolving baseline tag")
+        before, _ = self.get_manifest(self.tag, "baseline tag after PUT")
         if before != a["manifest_digest"]:
             raise RuntimeError("baseline tag did not resolve to digest A")
         self.rows["tag digest before replacement"] = before
         self.rows["pull by tag"] = "PASS"
-        self.verify_variant(a["manifest_digest"], "baseline")
+        self.phase("resolving baseline digest A")
+        self.verify_variant(a["manifest_digest"], "baseline", "baseline digest A")
         for row in ("pull by digest", "baseline manifest integrity",
                     "baseline config integrity", "baseline layer integrity",
                     "baseline marker/version"):
             self.rows[row] = "PASS"
 
+        self.phase("uploading replacement B")
         for kind in ("config", "layer"):
             self.ensure_blob(b[f"{kind}_digest"], b["bytes"][kind])
+        self.phase("replacement PUT")
         replacement_status, headers = self.put_manifest(self.tag, b["bytes"]["manifest"])
         self.rows["same-tag replacement HTTP result"] = f"HTTP {replacement_status}"
-        if (200 <= replacement_status < 300
+        self.phase(f"replacement manifest PUT HTTP {replacement_status}")
+        if (replacement_status == 201
                 and self.header(headers, "Docker-Content-Digest") not in
                 (None, b["manifest_digest"])):
             self.failures.append("replacement PUT returned an incoherent digest")
-        after, after_body = self.get_manifest(self.tag)
+        self.phase("resolving tag after replacement")
+        after, after_body = self.get_manifest(
+            self.tag, "tag after replacement attempt"
+        )
         self.rows["tag digest after replacement"] = after
-        if (200 <= replacement_status < 300 and after == b["manifest_digest"]
+        if (replacement_status == 201 and after == b["manifest_digest"]
                 and after_body == b["bytes"]["manifest"]):
             self.rows["OCI tag immutability"] = "FAIL (same-tag replacement accepted)"
         elif (replacement_status in {400, 403, 405, 409}
@@ -444,11 +565,15 @@ class Probe:
             self.failures.append("same-tag replacement behavior was incoherent")
 
         # A mutable tag is an observation, not a reason to skip digest-retention evidence.
-        self.verify_variant(a["manifest_digest"], "baseline")
+        self.phase("verifying original digest A")
+        self.verify_variant(
+            a["manifest_digest"], "baseline", "digest A after replacement"
+        )
         for row in ("original digest survives tag operation", "original config survives",
                     "original layer survives", "original digest integrity",
                     "exact-digest rollback before DELETE"):
             self.rows[row] = "PASS"
+        self.phase("DELETE probes")
         self.delete("DELETE manifest digest",
                     f"{self.registry_path}/manifests/{quote(a['manifest_digest'], safe=':')}")
         self.delete("DELETE tag", f"{self.registry_path}/manifests/{quote(self.tag, safe='')}")
@@ -459,7 +584,10 @@ class Probe:
         if all(value == "PASS (HTTP 403)" for value in deletes):
             self.rows["Public DELETE boundary"] = "PASS"
 
-        post_tag, post_tag_body = self.get_manifest(self.tag)
+        self.phase("post-DELETE verification")
+        post_tag, post_tag_body = self.get_manifest(
+            self.tag, "tag after DELETE attempts"
+        )
         expected_tag = (
             b if self.rows["OCI tag immutability"].startswith("FAIL") else a
         )
@@ -469,7 +597,9 @@ class Probe:
         ):
             raise RuntimeError("post-DELETE OCI tag resolved unexpectedly")
         self.rows["post-DELETE tag resolution"] = "PASS"
-        self.verify_variant(a["manifest_digest"], "baseline")
+        self.verify_variant(
+            a["manifest_digest"], "baseline", "digest A after DELETE attempts"
+        )
         for row in ("post-DELETE manifest retrieval", "post-DELETE manifest integrity",
                     "post-DELETE config retrieval", "post-DELETE layer retrieval",
                     "post-DELETE blob integrity", "exact-digest rollback after DELETE"):
