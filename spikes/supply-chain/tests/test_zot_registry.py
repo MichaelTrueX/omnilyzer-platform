@@ -349,7 +349,7 @@ class ZotProbeTests(unittest.TestCase):
     def test_split_registry_decision_preserves_failed_and_cost_evidence(self) -> None:
         self.assertTrue(ADR.is_file())
         adr = ADR.read_text()
-        self.assertIn("- Status: Proposed", adr)
+        self.assertIn("- Status: Accepted", adr)
         self.assertIn("Forgejo behind protected Nginx ingress", adr)
         self.assertIn("Generic / PyPI / npm", adr)
         self.assertRegex(adr, r"(?s)zot.*OCI")
@@ -360,7 +360,7 @@ class ZotProbeTests(unittest.TestCase):
         self.assertIn("garbage collection remains disabled for the Task 008D evidence", adr)
         self.assertIn("not indefinite retention", adr)
 
-    def test_architecture_matrix_records_proposed_split_without_acceptance(self) -> None:
+    def test_architecture_matrix_records_accepted_split(self) -> None:
         decisions = TECHNOLOGY_DECISIONS.read_text()
         rows = [line for line in decisions.splitlines()
                 if line.startswith("| Package registry / trusted publishing |")]
@@ -368,9 +368,9 @@ class ZotProbeTests(unittest.TestCase):
         row = rows[0]
         self.assertIn("Forgejo + protected Nginx ingress for Generic, PyPI, and npm", row)
         self.assertIn("zot for OCI", row)
-        self.assertIn("ADR 0010, Proposed", row)
-        self.assertIn("| TO VALIDATE |", row)
-        self.assertNotIn("ACCEPTED DIRECTION", row)
+        self.assertIn("[ADR 0010]", row)
+        self.assertIn("| ACCEPTED DIRECTION |", row)
+        self.assertNotIn("ADR 0010, Proposed", row)
         self.assertNotIn("provider TBD", row)
         self.assertIn("Forgejo Generic, PyPI, and npm", row)
         self.assertIn("same-tag replacement was accepted", row)
@@ -383,11 +383,19 @@ class ZotProbeTests(unittest.TestCase):
         self.assertIn("Cloudsmith was technically validated", row)
         self.assertIn("recurring commercial cost is unacceptable", row)
         self.assertIn("does not prove indefinite retention", row)
-        self.assertIn("ADR 0010 review and acceptance", row)
+        self.assertNotIn("ADR 0010 review and acceptance", row)
+        self.assertIn("Production retention/lifecycle policy", row)
+        self.assertIn("zot storage capacity", row)
+        self.assertIn("backup, restore, and disaster recovery", row)
+        self.assertIn("monitoring and alerting", row)
+        self.assertIn("upgrade procedure", row)
+        self.assertIn("TLS/ingress operations", row)
+        self.assertIn("availability and failover requirements", row)
+        self.assertIn("production operational ownership", row)
 
     def test_adr_date_status_and_supply_chain_related_link(self) -> None:
         adr = ADR.read_text()
-        self.assertIn("- Status: Proposed", adr)
+        self.assertIn("- Status: Accepted", adr)
         self.assertIn("- Date: 2026-09-04", adr)
         related = (SPIKE / "README.md").read_text().split("-->", 1)[0]
         self.assertIn("docs/adr/0005-versioned-platform-packaging-and-distribution.md", related)
@@ -400,11 +408,26 @@ class ZotProbeTests(unittest.TestCase):
         self.assertTrue((ROOT / "docs/adr/0007-product-observability-contract.md").is_file())
         self.assertTrue((ROOT / "docs/adr/0008-prometheus-metrics-scraper-and-query.md").is_file())
         self.assertTrue((ROOT / "docs/adr/0009-grafana-operator-visualization.md").is_file())
+        self.assertIn(
+            "- Status: Accepted",
+            (ROOT / "docs/adr/0007-product-observability-contract.md").read_text(),
+        )
+        self.assertIn(
+            "- Status: Accepted",
+            (ROOT / "docs/adr/0008-prometheus-metrics-scraper-and-query.md").read_text(),
+        )
+        self.assertIn(
+            "- Status: Proposed",
+            (ROOT / "docs/adr/0009-grafana-operator-visualization.md").read_text(),
+        )
+        self.assertIn("- Status: Accepted", ADR.read_text())
         decisions = TECHNOLOGY_DECISIONS.read_text()
         self.assertIn("ADR 0007 accepts the product-side observability contract", decisions)
         self.assertIn("ADR 0008 accepts Prometheus", decisions)
         self.assertIn("ADR 0009 is Proposed", decisions)
-        self.assertIn("ADR 0010, Proposed", decisions)
+        self.assertIn("ADRs 0001 through 0008 and ADR 0010 are Accepted", decisions)
+        self.assertIn("ADR 0009 remains Proposed", decisions)
+        self.assertNotIn("ADR 0010, Proposed", decisions)
 
 
 if __name__ == "__main__":

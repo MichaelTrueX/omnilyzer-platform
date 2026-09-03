@@ -210,7 +210,7 @@ The final Phase 5 classifications are:
 
 This proves retention across the tested multi-day interval and independence from expired GitHub Actions handoff artifacts. It does not claim indefinite retention.
 
-Remaining implementation work is operational: define production retention and capacity policy, backups and restore testing, disaster recovery, monitoring, and the controlled rollout of the selected services. ADR 0010 records the split-registry decision as Proposed pending repository review.
+Remaining implementation work is operational: define production retention and capacity policy, backups and restore testing, disaster recovery, monitoring, and the controlled rollout of the selected services. ADR 0010 accepts the split-registry decision; those production operational concerns remain unresolved.
 
 ## Task 008D zot OCI immutable-release validation
 
@@ -261,4 +261,4 @@ This is a requirements-and-evidence-based selection, not a claim that zot is uni
 
 ## Recommendation
 
-Adopt the split Forgejo-plus-zot registry direction through ADR 0010. Preserve exact-digest OCI promotion and rollback from ADR 0006, use only short-lived GitHub Actions OIDC workload identity in CI, and do not introduce long-lived registry credentials. Cloudsmith's technical evidence remains valid despite its cost-based non-selection, and the failed Forgejo OCI evidence remains part of the decision record.
+ADR 0010 accepts the split Forgejo-plus-zot registry architecture. Preserve exact-digest OCI promotion and rollback from ADR 0006, use only short-lived GitHub Actions OIDC workload identity in CI, and do not introduce long-lived registry credentials. Cloudsmith's technical evidence remains valid despite its cost-based non-selection, and the failed Forgejo OCI evidence remains part of the decision record.
