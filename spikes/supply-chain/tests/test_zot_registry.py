@@ -18,6 +18,7 @@ PUBLISH = ROOT / ".github/workflows/task008-zot-publish.yml"
 CONSUME = ROOT / ".github/workflows/task008-zot-consume.yml"
 PUBLISH_ID = "MichaelTrueX/omnilyzer-platform/.github/workflows/task008-zot-publish.yml@refs/heads/spike/008d-zot-registry"
 CONSUME_ID = "MichaelTrueX/omnilyzer-platform/.github/workflows/task008-zot-consume.yml@refs/heads/spike/008d-zot-registry"
+ZERO_SHA = "0" * 40
 
 spec = importlib.util.spec_from_file_location("zot_oci_common", SCRIPTS / "zot_oci_common.py")
 if spec is None or spec.loader is None:
@@ -35,6 +36,19 @@ def job(text: str, name: str) -> str:
 
 def classified(statuses: list[tuple[str, str]], trigger: str) -> str:
     return "active" if statuses == [("M", trigger)] else "none"
+
+
+def gate_lifecycle(before: str, after: str, statuses: list[tuple[str, str]],
+                   trigger: str, commits_exist: bool = True) -> str:
+    if re.fullmatch(r"[0-9a-f]{40}", before) is None or re.fullmatch(
+        r"[0-9a-f]{40}", after
+    ) is None:
+        raise ValueError("malformed event SHA")
+    if before == ZERO_SHA:
+        return "none"
+    if not commits_exist:
+        raise ValueError("push range commit is unavailable")
+    return classified(statuses, trigger)
 
 
 class ZotConfigurationTests(unittest.TestCase):
@@ -59,6 +73,42 @@ class ZotConfigurationTests(unittest.TestCase):
             for changes in ([('A', trigger)], [('D', trigger)], [('R100', trigger)],
                             [('M', trigger), ('M', 'README.md')], [('M', 'README.md')]):
                 self.assertEqual(classified(changes, trigger), "none")
+
+    def test_initial_branch_creation_always_emits_none(self) -> None:
+        after = "a" * 40
+        cases = ((self.publish, "spikes/supply-chain/control/zot-publish.trigger"),
+                 (self.consume, "spikes/supply-chain/control/zot-consume.trigger"))
+        for text, trigger in cases:
+            with self.subTest(trigger=trigger):
+                self.assertEqual(gate_lifecycle(ZERO_SHA, after, [("M", trigger)], trigger), "none")
+                gate = job(text, "gate")
+                zero_check = gate.index('if [[ "$BEFORE_SHA" == 0000000000000000000000000000000000000000 ]]')
+                self.assertGreater(gate.index("printf 'mode=none\\n'", zero_check), zero_check)
+                self.assertGreater(gate.index("exit 0", zero_check), zero_check)
+                self.assertGreater(gate.index("git cat-file", zero_check), gate.index("exit 0", zero_check))
+
+    def test_initial_branch_creation_cannot_reach_privileged_jobs(self) -> None:
+        cases = ((self.publish, "publish", "publisher-probe"),
+                 (self.consume, "consume", "consumer-probe"))
+        for text, mode, probe in cases:
+            with self.subTest(mode=mode):
+                self.assertIn(f"needs.gate.outputs.mode == '{mode}'", job(text, "fixture-build"))
+                privileged = job(text, probe)
+                self.assertIn(f"needs.gate.outputs.mode == '{mode}'", privileged)
+                self.assertIn("id-token: write", privileged)
+                self.assertNotEqual("none", mode)
+
+    def test_malformed_or_missing_ordinary_push_range_fails_closed(self) -> None:
+        for trigger in ("spikes/supply-chain/control/zot-publish.trigger",
+                        "spikes/supply-chain/control/zot-consume.trigger"):
+            with self.subTest(trigger=trigger):
+                with self.assertRaises(ValueError):
+                    gate_lifecycle("not-a-sha", "a" * 40, [("M", trigger)], trigger)
+                with self.assertRaises(ValueError):
+                    gate_lifecycle("b" * 40, "not-a-sha", [("M", trigger)], trigger)
+                with self.assertRaises(ValueError):
+                    gate_lifecycle("b" * 40, "a" * 40, [("M", trigger)], trigger,
+                                   commits_exist=False)
 
     def test_workflow_gates_are_branch_and_range_bound(self) -> None:
         for text, trigger in ((self.publish, "zot-publish.trigger"),
