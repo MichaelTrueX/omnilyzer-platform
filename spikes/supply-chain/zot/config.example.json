@@ -11,7 +11,7 @@
     "externalUrl": "https://oci-dev.omnilyzer.ai",
     "auth": {
       "bearer": {
-        "realm": "zot",
+        "realm": "https://oci-dev.omnilyzer.ai/zot/auth/token",
         "service": "oci-dev.omnilyzer.ai",
         "oidc": [
           {

@@ -218,7 +218,7 @@ Remaining Task 008 work:
 
 ## Task 008D zot OCI immutable-release validation
 
-**Task 008D status: IMPLEMENTED / LIVE VALIDATION PENDING.** This branch contains a local-only, unexecuted validation design for zot `v2.1.20` as the OCI-only component of a possible split registry architecture. It does not select zot and does not alter the existing Cloudsmith or Forgejo evidence. The candidate architecture to evaluate separately is Forgejo behind its protected ingress for Generic, PyPI, and npm, with zot serving only OCI.
+**Task 008D status: IMPLEMENTED / LIVE VALIDATION IN PROGRESS.** This branch contains the validation design for zot `v2.1.20` as the OCI-only component of a possible split registry architecture. It does not select zot and does not alter the existing Cloudsmith or Forgejo evidence. The candidate architecture to evaluate separately is Forgejo behind its protected ingress for Generic, PyPI, and npm, with zot serving only OCI.
 
 The intended public endpoint is `https://oci-dev.omnilyzer.ai`, with TLS terminated by a transparent Nginx reverse proxy and zot bound only to `127.0.0.1:5000`. Nginx deliberately blocks neither PUT nor DELETE during Task 008D: zot's native authorization must prove immutability. GitHub OIDC workload tokens must use issuer `https://token.actions.githubusercontent.com`, audience `https://oci-dev.omnilyzer.ai`, the exact repository owner/repository claims, and one of the two exact branch-specific `workflow_ref` identities. No PAT, registry password, API key, or other static CI registry credential is designed into the test.
 
@@ -226,17 +226,19 @@ For `omnilyzer/task008d-supply-chain-spike`, the publisher receives exactly `rea
 
 The deterministic, non-executable OCI fixture contains distinct baseline A and replacement B manifests for the exact same version and tag. The publisher probe will calculate all digests before authentication, publish A, verify A by both tag and digest, attempt a same-tag PUT of B, require an exact HTTP 403 authorization denial, verify the tag and original digest remain A, require exact HTTP 403 denials for manifest DELETE by digest and tag, and reverify the manifest/config/layer bytes afterward. A 201 replacement is **FAIL**; an unrelated conflict or protocol error is **INCONCLUSIVE**, not PASS. The direct Distribution API Bearer probe is authoritative. Docker login with the short-lived OIDC token as the Basic password and a harmless non-empty username is a separate interoperability result; images are pulled but never executed.
 
+Publisher run `33814063124` passed the gate, fixture build, GitHub OIDC acquisition, and authoritative direct probe, establishing PASS for the native zot security semantics exercised by that probe. Its separate standard Docker step failed because the advertised Bearer realm was the relative value `zot`; Docker requires the realm to be an absolute token-service URL. zot exposes its OIDC registry token-service flow at `/zot/auth/token`, so the example realm is now the same-origin HTTPS URL `https://oci-dev.omnilyzer.ai/zot/auth/token`. This is an interoperability/configuration correction, not an immutability failure. Docker compatibility still requires a fresh live result, and restart persistence remains pending.
+
 The intended acceptance matrix remains pending:
 
 | Property | Status |
 |---|---|
-| GitHub OIDC authentication | PENDING |
-| Publisher create/read | PENDING |
-| Same-tag update prohibition | PENDING |
-| OCI tag immutability | PENDING |
-| Original digest retention | PENDING |
-| Publisher DELETE prohibition | PENDING |
-| Post-denial integrity | PENDING |
+| GitHub OIDC authentication | PASS |
+| Publisher create/read | PASS |
+| Same-tag update prohibition | PASS |
+| OCI tag immutability | PASS |
+| Original digest retention | PASS |
+| Publisher DELETE prohibition | PASS |
+| Post-denial integrity | PASS |
 | Standard Docker client interoperability | PENDING |
 | Restart persistence | PENDING |
 | Exact-digest rollback | PENDING |
