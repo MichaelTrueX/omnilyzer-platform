@@ -1,1 +1,1 @@
-task008d-zot-publish-implementation-v1
+task008d-zot-publish-probe-v1
