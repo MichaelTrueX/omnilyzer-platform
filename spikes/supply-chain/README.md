@@ -202,6 +202,68 @@ Remaining Task 008 work:
 - the final Cloudsmith architecture decision;
 - ADR 0007 only after all evidence is reviewed.
 
+## Task 008C Forgejo registry validation
+
+**TASK 008C — PARTIAL PASS / UNSUITABLE AS THE SOLE RELEASE REGISTRY.** Task 008C evaluated self-hosted Forgejo as an open-source alternative to Cloudsmith. The probe used GitHub OIDC Authorized Integrations and the existing public Nginx registry ingress at `registry-dev.omnilyzer.ai`. Forgejo plus that protected ingress passed the required Generic, PyPI, and npm package checks. The tested Forgejo OCI behavior failed Omnilyzer's immutable-release and rollback requirements, so Forgejo is not validated as the complete multi-format replacement for Cloudsmith.
+
+### Security boundary
+
+Forgejo's native package authorization did not provide the required immutable-publisher semantics: the publisher could delete packages. The validated Generic, PyPI, and npm architecture therefore depends on the public Nginx ingress denying HTTP DELETE with exactly `403`. Publishers must not have a reachable route that bypasses that ingress. This boundary successfully preserved the tested non-OCI packages after their DELETE attempts.
+
+The same boundary cannot make the tested OCI registry append-only. Normal OCI publication requires `PUT /v2/<repository>/manifests/<tag>`, and the decisive destructive state transition used that PUT operation rather than DELETE. Blocking DELETE therefore does not provide OCI digest retention under the tested Forgejo deployment/configuration.
+
+### Result matrix
+
+| Format | Result | Key finding |
+|---|---|---|
+| Generic | PASS | Create/read and OIDC Authorized Integration worked; public DELETE returned `403`; the byte-identical original survived; consumer write was prohibited and duplicate protection held. |
+| PyPI | PASS | Bearer publication and Simple API retrieval worked; same-version replacement was rejected; DELETE returned `403`; the exact wheel survived with its SHA-256 unchanged. |
+| npm | PASS | Standard npm worked with the short-lived OIDC token; different-byte same-version replacement and unpublish were rejected; REST DELETE returned `403`; the exact tarball survived. |
+| OCI | FAIL | A different manifest PUT to the same tag returned `201`, after which the previously retrievable digest A returned `404 MANIFEST_UNKNOWN`. |
+
+Generic live evidence is GitHub Actions run `33381686741`. It validated publisher create/read, public DELETE denial, byte-identical survival, consumer read, consumer write prohibition, and duplicate protection. Its PASS is conditional on all publisher traffic remaining behind the protected Nginx ingress because Forgejo's native publisher authorization permits deletion.
+
+PyPI live evidence is successful run `33483051515`. The core Forgejo PyPI protocol and short-lived OIDC Bearer model passed publication, Simple API retrieval, exact wheel SHA-256 round trip, local installation, duplicate-version rejection, HTTP `403` DELETE denial, and post-operation integrity. Standard Twine/pip username-style interoperability was not established as a separate result.
+
+npm live evidence is successful run `33604625835`. It passed standard npm publication, metadata and tarball retrieval, SHA-256 round trip, local installation and exact-version reporting, standard `npm pack` retrieval, same-version replacement rejection, unpublish denial, exact HTTP `403` REST DELETE denial, and post-operation integrity.
+
+### Decisive OCI evidence
+
+GitHub Actions run `33713567365`, from commit `f2e78fd5d48e5faa3a4264e130a77675ecaa138e`, provided the decisive OCI result. Isolation behaved correctly: `gate` and `oci-probe-build` passed, `oci-permission-probe` executed, and the Generic, PyPI, npm, and normal release paths were skipped. Pre-OIDC handoff validation passed. The live OCI Distribution API probe used `Authorization: Bearer <GitHub OIDC JWT>` directly, without a username, PAT, static credential, Docker login, or `/api/v1/user` dependency.
+
+The baseline config and layer blobs were available. Baseline manifest A publication returned HTTP `201`; HEAD by tag, HEAD by digest A, and `GET /tags/list` each returned HTTP `200`; and mandatory GETs by both tag and digest A passed. Digest A was:
+
+```text
+sha256:94e2364fd26207a91eeb760b777a2332070888a7425a0ae9f4aa317f88404551
+```
+
+The probe then PUT different manifest B to the exact same repository and tag without first issuing DELETE. Forgejo returned HTTP `201`, and a subsequent GET by tag succeeded. The mandatory GET of original digest A then returned HTTP `404` with registry error code `MANIFEST_UNKNOWN`.
+
+Tag mutability and digest retention are separate properties. Moving the tag is an `OCI tag immutability` failure, but the decisive release-safety failure is that digest A ceased to be retrievable. Exact-digest deployment and rollback cannot work when the previously verified manifest digest disappears.
+
+The final OCI classifications are:
+
+- Same-tag replacement: **FAIL — replacement accepted**.
+- OCI tag immutability: **FAIL**.
+- Original manifest digest retention: **FAIL**.
+- OCI digest append-only / rollback: **FAIL**.
+- Exact-digest rollback: **FAIL**.
+- OCI public DELETE boundary: **NOT REACHED** in the decisive v3 run.
+
+The DELETE boundary did not fail. The probe had already observed failure of a stronger mandatory acceptance criterion—retention of an already-published immutable digest—without using DELETE, so continuing to DELETE probes was unnecessary for the provider/configuration decision.
+
+Under the tested Forgejo deployment/configuration, replacing a tag through a normal OCI manifest PUT caused the previously retrievable manifest digest to become unavailable. This violates Omnilyzer's immutable-release and rollback requirements. This evidence is scoped to the tested provider configuration; it is not a claim that OCI registries generally are unsafe or that every Forgejo deployment always removes old manifest digests.
+
+### Task 008C decision and next action
+
+Forgejo package services remain a viable candidate for Generic, PyPI, and npm hosting when the publisher cannot bypass the protected Nginx DELETE boundary. Forgejo OCI is rejected under the tested configuration. Because the required replacement is multi-format and includes OCI, Forgejo is a partial pass and cannot be adopted as the sole production release registry on this evidence.
+
+A separate OCI registry solution or a stronger independently validated Forgejo OCI immutability mechanism remains **TO VALIDATE**. Provider selection requires a dedicated comparison and validation; Task 008C does not select a replacement OCI registry.
+
 ## Recommendation
 
-Task 008A and Task 008B Phases 1, 2, 3, 4A, and 4B passed; the Phase 5 rollback and registry-only architecture checks passed, with final post-expiry retention proof pending. The documented Generic-republish provider caveat remains. Cloudsmith remains a **VALIDATED CANDIDATE**, **NOT ACCEPTED DIRECTION**. Task 008 is not complete. Do not write ADR 0007 or make the final package-registry/trusted-publishing architecture decision until all Task 008 evidence is reviewed.
+Task 008A and Task 008B Phases 1, 2, 3, 4A, and 4B passed; the Phase 5 rollback and registry-only architecture checks passed, with final post-expiry retention proof pending. The documented Generic-republish provider caveat remains. Cloudsmith remains a **VALIDATED CANDIDATE**, **NOT ACCEPTED DIRECTION**.
+
+Task 008C demonstrates that Forgejo plus the protected Nginx ingress can satisfy Omnilyzer's append-only requirements for Generic, PyPI, and npm packages. Forgejo's OCI registry did not satisfy the immutable-release requirement under the tested configuration: a different manifest published to an existing tag was accepted, after which the previously verified manifest digest returned `MANIFEST_UNKNOWN`. Because the accepted deployment architecture requires exact-digest promotion and retained previous digests for rollback, Forgejo cannot be accepted as the sole production release registry on this evidence. Forgejo remains a viable candidate for non-OCI package hosting, while production OCI registry selection remains **TO VALIDATE**.
+
+Task 008 is not complete. Do not make the final package-registry/trusted-publishing architecture decision until all Task 008 evidence is reviewed.

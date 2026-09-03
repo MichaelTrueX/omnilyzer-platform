@@ -170,7 +170,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             (SPIKE_ROOT / "control/oci-permissions.trigger").read_text(
                 encoding="utf-8"
             ),
-            "task008c-forgejo-oci-permission-probe-v2\n",
+            "task008c-forgejo-oci-permission-probe-v3\n",
         )
         self.assertEqual(
             (SPIKE_ROOT / "control/tamper-negative.trigger").read_text(

@@ -13,6 +13,7 @@ Reference evidence:
 
 - [`spikes/deployment/README.md`](../../spikes/deployment/README.md)
 - [`deployment-validation.md`](../../spikes/deployment/results/deployment-validation.md)
+- [`spikes/supply-chain/README.md`](../../spikes/supply-chain/README.md)
 
 ## Decision
 
@@ -241,6 +242,8 @@ Task 007 pinned its required infrastructure images by digest. Infrastructure ima
 ### Registry boundary
 
 Task 007 used an ephemeral loopback registry only to validate registry-style immutable digest promotion. This does not select a production container registry. Registry and provider selection remains **TO VALIDATE**. This ADR does not select GitHub Container Registry, Docker Hub, Cloudflare, or another provider.
+
+Task 008C subsequently evaluated Forgejo as a self-hosted registry candidate. Under the tested deployment/configuration, Forgejo accepted a different OCI manifest PUT to an existing tag with HTTP `201`; the previously verified manifest digest then returned HTTP `404 MANIFEST_UNKNOWN`. Forgejo OCI is therefore rejected under that tested configuration for this ADR's immutable-release and rollback requirements. This evidence reinforces rather than weakens the requirement to promote by immutable digest and retain the previous digest for rollback. Production OCI registry selection remains **TO VALIDATE**.
 
 ### Provenance boundary
 
