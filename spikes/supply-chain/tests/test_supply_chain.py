@@ -164,7 +164,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             (SPIKE_ROOT / "control/rollback-retention.trigger").read_text(
                 encoding="utf-8"
             ),
-            "task008b-phase5-rollback-retention-v2\n",
+            "task008b-phase5-rollback-retention-v3\n",
         )
 
     def test_publish_trigger_accepts_only_one_strict_version_plus_newline(self) -> None:
