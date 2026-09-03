@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import tempfile
 import unittest
+from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -62,7 +63,7 @@ class ZotConfigurationTests(unittest.TestCase):
         self.assertTrue(PUBLISH.is_file())
         self.assertTrue(CONSUME.is_file())
         self.assertEqual((SPIKE / "control/zot-publish.trigger").read_text(),
-                         "task008d-zot-publish-implementation-v1\n")
+                         "task008d-zot-publish-probe-v1\n")
         self.assertEqual((SPIKE / "control/zot-consume.trigger").read_text(),
                          '{"state":"task008d-zot-consume-implementation-v1"}\n')
 
@@ -200,8 +201,26 @@ class ZotConfigurationTests(unittest.TestCase):
         self.assertEqual(self.config["http"]["address"], "127.0.0.1")
         self.assertEqual(self.config["http"]["port"], "5000")
         self.assertEqual(self.config["http"]["externalUrl"], "https://oci-dev.omnilyzer.ai")
-        self.assertEqual(self.config["http"]["auth"]["bearer"]["realm"], "zot")
         self.assertIn("proxy_pass http://127.0.0.1:5000", (ZOT / "nginx.example.conf").read_text())
+
+    def test_bearer_realm_is_absolute_same_origin_zot_token_service(self) -> None:
+        http = self.config["http"]
+        bearer = http["auth"]["bearer"]
+        realm = bearer["realm"]
+        self.assertEqual(realm, "https://oci-dev.omnilyzer.ai/zot/auth/token")
+        self.assertNotEqual(realm, "zot")
+        parsed_realm = urlparse(realm)
+        parsed_external = urlparse(http["externalUrl"])
+        self.assertEqual(parsed_realm.scheme, "https")
+        self.assertEqual(parsed_realm.netloc, parsed_external.netloc)
+        self.assertEqual(parsed_realm.path, "/zot/auth/token")
+        self.assertEqual(parsed_realm.query, "")
+        self.assertEqual(parsed_realm.fragment, "")
+        self.assertEqual(bearer["service"], "oci-dev.omnilyzer.ai")
+        self.assertEqual(bearer["oidc"][0]["issuer"],
+                         "https://token.actions.githubusercontent.com")
+        self.assertEqual(bearer["oidc"][0]["audiences"],
+                         ["https://oci-dev.omnilyzer.ai"])
 
     def test_nginx_does_not_implement_immutability(self) -> None:
         nginx = (ZOT / "nginx.example.conf").read_text()
@@ -311,7 +330,9 @@ class ZotProbeTests(unittest.TestCase):
 
     def test_restart_result_is_pending_in_documentation(self) -> None:
         readme = (SPIKE / "README.md").read_text()
-        self.assertIn("Task 008D status: IMPLEMENTED / LIVE VALIDATION PENDING", readme)
+        self.assertIn("Task 008D status: IMPLEMENTED / LIVE VALIDATION IN PROGRESS", readme)
+        self.assertIn("Publisher run `33814063124`", readme)
+        self.assertIn("| Standard Docker client interoperability | PENDING |", readme)
         self.assertIn("| Restart persistence | PENDING |", readme)
         self.assertIn("must not be classified PASS before that separate live proof", readme)
 
