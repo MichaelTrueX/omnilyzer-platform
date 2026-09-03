@@ -42,7 +42,10 @@ jobs:
           trigger='spikes/supply-chain/control/zot-consume.trigger'
           [[ "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$AFTER_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$BEFORE_SHA" != 0000000000000000000000000000000000000000 ]]
+          if [[ "$BEFORE_SHA" == 0000000000000000000000000000000000000000 ]]; then
+            printf 'mode=none\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git cat-file -e "${BEFORE_SHA}^{commit}"; git cat-file -e "${AFTER_SHA}^{commit}"
           paths="$RUNNER_TEMP/zot-consume-paths"; states="$RUNNER_TEMP/zot-consume-states"
           git diff --name-only --no-renames --diff-filter=ACDMRTUXB "$BEFORE_SHA" "$AFTER_SHA" > "$paths"
