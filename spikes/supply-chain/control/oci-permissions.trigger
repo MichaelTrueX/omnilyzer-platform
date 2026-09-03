@@ -1,1 +1,1 @@
-task008c-forgejo-oci-permission-probe-v1
+task008c-forgejo-oci-permission-probe-v2
