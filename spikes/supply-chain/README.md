@@ -4,6 +4,7 @@ Purpose: Defines the governed Task 008 private-registry and GitHub OIDC validati
 Related:
 - docs/adr/0005-versioned-platform-packaging-and-distribution.md
 - docs/adr/0006-immutable-oci-deployment-and-promotion.md
+- docs/adr/0010-forgejo-and-zot-package-registries.md
 - .github/workflows/task008-publish.yml
 - .github/workflows/task008-consume.yml
 -->
@@ -185,7 +186,7 @@ The four live negative cases passed as follows:
 
 The fully verified reference release is `0.8.5`. Publisher run `33300665806`, from commit `431c984d3c3e81f358c0653d8d8d4041a31883e3`, and consumer run `33300905736`, from commit `d608ec5ebd5b85b9f17ef340b648538c14a7a362`, validated immutable OCI digest `sha256:b01299d6afe9f635a567347cc7617876ab90c024e1bfe644d71097eadcc184d1`.
 
-**TASK 008B PHASE 5 — ROLLBACK PASS / FINAL RETENTION PROOF PENDING.** GitHub Actions run `33301708289`, triggered by commit `5a19ab456891e2a15aa0694bb2f74d8674dc2b09`, completed the first live registry-only rollback validation. The explicit state remained **CURRENT = `0.8.5`** and **ROLLBACK TARGET = `0.8.4`**. The historical OCI image resolved to the reviewed immutable digest `sha256:44cdf2855105c824fcad999723ed7cc4f4a0ba276c8b953882413a1c61004967`.
+**TASK 008B PHASE 5 — PASS.** GitHub Actions run `33301708289`, triggered by commit `5a19ab456891e2a15aa0694bb2f74d8674dc2b09`, completed the first live registry-only rollback validation. The explicit state remained **CURRENT = `0.8.5`** and **ROLLBACK TARGET = `0.8.4`**. The historical OCI image resolved to the reviewed immutable digest `sha256:44cdf2855105c824fcad999723ed7cc4f4a0ba276c8b953882413a1c61004967`.
 
 The live job isolation passed: `gate` and `rollback-retention-probe` passed, while normal `consume`, `execute-verified`, `tamper-negative-probe`, and `consumer-permission-probe` were skipped. The probe authenticated only as the short-lived, read-only Cloudsmith OIDC identity `gha-consumer`. It retrieved the exact Python `0.8.4` wheel and npm `0.8.4` tarball from Cloudsmith, pulled OCI `0.8.4` without running it, and resolved it to the exact reviewed digest. It retrieved the exact versioned `0.8.4` evidence archive from Cloudsmith Generic and its external Sigstore bundle, verified the archive signature before extraction, safely extracted exactly seventeen regular evidence files, and verified the evidence-manifest signature.
 
@@ -193,15 +194,71 @@ The probe validated the artifact hashes; all three hash-bound CycloneDX JSON 1.6
 
 No historical GitHub Actions artifact was retrieved, and the rollback probe did not use `actions/download-artifact`. No rebuild, republish, floating version selection, verified-execution handoff, package installation, or rollback-artifact execution occurred.
 
-GitHub Actions release handoffs remain intentionally transient same-run trust-boundary transport with one-day retention; they are not the durable release archive. This first registry-only rollback verification passed while historical one-day GitHub Actions artifacts may still exist. Because the probe has no dependency on those artifacts, the **ROLLBACK** and **REGISTRY-ONLY ARCHITECTURE** classifications are **PASS**. **POST-CI-ARTIFACT-EXPIRY RETENTION VALIDATION remains PENDING**: a second live execution after the relevant one-day artifacts have actually expired is still required for the strongest empirical retention evidence.
+GitHub Actions release handoffs remain intentionally transient same-run trust-boundary transport with one-day retention; they are not the durable release archive.
 
-Remaining Task 008 work:
+**POST-CI-ARTIFACT-EXPIRY RETENTION VALIDATION — PASS.** GitHub Actions run `33714831395`, from commit `d1d77cb565ffcfd4befe898adaaca70d1834ef6e`, repeated the registry-only rollback validation after the historical artifacts from run `33301708289` had expired. GitHub reported `total_count = 0` for that historical run's Actions artifacts before the post-expiry validation. The `0.8.4` rollback release and its signed evidence were therefore retrieved exclusively from Cloudsmith rather than from historical GitHub Actions artifact transport.
 
-- post-one-day-artifact-expiry retention rerun;
-- provider operations, cost, and disaster-recovery analysis;
-- the final Cloudsmith architecture decision;
-- ADR 0007 only after all evidence is reviewed.
+The post-expiry probe authenticated as the short-lived, read-only Cloudsmith identity `gha-consumer`; downloaded the exact Python `0.8.4` wheel and npm `0.8.4` tarball; pulled exact OCI `0.8.4`; and resolved it to the expected immutable digest `sha256:44cdf2855105c824fcad999723ed7cc4f4a0ba276c8b953882413a1c61004967`. It retrieved the exact versioned evidence archive and external Sigstore bundle from Cloudsmith Generic, verified the archive signature before extraction, safely extracted exactly seventeen approved evidence files, and verified the evidence-manifest signature.
+
+It then verified the wheel and npm hashes; all three CycloneDX JSON 1.6 SBOMs; Grype evidence and database metadata; vulnerability-policy SHA-256 `f36c806af62c1920890b6c33ae5dc03aa738af860e73a08b6fea3543c03d6530`; the PASS decision with Critical/High blocking; SLSA v1 provenance and the exact retrieved subjects; publisher workflow/source binding; all six blob signatures; the immutable OCI digest signature; and transparency-log evidence. It performed no package execution, and Docker logout succeeded.
+
+The final Phase 5 classifications are:
+
+- **ROLLBACK — PASS**.
+- **REGISTRY-ONLY ARCHITECTURE — PASS**.
+- **POST-CI-ARTIFACT-EXPIRY RETENTION — PASS**.
+
+This proves retention across the tested multi-day interval and independence from expired GitHub Actions handoff artifacts. It does not claim indefinite retention.
+
+Remaining implementation work is operational: define production retention and capacity policy, backups and restore testing, disaster recovery, monitoring, and the controlled rollout of the selected services. ADR 0010 accepts the split-registry decision; those production operational concerns remain unresolved.
+
+## Task 008D zot OCI immutable-release validation
+
+**TASK 008D — PASS.** Task 008D validated zot `v2.1.20` as the OCI component of the selected split registry architecture.
+
+The intended public endpoint is `https://oci-dev.omnilyzer.ai`, with TLS terminated by a transparent Nginx reverse proxy and zot bound only to `127.0.0.1:5000`. Nginx deliberately blocks neither PUT nor DELETE during Task 008D: zot's native authorization must prove immutability. GitHub OIDC workload tokens must use issuer `https://token.actions.githubusercontent.com`, audience `https://oci-dev.omnilyzer.ai`, the exact repository owner/repository claims, and one of the two exact branch-specific `workflow_ref` identities. No PAT, registry password, API key, or other static CI registry credential is designed into the test.
+
+For `omnilyzer/task008d-supply-chain-spike`, the publisher receives exactly `read` and `create`, not `update` or `delete`; the independent consumer receives exactly `read`. Unknown authenticated identities and anonymous clients receive no authority. Garbage collection is explicitly disabled so retention cleanup cannot obscure the authorization result or remove historical rollback material during the spike.
+
+The deterministic, non-executable OCI fixture contains distinct baseline A and replacement B manifests for the exact same version and tag. The publisher probe calculated all digests before authentication, published A, verified A by both tag and digest, attempted a same-tag PUT of B, required an exact HTTP 403 authorization denial, verified the tag and original digest remained A, required exact HTTP 403 denials for manifest DELETE by digest and tag, and reverified the manifest/config/layer bytes afterward. The direct Distribution API Bearer probe is authoritative. Docker login with the short-lived OIDC token as the Basic password and a harmless non-empty username is a separate interoperability result; images were pulled but never executed.
+
+Publisher run `33814063124` passed the gate, fixture build, GitHub OIDC acquisition, and authoritative direct probe, establishing PASS for the native zot security semantics exercised by that probe. Its separate standard Docker step failed because the advertised Bearer realm was the relative value `zot`; Docker requires the realm to be an absolute token-service URL. zot exposes its OIDC registry token-service flow at `/zot/auth/token`, so the example realm was corrected to the same-origin HTTPS URL `https://oci-dev.omnilyzer.ai/zot/auth/token`. This was an interoperability/configuration failure, not an immutability failure. Docker compatibility and restart persistence were still pending at that point; the subsequent runs below resolved both rows.
+
+Publisher v2 run `33814874276`, from commit `25cc080f2298d48830ed480b54735ff28245b485`, passed its gate, fixture build, GitHub OIDC authentication, authoritative direct OCI probe, and standard Docker/OIDC interoperability check. The publisher created and read the baseline; same-tag replacement was denied with HTTP 403; both manifest DELETE by digest and DELETE by tag were denied with HTTP 403; and the original manifest, config, and layer remained byte-identical and retrievable by exact digest.
+
+The retained baseline is tag `task008d-33814874276-1`, manifest digest `sha256:869121fdf10de171eff2f2622fa4190939573abc1e5bb24e7502b8757d4f6059`, config digest `sha256:8ac6c44b9181a6d92469b5b701417f9ab13c5f0b8c462ffd68a7f4d098e9614d`, and layer digest `sha256:6747a1b2afcb45cb4e398e8f08158b305575e98f78fefee20c14e415dccfc89b`.
+
+After the publisher completed at approximately 22:50:43 UTC, systemd stopped and successfully restarted `zot.service` at 22:51:39 UTC. Consumer run `33815051427`, from commit `3284aa442310c172149efe76406fa9fa3a1f5630`, began at 22:52:16 UTC. Its independently authenticated read-only OIDC identity rebuilt the expected fixture, retrieved and verified the retained tag, manifest digest, config digest, and layer digest, and completed both standard Docker tag and exact-digest pulls. This proves persistence across the tested zot restart with garbage collection disabled; it does not prove indefinite retention.
+
+The final Task 008D matrix is:
+
+| Property | Status |
+|---|---|
+| GitHub OIDC authentication | PASS |
+| Publisher create/read | PASS |
+| Same-tag update prohibition | PASS |
+| OCI tag immutability | PASS |
+| Original digest retention | PASS |
+| Publisher DELETE prohibition | PASS |
+| Post-denial integrity | PASS |
+| Standard Docker interoperability | PASS |
+| Restart persistence | PASS |
+| Independent read-only retrieval | PASS |
+| Exact-digest rollback readiness | PASS |
+
+Deployment examples, the validation lifecycle, and the pinned binary/container details are in [`zot/README.md`](zot/README.md).
+
+## Selected registry architecture
+
+The selected open-source direction is:
+
+- **Forgejo behind the protected Nginx ingress** for Generic, PyPI, and npm packages. The append-only guarantee depends on public DELETE blocking and on publishers having no path that bypasses that ingress.
+- **zot** for OCI releases, using native `read`/`create` publisher authorization without `update` or `delete`, short-lived GitHub Actions OIDC identities, retained immutable digests, and exact-digest deployment references.
+
+Cloudsmith remains technically validated by Tasks 008A/B, including signed evidence and rollback after CI artifact expiry, but it is not selected because the recurring commercial plan cost required by this project is unacceptable. Forgejo OCI is not selected because the tested configuration accepted a different manifest PUT to an existing tag and subsequently made the original digest unavailable. Task 008D demonstrated that the tested zot configuration denied same-tag replacement and deletion, retained the original digest, interoperated with Docker through its OIDC token service, and retained exact bytes across a restart.
+
+This is a requirements-and-evidence-based selection, not a claim that zot is universally superior to other OCI registries. Production lifecycle, backup, restore, capacity, monitoring, and disaster-recovery controls remain operational work.
 
 ## Recommendation
 
-Task 008A and Task 008B Phases 1, 2, 3, 4A, and 4B passed; the Phase 5 rollback and registry-only architecture checks passed, with final post-expiry retention proof pending. The documented Generic-republish provider caveat remains. Cloudsmith remains a **VALIDATED CANDIDATE**, **NOT ACCEPTED DIRECTION**. Task 008 is not complete. Do not write ADR 0007 or make the final package-registry/trusted-publishing architecture decision until all Task 008 evidence is reviewed.
+ADR 0010 accepts the split Forgejo-plus-zot registry architecture. Preserve exact-digest OCI promotion and rollback from ADR 0006, use only short-lived GitHub Actions OIDC workload identity in CI, and do not introduce long-lived registry credentials. Cloudsmith's technical evidence remains valid despite its cost-based non-selection, and the failed Forgejo OCI evidence remains part of the decision record.
