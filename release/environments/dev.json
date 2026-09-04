@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "publishing_enabled": false,
+  "publishing_enabled": true,
   "forgejo_origin": "https://registry-dev.omnilyzer.ai",
   "forgejo_oidc_audience": "u:2:316bec9a-53e4-4807-9557-7febdc979d0a",
   "zot_origin": "https://oci-dev.omnilyzer.ai",
