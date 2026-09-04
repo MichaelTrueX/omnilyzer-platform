@@ -95,13 +95,21 @@ jobs:
         with:
           syft-version: v1.51.0
       - name: Install pinned Grype
+        id: grype
         uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.3.0
         with:
           grype-version: v0.118.0
       - name: Generate CycloneDX 1.6 SBOM and Grype evidence
         shell: bash
+        env:
+          GRYPE_COMMAND: ${{ steps.grype.outputs.cmd }}
         run: |
           set -euo pipefail
+          test -x "$GRYPE_COMMAND"
+          grype_version="$({ "$GRYPE_COMMAND" version; } 2>&1)"
+          python3 -c \
+            'import re, sys; text = sys.stdin.read(); versions = re.findall(r"(?im)^version:\s*v?([^\s]+)\s*$", text); raise SystemExit(0 if versions == ["0.118.0"] else "unexpected Grype version")' \
+            <<< "$grype_version"
           handoff="$RUNNER_TEMP/platform-release-handoff"
           wheel="$(find "$handoff" -maxdepth 1 -type f -name '*.whl' -print)"
           npm_tarball="$(find "$handoff" -maxdepth 1 -type f -name '*.tgz' -print)"
@@ -114,10 +122,10 @@ jobs:
           syft scan "dir:$RUNNER_TEMP/task013-scan-roots/npm" \
             -o "cyclonedx-json@1.6=$handoff/npm-sbom.cdx.json"
           syft scan "oci-archive:$oci_archive" -o "cyclonedx-json@1.6=$handoff/oci-sbom.cdx.json"
-          grype "sbom:$handoff/python-sbom.cdx.json" -o json > "$handoff/python-grype.json"
-          grype "sbom:$handoff/npm-sbom.cdx.json" -o json > "$handoff/npm-grype.json"
-          grype "sbom:$handoff/oci-sbom.cdx.json" -o json > "$handoff/oci-grype.json"
-          grype db status -o json > "$RUNNER_TEMP/grype-db-status.raw.json"
+          "$GRYPE_COMMAND" "sbom:$handoff/python-sbom.cdx.json" -o json > "$handoff/python-grype.json"
+          "$GRYPE_COMMAND" "sbom:$handoff/npm-sbom.cdx.json" -o json > "$handoff/npm-grype.json"
+          "$GRYPE_COMMAND" "sbom:$handoff/oci-sbom.cdx.json" -o json > "$handoff/oci-grype.json"
+          "$GRYPE_COMMAND" db status -o json > "$RUNNER_TEMP/grype-db-status.raw.json"
           python3 -m release.vulnerability_policy sanitize-db \
             "$RUNNER_TEMP/grype-db-status.raw.json" "$handoff/grype-db-status.json"
           rm -f "$RUNNER_TEMP/grype-db-status.raw.json"

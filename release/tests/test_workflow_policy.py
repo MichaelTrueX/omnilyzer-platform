@@ -85,6 +85,21 @@ class WorkflowPolicyTests(unittest.TestCase):
         checkout_count = self.raw.count("uses: actions/checkout@")
         self.assertEqual(self.raw.count("persist-credentials: false"), checkout_count)
 
+    def test_grype_scans_use_pinned_installer_command_output(self) -> None:
+        steps = self.jobs["build"]["steps"]
+        installer = next(step for step in steps if step["name"] == "Install pinned Grype")
+        scan = next(step for step in steps if step["name"] == "Generate CycloneDX 1.6 SBOM and Grype evidence")
+        self.assertEqual(installer["id"], "grype")
+        self.assertEqual(installer["with"]["grype-version"], "v0.118.0")
+        self.assertEqual(scan["env"]["GRYPE_COMMAND"], "${{ steps.grype.outputs.cmd }}")
+        script = scan["run"]
+        self.assertIn('test -x "$GRYPE_COMMAND"', script)
+        self.assertIn('"$GRYPE_COMMAND" version', script)
+        self.assertIn('versions == ["0.118.0"]', script)
+        self.assertEqual(script.count('"$GRYPE_COMMAND" "sbom:'), 3)
+        self.assertIn('"$GRYPE_COMMAND" db status', script)
+        self.assertNotRegex(script, r"(?m)^\s*grype(?:\s|$)")
+
     def test_no_long_lived_registry_credential_reference(self) -> None:
         forbidden = ("secrets.FORGEJO", "secrets.ZOT", "REGISTRY_PASSWORD", "REGISTRY_PAT", "API_KEY")
         for value in forbidden:
