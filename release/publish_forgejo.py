@@ -75,7 +75,10 @@ def _request(origin: str, token: str, method: str, path_or_url: str, body: bytes
             return response.status, response.read()
     except urllib.error.HTTPError as exc:
         detail = exc.read(512).decode("utf-8", "replace").replace(token, "[REDACTED]")
-        raise RuntimeError(f"Forgejo {method} {path} returned HTTP {exc.code}: {detail}") from exc
+        safe_target = parsed.path.replace(token, "[REDACTED]")[:256]
+        raise RuntimeError(
+            f"Forgejo {method} {safe_target} returned HTTP {exc.code}: {detail}"
+        ) from exc
 
 
 def _multipart(filename: str, payload: bytes, fields: dict[str, str]) -> tuple[bytes, str]:
@@ -91,6 +94,14 @@ def _multipart(filename: str, payload: bytes, fields: dict[str, str]) -> tuple[b
     ).encode() + payload + f"\r\n--{boundary}--\r\n".encode())
     body = b"".join(parts)
     return body, f"multipart/form-data; boundary={boundary}"
+
+
+def _pypi_multipart(filename: str, payload: bytes, name: str, version: str) -> tuple[bytes, str]:
+    return _multipart(filename, payload, {
+        ":action": "file_upload", "protocol_version": "1", "metadata_version": "2.3",
+        "name": name, "version": version, "filetype": "bdist_wheel", "pyversion": "py3",
+        "sha256_digest": hashlib.sha256(payload).hexdigest(),
+    })
 
 
 def _evidence_archive(handoff: Path, evidence: Path, plan: dict) -> bytes:
@@ -132,11 +143,10 @@ def publish(handoff: Path, evidence: Path, token_file: Path, repository: Path,
     owner = urllib.parse.quote(plan["packages"]["python"]["owner"], safe="")
 
     wheel_path = handoff / plan["artifacts"]["python_wheel"]
-    body, content_type = _multipart(wheel_path.name, wheel_path.read_bytes(), {
-        ":action": "file_upload", "protocol_version": "1", "metadata_version": "2.3",
-        "name": plan["packages"]["python"]["name"], "version": version,
-        "filetype": "bdist_wheel", "pyversion": "py3",
-    })
+    wheel_bytes = wheel_path.read_bytes()
+    body, content_type = _pypi_multipart(
+        wheel_path.name, wheel_bytes, plan["packages"]["python"]["name"], version,
+    )
     if _request(origin, token, "POST", f"/api/packages/{owner}/pypi", body, content_type)[0] != 201:
         raise RuntimeError("Forgejo PyPI publication did not return HTTP 201")
     normalized_python = plan["packages"]["python"]["name"].lower().replace("_", "-")
@@ -151,7 +161,7 @@ def publish(handoff: Path, evidence: Path, token_file: Path, repository: Path,
     if len(wheel_urls) != 1:
         raise RuntimeError("Forgejo PyPI Simple API did not expose exactly one built wheel")
     status, downloaded_wheel = _request(origin, token, "GET", wheel_urls[0])
-    if status != 200 or downloaded_wheel != wheel_path.read_bytes():
+    if status != 200 or downloaded_wheel != wheel_bytes:
         raise RuntimeError("Forgejo PyPI round-trip bytes differ from the immutable handoff")
 
     npm_path = handoff / plan["artifacts"]["npm_tarball"]
