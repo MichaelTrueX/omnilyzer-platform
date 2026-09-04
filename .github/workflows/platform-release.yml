@@ -1,0 +1,301 @@
+# File: .github/workflows/platform-release.yml
+# Purpose: Builds one verified platform release and publishes it with short-lived OIDC identities.
+# Phase 1 keeps publishing disabled in the reviewed DEV environment configuration.
+
+name: Platform release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Coordinated platform version (strict X.Y.Z)
+        required: true
+        type: string
+      source_sha:
+        description: Exact 40-character commit SHA selected from main
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: platform-release-${{ github.event.inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      publishing_enabled: ${{ steps.policy.outputs.publishing_enabled }}
+    steps:
+      - name: Check out exact dispatched source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Enforce repository, main ref, source SHA, plan, and environment
+        id: policy
+        shell: bash
+        env:
+          DISPATCH_REPOSITORY: ${{ github.repository }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          REQUESTED_SHA: ${{ github.event.inputs.source_sha }}
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          test "$DISPATCH_REPOSITORY" = "MichaelTrueX/omnilyzer-platform"
+          test "$DISPATCH_REF" = "refs/heads/main"
+          test "$REQUESTED_SHA" = "$DISPATCH_SHA"
+          test "$(git rev-parse HEAD)" = "$DISPATCH_SHA"
+          python3 -m release.release_plan materialize \
+            release/fixtures/task013-canary/release-plan-template.json \
+            "$RELEASE_VERSION" "$DISPATCH_SHA" "$RUNNER_TEMP/release-plan.json" \
+            --repository "$GITHUB_WORKSPACE"
+          publishing_enabled="$(python3 -m release.release_plan validate-environment release/environments/dev.json)"
+          printf 'publishing_enabled=%s\n' "$publishing_enabled" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact dispatched source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up pinned Python runtime
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - name: Materialize and build distributable artifacts once
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          handoff="$RUNNER_TEMP/platform-release-handoff"
+          mkdir -m 0700 "$handoff"
+          python3 -m release.release_plan materialize \
+            release/fixtures/task013-canary/release-plan-template.json \
+            "$RELEASE_VERSION" "$SOURCE_SHA" "$RUNNER_TEMP/release-plan.json" \
+            --repository "$GITHUB_WORKSPACE"
+          python3 -m release.build_release artifacts \
+            --plan "$RUNNER_TEMP/release-plan.json" --output "$handoff" \
+            --repository "$GITHUB_WORKSPACE"
+      - name: Install pinned Syft
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.22.2
+        with:
+          syft-version: v1.51.0
+      - name: Install pinned Grype
+        uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.3.0
+        with:
+          grype-version: v0.118.0
+      - name: Generate CycloneDX 1.6 SBOM and Grype evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          handoff="$RUNNER_TEMP/platform-release-handoff"
+          wheel="$(find "$handoff" -maxdepth 1 -type f -name '*.whl' -print)"
+          npm_tarball="$(find "$handoff" -maxdepth 1 -type f -name '*.tgz' -print)"
+          oci_archive="$(find "$handoff" -maxdepth 1 -type f -name '*.oci.tar' -print)"
+          test -n "$wheel" && test -n "$npm_tarball" && test -n "$oci_archive"
+          python3 -m release.prepare_scan_roots --wheel "$wheel" --npm "$npm_tarball" \
+            --output "$RUNNER_TEMP/task013-scan-roots"
+          syft scan "dir:$RUNNER_TEMP/task013-scan-roots/python" \
+            -o "cyclonedx-json@1.6=$handoff/python-sbom.cdx.json"
+          syft scan "dir:$RUNNER_TEMP/task013-scan-roots/npm" \
+            -o "cyclonedx-json@1.6=$handoff/npm-sbom.cdx.json"
+          syft scan "oci-archive:$oci_archive" -o "cyclonedx-json@1.6=$handoff/oci-sbom.cdx.json"
+          grype "sbom:$handoff/python-sbom.cdx.json" -o json > "$handoff/python-grype.json"
+          grype "sbom:$handoff/npm-sbom.cdx.json" -o json > "$handoff/npm-grype.json"
+          grype "sbom:$handoff/oci-sbom.cdx.json" -o json > "$handoff/oci-grype.json"
+          grype db status -o json > "$RUNNER_TEMP/grype-db-status.raw.json"
+          python3 -m release.vulnerability_policy sanitize-db \
+            "$RUNNER_TEMP/grype-db-status.raw.json" "$handoff/grype-db-status.json"
+          rm -f "$RUNNER_TEMP/grype-db-status.raw.json"
+      - name: Apply fail-closed vulnerability policy and finalize handoff
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          handoff="$RUNNER_TEMP/platform-release-handoff"
+          cp release/vulnerability-policy.json "$handoff/vulnerability-policy.json"
+          python3 -m release.vulnerability_policy \
+            --policy "$handoff/vulnerability-policy.json" \
+            --python "$handoff/python-grype.json" \
+            --npm "$handoff/npm-grype.json" \
+            --oci "$handoff/oci-grype.json" \
+            --evaluation-date "$(date -u +%F)" \
+            --output "$handoff/vulnerability-policy-result.json"
+          python3 -m release.build_release finalize --handoff "$handoff" \
+            --repository "$GITHUB_WORKSPACE" --evidence-mode production-tools
+          python3 -m release.verify_handoff --handoff "$handoff" \
+            --repository "$GITHUB_WORKSPACE" --expected-version "$RELEASE_VERSION" \
+            --expected-sha "$SOURCE_SHA" --require-production-evidence
+      - name: Upload immutable build handoff for transport only
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        with:
+          name: platform-release-handoff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/platform-release-handoff
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-zot:
+    needs: [gate, build]
+    if: needs.gate.outputs.publishing_enabled == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: task013-dev-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out exact dispatched source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download immutable build handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: platform-release-handoff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/platform-release-handoff
+      - name: Verify complete handoff before requesting OIDC
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 -m release.verify_handoff \
+            --handoff "$RUNNER_TEMP/platform-release-handoff" \
+            --repository "$GITHUB_WORKSPACE" --expected-version "$RELEASE_VERSION" \
+            --expected-sha "$SOURCE_SHA" --require-production-evidence
+      - name: Request short-lived zot OIDC and publish prebuilt OCI
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          token_file="$RUNNER_TEMP/task013-zot.jwt"
+          trap 'rm -f "$token_file"' EXIT
+          python3 -m release.request_oidc --audience https://oci-dev.omnilyzer.ai --output "$token_file"
+          python3 -m release.publish_zot \
+            --handoff "$RUNNER_TEMP/platform-release-handoff" --token-file "$token_file" \
+            --output "$RUNNER_TEMP/oci-publication.json" --repository "$GITHUB_WORKSPACE" \
+            --version "$RELEASE_VERSION" --source-sha "$SOURCE_SHA"
+      - name: Upload immutable OCI publication result for transport only
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        with:
+          name: platform-release-oci-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/oci-publication.json
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-forgejo:
+    needs: [gate, build, publish-zot]
+    if: needs.gate.outputs.publishing_enabled == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: task013-dev-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out exact dispatched source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download immutable build handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: platform-release-handoff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/platform-release-handoff
+      - name: Download immutable zot publication result
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: platform-release-oci-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/zot-result
+      - name: Verify complete handoff before requesting OIDC
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 -m release.verify_handoff \
+            --handoff "$RUNNER_TEMP/platform-release-handoff" \
+            --repository "$GITHUB_WORKSPACE" --expected-version "$RELEASE_VERSION" \
+            --expected-sha "$SOURCE_SHA" --require-production-evidence
+          python3 -m release.provenance \
+            --handoff "$RUNNER_TEMP/platform-release-handoff" \
+            --oci-publication "$RUNNER_TEMP/zot-result/oci-publication.json" \
+            --output "$RUNNER_TEMP/platform-release-evidence" \
+            --repository "$GITHUB_WORKSPACE" --version "$RELEASE_VERSION" \
+            --source-sha "$SOURCE_SHA"
+      - name: Install pinned Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.0
+        with:
+          cosign-release: v3.1.2
+      - name: Create keyless signed release evidence
+        shell: bash
+        env:
+          OCI_REPOSITORY: omnilyzer/task013-release-canary
+          CERTIFICATE_IDENTITY: https://github.com/MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main
+          CERTIFICATE_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/platform-release-evidence"
+          cosign sign-blob --yes --bundle "$evidence/release-manifest.sigstore.json" \
+            "$evidence/release-manifest.json"
+          cosign sign-blob --yes --bundle "$evidence/release-provenance.sigstore.json" \
+            "$evidence/release-provenance.json"
+          cosign verify-blob --bundle "$evidence/release-manifest.sigstore.json" \
+            --certificate-identity "$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer "$CERTIFICATE_ISSUER" \
+            "$evidence/release-manifest.json"
+          cosign verify-blob --bundle "$evidence/release-provenance.sigstore.json" \
+            --certificate-identity "$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer "$CERTIFICATE_ISSUER" \
+            "$evidence/release-provenance.json"
+          digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["manifest_digest"])' "$RUNNER_TEMP/zot-result/oci-publication.json")"
+          token_file="$RUNNER_TEMP/task013-zot-sign.jwt"
+          docker_config="$RUNNER_TEMP/task013-docker"
+          mkdir -m 0700 "$docker_config"
+          export DOCKER_CONFIG="$docker_config"
+          trap 'rm -f "$token_file"; docker --config "$docker_config" logout oci-dev.omnilyzer.ai >/dev/null 2>&1 || true; rm -rf "$docker_config"' EXIT
+          python3 -m release.request_oidc --audience https://oci-dev.omnilyzer.ai --output "$token_file"
+          docker --config "$docker_config" login oci-dev.omnilyzer.ai --username oidc --password-stdin < "$token_file"
+          rm -f "$token_file"
+          cosign sign --yes "oci-dev.omnilyzer.ai/$OCI_REPOSITORY@$digest"
+          cosign verify --certificate-identity "$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer "$CERTIFICATE_ISSUER" \
+            "oci-dev.omnilyzer.ai/$OCI_REPOSITORY@$digest"
+      - name: Request short-lived Forgejo OIDC and publish prebuilt packages/evidence
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+          FORGEJO_AUDIENCE: u:2:316bec9a-53e4-4807-9557-7febdc979d0a
+        run: |
+          set -euo pipefail
+          token_file="$RUNNER_TEMP/task013-forgejo.jwt"
+          trap 'rm -f "$token_file"' EXIT
+          python3 -m release.request_oidc --audience "$FORGEJO_AUDIENCE" --output "$token_file"
+          python3 -m release.publish_forgejo \
+            --handoff "$RUNNER_TEMP/platform-release-handoff" \
+            --evidence "$RUNNER_TEMP/platform-release-evidence" \
+            --token-file "$token_file" --repository "$GITHUB_WORKSPACE" \
+            --version "$RELEASE_VERSION" --source-sha "$SOURCE_SHA"

@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "plan_id": "task013-canary",
+  "platform_version": "{version}",
+  "source_commit": "{source_commit}",
+  "sources": {
+    "python": "release/fixtures/task013-canary/python",
+    "npm": "release/fixtures/task013-canary/npm",
+    "oci": "release/fixtures/task013-canary/oci"
+  },
+  "packages": {
+    "python": {
+      "name": "omnilyzer-release-canary",
+      "owner": "omnilyzer"
+    },
+    "npm": {
+      "name": "@omnilyzer/release-canary",
+      "owner": "omnilyzer"
+    },
+    "evidence": {
+      "name": "task013-release-evidence",
+      "owner": "omnilyzer"
+    },
+    "oci": {
+      "repository": "omnilyzer/task013-release-canary"
+    }
+  },
+  "registries": {
+    "forgejo_origin": "https://registry-dev.omnilyzer.ai",
+    "zot_origin": "https://oci-dev.omnilyzer.ai"
+  },
+  "artifacts": {
+    "python_wheel": "omnilyzer_release_canary-{version}-py3-none-any.whl",
+    "npm_tarball": "omnilyzer-release-canary-{version}.tgz",
+    "oci_archive": "task013-release-canary-{version}.oci.tar",
+    "sboms": {
+      "python": "python-sbom.cdx.json",
+      "npm": "npm-sbom.cdx.json",
+      "oci": "oci-sbom.cdx.json"
+    },
+    "vulnerability_reports": {
+      "python": "python-grype.json",
+      "npm": "npm-grype.json",
+      "oci": "oci-grype.json"
+    }
+  },
+  "tool_versions": {
+    "syft": "1.51.0",
+    "grype": "0.118.0",
+    "cosign": "3.1.2",
+    "cyclonedx_spec": "1.6"
+  }
+}

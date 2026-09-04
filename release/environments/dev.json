@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "publishing_enabled": false,
+  "forgejo_origin": "https://registry-dev.omnilyzer.ai",
+  "forgejo_oidc_audience": "u:2:316bec9a-53e4-4807-9557-7febdc979d0a",
+  "zot_origin": "https://oci-dev.omnilyzer.ai",
+  "zot_oidc_audience": "https://oci-dev.omnilyzer.ai",
+  "workflow_ref": "MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main"
+}
