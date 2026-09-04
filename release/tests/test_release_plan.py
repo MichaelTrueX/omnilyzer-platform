@@ -78,9 +78,9 @@ class ReleasePlanTests(unittest.TestCase):
         self.reject(lambda plan: plan["packages"]["oci"].update(repository="another-owner/package"))
         self.reject(lambda plan: plan["packages"]["python"].update(owner="another-owner"))
 
-    def test_environment_is_fixed_and_phase1_disabled(self) -> None:
+    def test_environment_is_fixed_and_phase2_dev_canary_enabled(self) -> None:
         environment = validate_environment(load_json(ROOT / "release/environments/dev.json"))
-        self.assertFalse(environment["publishing_enabled"])
+        self.assertTrue(environment["publishing_enabled"])
         self.assertEqual(environment["forgejo_origin"], FORGEJO_ORIGIN)
         self.assertEqual(environment["zot_origin"], ZOT_ORIGIN)
 
