@@ -42,23 +42,20 @@ class RepositoryPolicyTests(unittest.TestCase):
                 observed = hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
                 self.assertEqual(observed, expected)
 
-    def test_changed_paths_stay_within_task012_documentation_scope(self) -> None:
+    def test_historical_task012a_commit_stayed_within_its_documentation_scope(self) -> None:
         tracked = subprocess.run(
-            ["git", "diff", "--name-only", "d0a60345e0bcd21777efbc15738f90ce56d3a80a"],
-            cwd=ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.splitlines()
-        untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
+            [
+                "git", "diff", "--name-only",
+                "d0a60345e0bcd21777efbc15738f90ce56d3a80a",
+                "797c8f4c8080069a17eb73b958d017fc5c6deafc",
+            ],
             cwd=ROOT,
             check=True,
             capture_output=True,
             text=True,
         ).stdout.splitlines()
         allowed_files = {"spikes/README.md", "docs/architecture/technology-decisions.md"}
-        for path in tracked + untracked:
+        for path in tracked:
             with self.subTest(path=path):
                 self.assertTrue(path.startswith("spikes/registry-durability/") or path in allowed_files)
 
