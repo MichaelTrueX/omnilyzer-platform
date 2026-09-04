@@ -1,0 +1,1 @@
+Task 013 synthetic non-production OCI canary. This payload is data, not an executable.

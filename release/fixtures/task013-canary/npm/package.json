@@ -1,0 +1,7 @@
+{
+  "name": "@omnilyzer/release-canary",
+  "version": "0.0.0",
+  "description": "Synthetic, non-production Task 013 release canary",
+  "files": ["index.js"],
+  "license": "UNLICENSED"
+}
