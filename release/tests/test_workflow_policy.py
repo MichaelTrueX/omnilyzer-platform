@@ -66,8 +66,8 @@ class WorkflowPolicyTests(unittest.TestCase):
         environment = (ROOT / "release/environments/dev.json").read_text()
         self.assertIn("MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main", environment)
 
-    def test_phase1_cannot_publish_and_destinations_are_not_inputs(self) -> None:
-        self.assertIn('"publishing_enabled": false', (ROOT / "release/environments/dev.json").read_text())
+    def test_phase2_dev_canary_is_enabled_and_destinations_are_not_inputs(self) -> None:
+        self.assertIn('"publishing_enabled": true', (ROOT / "release/environments/dev.json").read_text())
         self.assertEqual(self.jobs["publish-zot"]["if"], "needs.gate.outputs.publishing_enabled == 'true'")
         self.assertEqual(self.jobs["publish-forgejo"]["if"], "needs.gate.outputs.publishing_enabled == 'true'")
         dispatch = self.raw.split("permissions: {}", 1)[0]

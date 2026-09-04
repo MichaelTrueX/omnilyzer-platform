@@ -10,7 +10,7 @@ Related:
 
 # Platform release control plane
 
-Task 013 begins production release tooling. This directory is deliberately outside `spikes/`: it implements the reviewed coordinated-SemVer, immutable-digest, split-registry architecture from ADRs 0005, 0006, and 0010. Phase 1 is code and local/policy validation only. `release/environments/dev.json` keeps `publishing_enabled` false, so neither OIDC publisher job is eligible. Phase 2 must first add the exact DEV workload identities and then explicitly review and enable one canary dispatch.
+Task 013 begins production release tooling. This directory is deliberately outside `spikes/`: it implements the reviewed coordinated-SemVer, immutable-digest, split-registry architecture from ADRs 0005, 0006, and 0010. Phase 1 completed code and local/policy validation. For Phase 2, the exact main-branch workflow identity was authorized in the DEV registries and `release/environments/dev.json` enables a separately reviewed DEV canary dispatch. This flag does not relax the repository, ref, source-SHA, package-identity, or registry-origin gates.
 
 ## Release lifecycle and trust boundaries
 
@@ -61,4 +61,4 @@ Publishers explicitly reject this local evidence mode. A workflow handoff must c
 
 ## Phase 1 non-claims
 
-Phase 1 does not prove live production publishing, actual production package boundaries, PROD registry deployment, DEV OIDC identity configuration, product consumption, or DEV-to-STAGING-to-PROD promotion. It performs no network publication. Those remain later acceptance work, beginning with one separately reviewed Phase 2 DEV canary.
+Phase 1 did not prove live publishing. Phase 2 enables only the reviewed DEV canary path; until its live run succeeds, it establishes no live round-trip result. Neither phase proves actual production package boundaries, PROD registry deployment, product consumption, or DEV-to-STAGING-to-PROD promotion. Those remain later acceptance work.
