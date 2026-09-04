@@ -85,3 +85,44 @@ Task 012A proves only a tested cold-backup procedure. It does **not** prove:
 ## Recommendation
 
 Retain the accepted split-registry architecture and exact-digest deployment rules from ADRs 0010 and 0006. Use this cold procedure as narrow technical evidence that filesystem-backed zot data can be integrity-manifested and freshly restored. Before production reliance, separately design and validate encrypted off-host backup, scheduling, retention/lifecycle safety, monitoring, capacity, restore drills, operational ownership, and production recovery objectives. No new ADR is warranted by this spike alone.
+
+## Task 012B: Forgejo Package Cold Backup and Fresh Restore
+
+### Hypothesis and acceptance
+
+A cold Forgejo-supported dump containing both package blobs and the SQLite metadata required to address them can be restored into a fresh isolated Forgejo instance so that previously published synthetic Generic, PyPI, and npm artifacts remain discoverable and byte-identical. Blob storage alone is not sufficient. Task 012B does not test OCI and does not reopen ADR 0010.
+
+PASS requires all three formats to publish and retrieve before backup; a clean source shutdown; a verified dump containing database, package-storage, and configuration state; removal of the temporary source; restore into fresh empty state on a different loopback port; all three packages remaining addressable with identical SHA-256 values; and rejection of the six required damaged/incomplete backup cases.
+
+### Security and test approach
+
+The validator uses Forgejo `16.0.3+gitea-1.22.0`, executable `/app/gitea/gitea`, SHA-256 `6d29dca8c14a884cbca19a162fb55f06cb8b3181032cf6d175aa34b5eae2ea5b`, extracted without a network pull from the locally cached digest-pinned image `codeberg.org/forgejo/forgejo@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685`. `FORGEJO_BIN` or a host `forgejo` is preferred when present and its actual version/path/hash are recorded.
+
+Both instances use temporary roots, package storage, repository directories, and SQLite databases on dynamic `127.0.0.1` ports. There is no OIDC, Nginx, TLS, external database/object storage, external registry, or real package data. One temporary package-scoped token is stored only in the temporary database and memory. Package payloads are deterministic, harmless, and never executed.
+
+After exact pre-backup retrieval, Forgejo A stops cleanly. The harness invokes Forgejo's supported `dump --type tar`, then adds a small `manifest.json` and `forgejo-data.tar.sha256` integrity wrapper. Restore rejects checksum mismatch, corrupt tar data, traversal, absolute/unexpected paths, links/special members, non-empty targets, missing `forgejo-db.sql`, or missing `data/packages` content. The dump's SQL is imported into a new SQLite database; a small `unistr()` compatibility decoder bridges the newer SQLite dump syntax to Python's host SQLite. Forgejo B then serves all verification requests from restored state only.
+
+Run:
+
+```bash
+PYTHONPATH=spikes/registry-durability python3 spikes/registry-durability/validate_forgejo_recovery.py
+python3 -m unittest discover -s spikes/registry-durability/tests -p 'test_*.py'
+```
+
+### Findings
+
+**TASK 012B — PASS.** Evidence is recorded in [`results/forgejo-recovery-validation.json`](results/forgejo-recovery-validation.json).
+
+| Format | Artifact length | SHA-256 | Pre-backup | Post-restore |
+|---|---:|---|---|---|
+| Generic | 51 | `5aa2c2bd0dff40b9c8595d7e7d1059632628684b248545d1e06cff1953bfc7e4` | PASS | PASS |
+| PyPI wheel | 1007 | `6dd21dfb724b49e05cd8224b8bb088188fddb6291d235dbc8eae8104a52cc5cf` | PASS | PASS |
+| npm tarball | 279 | `00c345cb5bab96ed82f787c4a0f28e51bec1bd9339230c612cca4efa72360b67` | PASS | PASS |
+
+The temporary source state was removed before restore. The restored PyPI Simple index and npm package/version metadata still addressed the exact artifacts, proving that package blobs and database metadata were recovered together. Removing either the database dump or package storage caused fail-closed rejection. Corrupt archive, checksum mismatch, traversal, and non-empty-destination negatives also passed.
+
+This is only a synthetic local cold-backup result. It does not establish online backup, production RPO/RTO, off-host or encrypted backup, HA, disaster recovery, production capacity/ownership, Forgejo OCI recovery, or application execution safety.
+
+### Recommendation
+
+Retain ADR 0010 unchanged. Task 012B supplies narrow technical evidence for cold recovery of Forgejo's accepted Generic/PyPI/npm role. Production backup scheduling, encryption, off-host custody, retention, restore drills, capacity, monitoring, disaster recovery, and ownership remain separate work.

@@ -1,0 +1,91 @@
+{
+  "backup": {
+    "archive_sha256": "f34c5c0c732bb1dac7b61857296fc547e0253295fa404864c4aa44478a2d7755",
+    "integrity_verified": true,
+    "logical_components": [
+      "forgejo-database-metadata",
+      "forgejo-package-storage",
+      "forgejo-config-state"
+    ],
+    "mode": "cold"
+  },
+  "classification": "TASK 012B \u2014 PASS",
+  "clean_shutdown": {
+    "restored": true,
+    "source": true
+  },
+  "created_at_utc": "2026-09-04T00:05:57Z",
+  "durations_seconds": {
+    "backup": 0.131461,
+    "restore": 1.259061
+  },
+  "forgejo": {
+    "binary_path": "/app/gitea/gitea",
+    "binary_sha256": "6d29dca8c14a884cbca19a162fb55f06cb8b3181032cf6d175aa34b5eae2ea5b",
+    "binary_source": "codeberg.org/forgejo/forgejo@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685:/app/gitea/gitea",
+    "version": "16.0.3+gitea-1.22.0"
+  },
+  "isolation": {
+    "address": "127.0.0.1",
+    "different_ports": true,
+    "external_services": false,
+    "live_infrastructure_accessed": false,
+    "restored_port": 59789,
+    "source_port": 39753,
+    "temporary_package_storage": true,
+    "temporary_sqlite": true
+  },
+  "limitations": [
+    "cold backup only",
+    "synthetic local data only",
+    "not production RPO or RTO",
+    "not online backup, HA, or disaster recovery",
+    "not off-host or encrypted backup",
+    "not Forgejo OCI validation"
+  ],
+  "negative_test_matrix": {
+    "checksum_mismatch_rejected": true,
+    "corrupt_archive_rejected": true,
+    "database_metadata_loss_rejected": true,
+    "nonempty_destination_rejected": true,
+    "package_storage_loss_rejected": true,
+    "path_traversal_rejected": true
+  },
+  "packages": {
+    "Generic": {
+      "length": 51,
+      "sha256": "5aa2c2bd0dff40b9c8595d7e7d1059632628684b248545d1e06cff1953bfc7e4"
+    },
+    "PyPI": {
+      "length": 1007,
+      "sha256": "6dd21dfb724b49e05cd8224b8bb088188fddb6291d235dbc8eae8104a52cc5cf"
+    },
+    "npm": {
+      "length": 279,
+      "sha256": "00c345cb5bab96ed82f787c4a0f28e51bec1bd9339230c612cca4efa72360b67"
+    }
+  },
+  "post_restore_results": {
+    "Generic": true,
+    "PyPI": true,
+    "npm": true
+  },
+  "pre_backup_results": {
+    "Generic": true,
+    "PyPI": true,
+    "npm": true
+  },
+  "restore": {
+    "archive_sha256": "f34c5c0c732bb1dac7b61857296fc547e0253295fa404864c4aa44478a2d7755",
+    "logical_components": [
+      "forgejo-database-metadata",
+      "forgejo-package-storage",
+      "forgejo-config-state"
+    ],
+    "restored": true
+  },
+  "source_removal": {
+    "temporary_source_removed": true
+  },
+  "task": "012B"
+}
