@@ -174,7 +174,42 @@ jobs:
           python3 -m release.vulnerability_policy sanitize-db \
             "$RUNNER_TEMP/grype-db-status.raw.json" "$handoff/grype-db-status.json"
           rm -f "$RUNNER_TEMP/grype-db-status.raw.json"
-      - name: Apply fail-closed vulnerability policy and finalize handoff
+      - name: Prepare denied-release diagnostic evidence
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 -m release.denial_evidence \
+            --handoff "$RUNNER_TEMP/platform-release-handoff" \
+            --policy release/vulnerability-policy.json \
+            --output "$RUNNER_TEMP/platform-release-denial-evidence" \
+            --repository "$GITHUB_WORKSPACE" \
+            --expected-version "$RELEASE_VERSION" --expected-sha "$SOURCE_SHA"
+      - name: Apply fail-closed vulnerability policy
+        id: vulnerability_policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          denial="$RUNNER_TEMP/platform-release-denial-evidence"
+          python3 -m release.vulnerability_policy \
+            --policy "$denial/vulnerability-policy.json" \
+            --python "$denial/python-grype.json" \
+            --npm "$denial/npm-grype.json" \
+            --oci "$denial/oci-grype.json" \
+            --evaluation-date "$(date -u +%F)" \
+            --output "$denial/vulnerability-policy-result.json"
+      - name: Upload denied-release diagnostic evidence
+        if: always() && steps.vulnerability_policy.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        with:
+          name: platform-release-denial-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/platform-release-denial-evidence
+          if-no-files-found: error
+          retention-days: 30
+      - name: Finalize and verify immutable handoff
+        if: steps.vulnerability_policy.outcome == 'success'
         shell: bash
         env:
           RELEASE_VERSION: ${{ github.event.inputs.version }}
@@ -182,20 +217,16 @@ jobs:
         run: |
           set -euo pipefail
           handoff="$RUNNER_TEMP/platform-release-handoff"
-          cp release/vulnerability-policy.json "$handoff/vulnerability-policy.json"
-          python3 -m release.vulnerability_policy \
-            --policy "$handoff/vulnerability-policy.json" \
-            --python "$handoff/python-grype.json" \
-            --npm "$handoff/npm-grype.json" \
-            --oci "$handoff/oci-grype.json" \
-            --evaluation-date "$(date -u +%F)" \
-            --output "$handoff/vulnerability-policy-result.json"
+          denial="$RUNNER_TEMP/platform-release-denial-evidence"
+          cp "$denial/vulnerability-policy.json" "$handoff/vulnerability-policy.json"
+          cp "$denial/vulnerability-policy-result.json" "$handoff/vulnerability-policy-result.json"
           python3 -m release.build_release finalize --handoff "$handoff" \
             --repository "$GITHUB_WORKSPACE" --evidence-mode production-tools
           python3 -m release.verify_handoff --handoff "$handoff" \
             --repository "$GITHUB_WORKSPACE" --expected-version "$RELEASE_VERSION" \
             --expected-sha "$SOURCE_SHA" --require-production-evidence
       - name: Upload immutable build handoff for transport only
+        if: success() && steps.vulnerability_policy.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
         with:
           name: platform-release-handoff-${{ github.run_id }}-${{ github.run_attempt }}

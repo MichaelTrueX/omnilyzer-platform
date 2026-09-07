@@ -20,7 +20,7 @@ from deployment.tests.test_audit import value as audit_value
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOYMENT_ROOT = ROOT / "deployment"
 WORKFLOW_PATH = ROOT / ".github/workflows/platform-promote.yml"
-PLATFORM_RELEASE_SHA256 = "ae0be9de046dc7dd3b41f27f4c1d7d940ad7fa64d6c1a97d5294e7540c94dc20"
+PLATFORM_RELEASE_SHA256 = "53485cfafd1d1b8cdf0b1cb80c34bab12be12bfc07d7f7e6629a8c489be53471"
 TASK008_PROTECTED = {
     ".github/workflows/task008-publish.yml": "0d6bd4a5715e6366250c427c959401e13b1f63b79786717a99b3816fd87a74b8",
     ".github/workflows/task008-consume.yml": "2712a221da0e4c4502fc2bc7dea6096cc015d8e0527a95a37f476c3fe3c7d5d1",

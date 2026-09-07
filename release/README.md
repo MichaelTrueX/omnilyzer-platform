@@ -32,6 +32,8 @@ The final `release-manifest.json` binds schema and platform version, source SHA,
 
 `vulnerability-policy.json` carries forward the Task 008 semantics: Critical and High findings block a release. Exceptions must name an exact vulnerability, package, and version; include a reason; and have an explicit future ISO expiry date. Unknown fields, duplicates, malformed/expired exceptions, and wildcard-like identities fail closed. The release manifest binds the exact policy hash.
 
+Before policy evaluation, the build creates a separate, owner-only diagnostic directory containing a canonical artifact identity and only the reviewed SBOM, Grype, sanitized database, and policy files. A policy denial remains a failed build and skips finalization, publisher OIDC, and publication, but a failure-only Actions artifact retains those diagnostics and the generated blocked-findings result. Publishers reference only the successful immutable handoff artifact; denial evidence is never publication or promotion input.
+
 ## Task 013 canary
 
 Until real package boundaries are reviewed, the production engine is exercised with harmless sources under `fixtures/task013-canary/`:
