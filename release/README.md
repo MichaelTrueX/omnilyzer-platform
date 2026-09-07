@@ -16,7 +16,7 @@ Task 013 begins production release tooling. This directory is deliberately outsi
 
 `platform-release.yml` accepts only a strict `X.Y.Z` version and the exact dispatched `main` SHA in `MichaelTrueX/omnilyzer-platform`. The committed release-plan template is materialized and checked with a closed schema, repository-confined source paths, fixed DEV origins, bounded package identities, fixed filenames, and pinned tool versions.
 
-The `build` job is the sole build boundary. With `contents: read` and no OIDC authority it creates a wheel, npm tarball, OCI layout archive, CycloneDX 1.6 SBOMs, pinned-Grype results, and the deterministic build manifest. The short-retention Actions artifact is transport only: it is not a registry, provenance authority, or retention system. Each publisher downloads that handoff and verifies its exact file allowlist, version, source SHA, hashes, schema, identities, SBOM format, and vulnerability-policy PASS before it requests OIDC.
+The `build` job is the sole build boundary. With `contents: read` and no OIDC authority it creates a wheel, npm tarball, executable OCI layout archive, CycloneDX 1.6 SBOMs, pinned-Grype results, and the deterministic build manifest. Docker Buildx 0.36.1 and BuildKit 0.24.0 are selected through commit-pinned actions; the BuildKit image and Python runtime base are digest-pinned. The short-retention Actions artifact is transport only: it is not a registry, provenance authority, or retention system. Each publisher downloads that handoff and verifies its exact file allowlist, version, source SHA, hashes, schema, identities, SBOM format, and vulnerability-policy PASS before it requests OIDC.
 
 Only publisher jobs have `id-token: write`. They use short-lived GitHub OIDC and no long-lived registry or signing credential. The intended identity is exactly:
 
@@ -40,7 +40,13 @@ Until real package boundaries are reviewed, the production engine is exercised w
 - npm: `@omnilyzer/release-canary`
 - OCI: `omnilyzer/task013-release-canary`
 
-These are synthetic validation fixtures, not production APIs. Validation packages their source bytes but imports, installs, and executes none of them. The engine derives identities and source paths from the validated plan rather than hard-coding canary names in its generic plan/handoff logic. Future packages plug in by adding reviewed repository-relative source paths, bounded registry identities, and filenames to a committed plan that satisfies the same closed contract.
+These are synthetic validation fixtures, not production APIs. Python and npm package validation does not import or install those packages. The OCI fixture is a deliberately executable Task 014 deployment canary, not Omnilyzer product code. It uses only the Python standard library and exposes `/livez`, `/readyz`, and `/metadata` on internal port 8080. `/readyz` requires a bounded runtime configuration identifier, an explicitly generated checksum-bound migration marker, and optional configured TCP dependency reachability. Startup never executes migration code.
+
+The OCI image runs as UID/GID 10001, writes no application state, and supports a read-only root filesystem. Its explicit migration command writes only to a narrow runtime mount at `/run/omnilyzer-canary`, using an exclusive file lock and atomic owner-only marker replacement. The image embeds no credentials. The release version and source SHA are injected as build metadata, validated in the final OCI configuration, and returned by `/metadata`; neither is derived from a mutable tag.
+
+The workflow builds the final OCI image exactly once and emits it directly as an OCI archive. A strict verifier checks every referenced blob digest and size, requires one linux/amd64 image, and enforces the reviewed non-root user, entrypoint, port, labels, and release metadata before Syft and Grype scan that same archive. Existing zot publication, exact-digest readback, Sigstore, provenance, and Forgejo package publication remain downstream of the immutable handoff.
+
+The engine continues to derive identities and source paths from the validated plan rather than hard-coding canary names in its generic plan/handoff logic. Future packages plug in by adding reviewed repository-relative source paths, bounded registry identities, and filenames to a committed plan that satisfies the same closed contract.
 
 For an offline deterministic check (which creates explicitly synthetic local scanner evidence because Syft/Grype need not be installed):
 
@@ -57,7 +63,7 @@ python3 -m release.verify_handoff --handoff "$tmp_dir/handoff" \
   --expected-sha f2575b9a90c0f3a03ec0730c2a5ff7fea1ed17e5
 ```
 
-Publishers explicitly reject this local evidence mode. A workflow handoff must contain SBOM and vulnerability evidence produced by the reviewed pinned Syft and Grype versions.
+Publishers explicitly reject this local evidence mode. It uses a deterministic synthetic OCI layout and does not validate the Docker-built runtime image. A workflow handoff must contain the contract-checked executable OCI archive plus SBOM and vulnerability evidence produced by the reviewed pinned Syft and Grype versions.
 
 ## Phase 1 non-claims
 

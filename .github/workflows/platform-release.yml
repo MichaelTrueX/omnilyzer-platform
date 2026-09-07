@@ -74,7 +74,7 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
-      - name: Materialize and build distributable artifacts once
+      - name: Materialize plan and build package artifacts once
         shell: bash
         env:
           RELEASE_VERSION: ${{ github.event.inputs.version }}
@@ -87,9 +87,50 @@ jobs:
             release/fixtures/task013-canary/release-plan-template.json \
             "$RELEASE_VERSION" "$SOURCE_SHA" "$RUNNER_TEMP/release-plan.json" \
             --repository "$GITHUB_WORKSPACE"
-          python3 -m release.build_release artifacts \
+          python3 -m release.build_release packages \
             --plan "$RUNNER_TEMP/release-plan.json" --output "$handoff" \
             --repository "$GITHUB_WORKSPACE"
+      - name: Set up pinned Buildx and BuildKit
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          version: v0.36.1
+          driver: docker-container
+          driver-opts: image=moby/buildkit:v0.24.0@sha256:6eceb8971ce4fceb3daca562832642706238b7eea72941fcf9896c93c3c4a53e
+      - name: Verify pinned image builder versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx version | grep -F 'v0.36.1'
+          docker buildx inspect --bootstrap | grep -F 'BuildKit: v0.24.0'
+      - name: Build executable OCI canary exactly once
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: release/fixtures/task013-canary/oci
+          file: release/fixtures/task013-canary/oci/Dockerfile
+          platforms: linux/amd64
+          pull: true
+          no-cache: true
+          network: none
+          push: false
+          load: false
+          provenance: false
+          sbom: false
+          build-args: |
+            RELEASE_VERSION=${{ github.event.inputs.version }}
+            SOURCE_SHA=${{ github.sha }}
+            OCI_REPOSITORY=omnilyzer/task013-release-canary
+          outputs: type=oci,dest=${{ runner.temp }}/platform-release-handoff/task013-release-canary-${{ github.event.inputs.version }}.oci.tar
+      - name: Validate executable OCI contract and exact manifest digest
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 -m release.executable_oci \
+            --archive "$RUNNER_TEMP/platform-release-handoff/task013-release-canary-$RELEASE_VERSION.oci.tar" \
+            --release-version "$RELEASE_VERSION" --source-sha "$SOURCE_SHA" \
+            --repository omnilyzer/task013-release-canary
       - name: Install pinned Syft
         uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.22.2
         with:

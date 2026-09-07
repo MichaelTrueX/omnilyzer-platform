@@ -1,0 +1,5 @@
+*
+!Dockerfile
+!canary_runtime.py
+!migration.py
+!migration-definition.json
