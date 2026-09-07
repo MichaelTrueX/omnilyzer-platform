@@ -100,8 +100,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker buildx version | grep -F 'v0.36.1'
-          docker buildx inspect --bootstrap | grep -F 'BuildKit: v0.24.0'
+          buildx_output="$(docker buildx version)"
+          printf '%s\n' "$buildx_output"
+          printf '%s\n' "$buildx_output" | python3 -m release.builder_versions buildx
+          buildkit_output="$(docker buildx inspect --bootstrap)"
+          printf '%s\n' "$buildkit_output"
+          printf '%s\n' "$buildkit_output" | python3 -m release.builder_versions buildkit
       - name: Build executable OCI canary exactly once
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
