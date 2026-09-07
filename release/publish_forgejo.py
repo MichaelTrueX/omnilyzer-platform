@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import stat
 import tarfile
 import urllib.error
@@ -53,6 +54,32 @@ class _Links(HTMLParser):
             for key, value in attrs:
                 if key.lower() == "href" and value is not None:
                     self.hrefs.append(value)
+
+
+def _validated_pypi_download_url(origin: str, advertised_url: str, owner: str,
+                                  package: str, version: str, wheel_filename: str,
+                                  expected_sha256: str) -> str:
+    if re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
+        raise ValueError("expected PyPI wheel SHA-256 is malformed")
+    parsed = urllib.parse.urlsplit(advertised_url)
+    expected_origin = urllib.parse.urlsplit(origin)
+    try:
+        unexpected_port = parsed.port != expected_origin.port
+    except ValueError as exc:
+        raise ValueError("PyPI wheel link has an invalid port") from exc
+    expected_path = (
+        f"/api/packages/{urllib.parse.quote(owner, safe='')}/pypi/files/"
+        f"{urllib.parse.quote(package, safe='-')}/{urllib.parse.quote(version, safe='')}/"
+        f"{urllib.parse.quote(wheel_filename, safe='')}"
+    )
+    if (parsed.scheme != "https" or parsed.netloc != expected_origin.netloc
+            or parsed.username or parsed.password or unexpected_port or parsed.query
+            or "\\" in advertised_url or "\x00" in urllib.parse.unquote(parsed.path)
+            or parsed.path != expected_path):
+        raise ValueError("PyPI wheel link escaped the expected Forgejo route")
+    if parsed.fragment != f"sha256={expected_sha256}":
+        raise ValueError("PyPI wheel link has an invalid SHA-256 fragment")
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
 
 
 def _request(origin: str, token: str, method: str, path_or_url: str, body: bytes = b"",
@@ -160,8 +187,14 @@ def publish(handoff: Path, evidence: Path, token_file: Path, repository: Path,
                   if Path(urllib.parse.urlsplit(href).path).name == wheel_path.name]
     if len(wheel_urls) != 1:
         raise RuntimeError("Forgejo PyPI Simple API did not expose exactly one built wheel")
-    status, downloaded_wheel = _request(origin, token, "GET", wheel_urls[0])
-    if status != 200 or downloaded_wheel != wheel_bytes:
+    expected_wheel_sha256 = hashlib.sha256(wheel_bytes).hexdigest()
+    wheel_download_url = _validated_pypi_download_url(
+        origin, wheel_urls[0], plan["packages"]["python"]["owner"], normalized_python,
+        version, wheel_path.name, expected_wheel_sha256,
+    )
+    status, downloaded_wheel = _request(origin, token, "GET", wheel_download_url)
+    if (status != 200 or downloaded_wheel != wheel_bytes
+            or hashlib.sha256(downloaded_wheel).hexdigest() != expected_wheel_sha256):
         raise RuntimeError("Forgejo PyPI round-trip bytes differ from the immutable handoff")
 
     npm_path = handoff / plan["artifacts"]["npm_tarball"]
