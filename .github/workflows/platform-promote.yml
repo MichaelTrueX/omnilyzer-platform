@@ -1,0 +1,79 @@
+# Task 014 Phase 1 validates immutable promotion requests only. It cannot deploy.
+name: Platform promotion request
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_stage:
+        description: Ordered target stage
+        required: true
+        type: choice
+        options: [dev, staging, prod]
+      release_version:
+        description: Strict accepted release version
+        required: true
+        type: string
+      source_sha:
+        description: Exact accepted release source SHA
+        required: true
+        type: string
+      manifest_digest:
+        description: Exact accepted OCI manifest digest
+        required: true
+        type: string
+      release_manifest_sha256:
+        description: Exact release-manifest.json SHA-256
+        required: true
+        type: string
+      provenance_sha256:
+        description: Exact release-provenance.json SHA-256
+        required: true
+        type: string
+      originating_release_run_id:
+        description: Successful Task 013 release run ID
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out promotion policy without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate immutable request against disabled Phase 1 environment
+        shell: bash
+        env:
+          TARGET_STAGE: ${{ inputs.target_stage }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          MANIFEST_DIGEST: ${{ inputs.manifest_digest }}
+          RELEASE_MANIFEST_SHA256: ${{ inputs.release_manifest_sha256 }}
+          PROVENANCE_SHA256: ${{ inputs.provenance_sha256 }}
+          ORIGINATING_RELEASE_RUN_ID: ${{ inputs.originating_release_run_id }}
+          REQUESTED_BY: github:${{ github.actor }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "MichaelTrueX/omnilyzer-platform"
+          test "$GITHUB_REF" = "refs/heads/main"
+          request="$RUNNER_TEMP/task014-promotion-request.json"
+          python3 -m deployment.promotion \
+            --release-version "$RELEASE_VERSION" \
+            --source-sha "$SOURCE_SHA" \
+            --manifest-digest "$MANIFEST_DIGEST" \
+            --release-manifest-sha256 "$RELEASE_MANIFEST_SHA256" \
+            --provenance-sha256 "$PROVENANCE_SHA256" \
+            --originating-release-run-id "$ORIGINATING_RELEASE_RUN_ID" \
+            --target-stage "$TARGET_STAGE" \
+            --requested-by "$REQUESTED_BY" \
+            --output "$request"
+          python3 -m deployment.controller \
+            --request "$request" \
+            --environment "deployment/environments/$TARGET_STAGE.json"

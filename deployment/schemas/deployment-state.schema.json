@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Omnilyzer Task 014 deployment state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "stage",
+    "active_release", "active_source_sha", "active_digest", "active_slot",
+    "previous_release", "previous_source_sha", "previous_digest", "previous_slot",
+    "candidate_release", "candidate_source_sha", "candidate_digest", "candidate_slot",
+    "migration_state", "updated_at", "event_id"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "stage": {"enum": ["dev", "staging", "prod"]},
+    "active_release": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"}]},
+    "active_source_sha": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^(?!0{40}$)[0-9a-f]{40}$"}]},
+    "active_digest": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}]},
+    "active_slot": {"enum": ["blue", "green", null]},
+    "previous_release": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"}]},
+    "previous_source_sha": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^(?!0{40}$)[0-9a-f]{40}$"}]},
+    "previous_digest": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}]},
+    "previous_slot": {"enum": ["blue", "green", null]},
+    "candidate_release": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"}]},
+    "candidate_source_sha": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^(?!0{40}$)[0-9a-f]{40}$"}]},
+    "candidate_digest": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}]},
+    "candidate_slot": {"enum": ["blue", "green", null]},
+    "migration_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "identity", "checksum", "serialized_lock_required"],
+      "properties": {
+        "status": {"enum": ["none", "pending", "running", "succeeded", "failed"]},
+        "identity": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"}]},
+        "checksum": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^[0-9a-f]{64}$"}]},
+        "serialized_lock_required": {"const": true}
+      }
+    },
+    "updated_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "event_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+  },
+  "allOf": [
+    {"oneOf": [
+      {"properties": {"active_release": {"type": "null"}, "active_source_sha": {"type": "null"}, "active_digest": {"type": "null"}, "active_slot": {"type": "null"}}},
+      {"properties": {"active_release": {"type": "string"}, "active_source_sha": {"type": "string"}, "active_digest": {"type": "string"}, "active_slot": {"enum": ["blue", "green"]}}}
+    ]},
+    {"oneOf": [
+      {"properties": {"previous_release": {"type": "null"}, "previous_source_sha": {"type": "null"}, "previous_digest": {"type": "null"}, "previous_slot": {"type": "null"}}},
+      {"properties": {"previous_release": {"type": "string"}, "previous_source_sha": {"type": "string"}, "previous_digest": {"type": "string"}, "previous_slot": {"enum": ["blue", "green"]}}}
+    ]},
+    {"oneOf": [
+      {"properties": {"candidate_release": {"type": "null"}, "candidate_source_sha": {"type": "null"}, "candidate_digest": {"type": "null"}, "candidate_slot": {"type": "null"}}},
+      {"properties": {"candidate_release": {"type": "string"}, "candidate_source_sha": {"type": "string"}, "candidate_digest": {"type": "string"}, "candidate_slot": {"enum": ["blue", "green"]}}}
+    ]},
+    {"not": {"properties": {"active_slot": {"const": "blue"}, "candidate_slot": {"const": "blue"}}}},
+    {"not": {"properties": {"active_slot": {"const": "green"}, "candidate_slot": {"const": "green"}}}},
+    {"not": {"properties": {"active_slot": {"const": "blue"}, "previous_slot": {"const": "blue"}}}},
+    {"not": {"properties": {"active_slot": {"const": "green"}, "previous_slot": {"const": "green"}}}},
+    {"if": {"properties": {"migration_state": {"properties": {"status": {"const": "none"}}}}},
+     "then": {"properties": {"migration_state": {"properties": {"identity": {"type": "null"}, "checksum": {"type": "null"}}}}},
+     "else": {"properties": {"migration_state": {"properties": {"identity": {"type": "string"}, "checksum": {"type": "string"}}}}}}
+  ]
+}

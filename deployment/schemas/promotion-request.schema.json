@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Omnilyzer Task 014 promotion request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "release_version",
+    "source_sha",
+    "oci_repository",
+    "manifest_digest",
+    "exact_image_reference",
+    "release_manifest_sha256",
+    "provenance_sha256",
+    "originating_release_run_id",
+    "target_stage",
+    "requested_by"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "release_version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"},
+    "source_sha": {"type": "string", "pattern": "^(?!0{40}$)[0-9a-f]{40}$"},
+    "oci_repository": {"enum": ["omnilyzer/task013-release-canary"]},
+    "manifest_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "exact_image_reference": {"type": "string", "pattern": "^oci-dev\\.omnilyzer\\.ai/omnilyzer/task013-release-canary@sha256:[0-9a-f]{64}$"},
+    "release_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "provenance_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "originating_release_run_id": {"type": "integer", "minimum": 1},
+    "target_stage": {"enum": ["dev", "staging", "prod"]},
+    "requested_by": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,254}$"}
+  }
+}
