@@ -189,8 +189,15 @@ def validate_plan(data: Any, repository: Path, *, check_sources: bool = True) ->
     if not artifacts["python_wheel"].endswith(".whl") or not artifacts["npm_tarball"].endswith(".tgz") or not artifacts["oci_archive"].endswith(".oci.tar"):
         raise PlanError("artifact filename extensions are not the reviewed formats")
 
-    tools = _object(plan["tool_versions"], {"syft", "grype", "cosign", "cyclonedx_spec"}, "tool_versions")
-    expected_tools = {"syft": "1.51.0", "grype": "0.118.0", "cosign": "3.1.2", "cyclonedx_spec": "1.6"}
+    tools = _object(
+        plan["tool_versions"],
+        {"syft", "grype", "cosign", "cyclonedx_spec", "buildx", "buildkit"},
+        "tool_versions",
+    )
+    expected_tools = {
+        "syft": "1.51.0", "grype": "0.118.0", "cosign": "3.1.2",
+        "cyclonedx_spec": "1.6", "buildx": "0.36.1", "buildkit": "0.24.0",
+    }
     if tools != expected_tools:
         raise PlanError("tool versions differ from reviewed pins")
     return plan

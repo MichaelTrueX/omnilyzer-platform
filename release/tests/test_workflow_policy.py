@@ -35,7 +35,7 @@ class WorkflowPolicyTests(unittest.TestCase):
     def test_manual_trigger_and_global_permissions_are_closed(self) -> None:
         self.assertEqual(self.workflow["permissions"], {})
         self.assertIn("workflow_dispatch", self.raw)
-        self.assertNotIn("push:", self.raw)
+        self.assertNotRegex(self.raw, r"(?m)^  (?:push|pull_request|schedule):")
 
     def test_build_has_read_only_contents_and_no_oidc(self) -> None:
         self.assertEqual(self.jobs["build"]["permissions"], {"contents": "read"})
