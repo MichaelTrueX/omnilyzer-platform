@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "stage": "dev",
+  "promotion_policy": {
+    "required_prior_stage": null,
+    "source_registry_origin": "https://oci-dev.omnilyzer.ai",
+    "approved_repositories": [
+      "omnilyzer/task013-release-canary"
+    ],
+    "github_environment": "task014-dev",
+    "production_approval_required": false
+  },
+  "runtime": {
+    "configuration_reference": null,
+    "secrets_reference": null,
+    "ingress_reference": null
+  },
+  "activation": {
+    "deployment_enabled": false,
+    "verified_at": null
+  }
+}
