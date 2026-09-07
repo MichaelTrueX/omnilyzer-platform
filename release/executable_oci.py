@@ -12,7 +12,7 @@ import tarfile
 from typing import Any
 
 
-BASE_IMAGE_DIGEST = "sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217"
+BASE_IMAGE_DIGEST = "sha256:bbdc4d1e20995d9bb9f9935188844c824b40969de4bb1f0eaadacda4c8d4121e"
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 SEMVER_RE = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
@@ -140,7 +140,7 @@ def verify_executable_archive(
         raise ExecutableOCIError("OCI environment does not bind release metadata")
     if runtime.get("User") != "10001:10001":
         raise ExecutableOCIError("OCI runtime user is not the reviewed non-root UID/GID")
-    if runtime.get("Entrypoint") != ["python3", "/app/canary_runtime.py"]:
+    if runtime.get("Entrypoint") != ["/usr/bin/python", "/app/canary_runtime.py"]:
         raise ExecutableOCIError("OCI entrypoint is not the reviewed executable command")
     if runtime.get("Cmd") not in (None, []):
         raise ExecutableOCIError("OCI command contains unexpected arguments")

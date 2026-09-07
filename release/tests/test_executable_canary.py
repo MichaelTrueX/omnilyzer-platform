@@ -38,6 +38,8 @@ BASE_ENVIRONMENT = {
     "CANARY_SOURCE_SHA": SOURCE_SHA,
 }
 PROTECTED_HASHES = {
+    ".github/workflows/platform-release.yml": "53485cfafd1d1b8cdf0b1cb80c34bab12be12bfc07d7f7e6629a8c489be53471",
+    "release/vulnerability-policy.json": "475ad38ef4ae8d89dcf7d4e03eeb76701085fdcd4ebdb8ae9aa41a7bce2cde8f",
     "release/publish_forgejo.py": "a30497ac6af29c35c860f09342d8b3a5d34e0baf092ea1fec0aba818105b42bd",
     "release/publish_zot.py": "e6271f96d3eb7b66df06f2bea6e90addbad88d44b0e461de8bdcd26b085b8ea7",
     "release/provenance.py": "845c3758c9a0b503b582a5264942b6622aae331ab21013be641ae36d4235d443",
@@ -231,14 +233,14 @@ def _descriptor(raw: bytes, media_type: str) -> dict[str, object]:
     return {"mediaType": media_type, "digest": "sha256:" + hashlib.sha256(raw).hexdigest(), "size": len(raw)}
 
 
-def _oci_archive(path: Path) -> str:
+def _oci_archive(path: Path, mutate=None) -> str:
     layers = [gzip.compress(b"base", mtime=0), gzip.compress(b"canary", mtime=0)]
-    config = (json.dumps({
+    configuration = {
         "architecture": "amd64",
         "os": "linux",
         "config": {
             "User": "10001:10001",
-            "Entrypoint": ["python3", "/app/canary_runtime.py"],
+            "Entrypoint": ["/usr/bin/python", "/app/canary_runtime.py"],
             "Env": [
                 f"CANARY_RELEASE_VERSION={VERSION}", f"CANARY_SOURCE_SHA={SOURCE_SHA}",
                 "PYTHONDONTWRITEBYTECODE=1", "PYTHONUNBUFFERED=1",
@@ -253,7 +255,10 @@ def _oci_archive(path: Path) -> str:
             },
         },
         "rootfs": {"type": "layers", "diff_ids": ["sha256:" + hashlib.sha256(x).hexdigest() for x in layers]},
-    }, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    }
+    if mutate is not None:
+        mutate(configuration)
+    config = (json.dumps(configuration, sort_keys=True, separators=(",", ":")) + "\n").encode()
     layer_descriptors = [_descriptor(raw, "application/vnd.oci.image.layer.v1.tar+gzip") for raw in layers]
     manifest = (json.dumps({
         "schemaVersion": 2,
@@ -281,12 +286,75 @@ def _oci_archive(path: Path) -> str:
 class ImageAndPipelineTests(unittest.TestCase):
     def test_dockerfile_is_digest_pinned_and_has_non_root_runtime_contract(self) -> None:
         dockerfile = (CANARY / "Dockerfile").read_text()
-        self.assertIn(f"FROM docker.io/library/python:3.12-slim@{BASE_IMAGE_DIGEST}", dockerfile)
+        self.assertEqual(BASE_IMAGE_DIGEST, "sha256:bbdc4d1e20995d9bb9f9935188844c824b40969de4bb1f0eaadacda4c8d4121e")
+        self.assertEqual(dockerfile.splitlines()[0], f"FROM cgr.dev/chainguard/python@{BASE_IMAGE_DIGEST}")
+        self.assertNotIn("cgr.dev/chainguard/python:", dockerfile)
+        self.assertNotRegex(dockerfile, r"(?im)^\s*RUN\b")
+        self.assertNotRegex(dockerfile, r"\b(apk|apt-get|bash|busybox|pip|gcc)\b")
+        self.assertIn("COPY --chown=10001:10001", dockerfile)
         self.assertIn("USER 10001:10001", dockerfile)
         self.assertIn("EXPOSE 8080", dockerfile)
-        self.assertIn('ENTRYPOINT ["python3", "/app/canary_runtime.py"]', dockerfile)
+        self.assertIn('ENTRYPOINT ["/usr/bin/python", "/app/canary_runtime.py"]', dockerfile)
         self.assertIn("CMD []", dockerfile)
         self.assertNotRegex(dockerfile, r"(?m)^FROM\s+[^\s@]+:[^\s@]+\s*$")
+
+    def test_old_base_is_absent_only_from_active_configuration(self) -> None:
+        old = "09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217"
+        # Historical spikes record their actual validated base and are out of scope.
+        for path in (CANARY / "Dockerfile", ROOT / "release/executable_oci.py",
+                     ROOT / ".github/workflows/platform-release.yml"):
+            self.assertNotIn(old, path.read_text())
+
+    def test_verifier_rejects_unreviewed_runtime_and_base(self) -> None:
+        cases = [
+            ("User", "65532"),
+            ("Entrypoint", ["python3", "/app/canary_runtime.py"]),
+            ("Entrypoint", ["/usr/bin/python"]),
+            ("Entrypoint", ["python", "/app/canary_runtime.py"]),
+            ("Cmd", ["unexpected"]),
+            ("ExposedPorts", {"8080/tcp": {}, "80/tcp": {}}),
+        ]
+        for key, value in cases:
+            with self.subTest(key=key, value=value), tempfile.TemporaryDirectory() as directory:
+                archive = Path(directory) / "canary.tar"
+                _oci_archive(archive, lambda c: c["config"].__setitem__(key, value))
+                with self.assertRaises(ExecutableOCIError):
+                    verify_executable_archive(archive, VERSION, SOURCE_SHA, REPOSITORY)
+        for digest in ("sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217",
+                       "sha256:" + "f" * 64):
+            with self.subTest(digest=digest), tempfile.TemporaryDirectory() as directory:
+                archive = Path(directory) / "canary.tar"
+                _oci_archive(archive, lambda c: c["config"]["Labels"].__setitem__("ai.omnilyzer.base.digest", digest))
+                with self.assertRaises(ExecutableOCIError):
+                    verify_executable_archive(archive, VERSION, SOURCE_SHA, REPOSITORY)
+
+    def test_identity_remains_fail_closed_without_shell_validation(self) -> None:
+        for key in ("org.opencontainers.image.version", "org.opencontainers.image.revision",
+                    "org.opencontainers.image.title"):
+            for value in (None, "", "mismatched"):
+                with self.subTest(label=key, value=value), tempfile.TemporaryDirectory() as directory:
+                    archive = Path(directory) / "canary.tar"
+                    def mutate(config):
+                        labels = config["config"]["Labels"]
+                        if value is None:
+                            labels.pop(key)
+                        else:
+                            labels[key] = value
+                    _oci_archive(archive, mutate)
+                    with self.assertRaises(ExecutableOCIError):
+                        verify_executable_archive(archive, VERSION, SOURCE_SHA, REPOSITORY)
+        for key in ("CANARY_RELEASE_VERSION", "CANARY_SOURCE_SHA"):
+            for value in (None, "", "mismatched"):
+                with self.subTest(environment=key, value=value), tempfile.TemporaryDirectory() as directory:
+                    archive = Path(directory) / "canary.tar"
+                    def mutate(config):
+                        env = config["config"]["Env"]
+                        env[:] = [entry for entry in env if not entry.startswith(key + "=")]
+                        if value is not None:
+                            env.append(f"{key}={value}")
+                    _oci_archive(archive, mutate)
+                    with self.assertRaises(ExecutableOCIError):
+                        verify_executable_archive(archive, VERSION, SOURCE_SHA, REPOSITORY)
 
     def test_final_oci_is_exact_digest_addressable_and_tamper_checked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
