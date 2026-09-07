@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build deterministic Task 013 release artifacts in the build-only trust zone."""
+"""Build coordinated release artifacts in the build-only trust zone."""
 
 from __future__ import annotations
 
@@ -18,9 +18,11 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from .executable_oci import verify_executable_archive
     from .release_plan import load_json, validate_plan
     from .vulnerability_policy import canonical_bytes
 except ImportError:  # Direct execution in GitHub Actions.
+    from executable_oci import verify_executable_archive
     from release_plan import load_json, validate_plan
     from vulnerability_policy import canonical_bytes
 
@@ -181,7 +183,7 @@ def artifact_record(path: Path) -> dict[str, Any]:
     return {"filename": path.name, "sha256": digest(raw), "size": len(raw)}
 
 
-def build_artifacts(plan_path: Path, output: Path, repository: Path) -> dict[str, Any]:
+def build_packages(plan_path: Path, output: Path, repository: Path) -> dict[str, Any]:
     plan = validate_plan(load_json(plan_path), repository)
     if output.exists() and any(output.iterdir()):
         raise ValueError("output directory must be new or empty")
@@ -192,11 +194,9 @@ def build_artifacts(plan_path: Path, output: Path, repository: Path) -> dict[str
     artifacts = plan["artifacts"]
     wheel = build_wheel(sources["python"], plan["packages"]["python"]["name"], version)
     npm = build_npm(sources["npm"], plan["packages"]["npm"]["name"], version)
-    oci, manifest_digest = build_oci(sources["oci"], plan["packages"]["oci"]["repository"], version)
-    for filename, data in ((artifacts["python_wheel"], wheel), (artifacts["npm_tarball"], npm),
-                           (artifacts["oci_archive"], oci)):
+    for filename, data in ((artifacts["python_wheel"], wheel), (artifacts["npm_tarball"], npm)):
         (output / filename).write_bytes(data)
-    return {"expected_oci_manifest_digest": manifest_digest}
+    return {"oci_source": sources["oci"], "oci_archive": output / artifacts["oci_archive"]}
 
 
 def synthetic_sbom(name: str, artifact: Path) -> dict[str, Any]:
@@ -215,8 +215,12 @@ def local_canary(plan_path: Path, output: Path, repository: Path, policy: Path, 
         from .vulnerability_policy import evaluate
     except ImportError:
         from vulnerability_policy import evaluate
-    info = build_artifacts(plan_path, output, repository)
+    info = build_packages(plan_path, output, repository)
     plan = load_json(output / "release-plan.json")
+    oci, manifest_digest = build_oci(
+        info["oci_source"], plan["packages"]["oci"]["repository"], plan["platform_version"],
+    )
+    info["oci_archive"].write_bytes(oci)
     artifact_paths = {
         "python": output / plan["artifacts"]["python_wheel"],
         "npm": output / plan["artifacts"]["npm_tarball"],
@@ -236,12 +240,20 @@ def local_canary(plan_path: Path, output: Path, repository: Path, policy: Path, 
         "built": "2000-01-01T00:00:00Z", "checksum": f"sha256:{'0' * 64}",
         "schema_version": "local-synthetic-canary", "valid": True,
     }))
-    finalize(output, repository, info["expected_oci_manifest_digest"], "local-synthetic-canary")
+    finalize(output, repository, manifest_digest, "local-synthetic-canary")
 
 
 def finalize(root: Path, repository: Path, expected_oci_digest: str, evidence_mode: str) -> None:
     plan_path = root / "release-plan.json"
     plan = validate_plan(load_json(plan_path), repository)
+    oci_archive = root / plan["artifacts"]["oci_archive"]
+    if evidence_mode == "production-tools":
+        verified_digest = verify_executable_archive(
+            oci_archive, plan["platform_version"], plan["source_commit"],
+            plan["packages"]["oci"]["repository"],
+        )
+        if verified_digest != expected_oci_digest:
+            raise ValueError("verified executable OCI digest differs from the final archive")
     artifacts = {
         key: artifact_record(root / plan["artifacts"][field])
         for key, field in (("python", "python_wheel"), ("npm", "npm_tarball"), ("oci", "oci_archive"))
@@ -283,10 +295,10 @@ def oci_digest_from_archive(path: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
-    artifacts = sub.add_parser("artifacts")
+    packages = sub.add_parser("packages")
     local = sub.add_parser("local-canary")
     final = sub.add_parser("finalize")
-    for command in (artifacts, local):
+    for command in (packages, local):
         command.add_argument("--plan", type=Path, required=True)
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--repository", type=Path, default=Path.cwd())
@@ -296,8 +308,8 @@ def main() -> int:
     final.add_argument("--repository", type=Path, default=Path.cwd())
     final.add_argument("--evidence-mode", choices=("production-tools",), required=True)
     args = parser.parse_args()
-    if args.command == "artifacts":
-        build_artifacts(args.plan, args.output, args.repository)
+    if args.command == "packages":
+        build_packages(args.plan, args.output, args.repository)
     elif args.command == "local-canary":
         local_canary(args.plan, args.output, args.repository, args.policy, args.evaluation_date)
     else:
