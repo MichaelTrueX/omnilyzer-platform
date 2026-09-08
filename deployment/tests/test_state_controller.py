@@ -18,6 +18,7 @@ from deployment.controller import (
 )
 from deployment.policy import DeploymentPolicyError
 from deployment.state import (
+    DEV_STATE_PATH,
     DeploymentState,
     MigrationState,
     load_state,
@@ -65,6 +66,8 @@ class DeploymentStateTests(unittest.TestCase):
             write_state_atomic(path, state())
             self.assertEqual(load_state(path), state())
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(str(DEV_STATE_PATH), "/var/lib/omnilyzer/deployment/dev/state.json")
 
     def test_migration_history_accepts_same_checksum_and_rejects_change(self) -> None:
         history = {"014_additive": "c" * 64}

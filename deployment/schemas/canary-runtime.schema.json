@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Omnilyzer Task 014 DEV synthetic canary runtime configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["CANARY_DEPENDENCY_REQUIRED", "CANARY_RUNTIME_CONFIG_ID", "schema_version"],
+  "properties": {
+    "CANARY_DEPENDENCY_REQUIRED": {"const": "false"},
+    "CANARY_RUNTIME_CONFIG_ID": {"const": "task014-dev"},
+    "schema_version": {"const": 1}
+  }
+}
