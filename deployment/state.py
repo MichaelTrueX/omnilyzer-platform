@@ -25,6 +25,9 @@ from .policy import (
 
 
 MIGRATION_STATUSES = ("none", "pending", "running", "succeeded", "failed")
+DEV_STATE_PATH = Path("/var/lib/omnilyzer/deployment/dev/state.json")
+STATE_DIRECTORY_MODE = 0o700
+STATE_FILE_MODE = 0o600
 STATE_FIELDS = {
     "schema_version", "stage",
     "active_release", "active_source_sha", "active_digest", "active_slot",
@@ -154,11 +157,14 @@ def load_state(path: Path) -> DeploymentState:
 
 def write_state_atomic(path: Path, state: DeploymentState) -> None:
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(mode=STATE_DIRECTORY_MODE, parents=True, exist_ok=True)
+    if path.parent.is_symlink() or not path.parent.is_dir():
+        raise DeploymentPolicyError("deployment state directory must be a real directory")
+    os.chmod(path.parent, STATE_DIRECTORY_MODE)
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(temporary_name)
     try:
-        os.fchmod(descriptor, 0o600)
+        os.fchmod(descriptor, STATE_FILE_MODE)
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(state.canonical_bytes())
             stream.flush()
