@@ -15,6 +15,7 @@ from deployment.policy import APPROVED_OCI_ORIGIN, APPROVED_OCI_REPOSITORIES
 from deployment.runtime import CONTAINER_SECURITY_CONTRACT, HEALTH_CONTRACT, NETWORK_PATH
 from deployment.tests.fixtures import request, state
 from deployment.tests.test_audit import value as audit_value
+from deployment.tests.test_execution import valid_request as executor_request_value
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -125,7 +126,7 @@ class SourceBoundaryTests(unittest.TestCase):
 
     def test_schemas_are_closed_draft_2020_12_documents(self) -> None:
         schemas = sorted((DEPLOYMENT_ROOT / "schemas").glob("*.schema.json"))
-        self.assertEqual(len(schemas), 3)
+        self.assertEqual(len(schemas), 4)
         for path in schemas:
             with self.subTest(path=path.name):
                 schema = json.loads(path.read_text(encoding="utf-8"))
@@ -138,6 +139,7 @@ class SourceBoundaryTests(unittest.TestCase):
             "promotion-request.schema.json": request().to_dict(),
             "deployment-state.schema.json": state(candidate=True).to_dict(),
             "audit-event.schema.json": AuditEvent.from_dict(audit_value()).to_dict(),
+            "executor-request.schema.json": executor_request_value(),
         }
         for filename, document in documents.items():
             with self.subTest(filename=filename):
