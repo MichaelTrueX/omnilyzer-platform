@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Omnilyzer Task 014 DEV broker-to-executor request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "operation", "stage", "release_version", "source_sha",
+    "oci_origin", "oci_repository", "manifest_digest", "exact_image_reference",
+    "release_manifest_sha256", "provenance_sha256", "originating_release_run_id",
+    "promotion_request_sha256", "requested_by_actor_id", "github_repository_id",
+    "github_workflow_ref", "github_workflow_sha", "github_run_id",
+    "github_run_attempt", "oidc_jti", "oidc_issued_at", "oidc_expires_at",
+    "runtime_configuration_reference", "secrets_reference", "ingress_reference"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "operation": {"const": "deploy"},
+    "stage": {"const": "dev"},
+    "release_version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"},
+    "source_sha": {"$ref": "#/$defs/source_sha"},
+    "oci_origin": {"const": "https://oci-dev.omnilyzer.ai"},
+    "oci_repository": {"const": "omnilyzer/task013-release-canary"},
+    "manifest_digest": {"$ref": "#/$defs/digest"},
+    "exact_image_reference": {
+      "type": "string",
+      "pattern": "^oci-dev\\.omnilyzer\\.ai/omnilyzer/task013-release-canary@sha256:[0-9a-f]{64}$"
+    },
+    "release_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "provenance_sha256": {"$ref": "#/$defs/sha256"},
+    "originating_release_run_id": {"$ref": "#/$defs/positive_id"},
+    "promotion_request_sha256": {"$ref": "#/$defs/sha256"},
+    "requested_by_actor_id": {"$ref": "#/$defs/positive_id"},
+    "github_repository_id": {"const": 1350104356},
+    "github_workflow_ref": {
+      "const": "MichaelTrueX/omnilyzer-platform/.github/workflows/platform-promote.yml@refs/heads/main"
+    },
+    "github_workflow_sha": {"$ref": "#/$defs/source_sha"},
+    "github_run_id": {"$ref": "#/$defs/positive_id"},
+    "github_run_attempt": {"$ref": "#/$defs/positive_id"},
+    "oidc_jti": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$",
+      "not": {"pattern": "\\.\\."}
+    },
+    "oidc_issued_at": {"type": "integer", "minimum": 0},
+    "oidc_expires_at": {"type": "integer", "minimum": 0},
+    "runtime_configuration_reference": {"$ref": "#/$defs/runtime_reference"},
+    "secrets_reference": {"$ref": "#/$defs/no_secrets_reference"},
+    "ingress_reference": {"$ref": "#/$defs/ingress_reference"}
+  },
+  "$defs": {
+    "positive_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "source_sha": {
+      "type": "string",
+      "pattern": "^(?!0{40}$)[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "ingress_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "runtime_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "kind", "repository_id", "reviewed_commit", "path", "sha256"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "kind": {"const": "repository-blob-sha256"},
+        "repository_id": {"const": 1350104356},
+        "reviewed_commit": {"$ref": "#/$defs/source_sha"},
+        "path": {"const": "deployment/runtime/dev/canary-runtime.json"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "no_secrets_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "kind", "required", "reason"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "kind": {"const": "none"},
+        "required": {"type": "array", "maxItems": 0},
+        "reason": {"const": "task014-synthetic-canary-has-no-runtime-secrets"}
+      }
+    },
+    "ingress_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "kind", "repository_id", "reviewed_commit", "files",
+        "loopback_address", "loopback_port", "public_origin"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "kind": {"const": "repository-file-set-sha256"},
+        "repository_id": {"const": 1350104356},
+        "reviewed_commit": {"$ref": "#/$defs/source_sha"},
+        "files": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "prefixItems": [
+            {
+              "allOf": [
+                {"$ref": "#/$defs/ingress_file"},
+                {"properties": {"path": {"const": "deployment/runtime/dev/compose.yaml"}}}
+              ]
+            },
+            {
+              "allOf": [
+                {"$ref": "#/$defs/ingress_file"},
+                {"properties": {"path": {"const": "deployment/runtime/dev/host-nginx.conf"}}}
+              ]
+            },
+            {
+              "allOf": [
+                {"$ref": "#/$defs/ingress_file"},
+                {"properties": {"path": {"const": "deployment/runtime/dev/nginx/nginx.conf"}}}
+              ]
+            }
+          ],
+          "items": false
+        },
+        "loopback_address": {"const": "127.0.0.1"},
+        "loopback_port": {"const": 3020},
+        "public_origin": {"const": "https://canary-dev.omnilyzer.ai"}
+      }
+    }
+  }
+}
