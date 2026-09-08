@@ -8,6 +8,16 @@ Phase 1 is a repository-side, non-live foundation. All three environment files s
 
 Phase 2 must verify and activate each real environment deliberately. It must supply reviewed runtime configuration and secret references, configure protected `task014-dev`, `task014-staging`, and `task014-prod` GitHub environments, implement runtime adapters, select durable state and append-only audit storage, and validate real ingress, migration, health, traffic-switch, and rollback behavior. PROD requires explicit approval. No repository file assumes those protections already exist.
 
+## Phase 2B2 deployment-authority contract
+
+[ADR 0011](../docs/adr/0011-oidc-restricted-deployment-authority.md) selects a GitHub-hosted deployment job attached to a protected environment, short-lived GitHub Actions OIDC, an unprivileged restricted broker, a closed canonical request over a local Unix-domain socket, and a narrow privileged executor. The broker has no Docker socket. The executor must parse and independently revalidate the request and exposes no shell, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image, or arbitrary environment.
+
+`identity.py` is pure authorization policy for **already cryptographically verified** GitHub OIDC claims. It does not parse JWTs, verify signatures, or retrieve JWKS. It requires the exact DEV audience, repository and numeric identity, workflow ref and revision, main ref, environment, manual event, GitHub-hosted runner, run and actor IDs, temporal claims, and a bounded JTI. Caller-supplied time makes the five-minute lifetime, sixty-second receipt, and thirty-second skew rules deterministic. `ReplayGuard` defines atomic single-use behavior through expiry plus skew. Its in-memory implementation is test-only; production requires bounded durable local state that fails closed when unavailable or corrupt.
+
+`execution.py` defines immutable closed runtime, no-secret, ingress, and executor-request models. The only operation is `deploy` to DEV. Canonical JSON reuses the repository's sorted, compact, ASCII, newline-terminated representation. Broker, privileged-executor, and transport types are protocols only: this phase adds no HTTP or Unix server, systemd service, Docker/Compose invocation, Nginx mutation, filesystem persistence, cryptographic dependency, or network client.
+
+The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Therefore **no live deployment workflow may be enabled**. This limitation must be resolved before PR C/D; it must not be worked around with a static SSH key, personal deployment identity, self-hosted runner on DEV, or weaker workload policy. Live JWT/JWKS behavior, replay persistence, broker/executor hardening, Unix-socket permissions, zot and Forgejo read-only consumers, host services, TLS/DNS/network integration, restart/recovery, and the first DEV deployment all remain to validate.
+
 ## Promotion identity and trust
 
 A promotion request binds the strict release version, source SHA, approved OCI repository, manifest digest, exact image reference, release-manifest and provenance hashes, originating release run, target stage, and actor. Unknown fields, mutable references, malformed identities, and noncanonical hashes fail closed. Canonical JSON is sorted, compact, ASCII, and newline terminated before hashing.
@@ -42,4 +52,4 @@ Audit events use a closed schema and deterministic canonical representation. The
 python3 -m unittest discover -s deployment/tests -p 'test_*.py'
 ```
 
-The package is governed by [ADR 0006](../docs/adr/0006-immutable-oci-deployment-and-promotion.md). Task 007 remains historical validation evidence; production code does not import from `spikes/`.
+The package is governed by [ADR 0006](../docs/adr/0006-immutable-oci-deployment-and-promotion.md) and [ADR 0011](../docs/adr/0011-oidc-restricted-deployment-authority.md). Task 007 remains historical validation evidence; production code does not import from `spikes/`.
