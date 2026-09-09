@@ -13,7 +13,29 @@ The decision question is:
 
 Task 014 Phase 2B2 discovery found no dedicated deployment identity, no self-hosted runner, no GitHub-to-DEV transport, and no read-only deployment consumer for the release evidence or OCI candidate. A personal host account has both Docker and sudo membership. Docker-group membership is effectively high privilege and is not a narrow deployment boundary. A workflow compromise must not become an unrestricted Docker daemon or host shell compromise merely because it reached a deployment endpoint.
 
-The current private repository/account capability cannot enforce the branch and GitHub environment protections required by this decision. Consequently, the architecture direction and non-live contract implementation may proceed, but **no live deployment workflow may be enabled**. PR A and PR B may remain non-live. PR C and PR D require the protection prerequisite to be resolved; a static key or weakened environment policy is not an acceptable workaround.
+The current private repository/account capability cannot enforce the branch and GitHub environment protections required by this decision. Consequently, architecture work and repository-side, non-live implementation may proceed before those protections become enforceable, but **no live deployment workflow or DEV deployment may be enabled** until the required private-repository branch and GitHub environment protections are enforceable. PR names do not determine authority. The boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
+
+Before that prerequisite is resolved, work is limited to:
+
+- closed verifier and authorization code;
+- durable replay code;
+- broker, transport, and executor code that cannot be activated;
+- registry-consumer interfaces and deterministic mocked tests;
+- audit schema and identity projection;
+- inert, uninstalled systemd, Nginx, and layout fixtures; and
+- deterministic repository tests and static validation.
+
+Until the prerequisite is resolved and the live-authority change is separately reviewed, the following remain prohibited:
+
+- `id-token: write` in a deployment workflow;
+- GitHub environment attachment or a deployment job;
+- live public broker ingress or listener;
+- installation or enabling of host services or sockets;
+- live registry credentials or token exchange;
+- Docker or application execution;
+- host, runtime, or infrastructure mutation;
+- environment activation or populated live runtime references; and
+- any static-key, personal-account, SSH, self-hosted-runner, or weakened-policy workaround.
 
 This decision extends [ADR 0006](0006-immutable-oci-deployment-and-promotion.md). It does not replace ADR 0006 or [ADR 0010](0010-forgejo-and-zot-package-registries.md).
 
@@ -119,7 +141,7 @@ Operational validation must cover concurrent replay attempts, unavailable or cor
 
 ## Migration and rollback implications
 
-Adoption proceeds through non-live contracts and tests before host or GitHub activation. Live deployment remains prohibited until the private-repository branch and environment protections required by this ADR can be enforced.
+Adoption proceeds through inert repository-side implementation, non-live contracts, and deterministic tests before host or GitHub activation. This sequencing does not depend on a PR name. Live deployment remains absolutely prohibited until the private-repository branch and GitHub environment protections required by this ADR can be enforced and the live-authority change is separately reviewed.
 
 The authority can be withdrawn by disabling GitHub environment activation, revoking or disabling the broker's OIDC trust policy, stopping the broker and executor, and removing public broker ingress. Immutable release artifacts and deployment state and audit evidence must be retained.
 
