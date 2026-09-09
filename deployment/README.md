@@ -18,7 +18,31 @@ Later phases must activate each environment deliberately, supply merge-SHA-bound
 
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
-The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Therefore **no live deployment workflow may be enabled**. This limitation must be resolved before PR C/D; it must not be worked around with a static SSH key, personal deployment identity, self-hosted runner on DEV, or weaker workload policy. Live JWT/JWKS behavior, replay persistence, broker/executor hardening, Unix-socket permissions, zot and Forgejo read-only consumers, host services, TLS/DNS/network integration, restart/recovery, and the first DEV deployment all remain to validate.
+The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
+
+Permitted before the prerequisite is resolved:
+
+- closed verifier and authorization code;
+- durable replay code;
+- broker, transport, and executor code that cannot be activated;
+- registry-consumer interfaces and deterministic mocked tests;
+- audit schema and identity projection;
+- inert, uninstalled systemd, Nginx, and layout fixtures; and
+- deterministic repository tests and static validation.
+
+Prohibited until the prerequisite is resolved and the live-authority change is separately reviewed:
+
+- `id-token: write` in a deployment workflow;
+- GitHub environment attachment or a deployment job;
+- live public broker ingress or listener;
+- installation or enabling of host services or sockets;
+- live registry credentials or token exchange;
+- Docker or application execution;
+- host, runtime, or infrastructure mutation;
+- environment activation or populated live runtime references; and
+- any static-key, personal-account, SSH, self-hosted-runner, or weakened-policy workaround.
+
+Therefore **no live deployment workflow or DEV deployment may be enabled** until the required private-repository branch and GitHub environment protections are enforceable. Live JWT/JWKS behavior, replay persistence, broker/executor hardening, Unix-socket permissions, zot and Forgejo read-only consumers, host services, TLS/DNS/network integration, restart/recovery, and the first DEV deployment all remain to validate.
 
 ## Promotion identity and trust
 
