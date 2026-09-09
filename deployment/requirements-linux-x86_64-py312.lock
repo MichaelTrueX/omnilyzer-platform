@@ -1,0 +1,14 @@
+# Qualified target: Ubuntu 24.04; Linux x86_64; CPython 3.12; glibc
+# Binary wheels only. Each pin accepts exactly the reviewed wheel hash below.
+# wheel: pyjwt-2.13.0-py3-none-any.whl
+PyJWT[crypto]==2.13.0 \
+    --hash=sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728
+# wheel: cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl
+cryptography==50.0.1 \
+    --hash=sha256:51afcfceb15597cf2635068e4ac9a56b2abde622edde17f37d85fd7b5306497a
+# wheel: cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+cffi==2.1.1 \
+    --hash=sha256:c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf
+# wheel: pycparser-3.0-py3-none-any.whl
+pycparser==3.0 \
+    --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
