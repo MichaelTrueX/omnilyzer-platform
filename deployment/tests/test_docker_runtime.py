@@ -17,7 +17,11 @@ from deployment.policy import DeploymentPolicyError
 
 
 IMAGE = IMAGE_PREFIX + "sha256:" + "6" * 64
+OTHER_IMAGE = IMAGE_PREFIX + "sha256:" + "7" * 64
 SOURCE = "9d29fa1a4010e6e72676580c36a94c1e97e8794b"
+EXPECTED_ENVIRONMENT = {
+    "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "CANARY_IMAGE": IMAGE,
+}
 
 
 class FakeRunner:
@@ -57,7 +61,9 @@ class DockerRuntimeTests(unittest.TestCase):
         self.http = FakeHttp()
         self.migration = Path(self.temp.name) / "migration"
         self.migration.mkdir()
-        self.adapter = DockerRuntimeAdapter(self.runner, self.http)
+        self.adapter = DockerRuntimeAdapter(
+            self.runner, self.http, canary_image=IMAGE,
+        )
         self.adapter._nginx_runtime_directory = Path(self.temp.name)
         self.adapter._migration_directory = self.migration
 
@@ -76,6 +82,20 @@ class DockerRuntimeTests(unittest.TestCase):
                 validate_canary_image(value)
         self.assertEqual(validate_canary_image(IMAGE), IMAGE)
 
+    def test_constructor_binds_only_an_exact_authorized_digest(self) -> None:
+        accepted = DockerRuntimeAdapter(
+            self.runner, self.http, canary_image=IMAGE,
+        )
+        self.assertEqual(accepted._canary_image, IMAGE)
+        rejected = (
+            IMAGE_PREFIX.removesuffix("@") + ":0.14.2",
+            "docker.io/omnilyzer/task013-release-canary@sha256:" + "6" * 64,
+            "oci-dev.omnilyzer.ai/omnilyzer/other@sha256:" + "6" * 64,
+        )
+        for image in rejected:
+            with self.subTest(image=image), self.assertRaises(RuntimeOperationError):
+                DockerRuntimeAdapter(self.runner, self.http, canary_image=image)
+
     def test_runtime_configuration_is_closed_and_canonical(self) -> None:
         validate_runtime_configuration(RUNTIME_CONFIG_BYTES)
         for raw in (RUNTIME_CONFIG_BYTES.rstrip(), RUNTIME_CONFIG_BYTES.replace(b"false", b"true"), RUNTIME_CONFIG_BYTES + b" "):
@@ -86,8 +106,27 @@ class DockerRuntimeTests(unittest.TestCase):
         self.adapter.pull_exact_image(IMAGE)
         argv, _, environment, timeout = self.runner.calls[0]
         self.assertEqual(argv, ("docker", "pull", IMAGE))
-        self.assertNotIn("shell", environment)
+        self.assertEqual(environment, EXPECTED_ENVIRONMENT)
         self.assertEqual(timeout, COMMAND_TIMEOUT_SECONDS)
+
+    def test_image_operations_reject_another_valid_digest(self) -> None:
+        operations = (
+            lambda: self.adapter.pull_exact_image(OTHER_IMAGE),
+            lambda: self.adapter.verify_local_repo_digest(OTHER_IMAGE),
+            lambda: self.adapter.start_candidate(DeploymentPlan(
+                "promotion", "dev", "0.14.2", SOURCE, OTHER_IMAGE, None, "blue", (),
+            )),
+            lambda: self.adapter.execute_migration(
+                stage="dev", exact_image_reference=OTHER_IMAGE,
+                identity=MIGRATION_IDENTITY, checksum=MIGRATION_CHECKSUM,
+            ),
+        )
+        for operation in operations:
+            with self.subTest(operation=operation), self.assertRaisesRegex(
+                RuntimeOperationError, "differs from the adapter",
+            ):
+                operation()
+        self.assertEqual(self.runner.calls, [])
 
     def test_subprocess_runner_bounds_output_and_time_without_shell(self) -> None:
         runner = SubprocessCommandRunner()
@@ -130,6 +169,7 @@ class DockerRuntimeTests(unittest.TestCase):
         self.adapter.start_candidate(plan())
         argv = self.runner.calls[-1][0]
         self.assertEqual(argv[-5:], ("up", "--detach", "--no-deps", "--force-recreate", "canary-blue"))
+        self.assertEqual(self.runner.calls[-1][2], EXPECTED_ENVIRONMENT)
         self.assertNotIn("build", argv)
         with self.assertRaises(RuntimeOperationError):
             self.adapter.start_candidate(plan(active="blue", candidate="blue"))
@@ -169,6 +209,20 @@ class DockerRuntimeTests(unittest.TestCase):
         with self.assertRaises(DeploymentPolicyError):
             self.adapter._active_fragment("blue:9000")
 
+    def test_validate_nginx_and_normal_switch_bind_every_compose_call(self) -> None:
+        self.assertTrue(self.adapter.validate_nginx("dev"))
+        self.assertEqual(len(self.runner.calls), 1)
+        self.assertIn("-t", self.runner.calls[0][0])
+        self.assertEqual(self.runner.calls[0][2], EXPECTED_ENVIRONMENT)
+
+        self.runner.calls.clear()
+        self.adapter.switch_traffic("dev", "green")
+        self.assertEqual(len(self.runner.calls), 2)
+        self.assertIn("-t", self.runner.calls[0][0])
+        self.assertEqual(self.runner.calls[1][0][-3:], ("nginx", "-s", "reload"))
+        for _, _, environment, _ in self.runner.calls:
+            self.assertEqual(environment, EXPECTED_ENVIRONMENT)
+
     def test_syntax_failure_restores_previous_routing(self) -> None:
         target = Path(self.temp.name) / "active.conf"
         old = self.adapter._active_fragment("blue")
@@ -177,6 +231,12 @@ class DockerRuntimeTests(unittest.TestCase):
         with self.assertRaises(RuntimeOperationError):
             self.adapter.switch_traffic("dev", "green")
         self.assertEqual(target.read_bytes(), old)
+        self.assertEqual(len(self.runner.calls), 3)
+        self.assertIn("-t", self.runner.calls[0][0])
+        self.assertIn("-t", self.runner.calls[1][0])
+        self.assertEqual(self.runner.calls[2][0][-3:], ("nginx", "-s", "reload"))
+        for _, _, environment, _ in self.runner.calls:
+            self.assertEqual(environment, EXPECTED_ENVIRONMENT)
 
     def test_reload_failure_restores_previous_routing(self) -> None:
         target = Path(self.temp.name) / "active.conf"
@@ -189,6 +249,13 @@ class DockerRuntimeTests(unittest.TestCase):
         with self.assertRaises(RuntimeOperationError):
             self.adapter.switch_traffic("dev", "green")
         self.assertEqual(target.read_bytes(), old)
+        self.assertEqual(len(self.runner.calls), 4)
+        self.assertIn("-t", self.runner.calls[0][0])
+        self.assertEqual(self.runner.calls[1][0][-3:], ("nginx", "-s", "reload"))
+        self.assertIn("-t", self.runner.calls[2][0])
+        self.assertEqual(self.runner.calls[3][0][-3:], ("nginx", "-s", "reload"))
+        for _, _, environment, _ in self.runner.calls:
+            self.assertEqual(environment, EXPECTED_ENVIRONMENT)
         self.assertNotIn("host-nginx", " ".join(" ".join(call[0]) for call in self.runner.calls))
 
 
