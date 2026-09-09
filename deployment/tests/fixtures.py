@@ -3,7 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 
-from deployment.audit import AuditEvent
+from deployment.audit import AuditEvent, AuditExecutionIdentity
+from deployment.execution import (
+    DEV_LOOPBACK_ADDRESS,
+    DEV_LOOPBACK_PORT,
+    DEV_PUBLIC_ORIGIN,
+    INGRESS_PATHS,
+    NO_SECRETS_REASON,
+    RUNTIME_CONFIGURATION_PATH,
+    ExecutorRequest,
+)
+from deployment.identity import DEV_REPOSITORY_ID, DEV_WORKFLOW_REF
 from deployment.policy import (
     EXPECTED_CERTIFICATE_IDENTITY,
     EXPECTED_CERTIFICATE_ISSUER,
@@ -21,6 +31,70 @@ DIGEST = "sha256:1e459732e5aeb124e333a80fb71714c788f3274b25d8747f0ffe1ccfda4e8a7
 OTHER_DIGEST = "sha256:" + "2" * 64
 IMAGE = f"oci-dev.omnilyzer.ai/{REPOSITORY}@{DIGEST}"
 TIMESTAMP = "2026-09-07T06:30:00Z"
+WORKFLOW_SHA = "4" * 40
+PROMOTION_REQUEST_SHA256 = "c" * 64
+
+
+def executor_request_value() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "operation": "deploy",
+        "stage": "dev",
+        "release_version": VERSION,
+        "source_sha": SOURCE_SHA,
+        "oci_origin": "https://oci-dev.omnilyzer.ai",
+        "oci_repository": REPOSITORY,
+        "manifest_digest": DIGEST,
+        "exact_image_reference": f"oci-dev.omnilyzer.ai/{REPOSITORY}@{DIGEST}",
+        "release_manifest_sha256": "a" * 64,
+        "provenance_sha256": "b" * 64,
+        "originating_release_run_id": 34088735049,
+        "promotion_request_sha256": PROMOTION_REQUEST_SHA256,
+        "requested_by_actor_id": 130741173,
+        "github_repository_id": DEV_REPOSITORY_ID,
+        "github_workflow_ref": DEV_WORKFLOW_REF,
+        "github_workflow_sha": WORKFLOW_SHA,
+        "github_run_id": 34150000000,
+        "github_run_attempt": 1,
+        "oidc_jti": "a95bf7cc-7c30-4c90-b85b-f001144c1c6e",
+        "oidc_issued_at": 1_778_000_000,
+        "oidc_expires_at": 1_778_000_300,
+        "runtime_configuration_reference": {
+            "schema_version": 1,
+            "kind": "repository-blob-sha256",
+            "repository_id": DEV_REPOSITORY_ID,
+            "reviewed_commit": WORKFLOW_SHA,
+            "path": RUNTIME_CONFIGURATION_PATH,
+            "sha256": "d" * 64,
+        },
+        "secrets_reference": {
+            "schema_version": 1,
+            "kind": "none",
+            "required": [],
+            "reason": NO_SECRETS_REASON,
+        },
+        "ingress_reference": {
+            "schema_version": 1,
+            "kind": "repository-file-set-sha256",
+            "repository_id": DEV_REPOSITORY_ID,
+            "reviewed_commit": WORKFLOW_SHA,
+            "files": [
+                {"path": path, "sha256": f"{index + 1:x}" * 64}
+                for index, path in enumerate(INGRESS_PATHS)
+            ],
+            "loopback_address": DEV_LOOPBACK_ADDRESS,
+            "loopback_port": DEV_LOOPBACK_PORT,
+            "public_origin": DEV_PUBLIC_ORIGIN,
+        },
+    }
+
+
+def executor_request() -> ExecutorRequest:
+    return ExecutorRequest.from_dict(executor_request_value())
+
+
+def execution_identity() -> dict[str, object]:
+    return AuditExecutionIdentity.from_executor_request(executor_request()).to_dict()
 
 
 def evidence() -> tuple[bytes, bytes]:
@@ -84,7 +158,7 @@ def oci_signature_result(digest: str = DIGEST) -> dict[str, object]:
 
 def event(stage: str, digest: str = DIGEST, event_type: str = "promotion_succeeded") -> AuditEvent:
     return AuditEvent.from_dict({
-        "schema_version": 1,
+        "schema_version": 2,
         "event_id": f"event-{stage}",
         "event_type": event_type,
         "stage": stage,
@@ -95,7 +169,7 @@ def event(stage: str, digest: str = DIGEST, event_type: str = "promotion_succeed
         "previous_digest": None,
         "active_slot": "green",
         "candidate_slot": None,
-        "actor": "github:task014",
+        "execution_identity": execution_identity(),
         "migration_identity": None,
         "result": "succeeded",
         "timestamp": TIMESTAMP,
