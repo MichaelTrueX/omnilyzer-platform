@@ -52,6 +52,50 @@ The transport response remains opaque because the future privileged-executor res
 
 C4 adds no HTTP endpoint, public listener, Unix-socket implementation, broker installation, executor implementation, systemd or Nginx asset, workflow authority, environment attachment, registry consumer, token exchange, runtime invocation, production filesystem state, or deployment activation. GitHub protection and a separate live-authority review remain absolute activation prerequisites.
 
+### Bounded Unix executor transport
+
+`unix_transport.py` adds the inert client-side `UnixExecutorTransport` for the
+broker's existing opaque-byte transport contract. It captures the one fixed
+production rendezvous path `/run/omnilyzer/deployment/executor.sock` and all
+standard-library operations during construction without inspecting the path or
+creating a socket. Each call validates exact nonempty built-in request bytes,
+uses one connection for one request, transmits a four-byte unsigned big-endian
+length followed by those exact bytes, shuts down its write side, and accepts
+one similarly framed exact built-in response. Empty responses are allowed;
+request and response payloads are each bounded to 64 KiB, and truncation,
+oversized declarations, trailing bytes, or a second frame fail closed.
+
+Before connecting, the pathname must identify a non-symlink Unix socket with
+one link, exact mode `0660`, the configured executor owner UID, and the
+separately configured socket-group GID. After connecting, Linux `SO_PEERCRED`
+must report a positive PID and the configured executor process UID and GID;
+the path is then checked again for the same device, inode, and accepted
+metadata before any request byte is sent. Peer credentials authenticate the
+connected local process, while pathname metadata constrains the rendezvous
+point. The socket-file group is deliberately distinct from the executor
+process GID because a future systemd-created socket may be broker-group
+accessible while the executor retains a different effective group.
+
+One captured monotonic deadline of at most three seconds covers validation,
+creation, connection, credential and metadata checks, transmission, response,
+EOF proof, and close. Every potentially blocking socket operation receives
+only the remaining budget. There is no reconnect, resend, retry, shared
+framing state, descriptor inheritance, compact-token or claims-mapping
+transmission, added identity envelope, arbitrary path, client bind, listener,
+or server implementation. The canonical request itself retains its required
+bounded OIDC JTI and execution-identity fields; removing them would violate the
+existing executor contract and exact-byte forwarding rule. All operational errors
+are reduced to `executor transport is unavailable` without path, identity,
+payload, framing, timing, errno, or dependency details.
+
+C5 does not install or qualify the parent ownership and mode chain beneath
+`/run/omnilyzer/deployment`, create or contact the production socket, or
+implement the executor listener. Activation must separately install and
+validate that complete chain. Root-equivalent local compromise is outside what
+a Unix-socket client can defend against. GitHub protections and a separate
+live-authority review remain mandatory before this inert transport may be
+installed, connected to a production executor, or used for deployment.
+
 `execution.py` continues to define immutable closed runtime, no-secret, ingress, and executor-request models. Its broker protocol now exposes only the safe token, canonical-request bytes, and receipt-time API implemented by the restricted broker. The only operation is `deploy` to DEV. Canonical JSON reuses the repository's sorted, compact, ASCII, newline-terminated representation. Privileged-executor and transport types remain protocols. C4 adds no HTTP or Unix server, systemd service, or public endpoint.
 
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
