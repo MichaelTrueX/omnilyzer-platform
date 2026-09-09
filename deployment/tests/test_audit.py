@@ -5,7 +5,9 @@ import unittest
 from deployment.audit import AuditEvent, EVENT_TYPES
 from deployment.policy import DeploymentPolicyError
 
-from deployment.tests.fixtures import DIGEST, REPOSITORY, SOURCE_SHA, TIMESTAMP, VERSION
+from deployment.tests.fixtures import (
+    DIGEST, REPOSITORY, SOURCE_SHA, TIMESTAMP, VERSION, execution_identity,
+)
 
 
 def value(event_type: str = "promotion_started") -> dict[str, object]:
@@ -13,7 +15,7 @@ def value(event_type: str = "promotion_started") -> dict[str, object]:
     previous = "sha256:" + "3" * 64 if event_type.startswith("rollback_") else None
     result = "succeeded" if event_type.endswith("succeeded") else "failed" if event_type.endswith("failed") else "started"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "event_id": "run-34088735049-1",
         "event_type": event_type,
         "stage": "dev",
@@ -24,7 +26,7 @@ def value(event_type: str = "promotion_started") -> dict[str, object]:
         "previous_digest": previous,
         "active_slot": "blue",
         "candidate_slot": "green",
-        "actor": "github:task014",
+        "execution_identity": execution_identity(),
         "migration_identity": migration,
         "result": result,
         "timestamp": TIMESTAMP,
@@ -66,7 +68,7 @@ class AuditEventTests(unittest.TestCase):
 
     def test_secret_like_values_are_rejected(self) -> None:
         candidate = value()
-        candidate["actor"] = "token=value"
+        candidate["migration_identity"] = "token=value"
         with self.assertRaises(DeploymentPolicyError):
             AuditEvent.from_dict(candidate)
 
