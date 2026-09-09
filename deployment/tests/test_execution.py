@@ -309,11 +309,17 @@ class PrivilegeBoundaryTests(unittest.TestCase):
         for name in ("runtime_reference", "no_secrets_reference", "ingress_reference"):
             self.assertFalse(schema["$defs"][name]["additionalProperties"])
 
-    def test_broker_interface_separates_verified_claims_replay_and_transport(self) -> None:
+    def test_broker_interface_accepts_only_remote_token_request_and_time(self) -> None:
         parameters = inspect.signature(DeploymentBroker.authorize_and_forward).parameters
-        self.assertIn("cryptographically_verified_claims", parameters)
-        self.assertIn("replay_guard", parameters)
-        self.assertIn("transport", parameters)
+        self.assertEqual(
+            tuple(parameters),
+            ("self", "compact_token", "canonical_request", "received_at"),
+        )
+        for forbidden in (
+            "cryptographically_verified_claims", "identity", "request",
+            "replay_guard", "transport", "verifier",
+        ):
+            self.assertNotIn(forbidden, parameters)
 
     def test_executor_interface_accepts_only_canonical_bytes(self) -> None:
         parameters = inspect.signature(PrivilegedExecutor.execute).parameters
