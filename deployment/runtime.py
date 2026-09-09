@@ -67,7 +67,7 @@ class RuntimeAdapter(Protocol):
     def check_readiness(self, stage: str, slot: str) -> bool:
         ...
 
-    def validate_application(self, stage: str, slot: str) -> bool:
+    def validate_application(self, plan: DeploymentPlan) -> bool:
         ...
 
     def validate_nginx(self, stage: str) -> bool:

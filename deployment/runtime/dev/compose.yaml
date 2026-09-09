@@ -1,0 +1,74 @@
+name: omnilyzer-task014-dev
+
+x-canary-service: &canary-service
+  image: ${CANARY_IMAGE:?exact digest required}
+  user: "10001:10001"
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+  volumes:
+    - /var/lib/omnilyzer/deployment/dev/canary-runtime:/run/omnilyzer-canary:ro
+  environment:
+    CANARY_DEPENDENCY_REQUIRED: "false"
+    CANARY_RUNTIME_CONFIG_ID: task014-dev
+  networks:
+    - task014_frontend
+  pids_limit: 128
+  cpus: "0.50"
+  mem_limit: 128m
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+  healthcheck:
+    test:
+      - CMD
+      - /usr/bin/python
+      - -c
+      - 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/livez", timeout=2).read(1024)'
+    interval: 10s
+    timeout: 3s
+    retries: 3
+    start_period: 5s
+
+services:
+  canary-blue:
+    <<: *canary-service
+  canary-green:
+    <<: *canary-service
+  deployment-nginx:
+    image: cgr.dev/chainguard/nginx@sha256:af16298b4fd38b12be52aa913c158b530b83d85d567752f611508593d542b20a
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /var/lib/omnilyzer/deployment/dev/nginx-runtime:/etc/nginx/runtime:ro
+    ports:
+      - "127.0.0.1:3020:8080"
+    networks:
+      - task014_frontend
+    pids_limit: 128
+    cpus: "0.50"
+    mem_limit: 128m
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  task014_frontend:
+    internal: true
