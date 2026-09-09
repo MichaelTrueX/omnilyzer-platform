@@ -20,7 +20,6 @@ from .identity import (
     DEV_REPOSITORY_ID,
     DEV_WORKFLOW_REF,
     MAX_TOKEN_LIFETIME_SECONDS,
-    ReplayGuard,
     validate_jti,
 )
 from .policy import (
@@ -377,12 +376,10 @@ class ExecutorTransport(Protocol):
 
 
 class DeploymentBroker(Protocol):
-    """Authorize verified claims, consume replay, and forward canonical bytes."""
+    """Verify one token and forward one bound canonical request."""
 
     def authorize_and_forward(
-        self, *, cryptographically_verified_claims: Mapping[str, Any],
-        received_at: int, request: ExecutorRequest, replay_guard: ReplayGuard,
-        transport: ExecutorTransport,
+        self, *, compact_token: str, canonical_request: bytes, received_at: int,
     ) -> bytes:
         ...
 
