@@ -68,7 +68,7 @@ class FilesystemAuditTests(unittest.TestCase):
             path = Path(directory) / "events.jsonl"
             sink = FilesystemAuditSink(path)
             raw = value("promotion_started")
-            raw["actor"] = "a" * 20000
+            raw["migration_identity"] = "a" * 20000
             with self.assertRaises(DeploymentPolicyError):
                 AuditEvent.from_dict(raw)
 

@@ -14,8 +14,21 @@ import re
 import tempfile
 from typing import Any, Protocol
 
+from .execution import (
+    ExecutorRequest,
+    IngressFileReference,
+    IngressReference,
+    MAX_IDENTIFIER,
+    NoSecretsReference,
+    RuntimeConfigurationReference,
+)
+from .identity import (
+    DEV_REPOSITORY_ID,
+    DEV_WORKFLOW_REF,
+    MAX_TOKEN_LIFETIME_SECONDS,
+    validate_jti,
+)
 from .policy import (
-    SCHEMA_VERSION,
     DeploymentPolicyError,
     canonical_bytes,
     closed_object,
@@ -24,6 +37,7 @@ from .policy import (
     validate_identity,
     validate_repository,
     validate_semver,
+    validate_sha256,
     validate_slot,
     validate_source_sha,
     validate_stage,
@@ -31,6 +45,8 @@ from .policy import (
 )
 
 
+AUDIT_SCHEMA_VERSION = 2
+AUDIT_EXECUTION_IDENTITY_SCHEMA_VERSION = 1
 EVENT_TYPES = (
     "promotion_requested", "promotion_rejected", "promotion_started",
     "migration_started", "migration_succeeded", "migration_failed",
@@ -42,7 +58,13 @@ RESULTS = ("started", "succeeded", "failed", "rejected")
 EVENT_FIELDS = {
     "schema_version", "event_id", "event_type", "stage", "release_version",
     "source_sha", "oci_repository", "digest", "previous_digest", "active_slot",
-    "candidate_slot", "actor", "migration_identity", "result", "timestamp",
+    "candidate_slot", "execution_identity", "migration_identity", "result", "timestamp",
+}
+EXECUTION_IDENTITY_FIELDS = {
+    "schema_version", "requested_by_actor_id", "github_repository_id",
+    "github_workflow_ref", "github_workflow_sha", "github_run_id",
+    "github_run_attempt", "oidc_jti", "oidc_issued_at", "oidc_expires_at",
+    "promotion_request_sha256", "executor_request_sha256",
 }
 SENSITIVE_MARKERS = ("password=", "secret=", "token=", "credential=")
 AUDIT_PATH = Path("/var/log/omnilyzer/deployment/dev/events.jsonl")
@@ -51,6 +73,170 @@ ROTATE_BYTES = 10 * 1024 * 1024
 ROTATION_RETENTION = 14
 CHAIN_FIELDS = {"event", "previous_event_sha256"}
 ROTATED_RE = re.compile(r"events\.jsonl\.[0-9]{8}T[0-9]{6}Z\.[0-9a-f]{12}(?:\.gz)?\Z")
+
+
+def _positive_integer(value: Any, context: str) -> int:
+    if type(value) is not int or not 1 <= value <= MAX_IDENTIFIER:
+        raise DeploymentPolicyError(f"{context} must be a bounded positive integer")
+    return value
+
+
+def _epoch(value: Any, context: str) -> int:
+    if type(value) is not int or not 0 <= value <= MAX_IDENTIFIER:
+        raise DeploymentPolicyError(f"{context} must be a bounded non-negative integer")
+    return value
+
+
+def _executor_request_mapping(request: ExecutorRequest) -> dict[str, Any]:
+    runtime = request.runtime_configuration_reference
+    secrets = request.secrets_reference
+    ingress = request.ingress_reference
+    if (type(runtime) is not RuntimeConfigurationReference
+            or type(secrets) is not NoSecretsReference
+            or type(ingress) is not IngressReference
+            or type(ingress.files) is not tuple
+            or type(secrets.required) is not tuple
+            or secrets.required != ()):
+        raise DeploymentPolicyError("executor request nested values are invalid")
+    files: list[dict[str, Any]] = []
+    for item in ingress.files:
+        if type(item) is not IngressFileReference:
+            raise DeploymentPolicyError("executor ingress file value is invalid")
+        files.append({"path": item.path, "sha256": item.sha256})
+    return {
+        "schema_version": request.schema_version,
+        "operation": request.operation,
+        "stage": request.stage,
+        "release_version": request.release_version,
+        "source_sha": request.source_sha,
+        "oci_origin": request.oci_origin,
+        "oci_repository": request.oci_repository,
+        "manifest_digest": request.manifest_digest,
+        "exact_image_reference": request.exact_image_reference,
+        "release_manifest_sha256": request.release_manifest_sha256,
+        "provenance_sha256": request.provenance_sha256,
+        "originating_release_run_id": request.originating_release_run_id,
+        "promotion_request_sha256": request.promotion_request_sha256,
+        "requested_by_actor_id": request.requested_by_actor_id,
+        "github_repository_id": request.github_repository_id,
+        "github_workflow_ref": request.github_workflow_ref,
+        "github_workflow_sha": request.github_workflow_sha,
+        "github_run_id": request.github_run_id,
+        "github_run_attempt": request.github_run_attempt,
+        "oidc_jti": request.oidc_jti,
+        "oidc_issued_at": request.oidc_issued_at,
+        "oidc_expires_at": request.oidc_expires_at,
+        "runtime_configuration_reference": {
+            "schema_version": runtime.schema_version,
+            "kind": runtime.kind,
+            "repository_id": runtime.repository_id,
+            "reviewed_commit": runtime.reviewed_commit,
+            "path": runtime.path,
+            "sha256": runtime.sha256,
+        },
+        "secrets_reference": {
+            "schema_version": secrets.schema_version,
+            "kind": secrets.kind,
+            "required": [],
+            "reason": secrets.reason,
+        },
+        "ingress_reference": {
+            "schema_version": ingress.schema_version,
+            "kind": ingress.kind,
+            "repository_id": ingress.repository_id,
+            "reviewed_commit": ingress.reviewed_commit,
+            "files": files,
+            "loopback_address": ingress.loopback_address,
+            "loopback_port": ingress.loopback_port,
+            "public_origin": ingress.public_origin,
+        },
+    }
+
+
+def _revalidate_executor_request(request: ExecutorRequest) -> ExecutorRequest:
+    if type(request) is not ExecutorRequest:
+        raise DeploymentPolicyError("audit projection requires an ExecutorRequest")
+    try:
+        first_pass = ExecutorRequest.from_dict(_executor_request_mapping(request))
+        normalized = json.loads(canonical_bytes(_executor_request_mapping(first_pass)))
+        return ExecutorRequest.from_dict(normalized)
+    except (AttributeError, TypeError, ValueError, DeploymentPolicyError) as exc:
+        raise DeploymentPolicyError("executor request failed audit validation") from exc
+
+
+@dataclass(frozen=True)
+class AuditExecutionIdentity:
+    schema_version: int
+    requested_by_actor_id: int
+    github_repository_id: int
+    github_workflow_ref: str
+    github_workflow_sha: str
+    github_run_id: int
+    github_run_attempt: int
+    oidc_jti: str
+    oidc_issued_at: int
+    oidc_expires_at: int
+    promotion_request_sha256: str
+    executor_request_sha256: str
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "AuditExecutionIdentity":
+        data = closed_object(value, EXECUTION_IDENTITY_FIELDS, "audit execution identity")
+        if (type(data["schema_version"]) is not int
+                or data["schema_version"] != AUDIT_EXECUTION_IDENTITY_SCHEMA_VERSION):
+            raise DeploymentPolicyError("unsupported audit execution-identity schema_version")
+        for name in (
+            "github_workflow_ref", "github_workflow_sha", "oidc_jti",
+            "promotion_request_sha256", "executor_request_sha256",
+        ):
+            if type(data[name]) is not str:
+                raise DeploymentPolicyError(f"audit execution identity {name} type is invalid")
+        repository_id = _positive_integer(
+            data["github_repository_id"], "github_repository_id",
+        )
+        if repository_id != DEV_REPOSITORY_ID:
+            raise DeploymentPolicyError("audit GitHub repository ID is not authorized")
+        if data["github_workflow_ref"] != DEV_WORKFLOW_REF:
+            raise DeploymentPolicyError("audit GitHub workflow ref is not authorized")
+        issued_at = _epoch(data["oidc_issued_at"], "oidc_issued_at")
+        expires_at = _epoch(data["oidc_expires_at"], "oidc_expires_at")
+        if not 0 < expires_at - issued_at <= MAX_TOKEN_LIFETIME_SECONDS:
+            raise DeploymentPolicyError("audit OIDC lifetime is invalid")
+        return cls(
+            AUDIT_EXECUTION_IDENTITY_SCHEMA_VERSION,
+            _positive_integer(data["requested_by_actor_id"], "requested_by_actor_id"),
+            repository_id,
+            DEV_WORKFLOW_REF,
+            validate_source_sha(data["github_workflow_sha"]),
+            _positive_integer(data["github_run_id"], "github_run_id"),
+            _positive_integer(data["github_run_attempt"], "github_run_attempt"),
+            validate_jti(data["oidc_jti"]),
+            issued_at,
+            expires_at,
+            validate_sha256(data["promotion_request_sha256"], "promotion_request_sha256"),
+            validate_sha256(data["executor_request_sha256"], "executor_request_sha256"),
+        )
+
+    @classmethod
+    def from_executor_request(cls, request: ExecutorRequest) -> "AuditExecutionIdentity":
+        validated = _revalidate_executor_request(request)
+        return cls.from_dict({
+            "schema_version": AUDIT_EXECUTION_IDENTITY_SCHEMA_VERSION,
+            "requested_by_actor_id": validated.requested_by_actor_id,
+            "github_repository_id": validated.github_repository_id,
+            "github_workflow_ref": validated.github_workflow_ref,
+            "github_workflow_sha": validated.github_workflow_sha,
+            "github_run_id": validated.github_run_id,
+            "github_run_attempt": validated.github_run_attempt,
+            "oidc_jti": validated.oidc_jti,
+            "oidc_issued_at": validated.oidc_issued_at,
+            "oidc_expires_at": validated.oidc_expires_at,
+            "promotion_request_sha256": validated.promotion_request_sha256,
+            "executor_request_sha256": validated.sha256(),
+        })
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -66,7 +252,7 @@ class AuditEvent:
     previous_digest: str | None
     active_slot: str | None
     candidate_slot: str | None
-    actor: str
+    execution_identity: AuditExecutionIdentity
     migration_identity: str | None
     result: str
     timestamp: str
@@ -74,8 +260,20 @@ class AuditEvent:
     @classmethod
     def from_dict(cls, value: Any) -> "AuditEvent":
         data = closed_object(value, EVENT_FIELDS, "audit event")
-        if data["schema_version"] != SCHEMA_VERSION:
+        if (type(data["schema_version"]) is not int
+                or data["schema_version"] != AUDIT_SCHEMA_VERSION):
             raise DeploymentPolicyError("unsupported audit-event schema_version")
+        for name in (
+            "event_id", "event_type", "stage", "release_version", "source_sha",
+            "oci_repository", "digest", "result", "timestamp",
+        ):
+            if type(data[name]) is not str:
+                raise DeploymentPolicyError(f"audit event {name} type is invalid")
+        for name in (
+            "previous_digest", "active_slot", "candidate_slot", "migration_identity",
+        ):
+            if data[name] is not None and type(data[name]) is not str:
+                raise DeploymentPolicyError(f"audit event {name} type is invalid")
         event_type = data["event_type"]
         result = data["result"]
         if event_type not in EVENT_TYPES or result not in RESULTS:
@@ -93,23 +291,112 @@ class AuditEvent:
         if event_type.startswith("rollback_") and previous_digest is None:
             raise DeploymentPolicyError("rollback events require previous_digest")
         event = cls(
-            SCHEMA_VERSION, validate_event_id(data["event_id"]), event_type,
+            AUDIT_SCHEMA_VERSION, validate_event_id(data["event_id"]), event_type,
             validate_stage(data["stage"]), validate_semver(data["release_version"]),
             validate_source_sha(data["source_sha"]), validate_repository(data["oci_repository"]),
             validate_digest(data["digest"]), previous_digest, active_slot, candidate_slot,
-            validate_identity(data["actor"]), migration_identity, result,
+            AuditExecutionIdentity.from_dict(data["execution_identity"]),
+            migration_identity, result,
             validate_timestamp(data["timestamp"]),
         )
-        encoded = event.canonical_bytes().decode("ascii").lower()
-        if any(marker in encoded for marker in SENSITIVE_MARKERS):
+        encoded = event.canonical_bytes()
+        if len(encoded) > MAX_EVENT_BYTES:
+            raise DeploymentPolicyError("audit event exceeds its byte bound")
+        lowered = encoded.decode("ascii").lower()
+        if any(marker in lowered for marker in SENSITIVE_MARKERS):
             raise DeploymentPolicyError("audit event contains secret-like data")
         return event
+
+    @classmethod
+    def for_executor_request(
+        cls, request: ExecutorRequest, *, event_id: str, event_type: str,
+        previous_digest: str | None, active_slot: str | None,
+        candidate_slot: str | None, migration_identity: str | None,
+        result: str, timestamp: str,
+    ) -> "AuditEvent":
+        validated = _revalidate_executor_request(request)
+        return cls.from_dict({
+            "schema_version": AUDIT_SCHEMA_VERSION,
+            "event_id": event_id,
+            "event_type": event_type,
+            "stage": validated.stage,
+            "release_version": validated.release_version,
+            "source_sha": validated.source_sha,
+            "oci_repository": validated.oci_repository,
+            "digest": validated.manifest_digest,
+            "previous_digest": previous_digest,
+            "active_slot": active_slot,
+            "candidate_slot": candidate_slot,
+            "execution_identity": AuditExecutionIdentity.from_executor_request(validated).to_dict(),
+            "migration_identity": migration_identity,
+            "result": result,
+            "timestamp": timestamp,
+        })
+
+    def require_executor_request(self, request: ExecutorRequest) -> None:
+        """Fail unless this validated event belongs to one exact executor request."""
+
+        if type(self) is not AuditEvent:
+            raise DeploymentPolicyError("audit event binding requires an AuditEvent")
+        validated_event = AuditEvent.from_dict(_audit_event_mapping(self))
+        validated_request = _revalidate_executor_request(request)
+        expected_identity = AuditExecutionIdentity.from_executor_request(validated_request)
+        if (
+            validated_event.stage != validated_request.stage
+            or validated_event.release_version != validated_request.release_version
+            or validated_event.source_sha != validated_request.source_sha
+            or validated_event.oci_repository != validated_request.oci_repository
+            or validated_event.digest != validated_request.manifest_digest
+            or validated_event.execution_identity != expected_identity
+        ):
+            raise DeploymentPolicyError("audit event does not bind its executor request")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     def canonical_bytes(self) -> bytes:
         return canonical_bytes(self.to_dict())
+
+
+def _audit_execution_identity_mapping(identity: AuditExecutionIdentity) -> dict[str, Any]:
+    if type(identity) is not AuditExecutionIdentity:
+        raise DeploymentPolicyError("audit execution identity type is invalid")
+    return {
+        "schema_version": identity.schema_version,
+        "requested_by_actor_id": identity.requested_by_actor_id,
+        "github_repository_id": identity.github_repository_id,
+        "github_workflow_ref": identity.github_workflow_ref,
+        "github_workflow_sha": identity.github_workflow_sha,
+        "github_run_id": identity.github_run_id,
+        "github_run_attempt": identity.github_run_attempt,
+        "oidc_jti": identity.oidc_jti,
+        "oidc_issued_at": identity.oidc_issued_at,
+        "oidc_expires_at": identity.oidc_expires_at,
+        "promotion_request_sha256": identity.promotion_request_sha256,
+        "executor_request_sha256": identity.executor_request_sha256,
+    }
+
+
+def _audit_event_mapping(event: AuditEvent) -> dict[str, Any]:
+    if type(event) is not AuditEvent:
+        raise DeploymentPolicyError("audit event type is invalid")
+    return {
+        "schema_version": event.schema_version,
+        "event_id": event.event_id,
+        "event_type": event.event_type,
+        "stage": event.stage,
+        "release_version": event.release_version,
+        "source_sha": event.source_sha,
+        "oci_repository": event.oci_repository,
+        "digest": event.digest,
+        "previous_digest": event.previous_digest,
+        "active_slot": event.active_slot,
+        "candidate_slot": event.candidate_slot,
+        "execution_identity": _audit_execution_identity_mapping(event.execution_identity),
+        "migration_identity": event.migration_identity,
+        "result": event.result,
+        "timestamp": event.timestamp,
+    }
 
 
 class AuditSink(Protocol):
@@ -262,8 +549,12 @@ class FilesystemAuditSink:
         self._compress_delayed(target)
 
     def append(self, event: AuditEvent) -> None:
-        if not isinstance(event, AuditEvent):
+        if type(event) is not AuditEvent:
             raise DeploymentPolicyError("audit sink accepts validated AuditEvent values only")
+        try:
+            event = AuditEvent.from_dict(_audit_event_mapping(event))
+        except (AttributeError, TypeError, DeploymentPolicyError) as exc:
+            raise DeploymentPolicyError("audit sink rejected an invalid AuditEvent") from exc
         directory = self.path.parent
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         if directory.is_symlink() or not directory.is_dir():
