@@ -1,0 +1,9 @@
+[project]
+name = "omnilyzer-deployment-control-plane"
+version = "0.0.0"
+description = "Inert Task 014 deployment control-plane verification boundary"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "PyJWT[crypto]==2.13.0",
+    "cryptography==50.0.1",
+]
