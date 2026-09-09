@@ -134,19 +134,30 @@ class DockerRuntimeAdapter:
     """Production-owned, non-automatic adapter for closed DEV operations."""
 
     def __init__(
-        self, runner: CommandRunner, http: CandidateHttpClient,
+        self, runner: CommandRunner, http: CandidateHttpClient, *, canary_image: str,
     ) -> None:
         self._runner = runner
         self._http = http
+        self._canary_image = validate_canary_image(canary_image)
         self._nginx_runtime_directory = NGINX_RUNTIME_DIRECTORY
         self._migration_directory = MIGRATION_DIRECTORY
-        self._environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
+        self._environment = {
+            "PATH": "/usr/bin:/bin",
+            "LANG": "C.UTF-8",
+            "CANARY_IMAGE": self._canary_image,
+        }
 
-    def _run(self, argv: tuple[str, ...], *, image: str | None = None, timeout: float = COMMAND_TIMEOUT_SECONDS) -> CommandResult:
-        environment = dict(self._environment)
-        if image is not None:
-            environment["CANARY_IMAGE"] = validate_canary_image(image)
-        result = self._runner.run(argv, cwd=WORKING_DIRECTORY, environment=environment, timeout=timeout)
+    def _require_bound_image(self, image: str) -> str:
+        image = validate_canary_image(image)
+        if image != self._canary_image:
+            raise RuntimeOperationError("image differs from the adapter's authorized CANARY_IMAGE")
+        return image
+
+    def _run(self, argv: tuple[str, ...], *, timeout: float = COMMAND_TIMEOUT_SECONDS) -> CommandResult:
+        result = self._runner.run(
+            argv, cwd=WORKING_DIRECTORY,
+            environment=dict(self._environment), timeout=timeout,
+        )
         if result.returncode != 0:
             raise RuntimeOperationError("closed runtime operation returned an unexpected status")
         return result
@@ -156,11 +167,11 @@ class DockerRuntimeAdapter:
         return ("docker", "compose", "--project-name", PROJECT, "--file", str(COMPOSE_FILE), *parts)
 
     def pull_exact_image(self, image: str) -> None:
-        image = validate_canary_image(image)
+        image = self._require_bound_image(image)
         self._run(("docker", "pull", image))
 
     def verify_local_repo_digest(self, image: str) -> None:
-        image = validate_canary_image(image)
+        image = self._require_bound_image(image)
         result = self._run(("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image))
         if len(result.stdout.encode("utf-8")) > MAX_COMMAND_OUTPUT:
             raise RuntimeOperationError("local image identity output exceeded its bound")
@@ -175,19 +186,19 @@ class DockerRuntimeAdapter:
         slot = validate_slot(plan.candidate_slot, "candidate_slot")
         if slot != candidate_slot(plan.active_slot):
             raise RuntimeOperationError("plan candidate is not the inactive slot")
-        image = validate_canary_image(plan.exact_image_reference)
+        image = self._require_bound_image(plan.exact_image_reference)
         if RUNTIME_CONFIG_FILE.is_symlink() or not RUNTIME_CONFIG_FILE.is_file():
             raise RuntimeOperationError("reviewed runtime configuration is unavailable")
         validate_runtime_configuration(RUNTIME_CONFIG_FILE.read_bytes())
         self.verify_local_repo_digest(image)
-        self._run(self._compose("up", "--detach", "--no-deps", "--force-recreate", f"canary-{slot}"), image=image)
+        self._run(self._compose("up", "--detach", "--no-deps", "--force-recreate", f"canary-{slot}"))
 
     def execute_migration(
         self, *, stage: str, exact_image_reference: str, identity: str, checksum: str,
     ) -> None:
         if stage != "dev":
             raise RuntimeOperationError("runtime adapter supports DEV only")
-        image = validate_canary_image(exact_image_reference)
+        image = self._require_bound_image(exact_image_reference)
         if identity != MIGRATION_IDENTITY or checksum != MIGRATION_CHECKSUM:
             raise RuntimeOperationError("migration identity or checksum is not authorized")
         if self._migration_directory.is_symlink() or not self._migration_directory.is_dir():

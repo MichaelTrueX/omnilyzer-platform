@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import unittest
 
 import yaml
@@ -12,7 +14,7 @@ from deployment.policy import canonical_bytes
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "deployment/runtime/dev"
-FAKE_IMAGE = "oci-dev.omnilyzer.ai/omnilyzer/task013-release-canary@sha256:" + "a" * 64
+TEST_IMAGE = "oci-dev.omnilyzer.ai/omnilyzer/task013-release-canary@sha256:" + "a" * 64
 NGINX_IMAGE = "cgr.dev/chainguard/nginx@sha256:af16298b4fd38b12be52aa913c158b530b83d85d567752f611508593d542b20a"
 INGRESS_HASHES = {
     "compose.yaml": "ac12c1958d5e65ab64a69ea58ca053d11cd664732edb20fb7dce39aabde6b3bc",
@@ -33,7 +35,7 @@ class RuntimeAssetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.raw = (RUNTIME / "compose.yaml").read_text()
-        cls.compose = yaml.safe_load(cls.raw.replace("${CANARY_IMAGE:?exact digest required}", FAKE_IMAGE))
+        cls.compose = yaml.safe_load(cls.raw.replace("${CANARY_IMAGE:?exact digest required}", TEST_IMAGE))
 
     def test_project_and_exact_services(self) -> None:
         self.assertEqual(self.compose["name"], "omnilyzer-task014-dev")
@@ -42,7 +44,38 @@ class RuntimeAssetTests(unittest.TestCase):
     def test_no_build_and_required_exact_image_expression(self) -> None:
         self.assertNotIn("build:", self.raw)
         self.assertIn("image: ${CANARY_IMAGE:?exact digest required}", self.raw)
+        self.assertNotIn("${CANARY_IMAGE:-", self.raw)
+        self.assertEqual(self.raw.count("${CANARY_IMAGE"), 1)
+        self.assertNotIn("sha256:" + "0" * 64, self.raw)
         self.assertNotIn("cgr.dev/chainguard/nginx:latest", self.raw)
+
+    def test_audit_documentation_defers_complete_oidc_projection_to_pr_c(self) -> None:
+        runtime_documentation = (RUNTIME / "README.md").read_text()
+        deployment_documentation = (ROOT / "deployment/README.md").read_text()
+        for documentation in (runtime_documentation, deployment_documentation):
+            self.assertIn("filesystem audit sink", documentation)
+            self.assertIn("current `AuditEvent` does not persist", documentation)
+            self.assertIn("PR C", documentation)
+            self.assertIn("OIDC JTI", documentation)
+
+    def test_real_compose_required_variable_contract_without_runtime_mutation(self) -> None:
+        docker = shutil.which("docker")
+        if docker is None:
+            self.skipTest("Docker Compose is not locally available")
+        argv = [docker, "compose", "--file", str(RUNTIME / "compose.yaml"), "config", "--quiet"]
+        environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
+        missing = subprocess.run(
+            argv, cwd=ROOT, env=environment, shell=False,
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=10,
+        )
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn(b"exact digest required", missing.stderr)
+        environment["CANARY_IMAGE"] = TEST_IMAGE
+        present = subprocess.run(
+            argv, cwd=ROOT, env=environment, shell=False,
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=10,
+        )
+        self.assertEqual(present.returncode, 0, present.stderr.decode("utf-8", "replace"))
 
     def test_nginx_qualification_evidence_is_recorded(self) -> None:
         evidence = (RUNTIME / "README.md").read_text()
@@ -57,7 +90,7 @@ class RuntimeAssetTests(unittest.TestCase):
     def test_application_security_and_resources(self) -> None:
         for name in ("canary-blue", "canary-green"):
             service = self.compose["services"][name]
-            self.assertEqual(service["image"], FAKE_IMAGE)
+            self.assertEqual(service["image"], TEST_IMAGE)
             self.assertEqual(service["user"], "10001:10001")
             self.assertIs(service["read_only"], True)
             self.assertEqual(service["cap_drop"], ["ALL"])
