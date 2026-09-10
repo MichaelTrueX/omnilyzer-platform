@@ -158,6 +158,52 @@ descriptors only and never bind a filesystem pathname. Listener ownership,
 process composition, installation, service lifecycle, audit sequencing, and
 activation remain future separately reviewed work.
 
+### Bounded inert Unix executor listener
+
+`executor_listener.py` adds the inert C9 boundary for one connection accepted
+from an already-created, already-bound, constructor-supplied AF_UNIX stream
+listener. C9 never creates, binds, listens on, installs, enables, discovers, or
+removes the fixed `/run/omnilyzer/deployment/executor.sock` pathname. A future
+separately reviewed installation or systemd socket layer must create that
+socket and enforce its ownership, group, mode, and lifecycle.
+
+Before its single bounded `accept()`, C9 verifies the listener domain, type,
+active-listening state, non-inheritability, fixed pathname, descriptor/path
+identities, and exact socket-file mode `0660`, link count, owner, and group.
+Linux exposes the open socket descriptor through a sockfs device/inode and its
+pathname through a separate filesystem device/inode, so those unlike inode
+numbers are not incorrectly equated. Instead C9 requires one unique listening
+entry in `/proc/self/net/unix` that binds the descriptor's sockfs inode to the
+fixed path; connected accepted-socket rows are distinct and ignored. C9 also
+independently snapshots the descriptor and pathname
+identities. It rejects symlink or non-directory ancestors and repeats the
+complete validation before dispatch. Python's pathname `lstat()` interface
+cannot make multiple ancestor and leaf observations one atomic kernel
+transaction; the before/after identity and unique proc-binding checks fail
+closed for observed substitution, but they do not claim to eliminate a
+rename-and-restore race by a process already able to mutate the protected
+production directory hierarchy. Production directory ownership and permissions
+therefore remain an installation-layer prerequisite responsibility.
+
+One non-restarting monotonic deadline of at most three seconds covers validation,
+one accept, post-accept validation, and restoration of the listener's prior
+timeout state. C9 accepts no second connection, performs no retry, and rejects
+concurrent or reentrant calls on one instance. After successful post-accept
+validation and timeout restoration, it passes the exact accepted socket once
+to the constructor-captured C7 `UnixExecutorConnectionHandler.handle()` method.
+C7 remains solely authoritative for broker peer authentication, request and
+response framing, execution, socket-I/O deadlines, and accepted-connection
+cleanup. Accordingly, the accept deadline ends before C7 may perform a
+minutes-long deployment. C9 closes only connections that fail before dispatch
+and never double-closes a connection transferred to C7.
+
+C9 provides no loop, daemon, worker, fork, signal, status, shutdown, service
+installation, or activation API. Its tests use deterministic filesystem and
+listener fakes plus unnamed `socketpair()` descriptors; they never touch or
+create the production path. Required GitHub branch and environment protections
+remain an absolute prerequisite for live authority. DEV, STAGING, and PROD
+remain disabled.
+
 ### Audited DEV deployment operation
 
 `deployment_operation.py` adds the inert C8 composition behind the executor's
