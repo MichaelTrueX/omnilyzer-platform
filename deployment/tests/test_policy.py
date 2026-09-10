@@ -126,7 +126,8 @@ class SourceBoundaryTests(unittest.TestCase):
 
     def test_schemas_are_closed_draft_2020_12_documents(self) -> None:
         schemas = sorted((DEPLOYMENT_ROOT / "schemas").glob("*.schema.json"))
-        self.assertEqual(len(schemas), 5)
+        self.assertEqual(len(schemas), 6)
+        self.assertIn("executor-response.schema.json", {path.name for path in schemas})
         for path in schemas:
             with self.subTest(path=path.name):
                 schema = json.loads(path.read_text(encoding="utf-8"))
@@ -145,6 +146,11 @@ class SourceBoundaryTests(unittest.TestCase):
             "deployment-state.schema.json": state(candidate=True).to_dict(),
             "audit-event.schema.json": AuditEvent.from_dict(audit_value()).to_dict(),
             "executor-request.schema.json": executor_request_value(),
+            "executor-response.schema.json": {
+                "executor_request_sha256": "a" * 64,
+                "schema_version": 1,
+                "status": "succeeded",
+            },
         }
         for filename, document in documents.items():
             with self.subTest(filename=filename):
