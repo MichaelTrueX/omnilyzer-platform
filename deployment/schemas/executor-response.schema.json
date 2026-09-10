@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Omnilyzer Task 014 privileged-executor response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["executor_request_sha256", "schema_version", "status"],
+  "properties": {
+    "executor_request_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "schema_version": {"type": "integer", "const": 1},
+    "status": {"type": "string", "const": "succeeded"}
+  }
+}
