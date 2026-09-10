@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 import unittest
 
 from deployment.audit import AuditEvent, EVENT_TYPES
@@ -34,6 +36,23 @@ def value(event_type: str = "promotion_started") -> dict[str, object]:
 
 
 class AuditEventTests(unittest.TestCase):
+    def test_promotion_failed_is_a_closed_terminal_failure_event(self) -> None:
+        event = AuditEvent.from_dict(value("promotion_failed"))
+        self.assertEqual((event.event_type, event.result), ("promotion_failed", "failed"))
+        invalid = value("promotion_failed")
+        invalid["result"] = "succeeded"
+        with self.assertRaises(DeploymentPolicyError):
+            AuditEvent.from_dict(invalid)
+        schema = json.loads(
+            (Path(__file__).resolve().parents[1] / "schemas/audit-event.schema.json").read_text()
+        )
+        self.assertIn("promotion_failed", schema["properties"]["event_type"]["enum"])
+        self.assertIn(
+            {"if": {"properties": {"event_type": {"const": "promotion_failed"}}},
+             "then": {"properties": {"result": {"const": "failed"}}}},
+            schema["allOf"],
+        )
+
     def test_all_required_event_types_validate(self) -> None:
         for event_type in EVENT_TYPES:
             with self.subTest(event_type=event_type):

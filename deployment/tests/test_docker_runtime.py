@@ -223,6 +223,23 @@ class DockerRuntimeTests(unittest.TestCase):
         for _, _, environment, _ in self.runner.calls:
             self.assertEqual(environment, EXPECTED_ENVIRONMENT)
 
+    def test_restore_traffic_is_closed_and_supports_no_active_maintenance(self) -> None:
+        class Text(str):
+            pass
+
+        target = Path(self.temp.name) / "active.conf"
+        target.write_bytes(self.adapter._active_fragment("green"))
+        self.adapter.restore_traffic("dev", "blue")
+        self.assertEqual(target.read_bytes(), self.adapter._active_fragment("blue"))
+        self.adapter.restore_traffic("dev", None)
+        self.assertFalse(target.exists())
+        for stage, slot in (
+            ("prod", "blue"), ("dev", "database"),
+            (Text("dev"), "blue"), ("dev", Text("blue")),
+        ):
+            with self.subTest(stage=stage, slot=slot), self.assertRaises(RuntimeOperationError):
+                self.adapter.restore_traffic(stage, slot)
+
     def test_syntax_failure_restores_previous_routing(self) -> None:
         target = Path(self.temp.name) / "active.conf"
         old = self.adapter._active_fragment("blue")
