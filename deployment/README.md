@@ -76,17 +76,29 @@ point. The socket-file group is deliberately distinct from the executor
 process GID because a future systemd-created socket may be broker-group
 accessible while the executor retains a different effective group.
 
-One captured monotonic deadline of at most three seconds covers validation,
-creation, connection, credential and metadata checks, transmission, response,
-EOF proof, and close. Every potentially blocking socket operation receives
-only the remaining budget. There is no reconnect, resend, retry, shared
-framing state, descriptor inheritance, compact-token or claims-mapping
-transmission, added identity envelope, arbitrary path, client bind, listener,
-or server implementation. The canonical request itself retains its required
-bounded OIDC JTI and execution-identity fields; removing them would violate the
-existing executor contract and exact-byte forwarding rule. All operational errors
-are reduced to `executor transport is unavailable` without path, identity,
-payload, framing, timing, errno, or dependency details.
+Two consecutive captured-monotonic deadlines bound the exchange. The existing
+caller-selected 1–3,000 millisecond deadline still begins before pathname
+validation and covers validation, creation, connection, credential and metadata
+checks, exact request transmission, and successful write-side shutdown. Only
+after `shutdown(SHUT_WR)` succeeds, the transport creates one separate fixed
+600,000 millisecond response deadline. That same response deadline—never
+restarted—covers the four-byte response header, declared body, EOF proof, and
+final cleanup checks. This allows the executor's bounded deployment operation to
+finish before returning its C6 response without weakening the strict connection
+and request-delivery bound or creating an unbounded wait.
+
+Every potentially blocking socket operation receives only its current phase's
+remaining budget. Failure after request delivery is uncertain: the client closes
+without reconnecting or resending and reports only the generic unavailable error.
+There is no caller-controlled response timeout, reconnect, resend, retry,
+heartbeat, polling/status API, background execution, shared framing state,
+descriptor inheritance, compact-token or claims-mapping transmission, added
+identity envelope, arbitrary path, client bind, listener, or server
+implementation. The canonical request itself retains its required bounded OIDC
+JTI and execution-identity fields; removing them would violate the existing
+executor contract and exact-byte forwarding rule. All operational errors are
+reduced to `executor transport is unavailable` without path, identity, payload,
+framing, timing, timeout, errno, or dependency details.
 
 C5 does not install or qualify the parent ownership and mode chain beneath
 `/run/omnilyzer/deployment`, create or contact the production socket, or
