@@ -122,6 +122,42 @@ The executor captures one coherent operation tuple at the start of each call, us
 
 C6 implements replay lifecycle and a closed success response only. The durable audit identity projection already exists in `audit.py`, but this slice deliberately emits no audit event: complete result and failure audit sequencing must be composed with the real deployment operation in a later separately reviewed change. Audit emission remains mandatory before activation, and no live authority may be activated without complete audit wiring. C6 does not compose the Unix transport, deployment controller, Docker runtime, registry access, production replay or audit paths, installation, services, or deployment activation.
 
+### Bounded Unix executor connection handler
+
+`executor_server.py` adds the inert C7 handler for one already-connected Unix
+stream socket supplied by a future separately reviewed listener. Import and
+construction create no socket, listener, filesystem entry, service, runtime,
+registry connection, application process, or deployment action. The handler
+accepts no pathname or listener dependency. It constructor-binds one ordinary
+`execute(canonical_request)` method plus exact broker UID/GID values and one
+1–3,000 millisecond socket-I/O timeout.
+
+Before reading, the handler independently requires a non-inheritable AF_UNIX
+SOCK_STREAM connection and exact Linux `SO_PEERCRED` bytes containing a
+positive PID and the configured broker UID/GID. One coherent fail-closed
+monotonic deadline covers peer checks, the four-byte unsigned big-endian request
+length, the exact nonempty request body of at most 64 KiB, and exact EOF. Partial
+reads and EINTR retain the same deadline; truncation, missing EOF, trailing data,
+and a second frame fail before execution. The exact received bytes are passed
+unchanged to the captured executor exactly once; semantic parsing and DEV policy
+remain solely the executor's responsibility.
+
+Deployment execution is outside the three-second request deadline. Only after
+execution returns does a new deadline bound canonical response validation,
+partial-safe transmission of the four-byte length and exact response bytes, and
+write-side shutdown. The existing `parse_canonical_response()` contract and
+64 KiB response bound are authoritative; no error response is fabricated.
+Every path closes the supplied connection. Post-request failures are uncertain
+and never retry execution, resend, reconnect, reset replay, or reverse a
+completed deployment. Operational failures expose only `executor connection is
+unavailable`; control-flow exceptions remain preserved after cleanup.
+
+C7 does not create, bind, listen on, accept, install, enable, or contact the
+production socket. Its real-socket tests use unnamed AF_UNIX `socketpair()`
+descriptors only and never bind a filesystem pathname. Listener ownership,
+process composition, installation, service lifecycle, audit sequencing, and
+activation remain future separately reviewed work.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
