@@ -158,6 +158,48 @@ descriptors only and never bind a filesystem pathname. Listener ownership,
 process composition, installation, service lifecycle, audit sequencing, and
 activation remain future separately reviewed work.
 
+### Audited DEV deployment operation
+
+`deployment_operation.py` adds the inert C8 composition behind the executor's
+closed `deploy(ExecutorRequest) -> None` boundary. Construction captures only
+ordinary runtime, state-store, audit-sink, and UTC-clock methods plus one exact
+reviewed commit and the reviewed runtime/ingress SHA-256 values. It has no
+production constructor, startup path, listener, workflow hook, filesystem path,
+command, service, registry client, or activation API.
+
+Each call independently reconstructs an exact-base request and its nested
+references, rejects mutation or subclasses, and checks the request's repository,
+commit, allowlisted paths, file hashes, loopback ingress, no-secrets contract,
+and exact image/digest against the constructor-bound review. It similarly
+reconstructs one exact, candidate-free DEV state before using the existing
+controller's candidate, gate, and completion transitions.
+
+The closed sequence durably audits and checkpoints candidate preparation and
+migration before health, metadata, Nginx, and traffic gates. Every audit event
+is deterministically identified from the exact canonical executor-request hash,
+constructed with `AuditEvent.for_executor_request()`, and rebound with
+`require_executor_request()` before one append attempt. Schema-2 now includes
+the distinct terminal `promotion_failed` event with result `failed`; rejection
+history remains unchanged.
+
+After a confirmed candidate switch, any state or final-audit failure causes one
+closed attempt to restore the former blue/green route—or the no-active
+maintenance route on a first deployment—and then the original durable state.
+No runtime action, state write, audit append, migration, traffic switch, or
+compensation is retried. Failures expose only `DEV deployment operation is
+unavailable`; no dependency output or request identity is included.
+
+The Docker runtime's new `restore_traffic("dev", previous_slot)` capability
+accepts only exact `blue`, `green`, or `None`. It uses the same atomic fragment
+replacement, Nginx validation/reload, and old-route self-restoration boundary as
+the normal switch and exposes no arbitrary path, fragment, upstream, service,
+or command.
+
+C8 remains non-activatable repository code. Its tests use deterministic fakes
+and temporary local directories only; they perform no Docker, Compose, network,
+registry, application, production-filesystem, listener, service, host, or
+deployment operation.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
