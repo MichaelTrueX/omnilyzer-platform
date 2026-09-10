@@ -25,6 +25,7 @@ from deployment.unix_transport import (
     ExecutorTransportUnavailableError,
     MAX_TIMEOUT_MS,
     PRODUCTION_EXECUTOR_SOCKET_PATH,
+    RESPONSE_TIMEOUT_MS,
     TRANSPORT_UNAVAILABLE_MESSAGE,
     UnixExecutorTransport,
 )
@@ -220,6 +221,7 @@ class Clock:
 def fake_transport(
     fake: FakeSocket, *, stats: list[object] | None = None,
     clock: Clock | None = None, factory_error: BaseException | None = None,
+    deadline_factory: object | None = None,
 ) -> tuple[UnixExecutorTransport, list[tuple[int, int]]]:
     path = "/tmp/task014-test/executor.sock"
     results = list(stats or [metadata(), metadata()])
@@ -241,6 +243,10 @@ def fake_transport(
         patch.object(unix_transport.os, "lstat", lstat),
         patch.object(unix_transport.socket, "socket", factory),
         patch.object(unix_transport.time, "monotonic", clock or Clock()),
+        patch.object(
+            unix_transport, "_Deadline",
+            unix_transport._Deadline if deadline_factory is None else deadline_factory,
+        ),
     ):
         result = UnixExecutorTransport(
             expected_executor_uid=os.getuid(),
@@ -253,6 +259,8 @@ def fake_transport(
 
 class UnixTransportConstructorTests(unittest.TestCase):
     def test_exact_public_signatures(self) -> None:
+        self.assertEqual(MAX_TIMEOUT_MS, 3000)
+        self.assertEqual(RESPONSE_TIMEOUT_MS, 600_000)
         self.assertEqual(
             tuple(inspect.signature(UnixExecutorTransport).parameters),
             ("expected_executor_uid", "expected_executor_gid", "expected_socket_group_gid", "timeout_ms"),
@@ -605,13 +613,246 @@ class UnixTransportFramingTests(unittest.TestCase):
 
 
 class UnixTransportDeadlineTests(unittest.TestCase):
-    def test_timeouts_decrease_and_are_never_restarted(self) -> None:
+    def test_each_phase_decreases_and_response_deadline_is_never_restarted(self) -> None:
         clock = Clock(step=0.01)
         fake = FakeSocket()
         transport, _ = fake_transport(fake, clock=clock)
         self.assertEqual(transport.send(REQUEST), RESPONSE)
-        self.assertTrue(all(a > b for a, b in zip(fake.timeouts, fake.timeouts[1:])))
-        self.assertLess(fake.timeouts[-1], 1.0)
+        request_timeouts = [value for value in fake.timeouts if value < 3.0]
+        response_timeouts = [value for value in fake.timeouts if value > 500.0]
+        self.assertEqual(len(request_timeouts), 5)
+        self.assertEqual(len(response_timeouts), 3)
+        self.assertTrue(all(a > b for a, b in zip(request_timeouts, request_timeouts[1:])))
+        self.assertTrue(all(a > b for a, b in zip(response_timeouts, response_timeouts[1:])))
+        self.assertEqual(fake.timeouts, request_timeouts + response_timeouts)
+
+    def test_shutdown_is_exact_transition_and_response_uses_one_new_deadline(self) -> None:
+        created: list[RecordingDeadline] = []
+
+        class RecordingDeadline:
+            def __init__(self, _clock: object, timeout_ms: int) -> None:
+                self.timeout_ms = timeout_ms
+                self.calls = 0
+                created.append(self)
+                if len(created) == 2:
+                    self.assert_shutdown()
+
+            def assert_shutdown(self) -> None:
+                self_test.assertEqual(fake.shutdowns, [socket.SHUT_WR])
+
+            def remaining(self) -> float:
+                self.calls += 1
+                return self.timeout_ms / 1000.0 - self.calls / 1000.0
+
+        self_test = self
+        fake = FakeSocket()
+        transport, _ = fake_transport(fake, deadline_factory=RecordingDeadline)
+        self.assertEqual(transport.send(REQUEST), RESPONSE)
+        self.assertEqual([item.timeout_ms for item in created], [1000, RESPONSE_TIMEOUT_MS])
+        self.assertEqual(created[0].calls, 8)
+        self.assertEqual(created[1].calls, 5)
+        self.assertEqual(len([value for value in fake.timeouts if value > 500]), 3)
+
+    def test_shutdown_failure_never_constructs_response_deadline(self) -> None:
+        calls: list[int] = []
+
+        def deadline_factory(clock: object, timeout_ms: int) -> object:
+            calls.append(timeout_ms)
+            return unix_transport._Deadline(clock, timeout_ms)  # type: ignore[arg-type]
+
+        fake = FakeSocket(failures={"shutdown": OSError("shutdown-marker")})
+        transport, factory_calls = fake_transport(fake, deadline_factory=deadline_factory)
+        with self.assertRaises(ExecutorTransportUnavailableError):
+            transport.send(REQUEST)
+        self.assertEqual(calls, [1000])
+        self.assertEqual(len(factory_calls), 1)
+        self.assertEqual(fake.sent, [len(REQUEST).to_bytes(4, "big"), REQUEST])
+
+    def test_response_after_request_deadline_but_within_fixed_budget_succeeds(self) -> None:
+        clock = Clock(step=0.001)
+
+        class DelayedResponse(FakeSocket):
+            def __init__(self) -> None:
+                super().__init__()
+                self.delayed = False
+
+            def recv(self, size: int) -> bytes:
+                if not self.delayed:
+                    self.delayed = True
+                    clock.current += 4.0
+                return super().recv(size)
+
+        fake = DelayedResponse()
+        transport, _ = fake_transport(fake, clock=clock)
+        self.assertEqual(transport.send(REQUEST), RESPONSE)
+        self.assertTrue(any(value > 599.0 for value in fake.timeouts))
+
+    def test_shutdown_that_exceeds_request_deadline_is_rejected(self) -> None:
+        clock = Clock(step=0.001)
+
+        class DelayedShutdown(FakeSocket):
+            def shutdown(self, direction: int) -> None:
+                super().shutdown(direction)
+                clock.current += 2.0
+
+        fake = DelayedShutdown()
+        transport, calls = fake_transport(fake, clock=clock)
+        with self.assertRaises(ExecutorTransportUnavailableError):
+            transport.send(REQUEST)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(fake.recv_sizes, [])
+        self.assertEqual(fake.close_calls, 1)
+
+    def test_response_deadline_constant_is_captured_and_not_caller_mutable(self) -> None:
+        calls: list[int] = []
+
+        def deadline_factory(clock: object, timeout_ms: int) -> object:
+            calls.append(timeout_ms)
+            return unix_transport._Deadline(clock, timeout_ms)  # type: ignore[arg-type]
+
+        fake = FakeSocket()
+        transport, _ = fake_transport(fake, deadline_factory=deadline_factory)
+        with patch.object(unix_transport, "RESPONSE_TIMEOUT_MS", 1):
+            self.assertEqual(transport.send(REQUEST), RESPONSE)
+        self.assertEqual(calls, [1000, 600_000])
+
+    def test_response_deadline_construction_failure_closes_without_resend(self) -> None:
+        calls: list[int] = []
+
+        def deadline_factory(clock: object, timeout_ms: int) -> object:
+            calls.append(timeout_ms)
+            if len(calls) == 2:
+                raise OSError("response-deadline-secret")
+            return unix_transport._Deadline(clock, timeout_ms)  # type: ignore[arg-type]
+
+        fake = FakeSocket()
+        transport, factory_calls = fake_transport(fake, deadline_factory=deadline_factory)
+        with self.assertRaisesRegex(
+            ExecutorTransportUnavailableError, f"^{TRANSPORT_UNAVAILABLE_MESSAGE}$",
+        ) as caught:
+            transport.send(REQUEST)
+        self.assertNotIn("response-deadline-secret", repr(caught.exception))
+        self.assertEqual(calls, [1000, RESPONSE_TIMEOUT_MS])
+        self.assertEqual(len(factory_calls), 1)
+        self.assertEqual(fake.sent, [len(REQUEST).to_bytes(4, "big"), REQUEST])
+        self.assertEqual(fake.close_calls, 1)
+
+    def test_malformed_response_clock_samples_fail_after_request_delivery(self) -> None:
+        malformed = (True, "1", None, math.nan, math.inf, -math.inf, -1.0)
+        for value in malformed:
+            clock = Clock()
+
+            class MalformedAfterShutdown(FakeSocket):
+                def shutdown(self, direction: int) -> None:
+                    super().shutdown(direction)
+                    clock.values = [101.0, value]
+
+            with self.subTest(value=repr(value)):
+                fake = MalformedAfterShutdown()
+                transport, calls = fake_transport(fake, clock=clock)
+                with self.assertRaises(ExecutorTransportUnavailableError):
+                    transport.send(REQUEST)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(len(fake.sent), 2)
+                self.assertEqual(fake.close_calls, 1)
+
+    def test_response_clock_rollback_fails_closed(self) -> None:
+        clock = Clock()
+
+        class RollbackAfterShutdown(FakeSocket):
+            def shutdown(self, direction: int) -> None:
+                super().shutdown(direction)
+                clock.values = [200.0, 201.0, 200.5]
+
+        fake = RollbackAfterShutdown()
+        transport, _ = fake_transport(fake, clock=clock)
+        with self.assertRaises(ExecutorTransportUnavailableError):
+            transport.send(REQUEST)
+        self.assertEqual(fake.close_calls, 1)
+
+    def test_clock_rollback_at_request_response_transition_fails_closed(self) -> None:
+        clock = Clock()
+
+        class RollbackAtShutdown(FakeSocket):
+            def shutdown(self, direction: int) -> None:
+                super().shutdown(direction)
+                clock.values = [101.0, 100.0]
+
+        fake = RollbackAtShutdown()
+        transport, _ = fake_transport(fake, clock=clock)
+        with self.assertRaises(ExecutorTransportUnavailableError):
+            transport.send(REQUEST)
+        self.assertEqual(fake.recv_sizes, [])
+        self.assertEqual(fake.close_calls, 1)
+
+    def test_non_advancing_response_deadline_overflow_fails_closed(self) -> None:
+        clock = Clock()
+
+        class OverflowAfterShutdown(FakeSocket):
+            def shutdown(self, direction: int) -> None:
+                super().shutdown(direction)
+                clock.values = [101.0, float.fromhex("0x1.fffffffffffffp+1023")]
+
+        fake = OverflowAfterShutdown()
+        transport, _ = fake_transport(fake, clock=clock)
+        with self.assertRaises(ExecutorTransportUnavailableError):
+            transport.send(REQUEST)
+        self.assertEqual(fake.recv_sizes, [])
+        self.assertEqual(fake.close_calls, 1)
+
+    def test_response_header_body_eof_and_cleanup_expiry_fail_closed(self) -> None:
+        for phase in ("header", "body", "eof", "cleanup"):
+            clock = Clock(step=0.001)
+
+            class Expiring(FakeSocket):
+                def __init__(self) -> None:
+                    super().__init__()
+                    self.response_reads = 0
+
+                def recv(self, size: int) -> bytes:
+                    self.response_reads += 1
+                    result = super().recv(size)
+                    target = {"header": 1, "body": 2, "eof": 3}.get(phase)
+                    if self.response_reads == target:
+                        clock.current += 601.0
+                    return result
+
+                def close(self) -> None:
+                    super().close()
+                    if phase == "cleanup":
+                        clock.current += 601.0
+
+            with self.subTest(phase=phase):
+                fake = Expiring()
+                transport, calls = fake_transport(fake, clock=clock)
+                with self.assertRaises(ExecutorTransportUnavailableError):
+                    transport.send(REQUEST)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(fake.close_calls, 1)
+
+    def test_partial_response_body_timeout_fails_closed(self) -> None:
+        class PartialBodyTimeout(FakeSocket):
+            def __init__(self) -> None:
+                super().__init__()
+                self.response_reads = 0
+
+            def recv(self, size: int) -> bytes:
+                self.response_reads += 1
+                if self.response_reads == 2:
+                    return super().recv(1)
+                if self.response_reads == 3:
+                    raise socket.timeout("partial-body-timeout-secret")
+                return super().recv(size)
+
+        fake = PartialBodyTimeout()
+        transport, calls = fake_transport(fake)
+        with self.assertRaisesRegex(
+            ExecutorTransportUnavailableError, f"^{TRANSPORT_UNAVAILABLE_MESSAGE}$",
+        ) as caught:
+            transport.send(REQUEST)
+        self.assertNotIn("partial-body-timeout-secret", repr(caught.exception))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(fake.close_calls, 1)
 
     def test_deadline_expiry_closes_without_retry(self) -> None:
         clock = Clock(step=0.6)
@@ -662,35 +903,21 @@ class UnixTransportDeadlineTests(unittest.TestCase):
                 self.assertEqual(len(fake.connected), 0 if phase == "connect" else 1)
                 self.assertEqual(fake.close_calls, 1)
 
-    def test_phase_delay_that_exhausts_total_budget_is_not_restarted(self) -> None:
-        for phase in ("connect", "header", "body", "eof"):
-            clock = Clock(step=0.001)
+    def test_connect_delay_that_exhausts_request_budget_is_not_restarted(self) -> None:
+        clock = Clock(step=0.001)
 
-            class Delayed(FakeSocket):
-                def __init__(self) -> None:
-                    super().__init__()
-                    self.recv_calls = 0
+        class DelayedConnect(FakeSocket):
+            def connect(self, path: str) -> None:
+                super().connect(path)
+                clock.current += 2.0
 
-                def connect(self, path: str) -> None:
-                    super().connect(path)
-                    if phase == "connect":
-                        clock.current += 2.0
-
-                def recv(self, size: int) -> bytes:
-                    self.recv_calls += 1
-                    result = super().recv(size)
-                    target = {"header": 1, "body": 2, "eof": 3}.get(phase)
-                    if self.recv_calls == target:
-                        clock.current += 2.0
-                    return result
-
-            with self.subTest(phase=phase):
-                fake = Delayed()
-                transport, calls = fake_transport(fake, clock=clock)
-                with self.assertRaises(ExecutorTransportUnavailableError):
-                    transport.send(REQUEST)
-                self.assertEqual(len(calls), 1)
-                self.assertEqual(fake.close_calls, 1)
+        fake = DelayedConnect()
+        transport, calls = fake_transport(fake, clock=clock)
+        with self.assertRaises(ExecutorTransportUnavailableError):
+            transport.send(REQUEST)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(fake.sent, [])
+        self.assertEqual(fake.close_calls, 1)
 
 
 class UnixTransportFailureTests(unittest.TestCase):
@@ -742,15 +969,16 @@ class UnixTransportFailureTests(unittest.TestCase):
         self.assertTrue(fake.closed)
 
     def test_all_required_control_flow_exceptions_are_preserved(self) -> None:
-        for error_type in (KeyboardInterrupt, SystemExit, GeneratorExit):
-            with self.subTest(error_type=error_type.__name__):
-                error = error_type("control-marker")
-                fake = FakeSocket(failures={"recv": error})
-                transport, _ = fake_transport(fake)
-                with self.assertRaises(error_type) as caught:
-                    transport.send(REQUEST)
-                self.assertIs(caught.exception, error)
-                self.assertEqual(fake.close_calls, 1)
+        for phase in ("connect", "recv"):
+            for error_type in (KeyboardInterrupt, SystemExit, GeneratorExit):
+                with self.subTest(phase=phase, error_type=error_type.__name__):
+                    error = error_type("control-marker")
+                    fake = FakeSocket(failures={phase: error})
+                    transport, _ = fake_transport(fake)
+                    with self.assertRaises(error_type) as caught:
+                        transport.send(REQUEST)
+                    self.assertIs(caught.exception, error)
+                    self.assertEqual(fake.close_calls, 1)
 
     def test_generic_failure_has_no_exception_chain_or_sensitive_marker(self) -> None:
         marker = "socket-path-uid-gid-pid-errno-request-response-timing-secret"
@@ -1006,6 +1234,29 @@ class UnixTransportStaticAuthorityTests(unittest.TestCase):
                     for argument in node.args)
         ]
         self.assertEqual(unsafe, [])
+
+    def test_no_retry_polling_heartbeat_or_background_execution_is_added(self) -> None:
+        source = (ROOT / "deployment/unix_transport.py").read_text()
+        tree = ast.parse(source)
+        names = {
+            node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+        } | {
+            node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+        }
+        self.assertFalse(names & {
+            "Thread", "ThreadPoolExecutor", "asyncio", "create_task", "sleep",
+            "poll", "heartbeat", "reconnect", "retry",
+        })
+        send_calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"connect", "sendall", "shutdown"}
+        ]
+        self.assertEqual(
+            [node.func.attr for node in send_calls],
+            ["connect", "sendall", "sendall", "shutdown"],
+        )
 
 
 def _install_constructor_boundary_tests() -> None:
