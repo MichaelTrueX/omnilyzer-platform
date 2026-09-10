@@ -584,6 +584,38 @@ class DevDeploymentOperation:
             load, save = store_methods
             save_state = save
             original_state = snapshot_state(load(), fresh=True)
+            same_active_identity = (
+                original_state.active_release is not None
+                and original_state.active_source_sha is not None
+                and original_state.active_digest is not None
+                and str.__eq__(
+                    original_state.active_release, snapshot.release_version,
+                )
+                and str.__eq__(
+                    original_state.active_source_sha, snapshot.source_sha,
+                )
+                and str.__eq__(
+                    original_state.active_digest, snapshot.manifest_digest,
+                )
+            )
+            same_active_digest = (
+                original_state.active_digest is not None
+                and str.__eq__(
+                    original_state.active_digest, snapshot.manifest_digest,
+                )
+            )
+            active_version_conflict = (
+                original_state.active_release is not None
+                and str.__eq__(
+                    original_state.active_release, snapshot.release_version,
+                )
+                and original_state.active_digest is not None
+                and not str.__eq__(
+                    original_state.active_digest, snapshot.manifest_digest,
+                )
+            )
+            if same_active_identity or same_active_digest or active_version_conflict:
+                raise TypeError("requested deployment identity is already active or conflicting")
             promotion = promotion_request(snapshot)
             plan = validate_plan(
                 make_plan(original_state, promotion), original_state, promotion,
