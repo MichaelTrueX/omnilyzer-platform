@@ -23,12 +23,35 @@ PRODUCTION_EXECUTOR_SOCKET_PATH = "/run/omnilyzer/deployment/executor.sock"
 TRANSPORT_UNAVAILABLE_MESSAGE = "executor transport is unavailable"
 MAX_IDENTITY_VALUE = 2**32 - 2
 MAX_TIMEOUT_MS = 3000
+RESPONSE_TIMEOUT_MS = 600_000
 MAX_UNIX_PATH_BYTES = 107
 _PEER_CREDENTIALS = struct.Struct("=iII")
 
 
 class ExecutorTransportUnavailableError(Exception):
     """The executor exchange did not produce one trustworthy response."""
+
+
+class _MonotonicValidator:
+    __slots__ = ("_clock", "_isfinite", "_last")
+
+    def __init__(
+        self, clock: Callable[[], object],
+        isfinite: Callable[[object], bool] = math.isfinite,
+    ) -> None:
+        self._clock = clock
+        self._isfinite = isfinite
+        self._last: float | None = None
+
+    def __call__(self) -> float:
+        value = self._clock()
+        if type(value) not in (int, float) or not self._isfinite(value) or value < 0:
+            raise OSError("invalid monotonic clock")
+        normalized = float(value)
+        if self._last is not None and normalized < self._last:
+            raise OSError("monotonic clock moved backward")
+        self._last = normalized
+        return normalized
 
 
 def _validate_configuration_integer(value: object, *, maximum: int) -> int:
@@ -88,7 +111,7 @@ class _Deadline:
         start = self._sample(None)
         self._last = start
         self._deadline = start + timeout_ms / 1000.0
-        if not self._isfinite(self._deadline):
+        if not self._isfinite(self._deadline) or self._deadline <= start:
             raise OSError("invalid monotonic deadline")
 
     def _sample(self, prior: float | None) -> float:
@@ -134,13 +157,13 @@ class UnixExecutorTransport:
         if hasattr(socket, "SOCK_CLOEXEC"):
             socket_kind |= socket.SOCK_CLOEXEC
         object.__setattr__(self, "_configuration", (
-            uid, gid, socket_gid, timeout_ms, path, encoded_path,
+            uid, gid, socket_gid, timeout_ms, RESPONSE_TIMEOUT_MS, path, encoded_path,
             os.lstat, socket.socket, time.monotonic, socket_kind,
             socket.AF_UNIX, socket.SOCK_STREAM, socket.SOL_SOCKET,
             getattr(socket, "SO_DOMAIN", None), socket.SO_TYPE,
             getattr(socket, "SO_PEERCRED", None), socket.SHUT_WR,
             MAX_CANONICAL_REQUEST_BYTES, MAX_EXECUTOR_RESPONSE_BYTES,
-            _metadata, _Deadline, _PEER_CREDENTIALS.size,
+            _metadata, _MonotonicValidator, _Deadline, _PEER_CREDENTIALS.size,
             _PEER_CREDENTIALS.unpack, UnixExecutorTransport._receive_exact,
             ExecutorTransportUnavailableError, TRANSPORT_UNAVAILABLE_MESSAGE,
         ))
@@ -150,12 +173,13 @@ class UnixExecutorTransport:
 
     def send(self, canonical_request: bytes) -> bytes:
         (
-            expected_uid, expected_gid, socket_group_gid, timeout_ms, path,
-            _encoded_path, lstat, socket_factory, monotonic, socket_kind,
+            expected_uid, expected_gid, socket_group_gid, timeout_ms,
+            response_timeout_ms, path, _encoded_path, lstat, socket_factory,
+            monotonic, socket_kind,
             af_unix, sock_stream, sol_socket, so_domain, so_type, so_peercred,
             shut_wr, request_bound, response_bound, metadata_validator,
-            deadline_factory, peer_size, peer_unpack, receive_exact,
-            error_type, error_message,
+            monotonic_validator, deadline_factory, peer_size, peer_unpack,
+            receive_exact, error_type, error_message,
         ) = object.__getattribute__(self, "_configuration")
         if (type(canonical_request) is not bytes or not canonical_request
                 or len(canonical_request) > request_bound):
@@ -164,17 +188,19 @@ class UnixExecutorTransport:
         response = None
         failed = False
         control: tuple[BaseException, object] | None = None
-        deadline = None
+        request_deadline = None
+        response_deadline = None
 
         try:
-            deadline = deadline_factory(monotonic, timeout_ms)
+            validated_monotonic = monotonic_validator(monotonic)
+            request_deadline = deadline_factory(validated_monotonic, timeout_ms)
             before = lstat(path)
             before_identity = metadata_validator(
                 before, owner_uid=expected_uid, group_gid=socket_group_gid,
             )
-            deadline.remaining()
+            request_deadline.remaining()
             client = socket_factory(af_unix, socket_kind)
-            deadline.remaining()
+            request_deadline.remaining()
             client.set_inheritable(False)
             if client.get_inheritable() is not False:
                 raise OSError("inheritable socket")
@@ -187,9 +213,9 @@ class UnixExecutorTransport:
             if type(actual_type) is not int or actual_type != sock_stream:
                 raise OSError("wrong socket type")
 
-            client.settimeout(deadline.remaining())
+            client.settimeout(request_deadline.remaining())
             client.connect(path)
-            client.settimeout(deadline.remaining())
+            client.settimeout(request_deadline.remaining())
             credentials = client.getsockopt(
                 sol_socket, so_peercred, peer_size,
             )
@@ -208,20 +234,24 @@ class UnixExecutorTransport:
                 raise OSError("socket path changed")
 
             request_header = len(canonical_request).to_bytes(4, "big", signed=False)
-            client.settimeout(deadline.remaining())
+            client.settimeout(request_deadline.remaining())
             client.sendall(request_header)
-            client.settimeout(deadline.remaining())
+            client.settimeout(request_deadline.remaining())
             client.sendall(canonical_request)
-            client.settimeout(deadline.remaining())
+            client.settimeout(request_deadline.remaining())
             client.shutdown(shut_wr)
+            request_deadline.remaining()
 
-            response_header = receive_exact(client, 4, deadline)
+            response_deadline = deadline_factory(
+                validated_monotonic, response_timeout_ms,
+            )
+            response_header = receive_exact(client, 4, response_deadline)
             response_length = int.from_bytes(response_header, "big", signed=False)
             response_header = b""
             if response_length > response_bound:
                 raise OSError("response is oversized")
-            response = receive_exact(client, response_length, deadline)
-            client.settimeout(deadline.remaining())
+            response = receive_exact(client, response_length, response_deadline)
+            client.settimeout(response_deadline.remaining())
             trailing = client.recv(1)
             if type(trailing) is not bytes or trailing != b"":
                 raise OSError("response contains trailing data")
@@ -231,9 +261,12 @@ class UnixExecutorTransport:
             failed = True
 
         if client is not None:
-            if deadline is not None:
+            cleanup_deadline = (
+                response_deadline if response_deadline is not None else request_deadline
+            )
+            if cleanup_deadline is not None:
                 try:
-                    deadline.remaining()
+                    cleanup_deadline.remaining()
                 except (KeyboardInterrupt, SystemExit, GeneratorExit) as exc:
                     control = (exc, exc.__traceback__)
                 except Exception:
@@ -244,9 +277,9 @@ class UnixExecutorTransport:
                 control = (exc, exc.__traceback__)
             except Exception:
                 failed = True
-            if deadline is not None:
+            if cleanup_deadline is not None:
                 try:
-                    deadline.remaining()
+                    cleanup_deadline.remaining()
                 except (KeyboardInterrupt, SystemExit, GeneratorExit) as exc:
                     control = (exc, exc.__traceback__)
                 except Exception:
@@ -275,7 +308,9 @@ class UnixExecutorTransport:
 
 __all__ = (
     "ExecutorTransportUnavailableError",
+    "MAX_TIMEOUT_MS",
     "PRODUCTION_EXECUTOR_SOCKET_PATH",
+    "RESPONSE_TIMEOUT_MS",
     "TRANSPORT_UNAVAILABLE_MESSAGE",
     "UnixExecutorTransport",
 )
