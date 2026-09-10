@@ -83,8 +83,10 @@ class StateStore:
         self.initial = initial or state()
         self.saved: list[DeploymentState] = []
         self.fail_save: int | None = None
+        self.load_calls = 0
 
     def load(self) -> DeploymentState:
+        self.load_calls += 1
         return self.initial
 
     def save(self, value: DeploymentState) -> None:
@@ -462,6 +464,165 @@ class RequestAndStateValidationTests(unittest.TestCase):
         with self.assertRaises(DeploymentOperationError):
             deployment.deploy(executor_request())
         self.assertEqual((runtime.calls, store.saved, sink.events, clock.calls), ([], [], [], 0))
+
+
+class ActiveIdentityRejectionTests(unittest.TestCase):
+    @staticmethod
+    def active_state(
+        request: ExecutorRequest, *, release: str | None = None,
+        source: str | None = None, digest: str | None = None,
+    ) -> DeploymentState:
+        value = state().to_dict()
+        value.update({
+            "active_release": request.release_version if release is None else release,
+            "active_source_sha": request.source_sha if source is None else source,
+            "active_digest": request.manifest_digest if digest is None else digest,
+        })
+        return DeploymentState.from_dict(value)
+
+    def assert_rejected_without_effects(
+        self, request: ExecutorRequest, initial: DeploymentState,
+    ) -> None:
+        runtime, store, sink, clock = Runtime(), StateStore(initial), AuditSink(), Clock()
+        deployment, _, _, _, _ = operation(
+            runtime=runtime, store=store, sink=sink, clock=clock,
+        )
+        with self.assertRaisesRegex(
+            DeploymentOperationError,
+            f"^{DEPLOYMENT_OPERATION_UNAVAILABLE_MESSAGE}$",
+        ) as caught:
+            deployment.deploy(request)
+        self.assertEqual(store.load_calls, 1)
+        self.assertEqual(store.saved, [])
+        self.assertEqual(sink.events, [])
+        self.assertEqual(runtime.calls, [])
+        self.assertEqual(clock.calls, 0)
+        exposed = str(caught.exception)
+        for marker in (
+            request.release_version, request.source_sha, request.manifest_digest,
+            "state", "already", "conflict", "injected-marker",
+        ):
+            self.assertNotIn(marker, exposed)
+
+    def test_exact_active_release_source_digest_is_rejected(self) -> None:
+        request = executor_request()
+        self.assert_rejected_without_effects(request, self.active_state(request))
+
+    def test_same_active_digest_with_different_release_and_source_is_rejected(self) -> None:
+        request = executor_request()
+        self.assert_rejected_without_effects(
+            request,
+            self.active_state(request, release="9.9.9", source="e" * 40),
+        )
+
+    def test_same_active_version_with_different_digest_is_rejected(self) -> None:
+        request = executor_request()
+        self.assert_rejected_without_effects(
+            request,
+            self.active_state(
+                request, source="e" * 40, digest="sha256:" + "f" * 64,
+            ),
+        )
+
+    def test_first_deployment_and_genuinely_different_candidate_still_succeed(self) -> None:
+        request = executor_request()
+        empty = state(previous=False).to_dict()
+        for prefix in ("active", "previous"):
+            for suffix in ("release", "source_sha", "digest", "slot"):
+                empty[f"{prefix}_{suffix}"] = None
+        first = operation(store=StateStore(DeploymentState.from_dict(empty)))
+        self.assertIsNone(first[0].deploy(request))
+        self.assertEqual(first[1].calls[-1][0], "switch")
+
+        different = operation(store=StateStore(state()))
+        self.assertIsNone(different[0].deploy(request))
+        self.assertEqual(different[3].events[-1].event_type, "promotion_succeeded")
+
+    def test_shared_source_with_distinct_version_and_digest_is_allowed(self) -> None:
+        request = executor_request()
+        initial = self.active_state(
+            request, release="0.13.3", source=request.source_sha,
+            digest="sha256:" + "f" * 64,
+        )
+        deployment, _, store, sink, _ = operation(store=StateStore(initial))
+        self.assertIsNone(deployment.deploy(request))
+        self.assertEqual(store.saved[-1].active_digest, request.manifest_digest)
+        self.assertEqual(sink.events[-1].event_type, "promotion_succeeded")
+
+    def test_hostile_string_subclasses_cannot_bypass_identity_checks(self) -> None:
+        class EqualText(str):
+            def __eq__(self, other: object) -> bool:
+                return False
+
+        request = executor_request()
+        hostile_request = replace(
+            request, manifest_digest=EqualText(request.manifest_digest),
+        )
+        deployment, runtime, store, sink, clock = operation(
+            store=StateStore(self.active_state(request)),
+        )
+        with self.assertRaises(DeploymentOperationError):
+            deployment.deploy(hostile_request)
+        self.assertEqual((store.load_calls, runtime.calls, store.saved, sink.events, clock.calls),
+                         (0, [], [], [], 0))
+
+        hostile_state = replace(
+            self.active_state(request),
+            active_digest=EqualText(request.manifest_digest),
+        )
+        deployment, runtime, store, sink, clock = operation(
+            store=StateStore(hostile_state),
+        )
+        with self.assertRaises(DeploymentOperationError):
+            deployment.deploy(request)
+        self.assertEqual((store.load_calls, runtime.calls, store.saved, sink.events, clock.calls),
+                         (1, [], [], [], 0))
+
+    def test_request_mutation_after_snapshot_cannot_change_rejection(self) -> None:
+        request = executor_request()
+        initial = self.active_state(request)
+
+        class MutatingStore(StateStore):
+            def load(self) -> DeploymentState:
+                self.load_calls += 1
+                object.__setattr__(request, "manifest_digest", "sha256:" + "f" * 64)
+                object.__setattr__(request, "release_version", "9.9.9")
+                return self.initial
+
+        runtime, store, sink, clock = Runtime(), MutatingStore(initial), AuditSink(), Clock()
+        deployment, _, _, _, _ = operation(
+            runtime=runtime, store=store, sink=sink, clock=clock,
+        )
+        with self.assertRaises(DeploymentOperationError):
+            deployment.deploy(request)
+        self.assertEqual((store.load_calls, runtime.calls, store.saved, sink.events, clock.calls),
+                         (1, [], [], [], 0))
+
+    def test_state_mutation_after_validation_cannot_redirect_identity(self) -> None:
+        request = executor_request()
+        initial = state()
+        original_active = (
+            initial.active_release, initial.active_source_sha,
+            initial.active_digest, initial.active_slot,
+        )
+
+        class MutatingRuntime(Runtime):
+            def pull_exact_image(self, image: str) -> None:
+                object.__setattr__(initial, "active_release", request.release_version)
+                object.__setattr__(initial, "active_source_sha", request.source_sha)
+                object.__setattr__(initial, "active_digest", request.manifest_digest)
+                self._record("pull", image)
+
+        deployment, _, store, _, _ = operation(
+            runtime=MutatingRuntime(), store=StateStore(initial),
+        )
+        self.assertIsNone(deployment.deploy(request))
+        final = store.saved[-1]
+        self.assertEqual(
+            (final.previous_release, final.previous_source_sha,
+             final.previous_digest, final.previous_slot),
+            original_active,
+        )
 
 
 class FailureAndCompensationTests(unittest.TestCase):
