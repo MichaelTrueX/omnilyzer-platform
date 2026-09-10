@@ -303,13 +303,30 @@ class DockerRuntimeAdapter:
     def switch_traffic(self, stage: str, slot: str) -> None:
         if stage != "dev":
             raise RuntimeOperationError("runtime adapter supports DEV only")
-        payload = self._active_fragment(slot)
+        self._replace_traffic(self._active_fragment(slot))
+
+    def restore_traffic(self, stage: str, previous_slot: str | None) -> None:
+        """Restore one closed prior DEV route, including no-active maintenance."""
+
+        if type(stage) is not str or stage != "dev":
+            raise RuntimeOperationError("runtime adapter supports DEV only")
+        if (
+            previous_slot is not None
+            and (type(previous_slot) is not str or previous_slot not in ("blue", "green"))
+        ):
+            raise RuntimeOperationError("previous runtime slot is not authorized")
+        payload = (
+            None if previous_slot is None else self._active_fragment(previous_slot)
+        )
+        self._replace_traffic(payload)
+
+    def _replace_traffic(self, payload: bytes | None) -> None:
         target = self._nginx_runtime_directory / "active.conf"
         old = target.read_bytes() if target.is_file() and not target.is_symlink() else None
         if target.exists() and (target.is_symlink() or not target.is_file()):
             raise RuntimeOperationError("active Nginx fragment is not a regular file")
-        self._write_active_atomic(payload)
         try:
+            self._write_active_atomic(payload)
             self.validate_nginx("dev")
             self._run(self._compose("exec", "--no-TTY", "deployment-nginx", "nginx", "-s", "reload"))
         except BaseException:
