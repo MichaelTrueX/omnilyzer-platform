@@ -52,7 +52,8 @@ EVENT_TYPES = (
     "migration_started", "migration_succeeded", "migration_failed",
     "liveness_passed", "liveness_failed", "readiness_passed", "readiness_failed",
     "traffic_switch_started", "traffic_switch_succeeded", "traffic_switch_failed",
-    "promotion_succeeded", "rollback_started", "rollback_succeeded", "rollback_failed",
+    "promotion_succeeded", "promotion_failed",
+    "rollback_started", "rollback_succeeded", "rollback_failed",
 )
 RESULTS = ("started", "succeeded", "failed", "rejected")
 EVENT_FIELDS = {
@@ -278,6 +279,8 @@ class AuditEvent:
         result = data["result"]
         if event_type not in EVENT_TYPES or result not in RESULTS:
             raise DeploymentPolicyError("audit event type or result is invalid")
+        if event_type == "promotion_failed" and result != "failed":
+            raise DeploymentPolicyError("promotion_failed requires failed result")
         previous_digest = data["previous_digest"]
         if previous_digest is not None:
             previous_digest = validate_digest(previous_digest, "previous_digest")
