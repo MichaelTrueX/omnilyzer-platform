@@ -246,6 +246,75 @@ and temporary local directories only; they perform no Docker, Compose, network,
 registry, application, production-filesystem, listener, service, host, or
 deployment operation.
 
+### Hardened fixed-path DEV deployment state store
+
+`state_store.py` adds C10's inert `FilesystemDeploymentStateStore` behind the
+exact `load() -> DeploymentState` and `save(DeploymentState) -> None`
+collaborator boundary consumed by C8. Import and construction perform no
+filesystem operation. The only production pathname is the non-configurable
+`/var/lib/omnilyzer/deployment/dev/state.json`; C10 provides no initialization,
+directory creation, repair, reset, deletion, enumeration, migration, chmod,
+chown, arbitrary-path, or temporary-path API.
+
+A future separately reviewed installation must provision the complete path and
+an initial canonical no-active DEV state before this store can operate. `/`,
+`/var`, and `/var/lib` must be root-owned real directories and may not be
+group/other writable unless they have the root-owned sticky-directory
+protection used by standard temporary roots in tests. The deployment-owned
+`omnilyzer`, `deployment`, and `dev` directories must have the configured
+numeric owner and group, owner `rwx`, and no group/other write permission; the
+final `dev` directory must be exactly `0700`. The existing `state.json` must be
+a single-link regular file, never a symlink, with exact mode `0600`, configured
+owner/group, and a nonempty size no greater than 16 KiB.
+
+Every operation traverses from `/` with retained descriptor-relative
+`O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC` opens, compares named and opened
+device/inode identities, rejects unexpected directory entries or fixed
+temporary residue, and revalidates the retained chain. A process-local
+non-reentrant gate covers threads and store instances; a non-waiting exclusive
+`flock()` on the retained `dev` directory coordinates cooperating processes.
+The advisory lock is retained through validation, replacement, verification,
+temporary cleanup, and non-locking descriptor cleanup. Processes with
+equivalent filesystem authority must cooperate with this advisory lock.
+
+Loads use an exact no-follow state descriptor, bounded progress-checked reads,
+an explicit EOF proof, strict UTF-8 JSON with duplicate-member and non-standard
+constant rejection, the authoritative closed `DeploymentState.from_dict()`
+parser, and exact canonical persisted-byte equality. They return only an exact
+base `DeploymentState` for stage `dev`.
+
+Saves first reconstruct the complete exact-base state and nested migration
+graph twice through non-virtual field access, without calling caller
+serialization, conversion, iteration, equality, or deepcopy hooks. The
+authoritative parser validates the snapshot, and only bounded canonical bytes
+are retained. Under coordination C10 validates the existing canonical state,
+creates the fixed `.state.json.tmp` leaf exclusively with no-follow/CLOEXEC and
+mode `0600`, completes bounded writes, fsyncs and revalidates the temporary,
+reconfirms the original state and directory identities and bytes, atomically
+replaces `state.json`, fsyncs the directory, then reopens and verifies the exact
+result. Pre-replacement failures preserve the original; cleanup unlinks only a
+temporary name still matching the created inode. Post-replacement or durability
+uncertainty fails closed without rollback, repair, or a claim that the old
+state remains active.
+
+All operational failures expose only `deployment state storage is unavailable`;
+control-flow exceptions are preserved after cleanup. Descriptor-relative
+opens and repeated named/descriptor observations narrow substitution races but
+do not form a transaction with the filesystem namespace. A process already
+able to mutate the protected directory hierarchy can attempt changes between
+observations, and repeated exact-state observations cannot prove detection of
+every theoretically reversible concurrent Python-object mutation. Secure
+directory authority, advisory-lock cooperation, and process isolation remain
+installation requirements. Supported-API immutability prevents ordinary
+configuration reassignment; it is not a defense against arbitrary code
+execution inside the interpreter.
+
+C10 does not compose the executor process and did not access the production
+state path during implementation or testing. Its real-filesystem tests use
+only secured temporary directories and remove only test-created objects. All
+environments remain disabled, and enforceable private-repository branch and
+environment protections remain an absolute prerequisite for activation.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
