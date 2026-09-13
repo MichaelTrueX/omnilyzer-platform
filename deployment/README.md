@@ -505,6 +505,29 @@ separate, and composing C15 remains future bootstrap work. C18 introduces no
 service or systemd asset and leaves deployment disabled; it does not assert
 that the production configuration file exists.
 
+### Inert DEV executor service bootstrap
+
+C19 is the inert bridge between the reviewed executor service boundaries.
+Import performs no operational action. One explicit
+`run_dev_executor_service_once()` call first loads exactly one hardened C18
+configuration and obtains C17's exact non-operational C15 projection. Only
+after that preparation succeeds does it acquire one C16 systemd listener,
+construct C15 once with a fixed UTC second-precision audit clock, and invoke
+`serve_once()` at most once.
+
+After C16 returns, C19 owns that exact inherited listener until it closes the
+listener exactly once before ordinary return or failure. There is no retry,
+reload, reacquisition, or service loop, and cleanup preserves active
+`KeyboardInterrupt`, `SystemExit`, and `GeneratorExit` exceptions. No config
+path, image, digest, identity, listener, or clock input is caller-configurable.
+
+C19 adds no CLI or `__main__` entrypoint, creates/binds/listens on no socket,
+and creates, installs, enables, or starts no systemd asset. It provisions no
+host resource and does not automatically activate deployment authority. A
+later separately reviewed slice may define inert systemd service/socket assets
+or another host entry mechanism. Deployment remains disabled pending the
+existing protection prerequisite.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
