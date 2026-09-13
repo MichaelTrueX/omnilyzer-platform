@@ -366,6 +366,35 @@ future C13 host-installation contract should describe resources required by
 both concrete process compositions without assuming every deployment is
 GitHub-triggered.
 
+### Inert DEV host installation contract
+
+`installation_contract.py` adds C13's pure declarative DEV host contract. It
+unifies the numeric installation identities projected into C11 and C12 and
+describes their fixed state, replay, audit, and executor-socket resources. The
+shared replay directory and database are root-owned with one dedicated replay
+group; state and audit ownership follow the executor UID/GID; socket ownership
+uses the executor UID and a dedicated socket-access group distinct from the
+executor process GID. Both compositions receive identical replay ownership and
+socket-group expectations, while broker and executor peer UID/GID values remain
+explicit service identities. Required supplementary-group memberships are
+declared without querying or changing host group state.
+
+C13 remains repository-only and performs no host preflight or provisioning. It
+does not inspect or create a path, initialize replay, write initial state,
+create an audit file or socket, install a systemd asset, or start a service.
+DEV, STAGING, and PROD remain disabled, and the unresolved required GitHub
+protection prerequisite is unchanged. A later separately reviewed slice must
+qualify complete ancestor chains and provision, initialize, install, and start
+the required host resources and services.
+
+This host-resource isolation contract does not assume every future deployment
+is GitHub-triggered. C12 and the current request/replay identity semantics remain
+GitHub-oriented. A future restricted-network profile for applications such as
+Bisma may require a separately reviewed local/manual authorization mechanism
+and an explicit identity-schema extension or version. C13 implements neither;
+compatible profiles must retain exact-digest release verification, deployment
+controls, and the reusable C11 executor boundary.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
