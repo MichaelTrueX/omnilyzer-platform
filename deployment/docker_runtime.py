@@ -1,7 +1,11 @@
 """Closed Docker/Compose implementation of the Task 014 DEV runtime boundary.
 
-Nothing is executed at import time. Callers provide domain values; command argv,
-paths, service names, and HTTP targets are generated only from closed allowlists.
+This module contains the closed runtime and concrete Docker Compose candidate
+loopback probe. Nothing executes at import or construction time. Candidate
+probing occurs only through explicit ``get()`` calls against exact Compose
+services and ``127.0.0.1:8080`` inside the selected container, so candidate host
+ports are neither required nor used. Other command argv, paths, service names,
+and HTTP targets are likewise generated only from closed allowlists.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ import selectors
 import subprocess
 import tempfile
 import time
+import types
 from typing import Mapping, Protocol
 
 from .controller import DeploymentPlan
@@ -36,6 +41,36 @@ MAX_COMMAND_OUTPUT = 16 * 1024
 COMMAND_TIMEOUT_SECONDS = 30.0
 HTTP_TIMEOUT_SECONDS = 3.0
 MAX_HTTP_RESPONSE = 4096
+_PROBE_SERVICES = {"blue": "canary-blue", "green": "canary-green"}
+_PROBE_PATHS = frozenset({"/livez", "/readyz", "/metadata"})
+_PROBE_ENVELOPE_MAX_BYTES = MAX_HTTP_RESPONSE * 2 + 64
+_CANDIDATE_PROBE_SCRIPT = """import http.client
+import json
+import sys
+
+def main():
+    try:
+        if len(sys.argv) != 2 or sys.argv[1] not in ("/livez", "/readyz", "/metadata"):
+            return 1
+        connection = http.client.HTTPConnection("127.0.0.1", 8080, timeout=2.0)
+        connection.request(
+            "GET", sys.argv[1],
+            headers={"Accept": "application/json", "Connection": "close"},
+        )
+        response = connection.getresponse()
+        body = response.read(4097)
+        status = response.status
+        connection.close()
+        if type(status) is not int or not 100 <= status <= 599 or len(body) > 4096:
+            return 1
+        envelope = {"body_hex": body.hex(), "status": status}
+        sys.stdout.write(json.dumps(envelope, sort_keys=True, separators=(",", ":")) + "\\n")
+        return 0
+    except Exception:
+        return 1
+
+raise SystemExit(main())
+"""
 
 
 class RuntimeOperationError(DeploymentPolicyError):
@@ -116,6 +151,157 @@ def validate_canary_image(value: str) -> str:
     if not isinstance(value, str) or IMAGE_RE.fullmatch(value) is None:
         raise RuntimeOperationError("CANARY_IMAGE must be the exact approved repository@sha256 digest")
     return value
+
+
+def _candidate_command_run(runner: object):
+    """Capture one exact ordinary CommandRunner method without invoking it."""
+
+    if runner is None:
+        raise TypeError("candidate probe configuration is invalid")
+    try:
+        hierarchy = type.__getattribute__(type(runner), "__mro__")
+    except (AttributeError, TypeError):
+        raise TypeError("candidate probe configuration is invalid") from None
+    descriptor: object | None = None
+    for base in hierarchy:
+        namespace = type.__getattribute__(base, "__dict__")
+        if "run" in namespace:
+            descriptor = namespace["run"]
+            break
+    if type(descriptor) is not types.FunctionType:
+        raise TypeError("candidate probe configuration is invalid")
+    code = descriptor.__code__
+    keyword_start = code.co_argcount
+    keyword_end = keyword_start + code.co_kwonlyargcount
+    if (
+        code.co_posonlyargcount != 0
+        or code.co_argcount != 2
+        or tuple(code.co_varnames[1:2]) != ("argv",)
+        or code.co_kwonlyargcount != 3
+        or tuple(code.co_varnames[keyword_start:keyword_end])
+        != ("cwd", "environment", "timeout")
+        or code.co_flags & (0x04 | 0x08 | 0x20 | 0x80 | 0x100 | 0x200)
+        or descriptor.__defaults__ is not None
+        or descriptor.__kwdefaults__ is not None
+    ):
+        raise TypeError("candidate probe configuration is invalid")
+    return types.MethodType(descriptor, runner)
+
+
+class DockerComposeCandidateHttpClient:
+    """Probe one exact candidate through fixed Docker Compose container exec."""
+
+    __slots__ = ("_configuration",)
+
+    def __init__(self, runner: CommandRunner, *, canary_image: str) -> None:
+        """Capture a runner and exact image environment without executing them."""
+
+        run = _candidate_command_run(runner)
+        if type(canary_image) is not str:
+            raise RuntimeOperationError("candidate probe configuration is invalid")
+        image = validate_canary_image(canary_image)
+        object.__setattr__(self, "_configuration", (
+            run,
+            {
+                "PATH": "/usr/bin:/bin",
+                "LANG": "C.UTF-8",
+                "CANARY_IMAGE": image,
+            },
+        ))
+
+    def __setattr__(self, name: str, value: object) -> None:
+        """Reject supported-API changes to the captured probe configuration."""
+
+        raise AttributeError("candidate probe configuration is immutable")
+
+    def __delattr__(self, name: str) -> None:
+        """Reject supported-API deletion of captured probe configuration."""
+
+        raise AttributeError("candidate probe configuration is immutable")
+
+    def get(
+        self, slot: str, path: str, *, timeout: float, max_bytes: int,
+    ) -> tuple[int, bytes]:
+        """Execute one bounded fixed-service same-container loopback probe."""
+
+        if (
+            type(slot) is not str
+            or slot not in _PROBE_SERVICES
+            or type(path) is not str
+            or path not in _PROBE_PATHS
+            or type(timeout) is not float
+            or timeout != HTTP_TIMEOUT_SECONDS
+            or type(max_bytes) is not int
+            or max_bytes != MAX_HTTP_RESPONSE
+        ):
+            raise RuntimeOperationError("candidate probe failed")
+        run, environment = object.__getattribute__(self, "_configuration")
+        argv = (
+            "docker", "compose", "--project-name", PROJECT,
+            "--file", str(COMPOSE_FILE), "exec", "--no-TTY",
+            _PROBE_SERVICES[slot], "/usr/bin/python", "-c",
+            _CANDIDATE_PROBE_SCRIPT, path,
+        )
+        try:
+            result = run(
+                argv, cwd=WORKING_DIRECTORY,
+                environment=dict(environment), timeout=HTTP_TIMEOUT_SECONDS,
+            )
+            if (
+                type(result) is not CommandResult
+                or type(result.returncode) is not int
+                or result.returncode != 0
+                or type(result.stdout) is not str
+                or type(result.stderr) is not str
+                or result.stderr != ""
+            ):
+                raise ValueError
+            raw = result.stdout.encode("ascii")
+            if not raw or len(raw) > _PROBE_ENVELOPE_MAX_BYTES:
+                raise ValueError
+
+            def no_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+                """Build the envelope object while rejecting duplicate fields."""
+
+                value: dict[str, object] = {}
+                for key, item in pairs:
+                    if key in value:
+                        raise ValueError
+                    value[key] = item
+                return value
+
+            envelope = json.loads(
+                result.stdout,
+                object_pairs_hook=no_duplicates,
+                parse_constant=lambda value: (_ for _ in ()).throw(ValueError),
+            )
+            if type(envelope) is not dict or set(envelope) != {"body_hex", "status"}:
+                raise ValueError
+            status = envelope["status"]
+            body_hex = envelope["body_hex"]
+            if (
+                type(status) is not int
+                or not 100 <= status <= 599
+                or type(body_hex) is not str
+                or len(body_hex) % 2 != 0
+                or len(body_hex) > MAX_HTTP_RESPONSE * 2
+                or re.fullmatch(r"[0-9a-f]*", body_hex) is None
+            ):
+                raise ValueError
+            canonical = json.dumps(
+                {"body_hex": body_hex, "status": status},
+                sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            ) + "\n"
+            if result.stdout != canonical:
+                raise ValueError
+            body = bytes.fromhex(body_hex)
+            if len(body) > MAX_HTTP_RESPONSE:
+                raise ValueError
+            return status, body
+        except (KeyboardInterrupt, SystemExit, GeneratorExit):
+            raise
+        except Exception:
+            raise RuntimeOperationError("candidate probe failed") from None
 
 
 def validate_runtime_configuration(raw: bytes) -> None:
