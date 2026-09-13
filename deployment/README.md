@@ -405,12 +405,29 @@ only `/livez`, `/readyz`, or `/metadata` from the candidate's own
 the host, and the client provides no proxy, DNS, arbitrary network target,
 shell command, or retry surface.
 
-C14 remains non-live repository code and is not yet wired into the executor
-composition. A later separately reviewed slice may close C11 by constructing
-this concrete client internally. C14 changes no workflow, environment,
-installation contract, service, or activation authority, and it introduces no
-special Bisma fork; the same deployment engine remains reusable within any
-future separately reviewed restricted-network authorization profile.
+C14 introduced the client as non-live repository code without wiring it into
+the executor composition. C15 performs that composition closure as described
+below. C14 changed no workflow, environment, installation contract, service,
+or activation authority, and introduced no special Bisma fork; the same
+deployment engine remains reusable within any future separately reviewed
+restricted-network authorization profile.
+
+### Closed DEV executor candidate-probe composition
+
+C15 closes C11 around C14's reviewed concrete candidate probe. The arbitrary
+`candidate_http_client` constructor input is removed. Instead,
+`DevExecutorComposition` constructs one `SubprocessCommandRunner`, supplies
+that same instance to both `DockerComposeCandidateHttpClient` and
+`DockerRuntimeAdapter`, and binds the same unchanged exact canary image to both
+components.
+
+Import and construction remain inert: no candidate probe, Docker or subprocess
+operation, path access, or listener action occurs. The already-provisioned
+listener remains caller-supplied because socket creation and service activation
+are still deferred to a separately reviewed layer. C15 adds no host
+installation, workflow authority, environment activation, socket creation,
+Docker execution, or deployment, and it remains below any future external
+authorization mechanism.
 
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
