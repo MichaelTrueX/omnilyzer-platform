@@ -528,6 +528,26 @@ later separately reviewed slice may define inert systemd service/socket assets
 or another host entry mechanism. Deployment remains disabled pending the
 existing protection prerequisite.
 
+### Closed DEV executor service process entrypoint
+
+C20 adds only the closed process entrypoint for the future module execution
+contract `python -m deployment.executor_service_entrypoint`. Import remains
+inert, `main()` accepts zero arguments, and one call delegates exactly once to
+C19. Exact normal exit codes are 0 for success, 1 for an ordinary bootstrap
+exception or unexpected non-`None` result, and 2 for unsupported trailing
+process arguments. Extra arguments are rejected before C19 is called. Ordinary
+exceptions are neither printed nor logged; `KeyboardInterrupt`, `SystemExit`,
+and `GeneratorExit` are not translated by `main()`.
+
+C20 has no retry, service loop, signal handler, or environment configuration,
+and no direct filesystem, socket, Docker, subprocess, or systemd behavior. It
+adds no package or console-script installation and chooses neither an absolute
+interpreter path nor a repository installation directory. No systemd service
+or socket asset exists yet, no host resource is provisioned, and no deployment
+authority is activated. Deployment remains disabled pending the existing
+protection prerequisite. A later separately reviewed slice may bind a systemd
+service asset to this reviewed module execution contract.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
