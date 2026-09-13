@@ -47,9 +47,12 @@ envelope to the host-side parser.
 
 Neither candidate publishes a host probe port; `deployment-nginx` remains the
 only service with the `127.0.0.1:3020:8080` host mapping. C14 is repository-only
-and does not activate or execute a real probe. The concrete client is not yet
-wired into C11's executor composition; that closure is reserved for a later
-reviewed slice. `compose.yaml` is unchanged and its SHA-256 remains
+and did not activate or execute a real probe. C15 now wires the reviewed client
+into `DevExecutorComposition`, sharing its one command runner and exact image
+binding with the Docker runtime. Candidate ports remain unpublished and probes
+remain exact-service, same-container loopback operations. C15 activates no
+deployment and changes no runtime asset. `compose.yaml` is unchanged and its
+SHA-256 remains
 `ac12c1958d5e65ab64a69ea58ca053d11cd664732edb20fb7dce39aabde6b3bc`.
 
 The canonical runtime configuration is exactly 99 bytes, SHA-256 `8978b0608a6ef434ad6818a4d654c804ecdba8cabf5dc5916658a8194e7d839f`, and has a closed schema. No runtime secret exists. The accepted no-secrets reference remains `{"schema_version":1,"kind":"none","required":[],"reason":"task014-synthetic-canary-has-no-runtime-secrets"}`. OIDC/zot/Forgejo tokens are deployment credentials, never application configuration.

@@ -4,20 +4,20 @@ This file composes ``deployment.state_store``, ``deployment.replay_sqlite``,
 ``deployment.audit``, ``deployment.docker_runtime``,
 ``deployment.deployment_operation``, ``deployment.executor``,
 ``deployment.executor_server``, and ``deployment.executor_listener`` into one
-closed executor boundary.  Import and construction are inert: they do not
-create, bind, or listen on sockets; install or initialize infrastructure; or
-execute deployment infrastructure.  Only an explicit ``serve_once()`` call
-delegates to the already-reviewed listener boundary.
+closed executor boundary. It internally binds the reviewed Docker Compose
+candidate client and runtime adapter to one command runner and exact image.
+Import and construction are inert: they do not create, bind, or listen on
+sockets; install or initialize infrastructure; probe a candidate; or execute
+deployment infrastructure. Only an explicit ``serve_once()`` call delegates
+to the already-reviewed listener boundary.
 """
 
 from __future__ import annotations
 
-import types as _types
-
 from .audit import FilesystemAuditSink as _FilesystemAuditSink
 from .deployment_operation import DevDeploymentOperation as _DevDeploymentOperation
 from .docker_runtime import (
-    CandidateHttpClient as _CandidateHttpClient,
+    DockerComposeCandidateHttpClient as _DockerComposeCandidateHttpClient,
     DockerRuntimeAdapter as _DockerRuntimeAdapter,
     SubprocessCommandRunner as _SubprocessCommandRunner,
 )
@@ -33,42 +33,6 @@ from .state_store import FilesystemDeploymentStateStore as _FilesystemDeployment
 
 __all__ = ("DevExecutorComposition",)
 
-_CONFIGURATION_MESSAGE = "DEV executor composition configuration is invalid"
-
-
-def _validate_candidate_http_client(client: object) -> None:
-    """Validate the candidate client's one reviewed HTTP method shape."""
-
-    if client is None:
-        raise TypeError(_CONFIGURATION_MESSAGE)
-    try:
-        hierarchy = type.__getattribute__(type(client), "__mro__")
-    except (AttributeError, TypeError):
-        raise TypeError(_CONFIGURATION_MESSAGE) from None
-    descriptor: object | None = None
-    for base in hierarchy:
-        namespace = type.__getattribute__(base, "__dict__")
-        if "get" in namespace:
-            descriptor = namespace["get"]
-            break
-    if type(descriptor) is not _types.FunctionType:
-        raise TypeError(_CONFIGURATION_MESSAGE)
-    code = descriptor.__code__
-    keyword_start = code.co_argcount
-    keyword_end = keyword_start + code.co_kwonlyargcount
-    if (
-        code.co_posonlyargcount != 0
-        or code.co_argcount != 3
-        or tuple(code.co_varnames[1:3]) != ("slot", "path")
-        or code.co_kwonlyargcount != 2
-        or tuple(code.co_varnames[keyword_start:keyword_end])
-        != ("timeout", "max_bytes")
-        or code.co_flags & (0x04 | 0x08 | 0x20 | 0x80 | 0x100 | 0x200)
-        or descriptor.__defaults__ is not None
-        or descriptor.__kwdefaults__ is not None
-    ):
-        raise TypeError(_CONFIGURATION_MESSAGE)
-
 
 class DevExecutorComposition:
     """Own one closed DEV executor graph with only single-accept delegation."""
@@ -76,8 +40,8 @@ class DevExecutorComposition:
     __slots__ = ("_serve_once",)
 
     def __init__(
-        self, *, listener: object, candidate_http_client: _CandidateHttpClient,
-        clock: object, canary_image: str, reviewed_commit: str,
+        self, *, listener: object, clock: object, canary_image: str,
+        reviewed_commit: str,
         runtime_configuration_sha256: str,
         ingress_file_sha256: tuple[str, str, str],
         expected_state_owner_uid: int, expected_state_group_gid: int,
@@ -87,7 +51,6 @@ class DevExecutorComposition:
     ) -> None:
         """Construct the reviewed graph without invoking an operational method."""
 
-        _validate_candidate_http_client(candidate_http_client)
         state_store = _FilesystemDeploymentStateStore(
             expected_owner_uid=expected_state_owner_uid,
             expected_group_gid=expected_state_group_gid,
@@ -99,6 +62,9 @@ class DevExecutorComposition:
         )
         audit_sink = _FilesystemAuditSink()
         command_runner = _SubprocessCommandRunner()
+        candidate_http_client = _DockerComposeCandidateHttpClient(
+            command_runner, canary_image=canary_image,
+        )
         runtime = _DockerRuntimeAdapter(
             command_runner, candidate_http_client, canary_image=canary_image,
         )

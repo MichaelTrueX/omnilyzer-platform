@@ -1,8 +1,8 @@
-"""deployment/tests/test_executor_composition.py — tests for inert C11 wiring.
+"""deployment/tests/test_executor_composition.py — tests for inert C15 wiring.
 
 These tests prove that the closed DEV executor composition uses the reviewed
-components and fixed production paths without activating any external side
-effect during import or construction.
+components, including C14's concrete probe, and fixed production paths without
+activating any external side effect during import or construction.
 """
 
 from __future__ import annotations
@@ -22,7 +22,12 @@ from unittest.mock import patch
 import deployment.executor_composition as composition_module
 from deployment.audit import AUDIT_PATH, FilesystemAuditSink
 from deployment.deployment_operation import DevDeploymentOperation
-from deployment.docker_runtime import DockerRuntimeAdapter, SubprocessCommandRunner
+from deployment.docker_runtime import (
+    DockerComposeCandidateHttpClient,
+    DockerRuntimeAdapter,
+    RuntimeOperationError,
+    SubprocessCommandRunner,
+)
 from deployment.executor import RestrictedPrivilegedExecutor
 from deployment.executor_composition import DevExecutorComposition
 from deployment.executor_listener import (
@@ -52,19 +57,6 @@ def audit_clock() -> str:
     """Return one deterministic value without performing external work."""
 
     return "2026-09-13T00:00:00Z"
-
-
-class HostileHttpClient:
-    """Expose only the reviewed candidate GET shape and fail if it is called."""
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def get(
-        self, slot: str, path: str, *, timeout: float, max_bytes: int,
-    ) -> tuple[int, bytes]:
-        self.calls += 1
-        raise AssertionError("candidate HTTP was called during composition")
 
 
 class ExistingListener:
@@ -104,7 +96,6 @@ def configuration(**changes: object) -> dict[str, object]:
 
     values: dict[str, object] = {
         "listener": ExistingListener(),
-        "candidate_http_client": HostileHttpClient(),
         "clock": audit_clock,
         "canary_image": CANARY_IMAGE,
         "reviewed_commit": REVIEWED_COMMIT,
@@ -169,7 +160,6 @@ class ConstructionTests(unittest.TestCase):
 
     def test_construction_calls_no_operational_boundary(self) -> None:
         listener = ExistingListener()
-        http = HostileHttpClient()
 
         def load(store: object) -> object:
             raise AssertionError("state load")
@@ -201,6 +191,12 @@ class ConstructionTests(unittest.TestCase):
         ) -> object:
             raise AssertionError("command execution")
 
+        def get(
+            client: object, slot: str, path: str, *, timeout: float,
+            max_bytes: int,
+        ) -> tuple[int, bytes]:
+            raise AssertionError("candidate probe")
+
         blockers = (
             patch.object(FilesystemDeploymentStateStore, "load", load),
             patch.object(FilesystemDeploymentStateStore, "save", save),
@@ -209,7 +205,12 @@ class ConstructionTests(unittest.TestCase):
             patch.object(SQLiteReplayGuard, "finish_execution", finish_execution),
             patch.object(FilesystemAuditSink, "append", append),
             patch.object(SubprocessCommandRunner, "run", run),
+            patch.object(DockerComposeCandidateHttpClient, "get", get),
             patch.object(socket, "socket", side_effect=AssertionError("socket creation")),
+            patch.object(
+                socket, "create_connection",
+                side_effect=AssertionError("socket connection"),
+            ),
             patch.object(os, "open", side_effect=AssertionError("production path open")),
             patch.object(os, "stat", side_effect=AssertionError("production path stat")),
             patch.object(os, "lstat", side_effect=AssertionError("production path lstat")),
@@ -228,20 +229,19 @@ class ConstructionTests(unittest.TestCase):
         with ExitStack() as stack:
             for blocker in blockers:
                 stack.enter_context(blocker)
-            composed = DevExecutorComposition(**configuration(
-                listener=listener, candidate_http_client=http,
-            ))
+            composed = DevExecutorComposition(**configuration(listener=listener))
 
         self.assertIsInstance(composed, DevExecutorComposition)
         self.assertEqual(listener.calls, [])
-        self.assertEqual(http.calls, 0)
 
     def test_graph_uses_actual_reviewed_components_in_order(self) -> None:
         created: dict[str, object] = {}
+        order: list[str] = []
 
         def record(name: str, constructor: object):
             def construct(*args: object, **kwargs: object) -> object:
                 instance = constructor(*args, **kwargs)  # type: ignore[operator]
+                order.append(name)
                 created[name] = instance
                 created[f"{name}_args"] = args
                 created[f"{name}_kwargs"] = kwargs
@@ -253,6 +253,9 @@ class ConstructionTests(unittest.TestCase):
             "_SQLiteReplayGuard": record("replay", SQLiteReplayGuard),
             "_FilesystemAuditSink": record("audit", FilesystemAuditSink),
             "_SubprocessCommandRunner": record("runner", SubprocessCommandRunner),
+            "_DockerComposeCandidateHttpClient": record(
+                "candidate", DockerComposeCandidateHttpClient,
+            ),
             "_DockerRuntimeAdapter": record("runtime", DockerRuntimeAdapter),
             "_DevDeploymentOperation": record("operation", DevDeploymentOperation),
             "_RestrictedPrivilegedExecutor": record("executor", RestrictedPrivilegedExecutor),
@@ -267,6 +270,7 @@ class ConstructionTests(unittest.TestCase):
             "replay": SQLiteReplayGuard,
             "audit": FilesystemAuditSink,
             "runner": SubprocessCommandRunner,
+            "candidate": DockerComposeCandidateHttpClient,
             "runtime": DockerRuntimeAdapter,
             "operation": DevDeploymentOperation,
             "executor": RestrictedPrivilegedExecutor,
@@ -275,6 +279,10 @@ class ConstructionTests(unittest.TestCase):
         }
         for name, expected_type in expected_types.items():
             self.assertIsInstance(created[name], expected_type)
+        self.assertEqual(order, [
+            "state", "replay", "audit", "runner", "candidate", "runtime",
+            "operation", "executor", "handler", "listener",
+        ])
         self.assertEqual(created["state_args"], ())
         self.assertEqual(set(created["state_kwargs"]), {  # type: ignore[arg-type]
             "expected_owner_uid", "expected_group_gid",
@@ -285,7 +293,12 @@ class ConstructionTests(unittest.TestCase):
         })
         self.assertEqual(created["audit_args"], ())
         self.assertEqual(created["audit_kwargs"], {})
+        self.assertEqual(order.count("runner"), 1)
+        self.assertIs(created["candidate_args"][0], created["runner"])  # type: ignore[index]
         self.assertIs(created["runtime_args"][0], created["runner"])  # type: ignore[index]
+        self.assertIs(created["runtime_args"][1], created["candidate"])  # type: ignore[index]
+        self.assertIs(created["candidate_kwargs"]["canary_image"], CANARY_IMAGE)  # type: ignore[index]
+        self.assertIs(created["runtime_kwargs"]["canary_image"], CANARY_IMAGE)  # type: ignore[index]
         self.assertIs(created["operation_kwargs"]["runtime"], created["runtime"])  # type: ignore[index]
         self.assertIs(created["operation_kwargs"]["state_store"], created["state"])  # type: ignore[index]
         self.assertIs(created["operation_kwargs"]["audit_sink"], created["audit"])  # type: ignore[index]
@@ -295,6 +308,71 @@ class ConstructionTests(unittest.TestCase):
         self.assertIs(created["listener_kwargs"]["handler"], created["handler"])  # type: ignore[index]
         self.assertNotIn("path", created["listener_kwargs"])  # type: ignore[operator]
         self.assertIs(composed._serve_once.__self__, created["listener"])
+
+    def test_constructor_surface_closes_candidate_and_runner_injection(self) -> None:
+        parameters = inspect.signature(DevExecutorComposition).parameters
+        self.assertEqual(tuple(parameters), (
+            "listener", "clock", "canary_image", "reviewed_commit",
+            "runtime_configuration_sha256", "ingress_file_sha256",
+            "expected_state_owner_uid", "expected_state_group_gid",
+            "expected_replay_directory_uid", "expected_replay_directory_gid",
+            "expected_broker_uid", "expected_broker_gid",
+            "expected_socket_owner_uid", "expected_socket_group_gid",
+        ))
+        for name in (
+            "candidate_http_client", "runner", "command_runner", "http",
+            "http_client", "candidate_probe", "probe_client", "probe_factory",
+            "runtime_factory", "docker_client", "compose_client",
+        ):
+            self.assertNotIn(name, parameters)
+
+    def test_candidate_client_injection_and_old_validator_are_absent(self) -> None:
+        with self.assertRaises(TypeError):
+            DevExecutorComposition(
+                **configuration(), candidate_http_client=object(),
+            )
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
+        imported_names = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        }
+        function_names = {
+            node.name for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        self.assertNotIn("CandidateHttpClient", imported_names)
+        self.assertNotIn("_validate_candidate_http_client", function_names)
+        self.assertIn("DockerComposeCandidateHttpClient", imported_names)
+
+    def test_invalid_image_fails_before_any_operation(self) -> None:
+        listener = ExistingListener()
+
+        def run(
+            runner: object, argv: tuple[str, ...], *, cwd: Path,
+            environment: object, timeout: float,
+        ) -> object:
+            raise AssertionError("command execution")
+
+        def get(
+            client: object, slot: str, path: str, *, timeout: float,
+            max_bytes: int,
+        ) -> tuple[int, bytes]:
+            raise AssertionError("candidate probe")
+
+        with (
+            patch.object(SubprocessCommandRunner, "run", run),
+            patch.object(DockerComposeCandidateHttpClient, "get", get),
+            patch.object(socket, "socket", side_effect=AssertionError("socket")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("process")),
+            patch.object(builtins, "open", side_effect=AssertionError("filesystem")),
+        ):
+            with self.assertRaises(RuntimeOperationError):
+                DevExecutorComposition(**configuration(
+                    listener=listener, canary_image="latest",
+                ))
+        self.assertEqual(listener.calls, [])
 
     def test_fixed_paths_have_no_composition_override(self) -> None:
         parameters = inspect.signature(DevExecutorComposition).parameters
@@ -328,7 +406,6 @@ class ConstructionTests(unittest.TestCase):
             ("ingress_file_sha256", ("1" * 64, "bad", "3" * 64)),
             ("ingress_file_sha256", ["1" * 64, "2" * 64, "3" * 64]),
             ("listener", object()),
-            ("candidate_http_client", object()),
             ("clock", object()),
         )
         for name, value in invalid:
