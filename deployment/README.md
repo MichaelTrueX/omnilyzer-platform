@@ -429,6 +429,31 @@ installation, workflow authority, environment activation, socket creation,
 Docker execution, or deployment, and it remains below any future external
 authorization mechanism.
 
+### Closed systemd executor socket-activation handoff
+
+C16 adds an uninstalled, one-shot handoff for a future systemd-provided
+executor listener. An explicit early-bootstrap acquisition accepts exactly one
+descriptor starting at FD 3: `LISTEN_FDS` must be exactly `1`,
+`LISTEN_FDNAMES` exactly `omnilyzer-executor`, and `LISTEN_PID` the canonical
+decimal identity of the current process. When `LISTEN_PIDFDID` is present, its
+canonical value is verified against a temporary pidfd for the current process,
+and that temporary descriptor is always closed.
+
+Every acquisition attempt consumes `LISTEN_PID`, `LISTEN_PIDFDID`,
+`LISTEN_FDS`, and `LISTEN_FDNAMES`, whether it succeeds or fails. The inherited
+FD is wrapped without duplication, made non-inheritable, and returned for a
+later service/bootstrap layer to supply to `DevExecutorComposition`. This
+environment mutation is process-global, so acquisition must occur during early
+single-threaded bootstrap.
+
+C16 does not duplicate `UnixExecutorListener` validation of socket type, path,
+inode, mode, ownership, listening state, or ancestor safety. It does not create,
+bind, or listen on the executor socket, construct the executor composition,
+provision a host resource, or introduce, install, enable, or start a `.socket`
+or `.service` unit. A later separately reviewed systemd socket asset will need
+to provide exactly one descriptor named `omnilyzer-executor`; no such asset
+exists in C16, and deployment activation remains blocked.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
