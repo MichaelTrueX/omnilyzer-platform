@@ -315,6 +315,36 @@ only secured temporary directories and remove only test-created objects. All
 environments remain disabled, and enforceable private-repository branch and
 environment protections remain an absolute prerequisite for activation.
 
+### Inert DEV executor composition and restricted networks
+
+`executor_composition.py` adds C11's closed, inert composition root. It
+constructs the fixed-path DEV state store, production-path replay guard without
+initializing it, default filesystem audit sink, subprocess command runner,
+closed Docker runtime adapter, audited deployment operation, restricted
+executor, connection handler, and listener wrapper. The caller must supply an
+already-provisioned listener plus the narrowly scoped candidate HTTP client and
+reviewed installation/release values. Import and construction perform no
+filesystem, replay, audit, socket, process, Docker, HTTP, registry, application,
+or deployment operation. Only a later explicit `serve_once()` call crosses the
+listener boundary; C11 provides no installation or activation layer.
+
+The composition root sits below external trigger and authorization
+acquisition. It neither acquires nor validates OIDC tokens, contacts GitHub,
+creates GitHub deployments or environments, nor decides how a deployment is
+initiated. The current `ExecutorRequest` and replay identity contract remains
+GitHub-oriented and C11 does not weaken or generalize it to non-GitHub
+identities.
+
+Omnilyzer must later support restricted-network applications such as Bisma
+behind an Aeven corporate firewall, where external deployment initiation or
+external health monitoring may be prohibited. A separately approved future
+profile may allow an authorized manual/local trigger from inside the corporate
+network while preserving the same immutable release, exact OCI digest,
+SBOM/provenance/signature requirements, deployment engine, state and audit
+controls, and migration and blue/green semantics. C11 does not implement that
+trigger. Monitoring may later be internal to Aeven, or outbound-only telemetry
+if Aeven policy permits; C11 implements no monitoring functionality.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
