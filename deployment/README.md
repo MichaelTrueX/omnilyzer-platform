@@ -454,6 +454,31 @@ or `.service` unit. A later separately reviewed systemd socket asset will need
 to provide exactly one descriptor named `omnilyzer-executor`; no such asset
 exists in C16, and deployment activation remains blocked.
 
+### Closed DEV executor service configuration contract
+
+C17 defines the pure canonical contract for a future root-owned DEV executor
+service configuration at `/etc/omnilyzer/deployment/dev/executor.json`. Its
+future directory and file modes are respectively `0750` and `0640`, with root
+ownership and executor-group read access. The configuration contains no secret
+or credential. Its six numeric service identities are validated through C13,
+so C13 remains authoritative for host identity and ownership relationships.
+
+One exact `canary_image` binds an executor process lifetime to one immutable
+digest. The exact `reviewed_commit`, runtime-configuration SHA-256, and three
+ingress SHA-256 values select one reviewed reference set. Runtime and ingress
+paths remain code-owned—including the fixed three `INGRESS_PATHS`—and cannot be
+configured. The JSON schema is closed, duplicate-free, ASCII canonical,
+newline-terminated, and bounded to 4096 bytes.
+
+C17's parser is pure: it neither reads nor creates the future `/etc` resource.
+Its projection supplies exactly C15's non-listener/non-clock constructor values;
+C16 socket acquisition and the production clock remain separate future
+bootstrap inputs. C17 does not construct or run the executor, add a systemd
+unit, install a service, or activate deployment. A future change to the image,
+reviewed commit, runtime hash, or ingress hashes will require a separately
+controlled root-owned configuration replacement and executor restart or
+re-bootstrap; that replacement mechanism does not exist in C17.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
