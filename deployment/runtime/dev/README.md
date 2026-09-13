@@ -35,6 +35,23 @@ Application slots run as `10001:10001`, read-only, cap-drop ALL, no-new-privileg
 
 The Nginx base is valid with an empty directory-mounted `/var/lib/omnilyzer/deployment/dev/nginx-runtime` and returns JSON 503 maintenance. A generated `active.conf` can name only blue or green. The adapter atomically fsync/replaces it, validates deployment Nginx syntax, then reloads only `deployment-nginx`. Candidate routing follows separate `/livez`, `/readyz`, and exact `/metadata` gates. Validation/reload failure restores, validates, and reloads the previous fragment; running routing remains unchanged on failed reload. The adapter never modifies host Nginx. `host-nginx.conf` is review-only and uninstalled; PR C selects TLS.
 
+### Closed candidate probing
+
+C14 adds the reviewed concrete candidate HTTP client without changing these
+runtime assets. A probe selects only the exact `canary-blue` or `canary-green`
+Compose service and runs one fixed, bounded `/usr/bin/python` helper there. The
+helper performs one GET to that candidate's own `127.0.0.1:8080` loopback and
+accepts only `/livez`, `/readyz`, or `/metadata`. It has no proxy, DNS hostname,
+arbitrary target, shell, or retry path, and returns only a bounded status/body
+envelope to the host-side parser.
+
+Neither candidate publishes a host probe port; `deployment-nginx` remains the
+only service with the `127.0.0.1:3020:8080` host mapping. C14 is repository-only
+and does not activate or execute a real probe. The concrete client is not yet
+wired into C11's executor composition; that closure is reserved for a later
+reviewed slice. `compose.yaml` is unchanged and its SHA-256 remains
+`ac12c1958d5e65ab64a69ea58ca053d11cd664732edb20fb7dce39aabde6b3bc`.
+
 The canonical runtime configuration is exactly 99 bytes, SHA-256 `8978b0608a6ef434ad6818a4d654c804ecdba8cabf5dc5916658a8194e7d839f`, and has a closed schema. No runtime secret exists. The accepted no-secrets reference remains `{"schema_version":1,"kind":"none","required":[],"reason":"task014-synthetic-canary-has-no-runtime-secrets"}`. OIDC/zot/Forgejo tokens are deployment credentials, never application configuration.
 
 ## Durable state and audit

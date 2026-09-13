@@ -395,6 +395,23 @@ and an explicit identity-schema extension or version. C13 implements neither;
 compatible profiles must retain exact-digest release verification, deployment
 controls, and the reusable C11 executor boundary.
 
+### Closed Docker Compose candidate probe
+
+C14 supplies the concrete candidate-probe collaborator that was missing from
+C11. It selects only the exact blue or green Docker Compose candidate service,
+then runs one fixed bounded helper inside that container. The helper requests
+only `/livez`, `/readyz`, or `/metadata` from the candidate's own
+`127.0.0.1:8080` loopback. Candidate application ports remain unpublished on
+the host, and the client provides no proxy, DNS, arbitrary network target,
+shell command, or retry surface.
+
+C14 remains non-live repository code and is not yet wired into the executor
+composition. A later separately reviewed slice may close C11 by constructing
+this concrete client internally. C14 changes no workflow, environment,
+installation contract, service, or activation authority, and it introduces no
+special Bisma fork; the same deployment engine remains reusable within any
+future separately reviewed restricted-network authorization profile.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
