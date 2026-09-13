@@ -345,6 +345,27 @@ controls, and migration and blue/green semantics. C11 does not implement that
 trigger. Monitoring may later be internal to Aeven, or outbound-only telemetry
 if Aeven policy permits; C11 implements no monitoring functionality.
 
+### Inert GitHub-authorized DEV broker composition
+
+`broker_composition.py` adds C12's one concrete GitHub-authorized DEV broker
+profile. It composes the existing GitHub OIDC verifier, fixed-path durable
+replay guard, fixed-socket executor transport, and restricted broker without
+performing verification, network access, replay initialization or consumption,
+socket inspection or connection, request forwarding, or deployment during
+import or construction. Its only public operation delegates a later explicit
+request to the reviewed broker core.
+
+This GitHub DEV authorization profile is intentionally separate from C11's
+executor composition, and the current GitHub OIDC and `ExecutorRequest`
+identity semantics remain unchanged. Restricted-network applications such as
+Bisma may later require a separately reviewed manual/local authorization
+profile, but C12 neither implements nor generalizes for that profile. Any such
+future profile must preserve release verification, exact-digest enforcement,
+state and audit controls, migration behavior, and the executor boundary. The
+future C13 host-installation contract should describe resources required by
+both concrete process compositions without assuming every deployment is
+GitHub-triggered.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
