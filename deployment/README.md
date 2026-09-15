@@ -686,6 +686,108 @@ A later separately reviewed slice must qualify/provision host resources,
 installation-tree ownership/modes, interpreter/venv integrity and the privileged
 runtime mechanism before any installation or activation.
 
+### Inert DEV host provisioning contract
+
+C23 provides `DevHostProvisioningContract(*, installation=...)`, an inert
+provisioning contract, not a provisioner. Its only input is one exact, already
+validated `DevHostInstallationContract`; no independent identity, path, mode,
+layout or configuration overrides are accepted. Import/construction perform no
+host I/O. All five public value/contract classes are frozen and slotted, and
+requirement collections are immutable tuples.
+
+| Contract | Retained authority |
+| --- | --- |
+| C13 | Numeric identities, derived memberships, state/replay/audit/socket resources and their lifecycles |
+| C17 | Canonical executor config path, modes and content authority |
+| C18 | Real runtime process identity/group validation |
+| C21 | Symbolic principals, /opt layout, interpreter/module argv and unit names |
+| C22 | Inert systemd unit source assets |
+| C23 | Closed projection describing required future host bindings/resources |
+
+Named broker/executor users must have positive non-root UIDs and primary GIDs,
+with distinct UIDs. The four symbolic groups must resolve to four distinct
+positive GIDs. C23 rejects root aliasing and group aliasing; C13 remains broader
+and reusable by design. No actual name lookup or numeric ID allocation occurs.
+The future bindings project the supplied C13 installation object exactly:
+
+| Symbolic principal | Numeric binding |
+| --- | --- |
+| Group `omnilyzer-broker` | `installation.broker_gid` |
+| Group `omnilyzer-executor` | `installation.executor_gid` |
+| Group `omnilyzer-replay` | `installation.replay_group_gid` |
+| Group `omnilyzer-deployment` | `installation.socket_group_gid` |
+| User `omnilyzer-broker` | UID `installation.broker_uid`, primary GID `installation.broker_gid` |
+| User `omnilyzer-executor` | UID `installation.executor_uid`, primary GID `installation.executor_gid` |
+
+Broker supplementary GIDs are C13's `broker_required_group_gids`, exactly
+`(replay_group_gid, socket_group_gid)` under C23's distinct-group topology.
+Executor supplementary GIDs are C13's `executor_required_group_gids`, exactly
+`(replay_group_gid,)`; no executor socket-sharing membership is added. A later
+account-creation mechanism must separately choose safe non-login account details
+and ensure host memberships satisfy C17/C18.
+
+`runtime_resource_requirements()` returns C13's original immutable objects
+unchanged. State retains its canonical no-active-state prerequisite; replay
+retains separate reviewed initialization; audit retains first-append creation;
+the executor socket retains future runtime-service creation. C23's additional
+paths do not collide with any C13 runtime resource path. Their exact order and
+metadata are:
+
+| Additional path | Kind | Mode | Numeric owner:group | Requirement |
+| --- | --- | --- | --- | --- |
+| `/opt/omnilyzer` | directory | 0755 | 0:0 | Must exist before activation |
+| `/opt/omnilyzer/deployment` | directory | 0755 | 0:0 | Must exist before activation |
+| `/opt/omnilyzer/deployment/app` | directory | 0755 | 0:0 | Reviewed application content before activation |
+| `/opt/omnilyzer/deployment/venv` | directory | 0755 | 0:0 | Reviewed venv content before activation |
+| `/etc/omnilyzer` | directory | 0755 | 0:0 | Must exist before activation |
+| `/etc/omnilyzer/deployment` | directory | 0755 | 0:0 | Must exist before activation |
+| `/etc/omnilyzer/deployment/dev` | directory | 0750 | 0:executor_gid | Must exist before activation |
+| `/etc/omnilyzer/deployment/dev/executor.json` | regular_file | 0640 | 0:executor_gid | C17 canonical config before activation |
+| `/var/lib/omnilyzer` | directory | 0755 | 0:0 | Must exist before activation |
+| `/var/lib/omnilyzer/deployment` | directory | 0755 | 0:0 | Must exist before activation |
+| `/var/log/omnilyzer` | directory | 0755 | 0:0 | Must exist before activation |
+| `/var/log/omnilyzer/deployment` | directory | 0755 | 0:0 | Must exist before activation |
+| `/run/omnilyzer` | directory | 0755 | 0:0 | Future systemd socket-directory creation only |
+| `/run/omnilyzer/deployment` | directory | 0755 | 0:0 | Future systemd socket-directory creation only |
+
+Here `0:0` is root:root and `executor_gid` is the C13 numeric executor GID.
+C21 supplies the /opt layout; C17 supplies config path/modes and its parent is
+derived textually. A future provisioner must obtain a separately reviewed C17
+configuration object and write exactly its canonical bytes; C23 generates no
+config JSON. The /run directories remain future systemd-created socket parents,
+compatible with C22 `DirectoryMode=0755`; C23 does not create them.
+
+The two future installation mappings, in socket/service order, are:
+
+| Repository source | Future destination |
+| --- | --- |
+| `deployment/systemd/dev/omnilyzer-deployment-executor.socket` | `/etc/systemd/system/omnilyzer-deployment-executor.socket` |
+| `deployment/systemd/dev/omnilyzer-deployment-executor.service` | `/etc/systemd/system/omnilyzer-deployment-executor.service` |
+
+Both destinations require root:root 0644. Names come from C21 and sources are the
+reviewed C22 assets. `/etc/systemd/system` itself is OS/systemd-owned and is not
+a C23 directory-provisioning requirement. No source is read, hashed or copied
+by C23, no unit is installed, no daemon-reload occurs and no systemctl command
+is run.
+
+`service_layout()` retains C21's descriptive Python path
+`/opt/omnilyzer/deployment/venv/bin/python`; C23 does not classify it as a
+provisioned regular file or decide whether it is copied or symlinked. Application
+tree integrity and venv/interpreter/package integrity remain future-qualified;
+no checkout, application file list, wheelhouse or new integrity hashes are
+selected. No account/group, directory/file or venv is created, no dependency is
+installed, and no state/replay/audit resource is initialized. No socket is
+created. Docker privilege remains unresolved and separately reviewable; no
+Docker/sudo/capability authority is granted. Deployment remains disabled pending
+GitHub branch/environment protections.
+
+Future work should separately close:
+
+1. Installation/application/venv integrity qualification.
+2. Read-only host qualification and provisioning mechanics.
+3. Narrow privileged runtime authority.
+4. Only after prerequisites, actual installation/activation.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
