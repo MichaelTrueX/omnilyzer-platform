@@ -548,6 +548,45 @@ authority is activated. Deployment remains disabled pending the existing
 protection prerequisite. A later separately reviewed slice may bind a systemd
 service asset to this reviewed module execution contract.
 
+### Inert DEV host-service layout
+
+C21 defines the closed, immutable, zero-input `DevHostServiceLayout()` contract:
+
+| Field | Fixed future value |
+| --- | --- |
+| Installation root | `/opt/omnilyzer/deployment` |
+| Application root | `/opt/omnilyzer/deployment/app` |
+| Virtual environment root | `/opt/omnilyzer/deployment/venv` |
+| Python executable | `/opt/omnilyzer/deployment/venv/bin/python` |
+| WorkingDirectory | `/opt/omnilyzer/deployment/app` |
+
+Future process argv is the immutable tuple
+`("/opt/omnilyzer/deployment/venv/bin/python", "-m", "deployment.executor_service_entrypoint")`.
+C20 retains the module entrypoint and its exit behavior; no shell is involved.
+
+Symbolic future principals are broker `omnilyzer-broker / omnilyzer-broker`,
+executor `omnilyzer-executor / omnilyzer-executor`, replay group
+`omnilyzer-replay`, and socket-sharing group `omnilyzer-deployment`.
+Names are symbolic only: C21 creates no account/group and selects no UID/GID
+values. C13 retains numeric identity/resource ownership relationships and C17
+retains exact service numeric identity authority. Future provisioning must
+resolve these names to actual numeric IDs and make C17 match those exact IDs.
+No Docker/sudo membership is assigned; the privileged executor mechanism
+remains separately reviewable.
+
+The existing Unix transport authority supplies
+`/run/omnilyzer/deployment/executor.sock`; C21 never inspects or creates it.
+Reserved future unit names are `omnilyzer-deployment-executor.service` and
+`omnilyzer-deployment-executor.socket`. No systemd unit exists yet; no service
+is installed, enabled, or started. C22 may add inert, uninstalled systemd
+socket/service assets tied to this layout.
+
+Import and construction perform no host inspection or environment lookup.
+C21 creates no path, creates no virtual environment, and installs no dependency.
+Installation-tree ownership/modes and interpreter/venv integrity still require
+future provisioning qualification. Deployment remains disabled pending GitHub
+branch/environment protections.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
