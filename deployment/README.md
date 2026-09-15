@@ -788,6 +788,80 @@ Future work should separately close:
 3. Narrow privileged runtime authority.
 4. Only after prerequisites, actual installation/activation.
 
+## C24 DEV installation integrity qualification contract
+
+`installation_integrity_contract.py` defines a closed, pure, inert installation
+integrity **qualification contract**. It does not qualify the current host.
+`DevInstallationIntegrityContract(*, configuration=...)` accepts only an exact
+C17 `DevExecutorServiceConfiguration`, revalidates its canonical bytes in memory,
+and caches one C21 layout and immutable application/environment requirements.
+Forged or malformed C17 inputs fail with the fixed C24 TypeError. C17 remains
+the sole reviewed source-revision authority; C21 remains the path authority;
+C23 provisioning metadata and directory requirements remain unchanged.
+
+Application requirements project C21's `/opt/omnilyzer/deployment/app` and
+C17's `reviewed_commit`. A future approved manifest must bind to that commit,
+use `canonical-relative-file-set-v1`, and describe every installed regular file
+with canonical POSIX relative `path`, exact SHA-256 (`sha256`), and installed
+`mode`. Entries must be sorted and unique by relative path, regular-files only,
+and complete. Future qualification must fail closed on unlisted or missing
+paths, symlinks, devices/FIFOs/sockets, digest mismatches and mode mismatches.
+Directories remain governed by C23. No actual application file set is selected
+in C24: the deployment-control-plane packaging boundary and manifest production
+remain future reviewed work. C24 does not choose a checkout, deployment subtree,
+runtime subset, archive, wheel, editable install, zipapp or copied repository.
+No application manifest or approved application digest exists in C24.
+
+Python environment requirements project C21's `/opt/omnilyzer/deployment/venv`
+and `/opt/omnilyzer/deployment/venv/bin/python`. The target is **CPython 3.12,
+Ubuntu 24.04, Linux x86_64, glibc**. The C1 dependency input is exactly
+`deployment/requirements-linux-x86_64-py312.lock`, pinned to SHA-256
+`13c7b3f0050f9aff0a94ab324a66276638f8b1b9dd0c62232ec205b24d874d0d`.
+Tests independently hash the repository lock and cross-check its four records.
+A future dependency change requires explicit coordinated C1/C24 review.
+
+The exact ordered reviewed wheel closure is:
+
+| Wheel filename | SHA-256 |
+| --- | --- |
+| `pyjwt-2.13.0-py3-none-any.whl` | `66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728` |
+| `cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl` | `51afcfceb15597cf2635068e4ac9a56b2abde622edde17f37d85fd7b5306497a` |
+| `cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl` | `c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf` |
+| `pycparser-3.0-py3-none-any.whl` | `b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992` |
+
+Source builds, network installation and extra wheels are forbidden. No
+production wheelhouse exists yet and C24 selects no wheelhouse filesystem path.
+It defines acceptance criteria, not a location: a future wheelhouse is acceptable
+only when its **complete directory entry set** is exactly these four filenames
+and every file SHA-256 matches C24. No extra wheel, sdist, metadata file,
+requirements file, nested directory, symlink or unexpected filesystem entry
+may be silently accepted. C24 does not perform that filesystem check.
+
+Interpreter integrity evidence is mandatory before host qualification:
+`interpreter_integrity_required=True`. C24 does not choose copy versus symlink,
+a regular executable, venv shim, interpreter artifact or approved interpreter
+hash. A later slice must establish reviewed interpreter origin and integrity
+before host activation. Caller-selected application, interpreter, venv or
+wheelhouse digests cannot confer trust through this contract.
+
+Task 013's current package/release artifacts are synthetic canaries, not
+accepted deployment-control-plane host installation evidence. C24 imports no
+release authority and does not reuse canary wheels or release manifests as proof
+of application or executor environment bytes. Any future packaging relationship
+requires separate review.
+
+C24 performs no host I/O, no hashing of the live host, no environment/package
+discovery, no wheel download, no package installation, no venv creation, no
+source copy, no application manifest generation, no systemd action, no Docker
+action and no activation. Its requirements imply no qualified/approved/trusted
+host state. Future work must separately establish:
+
+1. Reviewed deployment-control-plane packaging and file-manifest production.
+2. Reviewed CPython interpreter provenance and integrity.
+3. Production wheel acquisition/staging with exact C24 file-set verification.
+4. Read-only host qualification against those reviewed inputs.
+5. Only later, provisioning/installation and activation.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
