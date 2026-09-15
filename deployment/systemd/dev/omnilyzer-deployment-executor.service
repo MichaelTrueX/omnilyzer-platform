@@ -1,0 +1,38 @@
+# deployment/systemd/dev/omnilyzer-deployment-executor.service
+# Purpose: inert future systemd service asset for one C20/C19 DEV executor
+# process. C21 supplies the fixed interpreter, working directory and symbolic
+# identities. This repository asset is not installed, enabled or started.
+
+[Unit]
+Description=Omnilyzer DEV deployment executor
+Requires=omnilyzer-deployment-executor.socket
+After=omnilyzer-deployment-executor.socket
+
+[Service]
+Type=exec
+User=omnilyzer-executor
+Group=omnilyzer-executor
+SupplementaryGroups=omnilyzer-replay
+WorkingDirectory=/opt/omnilyzer/deployment/app
+ExecStart=/opt/omnilyzer/deployment/venv/bin/python -m deployment.executor_service_entrypoint
+Restart=no
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/omnilyzer/deployment /var/log/omnilyzer/deployment
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
