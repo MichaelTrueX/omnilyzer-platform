@@ -862,6 +862,75 @@ host state. Future work must separately establish:
 4. Read-only host qualification against those reviewed inputs.
 5. Only later, provisioning/installation and activation.
 
+## C25 closed DEV application source-set contract
+
+`application_source_set.py` selects **what files** belong below the future C21
+application root, `/opt/omnilyzer/deployment/app`. The zero-argument frozen,
+slotted `DevApplicationSourceSet` projects that root and the executor entrypoint
+from C21. Its explicit reviewed allowlist contains exactly **28 files: 25 Python
+module/package files and 3 runtime data files**, sorted lexicographically with
+unique paths. Each repository-relative path is also the future path relative to
+the application root. For example, `deployment/executor_service_entrypoint.py`
+would retain that path below the root. `ApplicationSourceFile` permits only
+canonical POSIX relative paths with identical source/target mappings and the
+closed kinds `python-module` and `runtime-data`.
+
+C25 selects the installed executor application and its current import graph,
+including `deployment/__init__.py`. It does not prove source bytes. C24 defines
+what evidence a complete application manifest must contain: the
+`canonical-relative-file-set-v1` semantics with sorted unique regular-file
+entries containing `path`, `sha256`, and `mode`, bound to C17 `reviewed_commit`.
+Future C26 is expected to turn this closed reviewed source selection into
+deterministic manifest evidence with those semantics; C26 does not exist in
+this slice. C25 supplies no hashes, modes, manifests, packaging format or build.
+
+The exact runtime-data selection is:
+
+- `deployment/runtime/dev/compose.yaml`
+- `deployment/runtime/dev/canary-runtime.json`
+- `deployment/runtime/dev/nginx/nginx.conf`
+
+The Docker runtime anchors Compose and canonical runtime configuration beneath
+`deployment/runtime/dev/`; Compose's relative `./nginx/nginx.conf` bind source
+resolves to the third asset. Absolute `/var/lib/...` bind sources are future
+host resources, not repository application source files. Tests parse the Python
+import closure with stdlib AST without executing application operational
+functions, and inspect the fixed Compose text without a new YAML dependency.
+They require exact equality with the declared Python and runtime-data sets,
+reject dead/new local modules and obvious dynamic imports, and inspect selected
+repository files for regular-file and no-symlink status. Production code never
+discovers, reads, inspects or hashes source files.
+
+The selection excludes repository governance, tests, documentation, schemas,
+environment policy files, provisioning contracts and installation assets:
+
+- `deployment/runtime/dev/host-nginx.conf` is review-only and uninstalled. It
+  remains in the existing ingress review/reference contract, but is not a
+  runtime file below the C21 application root.
+- `deployment/systemd/dev/` service/socket units are future host service assets
+  installed under systemd authority, not application-root files.
+- The dependency lock, wheels and `pyproject.toml` belong to the C24 Python
+  environment boundary, not the application-root manifest.
+- C21 layout and C23/C24/C25 qualification/provisioning/source-selection
+  contracts are repository-side installation authority, not runtime application
+  files. C25 does not select itself. The earlier C13 `installation_contract.py`
+  remains selected because the executor runtime imports its identity constants.
+- Tests, schemas, environment files, README/DEPENDENCIES documentation, and
+  `release/`, `docs/`, `spikes/`, `.github/` and repository-root files are excluded.
+  `oidc_verifier.py`, `broker_composition.py` and `runtime.py` are not in the
+  current executor import closure.
+
+`broker.py` and `jwks.py` deliberately remain selected: executor/Unix transport
+imports broker constants, and broker imports identity and JWKS. C25 records the
+reviewed graph as it exists; dependency cleanup requires a separate future
+reviewed slice.
+
+C25 does not make `/opt/omnilyzer/deployment/app` exist. No host is modified, no
+application is installed, no venv is built, no dependency is installed, and no
+systemd asset is installed or started. No packaging, archive, copy, Docker or
+candidate operation occurs. Live activation remains blocked by the unproven or
+unavailable GitHub private-repository deployment protection prerequisite.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
