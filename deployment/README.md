@@ -577,8 +577,8 @@ remains separately reviewable.
 The existing Unix transport authority supplies
 `/run/omnilyzer/deployment/executor.sock`; C21 never inspects or creates it.
 Reserved future unit names are `omnilyzer-deployment-executor.service` and
-`omnilyzer-deployment-executor.socket`. No systemd unit exists yet; no service
-is installed, enabled, or started. C22 may add inert, uninstalled systemd
+`omnilyzer-deployment-executor.socket`. C21 adds no systemd unit and installs,
+enables, or starts no service. C22 below adds inert, uninstalled systemd
 socket/service assets tied to this layout.
 
 Import and construction perform no host inspection or environment lookup.
@@ -586,6 +586,105 @@ C21 creates no path, creates no virtual environment, and installs no dependency.
 Installation-tree ownership/modes and interpreter/venv integrity still require
 future provisioning qualification. Deployment remains disabled pending GitHub
 branch/environment protections.
+
+### Inert DEV executor systemd socket and service assets
+
+C22 adds exactly two repository assets:
+
+- `deployment/systemd/dev/omnilyzer-deployment-executor.socket`
+- `deployment/systemd/dev/omnilyzer-deployment-executor.service`
+
+Both are inert, uninstalled, disabled and unstarted. Their names and layout
+values project C21; C13/C17 retain numeric identity authority, and C18 still
+validates real process identities/groups. These files create no account or group
+and do not guarantee the host database has no additional memberships. Future
+provisioning must resolve the symbolic names to C17's exact numeric identities
+and provide only reviewed memberships satisfying C17/C18.
+
+The socket unit has this single listener contract:
+
+```ini
+ListenStream=/run/omnilyzer/deployment/executor.sock
+SocketUser=omnilyzer-executor
+SocketGroup=omnilyzer-deployment
+SocketMode=0660
+DirectoryMode=0755
+FileDescriptorName=omnilyzer-executor
+Accept=no
+Service=omnilyzer-deployment-executor.service
+RemoveOnStop=yes
+```
+
+`DirectoryMode=0755` permits broker traversal without group/other directory
+writes if future activation creates missing parents. C22 creates no directory
+or socket. `Accept=no` passes one listening FD, rather than starting a service
+per connection. Future systemd activation supplies FD 3, `LISTEN_FDS=1` and
+`LISTEN_FDNAMES=omnilyzer-executor`; C16 continues to validate/consume activation
+state, including optional PIDFD identity, and C9 retains listener validation.
+The socket's `[Install] WantedBy=sockets.target` is declarative only.
+
+The service has no `[Install]` section and must not be enabled independently.
+It requires and follows `omnilyzer-deployment-executor.socket`. It uses
+`Type=exec`, `User=omnilyzer-executor`, `Group=omnilyzer-executor` and only
+`SupplementaryGroups=omnilyzer-replay`; the inherited listener requires no
+executor socket-sharing group membership. C21's exact process layout is:
+
+```ini
+WorkingDirectory=/opt/omnilyzer/deployment/app
+ExecStart=/opt/omnilyzer/deployment/venv/bin/python -m deployment.executor_service_entrypoint
+Restart=no
+```
+
+The direct exec reaches C20/C19's one-attempt boundary with no shell, wrapper,
+PATH lookup, extra arguments, environment configuration or automatic restart.
+The complete reviewed hardening set is:
+
+```ini
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/omnilyzer/deployment /var/log/omnilyzer/deployment
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+```
+
+Persistent read/write allowances cover only `/var/lib/omnilyzer/deployment`
+and `/var/log/omnilyzer/deployment`, including reviewed state/replay/audit
+resources. Under `ProtectSystem=strict`, `/etc` service configuration and `/opt`
+application/venv remain read-only. Existing resource validators retain exact
+ownership/mode authority; these directives provision nothing.
+
+`ProtectProc`/`ProcSubset` are intentionally absent because C9 needs
+`/proc/self/net/unix`. No separate PID namespace is selected. `PrivateUsers`
+is absent to preserve real numeric host identity validation. `PrivateNetwork`
+and `IPAddressDeny` are absent because the reviewed executor graph includes
+bounded local candidate HTTP probing; address families are restricted to
+AF_UNIX/AF_INET/AF_INET6. No system-call filter or `MemoryDenyWriteExecute` is
+selected until the exact Python/native dependency/runtime graph is separately
+qualified.
+
+C22 grants no Docker/sudo/capability privilege and references no Docker socket
+or credential channel. It does not make live Docker deployment functional.
+No host path, account, group or venv is provisioned, no dependency is installed,
+and neither unit is installed/enabled/started. No systemctl action occurs.
+Deployment remains disabled pending GitHub branch/environment protections.
+A later separately reviewed slice must qualify/provision host resources,
+installation-tree ownership/modes, interpreter/venv integrity and the privileged
+runtime mechanism before any installation or activation.
 
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 

@@ -1,0 +1,21 @@
+# deployment/systemd/dev/omnilyzer-deployment-executor.socket
+# Purpose: inert future systemd socket-activation asset for the DEV privileged
+# executor. C21 supplies names/path ownership contracts; C16 consumes the one
+# inherited named FD. This repository asset is not installed, enabled or started.
+
+[Unit]
+Description=Omnilyzer DEV deployment executor socket
+
+[Socket]
+ListenStream=/run/omnilyzer/deployment/executor.sock
+SocketUser=omnilyzer-executor
+SocketGroup=omnilyzer-deployment
+SocketMode=0660
+DirectoryMode=0755
+FileDescriptorName=omnilyzer-executor
+Accept=no
+Service=omnilyzer-deployment-executor.service
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target
