@@ -931,6 +931,63 @@ systemd asset is installed or started. No packaging, archive, copy, Docker or
 candidate operation occurs. Live activation remains blocked by the unproven or
 unavailable GitHub private-repository deployment protection prerequisite.
 
+## C26 deterministic DEV application manifest evidence
+
+C25 selects **what files** belong in the future application. C26
+`application_manifest.py` produces evidence of their exact bytes and normalized
+modes at one exact Git commit. Generation requires a canonical absolute
+repository root and a nonzero, exact 40-character lowercase commit SHA. It
+qualifies Git's repository top level, requires **HEAD == reviewed_commit** and
+an actual commit object, and rechecks HEAD after reading the selected objects.
+Dirty working-tree state is irrelevant: working-tree application files are
+never read as evidence, even when edited, replaced with symlinks or chmodded.
+
+C26 consumes exactly one C25 source-set instance. All 28 selected files are
+required, in C25 order; no extra repository file enters the evidence. Strict
+NUL-delimited Git tree records must describe regular blobs with mode `100644`.
+Executable `100755`, symlink `120000`, missing, duplicate, unknown or malformed
+entries fail closed. Git `100644` deliberately maps to manifest mode `"0644"`;
+this is a future installation requirement, not a working-tree permission claim.
+A future installer must explicitly materialize that exact mode.
+
+The fixed `/usr/bin/git` executable performs only read-only `rev-parse`,
+`ls-tree` and `cat-file` plumbing with literal pathspecs. A closed environment
+disables replacement objects, lazy promisor fetching, prompts, optional locks
+and system/global Git configuration. No arbitrary process Git environment is
+inherited. Each operation has a five-second deadline and bounded stdout;
+stdin and stderr are suppressed. Blob sizes are qualified before raw content
+is requested: at most 1 MiB per blob and 8 MiB combined. Missing objects fail
+without a network fallback. SHA-256 hashes exact raw Git blob bytes, with no
+checkout filters, newline normalization or text decode/re-encode.
+
+The immutable manifest has exactly `manifest_kind`, `digest_algorithm`,
+`reviewed_commit` and `entries`. Its kind is
+`canonical-relative-file-set-v1`, its algorithm is `sha256`, and each of its
+28 sorted unique entries contains exactly `path`, `sha256` and `mode`.
+C26 consumes C24 application-integrity requirements without changing C24.
+Canonical JSON reuses `deployment.policy.canonical_bytes`: sorted object keys,
+compact separators, ASCII-safe bytes and exactly one final newline, bounded to
+64 KiB. `to_dict()` returns fresh containers; `canonical_bytes()` returns
+in-memory bytes. C26 never writes, uploads or commits the manifest. A manifest
+committed into the commit it names would create a commit self-reference problem;
+future reviewed work may store or transfer evidence outside that source commit.
+There is no manifest self-digest or trust/approval/qualification boolean.
+
+A caller-supplied commit does not become trusted through generation. A later
+reviewed qualification/provisioning slice must require **C26 manifest
+reviewed_commit == C17 configuration reviewed_commit**, compare this evidence
+against the complete installed application, and establish the other C24
+requirements. C21 retains application-root authority. Task 013 synthetic
+release-canary evidence is not deployment-control-plane application-installation
+evidence; C26 imports no release authority.
+
+C26 does not qualify the host, inspect the application root or live venv, create
+`/opt` application paths, install application files, create a venv, stage wheels,
+prove CPython interpreter provenance, or install packages. It does not install
+systemd assets, enable/start services, use Docker, contact the candidate, alter
+workflows or activate deployment. GitHub private-repository deployment
+protections remain unproven/unavailable; the activation blocker remains absolute.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
