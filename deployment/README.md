@@ -1297,6 +1297,89 @@ No daemon-reload, enable, start or activation authority exists in C30.
 Live activation remains blocked by ADR 0011's GitHub protection prerequisite
 and a separate activation review.
 
+## C31P reviewed pip installer provenance and qualification
+
+C31A stopped before defining provisioning because none of C24, C27 or C28
+established trust in an installer. An arbitrary `pip` from `PATH`, system pip,
+`python -m pip` merely because it exists, and pip created by `ensurepip` are not
+accepted bootstrap roots. C31P closes that prerequisite without constructing a
+production venv or installing any runtime package.
+
+`DevPipInstallerProvenance()` is a frozen, slotted, zero-input record for the
+provisioning-tool artifact only:
+
+| Field | Reviewed value |
+| --- | --- |
+| Package/version | `pip` `26.2.1` |
+| Wheel/tag | `pip-26.2.1-py3-none-any.whl`; `py3-none-any` |
+| Size | 1,816,632 bytes |
+| SHA-256 | `71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e` |
+| Requires-Python | `>=3.10` |
+| PyPI upload | `2026-08-04T22:51:12.472093Z` |
+| Publication | PyPI Trusted Publishing from GitHub repository `pypa/pip` |
+| Source/ref | `634a6ec1a5d9dcc2433571cdb2f4c58a4bb29caf`; `refs/tags/26.2.1` |
+| Workflow | `.github/workflows/release.yml` |
+| Certificate identity | `https://github.com/pypa/pip/.github/workflows/release.yml@refs/tags/26.2.1` |
+| Sigstore log index | `2341605236` |
+
+The PyPI JSON API independently supplied the artifact filename, byte count,
+SHA-256, Python requirement and upload identity. PyPI's Integrity API returned
+an in-toto publication statement whose subject is that exact filename and
+SHA-256, a GitHub publisher identity for `pypa/pip` and `release.yml`, the
+certificate identity above, and the Sigstore transparency entry. The PyPI
+release page supplied the corresponding source commit and identifies the upload
+as Trusted Publishing. The exact-tag workflow at that commit grants its
+publishing job `id-token: write` and invokes the PyPA publisher action.
+
+Those values are repository-reviewed immutable evidence of PyPI-verified
+publication provenance. The repository does not retain the complete Sigstore
+bundle or Fulcio/Rekor trust material and does not claim to reverify the
+attestation cryptographically offline. That is distinct from the exact
+artifact identity, which the local qualifier verifies directly, and from the
+future act of staging an artifact.
+
+`qualify_dev_pip_installer(*, staging_directory)` inspects a dedicated absolute
+installer staging directory containing exactly one entry with the reviewed
+filename. It accepts only a non-symlink regular file of exactly 1,816,632 bytes
+whose bounded 64 KiB streaming SHA-256 is the reviewed digest. Every directory
+component and the wheel are opened descriptor-relative with `O_NOFOLLOW`;
+named/opened identities, exact EOF, post-read file metadata, directory
+identities and the complete entry set are revalidated. A wrong filename, extra
+entry, wrong size or digest, symlink, non-regular file, path substitution or
+read race fails with one fixed public error. Qualification is read-only,
+performs no import or execution of pip, and returns immutable evidence. The
+caller selects only where to inspect and cannot select the expected artifact.
+
+The reviewed wheel was also executed directly from its ZIP bytes under CPython
+3.12 without installation. The future fixed command shape is:
+
+```text
+/opt/omnilyzer/deployment/venv/bin/python -I -c <reviewed-bootstrap> \
+  <freshly-qualified-pip-wheel> <internally-generated-pip-arguments>
+```
+
+The reviewed bootstrap removes the wheel-path argument, inserts that exact
+wheel first on `sys.path`, imports `pip`, requires both version `26.2.1` and an
+`__file__` below that exact wheel path, then executes `pip` with `runpy` as
+`__main__`. `-I` ignores `PYTHONPATH` and user site configuration; the
+executable is an absolute C24 venv path and no `PATH` pip, `/usr/bin/pip`,
+ensurepip, shell or network bootstrap participates. Development verification
+ran the exact reviewed wheel with `/usr/bin/python3.12` and obtained version
+`26.2.1` from inside the wheel; deterministic tests repeat the same origin and
+version checks with a tiny test-owned ZIP and prove a wrong version cannot fall
+back to another pip. Future C31 must preserve or freshly revalidate the staged
+wheel identity immediately before this separate execution step and must supply
+only its own closed installation arguments.
+
+This installer wheel is not one of C24/C28's four runtime wheels, is not mixed
+into the runtime wheelhouse, does not widen `extra_wheels_allowed=False`, and is
+not a runtime dependency. C31 must still define exact orchestration, use a fresh
+C28 runtime-wheel qualification, derive installed-file evidence from the four
+reviewed runtime wheels, and ensure provisioning-only pip does not remain as an
+unreviewed runtime distribution. C31P performs no host provisioning, venv
+construction, runtime-wheel installation, systemd lifecycle operation or
+activation.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
