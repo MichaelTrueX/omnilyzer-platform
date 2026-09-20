@@ -1210,6 +1210,8 @@ class CorrectiveSemanticsTests(ReplayTestCase):
         self.path.unlink()
         guard.initialize()
         self.assertEqual(calls, 1)
+        guard.validate()
+        self.assertEqual(calls, 1)
         guard.consume(
             "clock-jti", expires_at=NOW + 100, request_hash=HASH_A,
             run_id=90, run_attempt=1,
@@ -1280,7 +1282,7 @@ class CorrectiveSemanticsTests(ReplayTestCase):
         }
         self.assertEqual(
             public,
-            {"initialize", "consume", "begin_execution", "finish_execution"},
+            {"initialize", "validate", "consume", "begin_execution", "finish_execution"},
         )
 
     def test_maximum_configuration_bound_is_accepted(self) -> None:

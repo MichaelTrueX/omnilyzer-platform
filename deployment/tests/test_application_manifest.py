@@ -259,6 +259,7 @@ class RepositoryTests(unittest.TestCase):
                          "installation_integrity_contract.py", "requirements-linux-x86_64-py312.lock",
                          "dev_host_provisioning_plan.py", "python_environment_qualification.py",
                          "dev_host_provisioning_mechanics.py",
+                         "dev_persistent_state_prerequisites.py",
                          "runtime/dev/host-nginx.conf"):
             self.assertNotIn("deployment/" + excluded, PATHS)
         self.assertFalse(any("/systemd/" in path for path in PATHS))

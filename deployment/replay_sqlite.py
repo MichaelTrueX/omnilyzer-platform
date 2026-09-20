@@ -278,6 +278,69 @@ class SQLiteReplayGuard:
         if uncertain:
             raise ReplayUnavailableError(_GENERIC_UNAVAILABLE) from None
 
+    def validate(self) -> None:
+        """Read-only validate one already initialized exact replay store."""
+
+        directory_descriptor: int | None = None
+        database_descriptor: int | None = None
+        connection: sqlite3.Connection | None = None
+        failed = False
+        try:
+            directory_descriptor = self._open_directory()
+            self._validate_filesystem(directory_descriptor)
+            database_descriptor = os.open(
+                REPLAY_FILENAME, os.O_RDONLY | os.O_NOFOLLOW,
+                dir_fd=directory_descriptor,
+            )
+            self._validate_bound_file(directory_descriptor, database_descriptor)
+            bound_path = Path(
+                f"/proc/self/fd/{directory_descriptor}/{REPLAY_FILENAME}"
+            )
+            connection = sqlite3.connect(
+                bound_path.as_uri() + "?mode=ro", uri=True,
+                timeout=self._busy_timeout_ms / 1000, isolation_level=None,
+            )
+            connection.enable_load_extension(False)
+            connection.execute("PRAGMA query_only=ON")
+            connection.execute(f"PRAGMA max_page_count={MAX_PAGE_COUNT}")
+            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("PRAGMA trusted_schema=OFF")
+            connection.execute("PRAGMA temp_store=MEMORY")
+            connection.execute(f"PRAGMA busy_timeout={self._busy_timeout_ms}")
+            self._validate_bound_file(directory_descriptor, database_descriptor)
+            self._validate_open_store(connection)
+            self._validate_filesystem(directory_descriptor)
+            self._validate_bound_file(directory_descriptor, database_descriptor)
+        except (KeyboardInterrupt, SystemExit, GeneratorExit):
+            raise
+        except Exception:
+            failed = True
+        finally:
+            if connection is not None:
+                try:
+                    connection.close()
+                except (KeyboardInterrupt, SystemExit, GeneratorExit):
+                    raise
+                except Exception:
+                    failed = True
+            if database_descriptor is not None:
+                try:
+                    os.close(database_descriptor)
+                except (KeyboardInterrupt, SystemExit, GeneratorExit):
+                    raise
+                except Exception:
+                    failed = True
+            if directory_descriptor is not None:
+                try:
+                    os.close(directory_descriptor)
+                except (KeyboardInterrupt, SystemExit, GeneratorExit):
+                    raise
+                except Exception:
+                    failed = True
+        if failed:
+            raise ReplayUnavailableError(_GENERIC_UNAVAILABLE) from None
+
     def consume(
         self, jti: str, *, expires_at: int, request_hash: str,
         run_id: int, run_attempt: int,
