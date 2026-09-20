@@ -1195,8 +1195,14 @@ objects fail closed and are never repaired.
 An absent C21 application root is acceptable. If present, it must have C23
 metadata and its complete descriptor-relative tree must exactly match the
 revalidated C26 manifest bound to C17/C24 `reviewed_commit`: no missing, extra,
-symlinked, wrong-mode or wrong-hash file is accepted. C29 reads but never
-regenerates application trust from host bytes.
+symlinked, wrong-mode or wrong-hash file is accepted. C23's closed application
+root metadata is projected across the installed tree: every C26 file must have
+the reviewed installation UID/GID, while every implicit structural directory
+must have that ownership and the exact reviewed `0755` directory mode. Thus
+neither broker nor executor may own or write installed application code or its
+directories. Opened/named identity and post-read checks cover both files and
+directories. C29 reads but never regenerates application trust from host bytes;
+C31 still owns installation and convergence.
 
 C28 evidence is revalidated against C24 and copied into C29 observations; C29
 does not recreate the wheel allowlist or install wheels. Because evidence does

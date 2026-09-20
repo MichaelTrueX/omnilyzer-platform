@@ -79,6 +79,31 @@ def integrity_root():
     return "/opt/omnilyzer/deployment/app"
 
 
+def application_fixture(temporary):
+    root = Path(temporary) / "app"
+    source = root / "deployment/example.py"
+    source.parent.mkdir(parents=True)
+    root.chmod(0o755); source.parent.chmod(0o755)
+    source.write_bytes(b"app"); source.chmod(0o644)
+    entry = SimpleNamespace(path="deployment/example.py",
+                            sha256=hashlib.sha256(b"app").hexdigest(), mode="0644")
+    manifest = SimpleNamespace(entries=(entry,), reviewed_commit="a" * 40,
+                               canonical_bytes=lambda: b"manifest\n")
+    requirement = SimpleNamespace(root=str(root))
+    root_requirement = c23.HostPathRequirement(
+        str(root), "directory", 0o755, os.getuid(), os.getgid(),
+        "must-contain-reviewed-application-before-activation")
+    return root, source, manifest, requirement, root_requirement
+
+
+def changed_status(status, **changes):
+    names = ("st_mode", "st_ino", "st_dev", "st_nlink", "st_uid", "st_gid", "st_size",
+             "st_mtime_ns", "st_ctime_ns")
+    values = {name: getattr(status, name) for name in names}
+    values.update(changes)
+    return SimpleNamespace(**values)
+
+
 class ModelAndCompositionTests(unittest.TestCase):
     def setUp(self):
         importlib.reload(module)
@@ -181,6 +206,19 @@ class ModelAndCompositionTests(unittest.TestCase):
                     module.qualify_dev_host(configuration=self.configuration,
                                             application_manifest=self.manifest,
                                             wheelhouse_evidence=self.wheels)
+        values = fake_observations(self.provisioning, self.manifest, self.wheels)
+        with patch.object(module, "_platform_observation", return_value=values[0]), \
+             patch.object(module, "_query_packages", return_value=values[4]), \
+             patch.object(module, "_observe_payload", return_value=values[5]), \
+             patch.object(module, "_observe_principals", return_value=(values[1], values[2])), \
+             patch.object(module, "_observe_paths", return_value=values[3]), \
+             patch.object(module, "_observe_application", side_effect=OSError):
+            with self.assertRaises(module.HostQualificationError) as caught:
+                module.qualify_dev_host(configuration=self.configuration,
+                                        application_manifest=self.manifest,
+                                        wheelhouse_evidence=self.wheels)
+            self.assertEqual(str(caught.exception), ERROR)
+            self.assertIsNone(caught.exception.__cause__)
 
     def test_f_forged_nested_result_observation_rejected(self):
         values = list(fake_observations(self.provisioning, self.manifest, self.wheels))
@@ -319,22 +357,81 @@ class HostObservationTests(unittest.TestCase):
              patch.object(module._pwd, "getpwuid", return_value=SimpleNamespace(pw_name="unrelated")):
             with self.assertRaises(OSError): module._observe_principals(self.provisioning)
 
-    def test_o_application_absence_exact_and_modified(self):
-        entry = SimpleNamespace(path="deployment/example.py", sha256=hashlib.sha256(b"app").hexdigest(),
-                                mode="0644")
-        manifest = SimpleNamespace(entries=(entry,), reviewed_commit="a" * 40,
+    def test_o_application_absence_is_acceptable(self):
+        manifest = SimpleNamespace(entries=(), reviewed_commit="a" * 40,
                                    canonical_bytes=lambda: b"manifest\n")
         requirement = SimpleNamespace(root="/path/that/c29-test-does-not-create")
-        self.assertEqual(module._observe_application(manifest, requirement).state, "absent")
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary) / "app"; source = root / entry.path
-            source.parent.mkdir(parents=True); source.write_bytes(b"app"); source.chmod(0o644)
-            requirement.root = str(root)
-            self.assertEqual(module._observe_application(manifest, requirement).state, "exact")
-            source.write_bytes(b"changed")
-            with self.assertRaises(OSError): module._observe_application(manifest, requirement)
+        root_requirement = c23.HostPathRequirement(
+            requirement.root, "directory", 0o755, 0, 0,
+            "must-contain-reviewed-application-before-activation")
+        self.assertEqual(module._observe_application(
+            manifest, requirement, root_requirement).state, "absent")
 
-    def test_p_no_network_mutation_installation_or_activation_authority(self):
+    def test_p_exact_application_tree_qualifies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _, _, manifest, requirement, root_requirement = application_fixture(temporary)
+            self.assertEqual(module._observe_application(
+                manifest, requirement, root_requirement).state, "exact")
+
+    def test_q_application_file_content_and_mode_mismatch_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _, source, manifest, requirement, root_requirement = application_fixture(temporary)
+            source.write_bytes(b"changed")
+            with self.assertRaises(OSError):
+                module._observe_application(manifest, requirement, root_requirement)
+        with tempfile.TemporaryDirectory() as temporary:
+            _, source, manifest, requirement, root_requirement = application_fixture(temporary)
+            source.chmod(0o664)
+            with self.assertRaises(OSError):
+                module._observe_application(manifest, requirement, root_requirement)
+
+    def test_r_application_file_wrong_uid_and_gid_rejected(self):
+        for field in ("st_uid", "st_gid"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as temporary:
+                _, _, manifest, requirement, root_requirement = application_fixture(temporary)
+                real_stat = os.stat
+
+                def altered(path, *args, **kwargs):
+                    status = real_stat(path, *args, **kwargs)
+                    if path == "example.py":
+                        return changed_status(status, **{field: getattr(status, field) + 1})
+                    return status
+
+                with patch.object(module._os, "stat", side_effect=altered), self.assertRaises(OSError):
+                    module._observe_application(manifest, requirement, root_requirement)
+
+    def test_s_application_directory_wrong_owner_or_writable_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _, _, manifest, requirement, root_requirement = application_fixture(temporary)
+            real_stat = os.stat
+
+            def wrong_owner(path, *args, **kwargs):
+                status = real_stat(path, *args, **kwargs)
+                if path == "deployment":
+                    return changed_status(status, st_uid=status.st_uid + 1)
+                return status
+
+            with patch.object(module._os, "stat", side_effect=wrong_owner), self.assertRaises(OSError):
+                module._observe_application(manifest, requirement, root_requirement)
+        with tempfile.TemporaryDirectory() as temporary:
+            _, source, manifest, requirement, root_requirement = application_fixture(temporary)
+            source.parent.chmod(0o775)
+            with self.assertRaises(OSError):
+                module._observe_application(manifest, requirement, root_requirement)
+
+    def test_t_application_symlink_and_extra_entry_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _, source, manifest, requirement, root_requirement = application_fixture(temporary)
+            source.unlink(); source.symlink_to("elsewhere")
+            with self.assertRaises(OSError):
+                module._observe_application(manifest, requirement, root_requirement)
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _, manifest, requirement, root_requirement = application_fixture(temporary)
+            (root / "extra").write_bytes(b"unlisted")
+            with self.assertRaises(OSError):
+                module._observe_application(manifest, requirement, root_requirement)
+
+    def test_u_no_network_mutation_installation_or_activation_authority(self):
         source = Path(module.__file__).read_text(); tree = ast.parse(source)
         imports = set()
         for node in ast.walk(tree):
@@ -348,14 +445,15 @@ class HostObservationTests(unittest.TestCase):
         for forbidden in ("apt install", "apt update", "pip install", "systemctl", "docker"):
             self.assertNotIn(forbidden, lowered)
 
-    def test_q_documented_c29_boundaries(self):
+    def test_v_documented_c29_boundaries(self):
         documentation = (ROOT / "deployment/README.md").read_text()
         section = documentation.split("## C29 read-only DEV host qualification", 1)[1]
         for required in (
             "C27 proves", "installed-file hashes",
             "fresh C28 qualification", "absence is recorded explicitly",
             "Conflicting pre-existing", "C30 remains", "C31 remains",
-            "Live activation remains",
+            "Live activation remains", "every C26 file must have",
+            "neither broker nor executor may own or write",
         ):
             self.assertIn(required, section)
 
