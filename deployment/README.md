@@ -1188,9 +1188,32 @@ numeric ID already exists, both directions must match the reviewed identity;
 an existing user must have the exact primary and required supplementary group
 set. Existing reviewed paths must have exact type, mode and ownership with no
 symlinked component. Existing C17 configuration and systemd assets must also
-match their exact reviewed bytes. An existing future venv root must be empty;
-C29 cannot accept an unreviewed pre-populated venv. Conflicting pre-existing
-objects fail closed and are never repaired.
+match their exact reviewed bytes. C17 canonical bytes remain the configuration
+authority. For systemd units, C29 no longer reads the repository checkout as an
+expected-content source: it hashes each installed destination through bounded,
+descriptor-relative no-follow reads and compares it directly with the immutable
+C23 SHA-256 for that C22 asset. Missing, modified, same-size substituted,
+symlinked or metadata-conflicting units fail closed. Modified or missing checkout
+bytes therefore cannot redefine C29's installed-unit expectation. An existing
+future venv root must be empty; C29 cannot accept an unreviewed pre-populated
+venv. Conflicting pre-existing objects fail closed and are never repaired.
+
+The shared C22/C23 unit-content trust chain is:
+
+```text
+C22 reviewed unit bytes
+        |
+        v
+C23 immutable SHA-256
+       / \
+      v   v
+C29 installed-file check    C30 source-before-installation verification
+```
+
+C29 compares installed units with C23 digests; C30 compares captured candidate
+source bytes with the same digests before writing. Checkout bytes cannot alter
+C29's expectation, while a mutable checkout can only make C30 fail verification.
+Neither boundary performs systemd daemon-reload, enable, start or activation.
 
 An absent C21 application root is acceptable. If present, it must have C23
 metadata and its complete descriptor-relative tree must exactly match the
@@ -1254,7 +1277,9 @@ failure. Before privileged asset installation, C30 reads the bounded C23 source
 through descriptor-relative no-follow traversal, revalidates named/opened file
 identity, hashes the exact captured bytes and requires the C23 SHA-256. Checkout
 ownership is not content provenance: a mutable or replaced checkout can cause
-the operation to fail, but cannot authorize different unit bytes. A directory
+the operation to fail, but cannot authorize different unit bytes. This is the
+same immutable digest C29 uses to qualify an installed destination without
+consulting checkout bytes. A directory
 created by a failed invocation receives identity-bound, descriptor-relative
 `rmdir` cleanup only while its pathname still identifies that exact empty
 directory; cleanup never recurses or removes a pre-existing/substituted object.
