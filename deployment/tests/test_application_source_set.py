@@ -166,7 +166,7 @@ class ApplicationSourceSetTests(unittest.TestCase):
         excluded = {
             "application_source_set.py", "host_service_layout.py", "host_provisioning_contract.py",
             "installation_integrity_contract.py", "pyproject.toml",
-            "python_interpreter_provenance.py",
+            "python_interpreter_provenance.py", "dev_host_qualification.py",
             "requirements-linux-x86_64-py312.lock", "DEPENDENCIES.md", "README.md",
             "runtime/dev/README.md", "runtime/dev/host-nginx.conf", "oidc_verifier.py",
             "broker_composition.py", "runtime.py",
