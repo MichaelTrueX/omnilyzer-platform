@@ -532,8 +532,12 @@ def _observe_payload(entries: tuple[dict, ...]) -> tuple[HostPayloadFileObservat
 
 
 def _observe_application(manifest: _c26.DevApplicationManifest,
-                         requirement: _c24.ApplicationIntegrityRequirement) -> HostApplicationObservation:
+                         requirement: _c24.ApplicationIntegrityRequirement,
+                         root_requirement: _c23.HostPathRequirement) -> HostApplicationObservation:
     digest = _hashlib.sha256(manifest.canonical_bytes()).hexdigest()
+    if (root_requirement.path != requirement.root or root_requirement.kind != "directory"
+            or root_requirement.lifecycle != "must-contain-reviewed-application-before-activation"):
+        raise OSError
     owned = []
     try:
         parent, name = _open_parent(requirement.root, owned)
@@ -542,7 +546,11 @@ def _observe_application(manifest: _c26.DevApplicationManifest,
         try: status = _os.stat(name, dir_fd=parent, follow_symlinks=False)
         except FileNotFoundError:
             return HostApplicationObservation(requirement.root, "absent", manifest.reviewed_commit, digest)
-        if not _stat.S_ISDIR(status.st_mode) or _stat.S_ISLNK(status.st_mode): raise OSError
+        if (not _stat.S_ISDIR(status.st_mode) or _stat.S_ISLNK(status.st_mode)
+                or _stat.S_IMODE(status.st_mode) != root_requirement.mode
+                or status.st_uid != root_requirement.owner_uid
+                or status.st_gid != root_requirement.group_gid):
+            raise OSError
         root_fd = _os.open(name, _os.O_RDONLY | _os.O_DIRECTORY | _os.O_NOFOLLOW | _os.O_CLOEXEC,
                            dir_fd=parent)
         owned.append(root_fd)
@@ -560,17 +568,26 @@ def _observe_application(manifest: _c26.DevApplicationManifest,
                 relative = child_name if not prefix else prefix + "/" + child_name
                 child_status = _os.stat(child_name, dir_fd=directory_fd, follow_symlinks=False)
                 if _stat.S_ISDIR(child_status.st_mode) and not _stat.S_ISLNK(child_status.st_mode):
-                    if relative not in prefixes: raise OSError
+                    if (relative not in prefixes
+                            or _stat.S_IMODE(child_status.st_mode) != root_requirement.mode
+                            or child_status.st_uid != root_requirement.owner_uid
+                            or child_status.st_gid != root_requirement.group_gid):
+                        raise OSError
                     child_fd = _os.open(child_name, _os.O_RDONLY | _os.O_DIRECTORY
                                         | _os.O_NOFOLLOW | _os.O_CLOEXEC, dir_fd=directory_fd)
                     owned.append(child_fd)
                     if _fingerprint(_os.fstat(child_fd)) != _fingerprint(child_status): raise OSError
                     scan(child_fd, relative)
+                    current = _os.stat(child_name, dir_fd=directory_fd, follow_symlinks=False)
+                    if _fingerprint(current) != _fingerprint(child_status): raise OSError
                 else:
                     entry = expected.get(relative)
                     if entry is None or not _stat.S_ISREG(child_status.st_mode) or _stat.S_ISLNK(child_status.st_mode):
                         raise OSError
-                    if _stat.S_IMODE(child_status.st_mode) != int(entry.mode, 8): raise OSError
+                    if (_stat.S_IMODE(child_status.st_mode) != int(entry.mode, 8)
+                            or child_status.st_uid != root_requirement.owner_uid
+                            or child_status.st_gid != root_requirement.group_gid):
+                        raise OSError
                     child_fd = _os.open(child_name, _os.O_RDONLY | _os.O_NOFOLLOW | _os.O_CLOEXEC,
                                         dir_fd=directory_fd)
                     owned.append(child_fd)
@@ -617,13 +634,18 @@ def qualify_dev_host(*, configuration: _c17.DevExecutorServiceConfiguration,
                 environment.implementation, environment.python_series, environment.operating_system,
                 environment.distribution, environment.architecture, environment.libc): raise ValueError
         provisioning = _c23.DevHostProvisioningContract(installation=configuration.installation_contract())
+        application_paths = tuple(item for item in provisioning.path_requirements()
+                                  if item.path == application_requirement.root)
+        if len(application_paths) != 1: raise ValueError
+        application_path = application_paths[0]
         payload = _load_payload(provenance)
         platform = _platform_observation()
         packages = _query_packages(provenance)
         payload_files = _observe_payload(payload)
         groups, users = _observe_principals(provisioning)
         paths = _observe_paths(provisioning, configuration)
-        application = _observe_application(application_manifest, application_requirement)
+        application = _observe_application(application_manifest, application_requirement,
+                                            application_path)
         return DevHostQualificationEvidence(
             platform, groups, users, paths, packages, payload_files, application,
             wheelhouse_evidence.wheelhouse_path, wheelhouse_evidence.files, _PAYLOAD_SHA256,
