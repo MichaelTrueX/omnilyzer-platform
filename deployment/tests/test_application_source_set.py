@@ -171,6 +171,7 @@ class ApplicationSourceSetTests(unittest.TestCase):
             "pip_installer_provenance.py", "pip_installer_qualification.py",
             "dev_host_provisioning_plan.py", "python_environment_qualification.py",
             "dev_host_provisioning_mechanics.py",
+            "dev_persistent_state_prerequisites.py",
             "requirements-linux-x86_64-py312.lock", "DEPENDENCIES.md", "README.md",
             "runtime/dev/README.md", "runtime/dev/host-nginx.conf", "oidc_verifier.py",
             "broker_composition.py", "runtime.py",

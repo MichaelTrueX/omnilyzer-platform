@@ -28,7 +28,7 @@ C1 adds no replay persistence, broker HTTP API, Unix transport, executor, regist
 
 ### Durable SQLite replay boundary
 
-`replay_sqlite.py` now supplies an inert, repository-only `SQLiteReplayGuard`. It provides explicit initialization plus the closed `consume()`, `begin_execution()`, and `finish_execution()` operations, but no broker consumes it and no executor transitions it. This repository change does not install or initialize the production directory or database at `/var/lib/omnilyzer/deployment/authority/replay.sqlite3`, and it creates or opens no filesystem state merely by import or construction.
+`replay_sqlite.py` now supplies an inert, repository-only `SQLiteReplayGuard`. It provides explicit initialization, read-only `validate()`, and the closed `consume()`, `begin_execution()`, and `finish_execution()` operations, but no broker consumes it and no executor transitions it. This repository change does not install or initialize the production directory or database at `/var/lib/omnilyzer/deployment/authority/replay.sqlite3`, and it creates or opens no filesystem state merely by import or construction.
 
 Future reviewed installation must create the dedicated directory as mode `0770` and the database as mode `0660`, then provide reviewed numeric owner and group IDs. The directory is expected to be root-owned with a future reviewed deployment-authority group. The store rejects symlinks, hard links, permissive or mismatched ownership and modes, unexpected directory entries, and databases exceeding 16 MiB. It uses only standard-library SQLite, rollback-journal `DELETE` mode, 4096-byte pages, at most 4096 pages, at most 10,000 live rows, and a busy timeout no greater than 1,000 milliseconds. WAL and shared-memory files remain prohibited pending activation-time filesystem qualification.
 
@@ -258,14 +258,14 @@ chown, arbitrary-path, or temporary-path API.
 
 A future separately reviewed installation must provision the complete path and
 an initial canonical no-active DEV state before this store can operate. `/`,
-`/var`, and `/var/lib` must be root-owned real directories and may not be
-group/other writable unless they have the root-owned sticky-directory
-protection used by standard temporary roots in tests. The deployment-owned
-`omnilyzer`, `deployment`, and `dev` directories must have the configured
-numeric owner and group, owner `rwx`, and no group/other write permission; the
-final `dev` directory must be exactly `0700`. The existing `state.json` must be
-a single-link regular file, never a symlink, with exact mode `0600`, configured
-owner/group, and a nonempty size no greater than 16 KiB.
+`/var`, `/var/lib`, `/var/lib/omnilyzer`, and
+`/var/lib/omnilyzer/deployment` must be root-owned real directories and may not
+be group/other writable unless they have the root-owned sticky-directory
+protection used by standard temporary roots in tests. C23 later closed that
+ancestor ownership projection; the deployment-owned final `dev` directory has
+the configured numeric owner and group and must be exactly `0700`. The existing
+`state.json` must be a single-link regular file, never a symlink, with exact
+mode `0600`, configured owner/group, and a nonempty size no greater than 16 KiB.
 
 Every operation traverses from `/` with retained descriptor-relative
 `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC` opens, compares named and opened
@@ -1484,13 +1484,12 @@ runtime package.
 
 C31B supplies narrowly named closed mechanics for C26 tree materialization,
 the identity-bound input snapshot, exact no-pip venv construction, exact
-offline installation and identity-bound snapshot cleanup. Closed
-state/replay/audit prerequisites remain deferred. Neither C31A nor C31B adds a
-general command, path, copy, write or remove API. Canonical initial no-active state bytes and their
-timestamp/event-id authority remain to be closed before initialization; replay
-must never replace an existing database, and audit provisioning must preserve
-history. Systemd daemon-reload/enable/start and live activation remain outside
-C31A and blocked by ADR 0011's protection prerequisite.
+offline installation and identity-bound snapshot cleanup. C31C supplies the
+separate state/replay/audit prerequisites. None of C31A, C31B, or C31C adds a
+general command, path, copy, write or remove API. Replay must never replace an
+existing database, and audit provisioning must preserve history. Systemd
+daemon-reload/enable/start and live activation remain outside C31A and blocked
+by ADR 0011's protection prerequisite.
 
 ## C31B narrow privileged provisioning mechanics
 
@@ -1580,11 +1579,66 @@ Substituted, unknown or nonempty state is never recursively removed. A failed
 venv is deliberately left for operator inspection because safe generic tree
 removal cannot be proven; C31B never destroys a pre-existing venv.
 
-Deployment-state initialization, replay initialization, audit prerequisites,
-the complete 22-step orchestration and every systemd lifecycle operation remain
-deferred. C31B performs no Docker, registry, candidate-image, workflow, OIDC or
-activation operation. Actual host provisioning and live activation remain
-prohibited by ADR 0011's protection prerequisite.
+Deployment-state initialization, replay initialization and audit prerequisites
+are implemented separately by C31C. The complete 22-step orchestration and
+every systemd lifecycle operation remain deferred. C31B performs no Docker,
+registry, candidate-image, workflow, OIDC or activation operation. Actual host
+provisioning and live activation remain prohibited by ADR 0011's protection
+prerequisite.
+
+## C31C closed DEV persistent-state prerequisites
+
+`DevPersistentStatePrerequisites` is an inert, uncomposed C31C boundary for
+steps 19–21 of the C31A plan. It derives all paths, modes and identities from
+C17/C13/C23 and composes C30's existing exact-directory primitive. It exposes
+separate state, replay and audit methods because those resources intentionally
+have different monotonic lifecycles; a later failure never rolls back or erases
+an earlier persistent-security result.
+
+The zero-input `dev_initial_state()` authority is the exact canonical no-active
+DEV state. Active, previous and candidate identities are empty; migration is
+`none` with no identity or checksum and `serialized_lock_required=true`. Its
+bootstrap-only metadata is `updated_at=1970-01-01T00:00:00Z` and
+`event_id=bootstrap-initial-state-v1`. These fixed sentinels satisfy the state
+validators, cannot match the real deployment operation's
+`c8:<request-hash>:<step>` event IDs, and are replaced by the first genuine
+audited checkpoint. The canonical bytes are 492 bytes with SHA-256
+`1267be5bd7f29db9e89289ad9bfc6e13b210641e8407cab8a52e9c08fde17f3f`.
+
+State initialization uses the existing state-store descriptor traversal,
+nonblocking process-local gate and directory `flock`, then exclusively creates
+only `state.json` with C13 mode and ownership. It writes bounded canonical
+bytes, fsyncs the file and directory, reopens and reparses the exact bytes, and
+proves compatibility by loading through `FilesystemDeploymentStateStore`.
+Exact initial state converges unchanged. Any valid genuine later deployment
+state is classified as existing and never overwritten; malformed content,
+metadata conflicts, symlinks, hard links and temporary residue fail closed.
+Failure cleanup may unlink only the exact inode created by that invocation.
+
+Replay preparation creates or validates only C13's exact root-owned `0770`
+authority directory through C30. An empty directory receives exactly one call
+to `SQLiteReplayGuard.initialize()` using its real clock semantics; the replay
+clock is runtime monotonic state and is deliberately not the fixed deployment
+bootstrap timestamp. An existing database is never initialized, reset,
+replaced or migrated. The guard's read-only `validate()` path checks filesystem
+identity, exact schema, SQLite integrity, metadata and stored rows without
+advancing the replay clock. Existing consumptions survive every C31C rerun, and
+the guard's existing failed-initialization quarantine behavior remains intact.
+
+Audit preparation creates or validates only the exact executor-owned `0700`
+audit directory. It deliberately leaves `events.jsonl` absent in pristine
+state: `FilesystemAuditSink` retains sole authority to create that `0600` file
+on the first real audit append. If current or rotated history exists, C31C
+validates exact file metadata and the existing bounded hash-chain parser while
+retaining opened identities, and never appends, truncates, replaces, rotates or
+deletes anything. Unknown or unsafe directory entries fail closed.
+
+The combined verifier is read-only and reports explicit initial/existing,
+replay-verified and pristine/existing-history observations; it does not claim
+activation readiness. C31C changes no C30 public API, is not connected to the
+broker, executor, service or workflow, and has not been invoked against the DEV
+host. Step 22, full orchestration, systemd lifecycle, actual host provisioning,
+OIDC activation and live deployment remain deferred and prohibited by ADR 0011.
 
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
