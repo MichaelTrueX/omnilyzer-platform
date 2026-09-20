@@ -1217,6 +1217,53 @@ future account/path/configuration/application/venv/package installation and
 provisioning mechanism. Live activation remains separately blocked by GitHub
 protection prerequisites and a later activation review.
 
+## C30 narrow privileged host runtime
+
+C30 implements repository-side primitives for the middle of the fixed
+`C29 -> C30 -> C31` sequence. It is separate from
+`RestrictedPrivilegedExecutor` and `DockerRuntimeAdapter`: those existing
+components retain the authenticated DEV deployment and Docker/Compose boundary,
+while C30 can only perform individual future host-provisioning mutations. C30
+does not change or compose either existing deployment boundary.
+
+`DevPrivilegedHostRuntime(*, configuration)` revalidates the exact C17 object,
+reconstructs C13/C21/C23 internally, and captures immutable closed authority.
+Its only explicit operations create or verify one reviewed group, create or
+verify one reviewed non-login service user with exact memberships, create or
+verify one reviewed directory, atomically install the exact constructor-bound
+C17 configuration, or atomically install one of C23's two repository-owned
+systemd assets. Name, path and destination arguments are selectors into those
+closed C13/C21/C23 sets; unknown values fail before mutation. It does not expose
+a shell, arbitrary command, argv, environment, path, principal, mode, ownership,
+file payload or source selector.
+
+Account creation uses only absolute `/usr/sbin/groupadd` and
+`/usr/sbin/useradd`, with internally generated argv, a closed environment,
+closed stdin/output, a finite timeout, collision checks in both name/ID
+directions and post-operation verification. Users have `/nonexistent` home and
+`/usr/sbin/nologin`; supplementary memberships are exactly C13/C23's set. No
+sudo or Docker membership is granted.
+
+Filesystem primitives traverse retained directory descriptors with
+`O_DIRECTORY | O_NOFOLLOW`, reject symlink components and conflicting existing
+objects, and use exact reviewed UID/GID/mode. Regular files use bounded writes,
+a same-directory exclusive temporary regular file, `fsync`, atomic replacement,
+post-install descriptor-relative verification and identity-bound cleanup on
+failure. Repository asset sources must themselves be root-owned regular files
+without group/other write permission beneath non-symlinked, protected
+directories. These primitives do not recursively mutate trees and never repair
+an unreviewed ownership or mode conflict.
+
+Import and construction perform no host operation. No method runs
+automatically, and nothing in C30 installs or activates this helper. C30 does
+not perform provisioning order or convergence policy, application-tree
+installation, venv construction, wheel/pip/apt installation, state/replay/audit
+initialization, socket creation, systemd reload/enable/start, Docker or registry
+operations, networking, workflow changes or deployment activation. C31 must
+later supply the reviewed ordering, C26 application and C28 wheel orchestration,
+venv/bootstrap mechanics, initialization and convergence. Live activation remains blocked
+by ADR 0011's GitHub protection prerequisite and a separate activation review.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
