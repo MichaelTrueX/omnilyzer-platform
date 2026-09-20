@@ -287,30 +287,27 @@ class SQLiteReplayGuard:
         failed = False
         try:
             directory_descriptor = self._open_directory()
-            self._validate_filesystem(directory_descriptor)
+            self._validate_quiescent_filesystem(directory_descriptor)
             database_descriptor = os.open(
                 REPLAY_FILENAME, os.O_RDONLY | os.O_NOFOLLOW,
                 dir_fd=directory_descriptor,
             )
             self._validate_bound_file(directory_descriptor, database_descriptor)
-            bound_path = Path(
-                f"/proc/self/fd/{directory_descriptor}/{REPLAY_FILENAME}"
-            )
+            bound_path = Path(f"/proc/self/fd/{database_descriptor}")
             connection = sqlite3.connect(
                 bound_path.as_uri() + "?mode=ro", uri=True,
                 timeout=self._busy_timeout_ms / 1000, isolation_level=None,
             )
             connection.enable_load_extension(False)
             connection.execute("PRAGMA query_only=ON")
-            connection.execute(f"PRAGMA max_page_count={MAX_PAGE_COUNT}")
             connection.execute("PRAGMA synchronous=FULL")
             connection.execute("PRAGMA foreign_keys=ON")
             connection.execute("PRAGMA trusted_schema=OFF")
             connection.execute("PRAGMA temp_store=MEMORY")
             connection.execute(f"PRAGMA busy_timeout={self._busy_timeout_ms}")
             self._validate_bound_file(directory_descriptor, database_descriptor)
-            self._validate_open_store(connection)
-            self._validate_filesystem(directory_descriptor)
+            self._validate_open_store(connection, require_connection_limit=False)
+            self._validate_quiescent_filesystem(directory_descriptor)
             self._validate_bound_file(directory_descriptor, database_descriptor)
         except (KeyboardInterrupt, SystemExit, GeneratorExit):
             raise
@@ -708,6 +705,13 @@ class SQLiteReplayGuard:
         except Exception:
             raise ReplayUnavailableError(_GENERIC_UNAVAILABLE) from None
 
+    def _validate_quiescent_filesystem(self, directory_descriptor: int) -> None:
+        """Require the journal-free layout used by descriptor-bound validation."""
+
+        self._validate_filesystem(directory_descriptor)
+        if self._bounded_entries(directory_descriptor) != frozenset({REPLAY_FILENAME}):
+            raise ReplayUnavailableError(_GENERIC_UNAVAILABLE)
+
     def _validate_bound_file(
         self, directory_descriptor: int, database_descriptor: int,
     ) -> None:
@@ -783,7 +787,10 @@ class SQLiteReplayGuard:
                 except Exception:
                     pass
 
-    def _validate_open_store(self, connection: sqlite3.Connection) -> None:
+    def _validate_open_store(
+        self, connection: sqlite3.Connection, *,
+        require_connection_limit: bool = True,
+    ) -> None:
         integrity = connection.execute("PRAGMA integrity_check").fetchmany(2)
         if integrity != [("ok",)]:
             raise ReplayUnavailableError(_GENERIC_UNAVAILABLE)
@@ -791,11 +798,15 @@ class SQLiteReplayGuard:
         page_count = connection.execute("PRAGMA page_count").fetchone()
         maximum = connection.execute("PRAGMA max_page_count").fetchone()
         if (
-            page_size != (PAGE_SIZE,) or maximum != (MAX_PAGE_COUNT,)
+            page_size != (PAGE_SIZE,)
             or page_count is None or isinstance(page_count[0], bool)
             or not isinstance(page_count[0], int)
             or not 0 <= page_count[0] <= MAX_PAGE_COUNT
             or page_count[0] * PAGE_SIZE > DATABASE_SIZE_LIMIT
+            or maximum is None or isinstance(maximum[0], bool)
+            or not isinstance(maximum[0], int)
+            or maximum[0] < page_count[0]
+            or (require_connection_limit and maximum != (MAX_PAGE_COUNT,))
         ):
             raise ReplayUnavailableError(_GENERIC_UNAVAILABLE)
         if connection.execute("PRAGMA application_id").fetchone() != (APPLICATION_ID,):

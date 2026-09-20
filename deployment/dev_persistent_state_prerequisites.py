@@ -1,10 +1,11 @@
 """Closed, inert C31C DEV persistent-state prerequisite mechanics."""
 
 from dataclasses import dataclass as _dataclass
+import gzip as _gzip
 import hashlib as _hashlib
+import io as _io
 import json as _json
 import os as _os
-from pathlib import Path as _Path
 import stat as _stat
 import sys as _sys
 import threading as _threading
@@ -36,6 +37,12 @@ _STATE_PATH = "/var/lib/omnilyzer/deployment/dev/state.json"
 _REPLAY_PATH = "/var/lib/omnilyzer/deployment/authority/replay.sqlite3"
 _AUDIT_PATH = "/var/log/omnilyzer/deployment/dev/events.jsonl"
 _MAX_AUDIT_ENTRIES = _audit.ROTATION_RETENTION + 2
+_AUDIT_HISTORY_LIMIT = _audit.ROTATE_BYTES + _audit.MAX_EVENT_BYTES
+# gzip's DEFLATE framing overhead is far below this conservative finite bound.
+# Keeping twice the maximum legitimate expanded history plus 64 KiB admits every
+# file emitted by FilesystemAuditSink while bounding attacker-controlled input.
+_AUDIT_COMPRESSED_INPUT_LIMIT = 2 * _AUDIT_HISTORY_LIMIT + 65_536
+_READ_CHUNK = 64 * 1024
 
 
 class PersistentStatePrerequisiteError(Exception):
@@ -507,8 +514,14 @@ def _audit_observation(authority: _Authority) -> PersistentPrerequisiteEvidence:
         for name in names:
             if name == ".events.lock":
                 maximum = 0
-            elif name == authority.audit_file.path.rsplit("/", 1)[1] or _audit.ROTATED_RE.fullmatch(name):
-                maximum = _audit.ROTATE_BYTES + _audit.MAX_EVENT_BYTES
+            elif (
+                name == authority.audit_file.path.rsplit("/", 1)[1]
+                or _audit.ROTATED_RE.fullmatch(name)
+            ):
+                maximum = (
+                    _AUDIT_COMPRESSED_INPUT_LIMIT
+                    if name.endswith(".gz") else _AUDIT_HISTORY_LIMIT
+                )
                 history_names.append(name)
             else:
                 raise OSError
@@ -534,8 +547,10 @@ def _audit_observation(authority: _Authority) -> PersistentPrerequisiteEvidence:
             if fingerprint != _file_fingerprint(named):
                 raise OSError
             file_descriptors.append((descriptor, name, fingerprint))
-        sink = _audit.FilesystemAuditSink(_Path(authority.audit_file.path))
-        sink._validate_history()
+        _validate_audit_history_descriptors(
+            file_descriptors,
+            current_name=authority.audit_file.path.rsplit("/", 1)[1],
+        )
         for descriptor, name, expected in file_descriptors:
             if (
                 _file_fingerprint(_os.fstat(descriptor)) != expected
@@ -573,6 +588,71 @@ def _audit_observation(authority: _Authority) -> PersistentPrerequisiteEvidence:
             raise control
         if failed and active is None:
             raise OSError
+
+
+def _read_audit_descriptor(
+    descriptor: int, name: str, expected: tuple[int, ...],
+) -> bytes:
+    compressed = name.endswith(".gz")
+    physical_limit = (
+        _AUDIT_COMPRESSED_INPUT_LIMIT if compressed else _AUDIT_HISTORY_LIMIT
+    )
+    before = _os.fstat(descriptor)
+    if _file_fingerprint(before) != expected or before.st_size > physical_limit:
+        raise OSError
+    _os.lseek(descriptor, 0, _os.SEEK_SET)
+    remaining = before.st_size
+    chunks: list[bytes] = []
+    while remaining:
+        chunk = _os.read(descriptor, min(_READ_CHUNK, remaining))
+        if not chunk:
+            raise OSError
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    if _os.read(descriptor, 1) != b"":
+        raise OSError
+    if _file_fingerprint(_os.fstat(descriptor)) != expected:
+        raise OSError
+    raw = b"".join(chunks)
+    if not compressed:
+        return raw
+    try:
+        with _gzip.GzipFile(fileobj=_io.BytesIO(raw), mode="rb") as stream:
+            expanded = stream.read(_AUDIT_HISTORY_LIMIT + 1)
+            if len(expanded) > _AUDIT_HISTORY_LIMIT or stream.read(1) != b"":
+                raise OSError
+    except (OSError, EOFError):
+        raise OSError from None
+    return expanded
+
+
+def _validate_audit_history_descriptors(
+    values: list[tuple[int, str, tuple[int, ...]]], *, current_name: str,
+) -> None:
+    history = [item for item in values if item[1] != ".events.lock"]
+    rotations = sorted(
+        (item for item in history if item[1] != current_name),
+        key=lambda item: item[1],
+    )
+    current = [item for item in history if item[1] == current_name]
+    ordered = rotations + current
+    previous: str | None = None
+    event_ids: set[str] = set()
+    anchored_retained_history = bool(ordered and ordered[0][1] != current_name)
+    first = True
+    for descriptor, name, expected in ordered:
+        raw = _read_audit_descriptor(descriptor, name, expected)
+        records = _audit.FilesystemAuditSink._decode_lines(raw, name)
+        for record in records:
+            if first and anchored_retained_history:
+                previous = record.previous_event_sha256
+            if record.previous_event_sha256 != previous:
+                raise OSError
+            if record.event.event_id in event_ids:
+                raise OSError
+            event_ids.add(record.event.event_id)
+            previous = record.sha256()
+            first = False
 
 
 def _directory_result(

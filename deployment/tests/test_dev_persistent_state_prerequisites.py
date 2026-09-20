@@ -3,6 +3,7 @@
 import ast
 from concurrent.futures import ThreadPoolExecutor
 import dataclasses
+import gzip
 import hashlib
 import importlib
 import inspect
@@ -377,6 +378,175 @@ class ReplayAndAuditTests(unittest.TestCase):
         after = {item.name: item.read_bytes() for item in self.sandbox.audit_directory.iterdir()}
         self.assertEqual(evidence.outcome, "existing")
         self.assertEqual(before, after)
+
+    def test_l2_audit_validation_consumes_the_retained_current_descriptor(self):
+        path = self.sandbox.audit_directory / "events.jsonl"
+        audit.FilesystemAuditSink(path).append(
+            event("dev", event_type="promotion_succeeded"),
+        )
+        replacement = self.sandbox.state_directory / "replacement"
+        replacement.write_bytes(b"malformed replacement\n")
+        replacement.chmod(0o600)
+        held = self.sandbox.state_directory / "held"
+        original_reader = module._read_audit_descriptor
+
+        def swap_while_reading(descriptor, name, expected):
+            os.replace(path, held)
+            os.replace(replacement, path)
+            try:
+                return original_reader(descriptor, name, expected)
+            finally:
+                os.replace(path, replacement)
+                os.replace(held, path)
+
+        before = path.read_bytes()
+        # Ignore timestamp changes caused by rename so this test isolates the
+        # content source: even with that secondary defense removed, bytes come
+        # from the retained inode rather than the temporary pathname target.
+        stable_fingerprint = lambda value: (
+            value.st_dev, value.st_ino, value.st_mode, value.st_nlink,
+            value.st_uid, value.st_gid, value.st_size,
+        )
+        with patch.object(module, "_file_fingerprint", side_effect=stable_fingerprint), \
+             patch.object(module, "_read_audit_descriptor", side_effect=swap_while_reading):
+            self.assertEqual(self.sandbox.value.prepare_audit().outcome, "existing")
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_l3_temporary_valid_path_cannot_hide_malformed_retained_bytes(self):
+        path = self.sandbox.audit_directory / "events.jsonl"
+        audit.FilesystemAuditSink(path).append(
+            event("dev", event_type="promotion_succeeded"),
+        )
+        valid = self.sandbox.state_directory / "valid"
+        valid.write_bytes(path.read_bytes())
+        valid.chmod(0o600)
+        path.write_bytes(b"{\n")
+        held = self.sandbox.state_directory / "held"
+        original_reader = module._read_audit_descriptor
+
+        def swap_while_reading(descriptor, name, expected):
+            os.replace(path, held)
+            os.replace(valid, path)
+            try:
+                return original_reader(descriptor, name, expected)
+            finally:
+                os.replace(path, valid)
+                os.replace(held, path)
+
+        with patch.object(module, "_read_audit_descriptor", side_effect=swap_while_reading):
+            with self.assertRaisesRegex(module.PersistentStatePrerequisiteError, ERROR):
+                self.sandbox.value.prepare_audit()
+        self.assertEqual(path.read_bytes(), b"{\n")
+
+    def test_l4_compressed_rotation_validation_is_descriptor_bound(self):
+        path = self.sandbox.audit_directory / "events.jsonl"
+        audit.FilesystemAuditSink(path).append(
+            event("dev", event_type="promotion_succeeded"),
+        )
+        rotation = self.sandbox.audit_directory / "events.jsonl.20260908T000000Z.aaaaaaaaaaaa.gz"
+        rotation.write_bytes(gzip.compress(path.read_bytes(), mtime=0))
+        rotation.chmod(0o600)
+        path.unlink()
+        replacement = self.sandbox.state_directory / "replacement.gz"
+        replacement.write_bytes(b"not gzip")
+        replacement.chmod(0o600)
+        held = self.sandbox.state_directory / "held.gz"
+        original_reader = module._read_audit_descriptor
+
+        def swap_while_reading(descriptor, name, expected):
+            os.replace(rotation, held)
+            os.replace(replacement, rotation)
+            try:
+                return original_reader(descriptor, name, expected)
+            finally:
+                os.replace(rotation, replacement)
+                os.replace(held, rotation)
+
+        before = rotation.read_bytes()
+        # As above, isolate descriptor-bound gzip consumption from the stronger
+        # production timestamp fingerprint that also detects this rename.
+        stable_fingerprint = lambda value: (
+            value.st_dev, value.st_ino, value.st_mode, value.st_nlink,
+            value.st_uid, value.st_gid, value.st_size,
+        )
+        with patch.object(module, "_file_fingerprint", side_effect=stable_fingerprint), \
+             patch.object(module, "_read_audit_descriptor", side_effect=swap_while_reading):
+            self.assertEqual(self.sandbox.value.prepare_audit().outcome, "existing")
+        self.assertEqual(rotation.read_bytes(), before)
+
+    def test_l5_audit_validation_rechecks_descriptor_and_named_identity(self):
+        path = self.sandbox.audit_directory / "events.jsonl"
+        audit.FilesystemAuditSink(path).append(
+            event("dev", event_type="promotion_succeeded"),
+        )
+        original_reader = module._read_audit_descriptor
+
+        def mutate_opened_identity(descriptor, name, expected):
+            os.utime(path, ns=(path.stat().st_atime_ns, path.stat().st_mtime_ns + 1))
+            return original_reader(descriptor, name, expected)
+
+        with patch.object(module, "_read_audit_descriptor", side_effect=mutate_opened_identity):
+            with self.assertRaisesRegex(module.PersistentStatePrerequisiteError, ERROR):
+                self.sandbox.value.prepare_audit()
+
+        second = event("dev", event_type="promotion_succeeded").to_dict()
+        second["event_id"] = "event-dev-two"
+        second["timestamp"] = "2026-09-08T00:00:01Z"
+        audit.FilesystemAuditSink(path).append(audit.AuditEvent.from_dict(second))
+        replacement = self.sandbox.state_directory / "replacement"
+        replacement.write_bytes(path.read_bytes())
+        replacement.chmod(0o600)
+        held = self.sandbox.state_directory / "held"
+
+        def substitute_named_identity(descriptor, name, expected):
+            raw = original_reader(descriptor, name, expected)
+            os.replace(path, held)
+            os.replace(replacement, path)
+            return raw
+
+        try:
+            with patch.object(
+                module, "_read_audit_descriptor",
+                side_effect=substitute_named_identity,
+            ):
+                with self.assertRaisesRegex(module.PersistentStatePrerequisiteError, ERROR):
+                    self.sandbox.value.prepare_audit()
+        finally:
+            if held.exists():
+                if path.exists():
+                    os.replace(path, replacement)
+                os.replace(held, path)
+
+    def test_l6_c31c_never_calls_pathname_history_validation(self):
+        path = self.sandbox.audit_directory / "events.jsonl"
+        audit.FilesystemAuditSink(path).append(
+            event("dev", event_type="promotion_succeeded"),
+        )
+        with patch.object(
+            audit.FilesystemAuditSink, "_validate_history",
+            side_effect=AssertionError("pathname reopen"),
+        ) as pathname_validator, patch.object(
+            audit.FilesystemAuditSink, "_files",
+            side_effect=AssertionError("pathname listing"),
+        ) as pathname_files, patch.object(
+            audit.FilesystemAuditSink, "_read",
+            side_effect=AssertionError("pathname read"),
+        ) as pathname_reader:
+            self.assertEqual(self.sandbox.value.prepare_audit().outcome, "existing")
+        for pathname_method in (pathname_validator, pathname_files, pathname_reader):
+            pathname_method.assert_not_called()
+
+    def test_l7_malformed_compressed_history_is_rejected_without_mutation(self):
+        rotation = (
+            self.sandbox.audit_directory
+            / "events.jsonl.20260908T000000Z.aaaaaaaaaaaa.gz"
+        )
+        rotation.write_bytes(b"not a gzip stream")
+        rotation.chmod(0o600)
+        before = rotation.read_bytes()
+        with self.assertRaisesRegex(module.PersistentStatePrerequisiteError, ERROR):
+            self.sandbox.value.prepare_audit()
+        self.assertEqual(rotation.read_bytes(), before)
 
     def test_m_unsafe_audit_entries_fail_without_history_mutation(self):
         path = self.sandbox.audit_directory / "events.jsonl"

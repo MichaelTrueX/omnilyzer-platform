@@ -1622,16 +1622,26 @@ clock is runtime monotonic state and is deliberately not the fixed deployment
 bootstrap timestamp. An existing database is never initialized, reset,
 replaced or migrated. The guard's read-only `validate()` path checks filesystem
 identity, exact schema, SQLite integrity, metadata and stored rows without
-advancing the replay clock. Existing consumptions survive every C31C rerun, and
-the guard's existing failed-initialization quarantine behavior remains intact.
+advancing the replay clock. SQLite opens `/proc/self/fd/<database-fd>` for the
+already retained database inode rather than re-resolving `replay.sqlite3`; a
+journal is rejected as non-quiescent instead of recovered or removed. This
+read-only path issues no persistent-setting pragma and leaves the database,
+clock watermark and consumptions unchanged. Existing consumptions survive every
+C31C rerun, and the guard's existing failed-initialization quarantine behavior
+remains intact.
 
 Audit preparation creates or validates only the exact executor-owned `0700`
 audit directory. It deliberately leaves `events.jsonl` absent in pristine
 state: `FilesystemAuditSink` retains sole authority to create that `0600` file
 on the first real audit append. If current or rotated history exists, C31C
 validates exact file metadata and the existing bounded hash-chain parser while
-retaining opened identities, and never appends, truncates, replaces, rotates or
-deletes anything. Unknown or unsafe directory entries fail closed.
+retaining opened identities. Plain bytes are read only from those descriptors;
+compressed rotations are read under a finite physical bound and decompressed
+from the captured bytes under the existing decompressed-history bound. Both the
+opened and final named identities are revalidated, so pathname replacement
+cannot supply different validation bytes. C31C never appends, truncates,
+replaces, rotates or deletes anything. Unknown or unsafe directory entries fail
+closed.
 
 The combined verifier is read-only and reports explicit initial/existing,
 replay-verified and pristine/existing-history observations; it does not claim
