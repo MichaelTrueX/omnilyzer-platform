@@ -3,6 +3,7 @@
 import ast
 from contextlib import ExitStack
 import dataclasses
+import hashlib
 import importlib
 import inspect
 from pathlib import Path, PurePosixPath
@@ -257,13 +258,24 @@ class HostProvisioningContractTests(unittest.TestCase):
     def test_n_exact_systemd_mappings(self):
         assets = self.contract.installed_asset_requirements()
         self.assertEqual(len(assets), 2)
-        for item, name in zip(assets, (self.layout.executor_socket_unit_name,
-                                      self.layout.executor_service_unit_name), strict=True):
+        digests = (
+            "4211b0a4498548a54c4aedeaeb419aef84fb76d16f9da5f60a40b20be1daf95f",
+            "00b4d6bef37a1582092ec927cd8501ff922c209f7b10542d264a9c48b74088fa",
+        )
+        for item, name, digest in zip(
+                assets,
+                (self.layout.executor_socket_unit_name,
+                 self.layout.executor_service_unit_name),
+                digests,
+                strict=True):
             self.assertEqual(dataclasses.astuple(item), (
-                "deployment/systemd/dev/" + name, "/etc/systemd/system/" + name, 0o644, 0, 0,
+                "deployment/systemd/dev/" + name, "/etc/systemd/system/" + name,
+                digest, 0o644, 0, 0,
             ))
             repository = Path(__file__).absolute().parents[2]
-            self.assertTrue((repository / item.source_path).is_file())
+            source = repository / item.source_path
+            self.assertTrue(source.is_file())
+            self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), item.sha256)
 
     def test_o_os_systemd_directory_not_provisioned(self):
         self.assertNotIn("/etc/systemd/system", tuple(item.path for item in self.contract.path_requirements()))
@@ -340,7 +352,8 @@ class HostProvisioningContractTests(unittest.TestCase):
             (module.HostGroupRequirement, ("name", "gid")),
             (module.HostUserRequirement, ("name", "uid", "primary_gid", "supplementary_gids")),
             (module.HostPathRequirement, ("path", "kind", "mode", "owner_uid", "group_gid", "lifecycle")),
-            (module.HostInstalledAssetRequirement, ("source_path", "destination_path", "mode", "owner_uid", "group_gid")),
+            (module.HostInstalledAssetRequirement,
+             ("source_path", "destination_path", "sha256", "mode", "owner_uid", "group_gid")),
         )
         for cls, names in shapes:
             self.assertEqual(tuple(field.name for field in dataclasses.fields(cls)), names)
@@ -368,6 +381,9 @@ class HostProvisioningContractTests(unittest.TestCase):
                 attacks.extend((requirement, {field: value}) for field in ("owner_uid", "group_gid"))
         for value in (True, -1, 0o10000, Number(0), 1.0):
             attacks.extend(((path, {"mode": value}), (asset, {"mode": value})))
+        for value in (None, "", Text("0" * 64), "0" * 63, "0" * 65,
+                      "A" * 64, "g" * 64):
+            attacks.append((asset, {"sha256": value}))
         attacks.extend(((path, {"kind": "unix_socket"}), (path, {"kind": Text("directory")}),
                         (path, {"lifecycle": "create-now"}),
                         (path, {"lifecycle": Text("must-exist-before-activation")})))

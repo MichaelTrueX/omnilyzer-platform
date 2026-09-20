@@ -8,6 +8,7 @@ systemd, execute Docker, or activate deployment authority.
 
 from dataclasses import dataclass as _dataclass
 import grp as _grp
+import hashlib as _hashlib
 import os as _os
 from pathlib import PurePosixPath as _PurePosixPath
 import pwd as _pwd
@@ -128,6 +129,13 @@ def _directory(value: _os.stat_result, requirement: _DirectoryAuthority | None) 
     return value
 
 
+def _source_directory(value: _os.stat_result) -> _os.stat_result:
+    """Accept untrusted checkout ownership while still rejecting path substitution."""
+    if not _stat.S_ISDIR(value.st_mode) or _stat.S_ISLNK(value.st_mode):
+        raise OSError
+    return value
+
+
 def _regular(value: _os.stat_result, requirement: _FileAuthority) -> _os.stat_result:
     if (not _stat.S_ISREG(value.st_mode) or _stat.S_ISLNK(value.st_mode)
             or value.st_nlink != 1 or _stat.S_IMODE(value.st_mode) != requirement.mode
@@ -163,6 +171,31 @@ def _open_parent(path: str, authorities: tuple[_DirectoryAuthority, ...],
         named = _directory(_os.stat(component, dir_fd=parent, follow_symlinks=False), requirement)
         child = _claim(_os.open(component, directory_flags, dir_fd=parent), owned)
         opened = _directory(_os.fstat(child), requirement)
+        if _directory_fingerprint(named) != _directory_fingerprint(opened):
+            raise OSError
+        chain.append((child, parent, component, _directory_fingerprint(opened)))
+        parent = child
+    return parent, parts[-1], chain
+
+
+def _open_source_parent(
+        path: str, owned: list[int],
+) -> tuple[int, str, list[tuple[int, int | None, str | None, tuple[int, ...]]]]:
+    """Open an untrusted source checkout by identity without following symlinks."""
+    directory_flags = _os.O_RDONLY | _os.O_DIRECTORY | _os.O_NOFOLLOW | _os.O_CLOEXEC
+    root_named = _source_directory(_os.stat("/", follow_symlinks=False))
+    root = _claim(_os.open("/", directory_flags), owned)
+    root_opened = _source_directory(_os.fstat(root))
+    if _directory_fingerprint(root_named) != _directory_fingerprint(root_opened):
+        raise OSError
+    chain = [(root, None, None, _directory_fingerprint(root_opened))]
+    parent = root
+    parts = path[1:].split("/")
+    for component in parts[:-1]:
+        named = _source_directory(
+            _os.stat(component, dir_fd=parent, follow_symlinks=False))
+        child = _claim(_os.open(component, directory_flags, dir_fd=parent), owned)
+        opened = _source_directory(_os.fstat(child))
         if _directory_fingerprint(named) != _directory_fingerprint(opened):
             raise OSError
         chain.append((child, parent, component, _directory_fingerprint(opened)))
@@ -296,9 +329,23 @@ def _create_user(requirement: _c23.HostUserRequirement,
     return HostMutationEvidence("user", requirement.name, "created")
 
 
+def _cleanup_created_directory(parent: int, name: str, identity: tuple[int, int]) -> None:
+    """Remove only the still-empty directory created by this primitive attempt."""
+    current = _os.stat(name, dir_fd=parent, follow_symlinks=False)
+    if (not _stat.S_ISDIR(current.st_mode) or _stat.S_ISLNK(current.st_mode)
+            or (current.st_dev, current.st_ino) != identity):
+        raise OSError
+    if _os.rmdir(name, dir_fd=parent) is not None:
+        raise OSError
+    if _os.fsync(parent) is not None:
+        raise OSError
+
+
 def _ensure_directory(requirement: _DirectoryAuthority,
                       authorities: tuple[_DirectoryAuthority, ...]) -> HostMutationEvidence:
     owned: list[int] = []
+    created_identity = None
+    completed = False
     try:
         parent, name, chain = _open_parent(requirement.path, authorities, owned)
         try:
@@ -316,11 +363,16 @@ def _ensure_directory(requirement: _DirectoryAuthority,
             return HostMutationEvidence("directory", requirement.path, "unchanged")
         if _os.mkdir(name, 0o700, dir_fd=parent) is not None:
             raise OSError
+        created_named = _os.stat(name, dir_fd=parent, follow_symlinks=False)
+        if not _stat.S_ISDIR(created_named.st_mode) or _stat.S_ISLNK(created_named.st_mode):
+            raise OSError
+        created_identity = (created_named.st_dev, created_named.st_ino)
         descriptor = _claim(_os.open(
             name, _os.O_RDONLY | _os.O_DIRECTORY | _os.O_NOFOLLOW | _os.O_CLOEXEC,
             dir_fd=parent), owned)
         opened = _os.fstat(descriptor)
-        if not _stat.S_ISDIR(opened.st_mode) or _stat.S_ISLNK(opened.st_mode):
+        if (not _stat.S_ISDIR(opened.st_mode) or _stat.S_ISLNK(opened.st_mode)
+                or (opened.st_dev, opened.st_ino) != created_identity):
             raise OSError
         if (opened.st_uid, opened.st_gid) != (requirement.owner_uid, requirement.group_gid):
             if _os.fchown(descriptor, requirement.owner_uid, requirement.group_gid) is not None:
@@ -334,9 +386,22 @@ def _ensure_directory(requirement: _DirectoryAuthority,
         _revalidate_chain(chain)
         if _os.fsync(parent) is not None:
             raise OSError
-        return HostMutationEvidence("directory", requirement.path, "created")
+        evidence = HostMutationEvidence("directory", requirement.path, "created")
+        completed = True
+        return evidence
     finally:
-        _close(owned)
+        active = _sys.exception()
+        try:
+            if created_identity is not None and not completed and "parent" in locals():
+                _cleanup_created_directory(parent, name, created_identity)
+        except _CONTROL:
+            if not isinstance(active, _CONTROL):
+                raise
+        except BaseException:
+            if active is None:
+                raise
+        finally:
+            _close(owned)
 
 
 def _write_all(descriptor: int, payload: bytes) -> None:
@@ -476,14 +541,16 @@ def _install_atomic(requirement: _FileAuthority, payload: bytes,
             _close(owned)
 
 
-def _read_reviewed_source(path: str) -> bytes:
+def _read_reviewed_source(path: str, expected_sha256: str) -> bytes:
     owned: list[int] = []
     try:
-        parent, name, chain = _open_parent(path, (), owned)
+        if (type(expected_sha256) is not str
+                or _re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None):
+            raise OSError
+        parent, name, chain = _open_source_parent(path, owned)
         named = _os.stat(name, dir_fd=parent, follow_symlinks=False)
         if (not _stat.S_ISREG(named.st_mode) or _stat.S_ISLNK(named.st_mode)
-                or named.st_nlink != 1 or named.st_uid != 0
-                or _stat.S_IMODE(named.st_mode) & 0o022
+                or named.st_nlink != 1
                 or named.st_size <= 0 or named.st_size > _MAX_FILE_BYTES):
             raise OSError
         descriptor = _claim(_os.open(
@@ -497,6 +564,8 @@ def _read_reviewed_source(path: str) -> bytes:
                 != _fingerprint(opened)):
             raise OSError
         _revalidate_chain(chain)
+        if _hashlib.sha256(raw).hexdigest() != expected_sha256:
+            raise OSError
         return raw
     finally:
         _close(owned)
@@ -574,7 +643,8 @@ class DevPrivilegedHostRuntime:
             elif operation == "asset" and type(selector) is str:
                 asset = _lookup(authority.assets, "destination_path", selector)
                 repository = _os.path.dirname(_os.path.dirname(__file__))
-                payload = _read_reviewed_source(repository + "/" + asset.source_path)
+                payload = _read_reviewed_source(
+                    repository + "/" + asset.source_path, asset.sha256)
                 requirement = _FileAuthority(
                     asset.destination_path, asset.mode, asset.owner_uid, asset.group_gid)
                 result = _install_atomic(requirement, payload, authority.directories)

@@ -1232,10 +1232,11 @@ Its only explicit operations create or verify one reviewed group, create or
 verify one reviewed non-login service user with exact memberships, create or
 verify one reviewed directory, atomically install the exact constructor-bound
 C17 configuration, or atomically install one of C23's two repository-owned
-systemd assets. Name, path and destination arguments are selectors into those
-closed C13/C21/C23 sets; unknown values fail before mutation. It does not expose
-a shell, arbitrary command, argv, environment, path, principal, mode, ownership,
-file payload or source selector.
+systemd assets. Each C23 asset mapping binds its C22 source path, destination,
+metadata and exact reviewed source SHA-256. Name, path and destination arguments
+are selectors into those closed C13/C21/C23 sets; unknown values fail before
+mutation. It does not expose a shell, arbitrary command, argv, environment,
+path, principal, mode, ownership, digest, file payload or source selector.
 
 Account creation uses only absolute `/usr/sbin/groupadd` and
 `/usr/sbin/useradd`, with internally generated argv, a closed environment,
@@ -1249,10 +1250,15 @@ Filesystem primitives traverse retained directory descriptors with
 objects, and use exact reviewed UID/GID/mode. Regular files use bounded writes,
 a same-directory exclusive temporary regular file, `fsync`, atomic replacement,
 post-install descriptor-relative verification and identity-bound cleanup on
-failure. Repository asset sources must themselves be root-owned regular files
-without group/other write permission beneath non-symlinked, protected
-directories. These primitives do not recursively mutate trees and never repair
-an unreviewed ownership or mode conflict.
+failure. Before privileged asset installation, C30 reads the bounded C23 source
+through descriptor-relative no-follow traversal, revalidates named/opened file
+identity, hashes the exact captured bytes and requires the C23 SHA-256. Checkout
+ownership is not content provenance: a mutable or replaced checkout can cause
+the operation to fail, but cannot authorize different unit bytes. A directory
+created by a failed invocation receives identity-bound, descriptor-relative
+`rmdir` cleanup only while its pathname still identifies that exact empty
+directory; cleanup never recurses or removes a pre-existing/substituted object.
+These primitives never repair an unreviewed ownership or mode conflict.
 
 Import and construction perform no host operation. No method runs
 automatically, and nothing in C30 installs or activates this helper. C30 does
@@ -1261,8 +1267,10 @@ installation, venv construction, wheel/pip/apt installation, state/replay/audit
 initialization, socket creation, systemd reload/enable/start, Docker or registry
 operations, networking, workflow changes or deployment activation. C31 must
 later supply the reviewed ordering, C26 application and C28 wheel orchestration,
-venv/bootstrap mechanics, initialization and convergence. Live activation remains blocked
-by ADR 0011's GitHub protection prerequisite and a separate activation review.
+venv/bootstrap mechanics, initialization, convergence and the systemd lifecycle.
+No daemon-reload, enable, start or activation authority exists in C30.
+Live activation remains blocked by ADR 0011's GitHub protection prerequisite
+and a separate activation review.
 
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
