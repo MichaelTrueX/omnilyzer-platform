@@ -988,6 +988,46 @@ systemd assets, enable/start services, use Docker, contact the candidate, alter
 workflows or activate deployment. GitHub private-repository deployment
 protections remain unproven/unavailable; the activation blocker remains absolute.
 
+## C28 closed staged wheelhouse qualification
+
+`wheelhouse_qualification.py` performs an explicit, read-only qualification of
+caller-selected staged wheel bytes. C28 obtains the wheel requirements only from
+an exact, revalidated C24 `DevInstallationIntegrityContract`; it contains no
+independent production filename or digest allowlist and does not change C24.
+The supplied absolute path identifies the directory to inspect and confers no
+trust. Import and immutable evidence construction are inert.
+
+Qualification accepts only a complete directory entry set of exactly four
+entries: the four C24 wheel filenames in the C24 closure. Every entry must be a
+regular, non-symlink file and its bytes must have the exact C24 SHA-256. A
+missing or renamed wheel, extra wheel, sdist, metadata or requirements file,
+nested directory, symlink, FIFO, device, socket, hash mismatch, zero-length or
+truncated replacement fails closed. Wheel bytes are streamed through SHA-256 in
+fixed 64 KiB chunks rather than loaded into memory.
+
+The qualifier traverses every path component from `/` with retained,
+descriptor-relative `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC` opens. Wheel files
+are opened relative to the retained wheelhouse descriptor with
+`O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK`. Named and opened identities
+are compared; file and directory metadata are revalidated after hashing; and
+the complete entry set is scanned both before and after hashing. These checks
+reject persistent path, directory and file replacement and narrow filesystem
+race windows within this read-only boundary. A caller able to mutate the staged
+tree concurrently is not made trusted by selecting its path.
+
+Successful qualification returns only frozen, slotted evidence containing the
+selected path, the `sha256` algorithm, and the exact ordered C24 filenames and
+digests. It exposes no trusted, approved, ready or qualified boolean. C28
+qualifies staged wheel bytes only. It does not download, create, populate or
+modify a wheelhouse; use a network or source-build fallback; run `pip`; install
+packages; create a venv; inspect or mutate `/opt`; contact a candidate image; or
+activate anything.
+
+C27 CPython interpreter provenance remains unresolved and is deliberately not
+attempted by C28. A later C29 must compare this reviewed staged-wheel evidence
+against the live host together with separately established interpreter evidence.
+C28 itself does not install anything and does not qualify a live host.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
