@@ -911,10 +911,12 @@ environment policy files, provisioning contracts and installation assets:
   installed under systemd authority, not application-root files.
 - The dependency lock, wheels and `pyproject.toml` belong to the C24 Python
   environment boundary, not the application-root manifest.
-- C21 layout and C23/C24/C25 qualification/provisioning/source-selection
-  contracts are repository-side installation authority, not runtime application
-  files. C25 does not select itself. The earlier C13 `installation_contract.py`
-  remains selected because the executor runtime imports its identity constants.
+- C21 layout and C23/C24/C25/C27 qualification, provisioning, source-selection,
+  and provenance contracts are repository-side installation authority, not
+  runtime application files. C25 does not select itself. The retained C27 key
+  and signed metadata under `deployment/provenance/` are review evidence, not
+  application-root files. The earlier C13 `installation_contract.py` remains
+  selected because the executor runtime imports its identity constants.
 - Tests, schemas, environment files, README/DEPENDENCIES documentation, and
   `release/`, `docs/`, `spikes/`, `.github/` and repository-root files are excluded.
   `oidc_verifier.py`, `broker_composition.py` and `runtime.py` are not in the
@@ -988,6 +990,107 @@ systemd assets, enable/start services, use Docker, contact the candidate, alter
 workflows or activate deployment. GitHub private-repository deployment
 protections remain unproven/unavailable; the activation blocker remains absolute.
 
+## C27 reviewed CPython interpreter provenance
+
+The earlier C27 investigation correctly stopped because an Ubuntu archive key
+found in the DEV host keyring was only host-provided data. Its UID and short key
+ID could not independently make it a trust anchor. C27 resolves that review
+blocker with Canonical's independently published full Ubuntu Archive Automatic
+Signing Key (2018) fingerprint:
+
+`F6ECB3762474EDA9D21B7022871920D1991BC93C`
+
+Canonical publishes that full fingerprint in the
+[Ubuntu Security Team FAQ](https://wiki.ubuntu.com/SecurityTeam/FAQ) and its
+[image-verification guidance](https://documentation.ubuntu.com/security/software-integrity/image-verification/).
+Canonical's [Ubuntu 24.04 Chisel archive configuration](https://ubuntu.com/chisel/docs/latest/reference/chisel-releases/chisel.yaml/)
+embeds the same key and applies it to `noble`, `noble-security`, and
+`noble-updates`. The repository-retained
+`provenance/ubuntu-archive-key-2018.asc` contains exactly one public key. Its
+computed full fingerprint matches the independently reviewed Canonical value;
+that equality—not its local filename, UID, installed-keyring origin, or short
+key ID—converts those exact key bytes into C27's accepted verification key. The
+retained key file is 1,660 bytes with SHA-256
+`2a3cc57ab6b47626b496a101c29af6dfe54d54d03d613f2326b9f2a30a15c39b`.
+
+C27's verified chain is:
+
+```text
+Canonical-published full archive-key fingerprint
+    -> exact retained public key with that computed fingerprint
+    -> valid noble-security InRelease signature by only that key
+    -> signed SHA-256 and size for main/binary-amd64/Packages
+    -> exact reviewed package records extracted from those index bytes
+    -> downloaded .deb bytes matching every record's size and SHA-256
+    -> immutable, zero-input repository C27 evidence
+```
+
+The retained `provenance/noble-security-20260919T004615Z.InRelease` is the exact
+126,127-byte Canonical Ubuntu Snapshot object at
+`https://snapshot.ubuntu.com/ubuntu/20260919T004615Z/dists/noble-security/InRelease`,
+SHA-256
+`603d902fbcedd1666b0897c005771162a7b36288a56aac6a5f557556d53d66de`.
+An isolated keyring containing only the accepted key verifies its OpenPGP
+signature, created `2026-09-19T00:47:09Z`, with the exact full fingerprint. The
+signed metadata identifies Ubuntu `noble-security`, component `main`, and
+architecture `amd64`. It signs both of these index identities:
+
+| Signed index path | Size | SHA-256 |
+| --- | ---: | --- |
+| `main/binary-amd64/Packages` | 5,476,895 | `f8fca2bdd59ee4de64a30fc88df870356c6f43e19372b0dbc7caf8b1f2bb2536` |
+| `main/binary-amd64/Packages.xz` | 1,009,196 | `7068ebb5e7f7f862612a63d66e1178de0d136086ae02bc7fe95947ab09d8b6a1` |
+
+The exact timestamped `Packages.xz` bytes match the signed compressed identity;
+decompression produces exactly 5,476,895 bytes with the signed uncompressed
+SHA-256. The retained host index was independently byte-equal to that result,
+but host retention does not confer trust. The uncompressed index is not
+committed because it is approximately 5.5 MiB. The selected package fields in
+`python_interpreter_provenance.py` are compact, reviewed derived evidence from
+that verified index; an extracted stanza is not itself archive-signed. The
+retained `InRelease`, signed index identity, immutable snapshot URL, and exact
+record fields preserve the relationship and allow independent reproduction.
+
+The closed CPython artifact boundary is exactly:
+
+| Package | Version | Architecture | Artifact path | Size | SHA-256 |
+| --- | --- | --- | --- | ---: | --- |
+| `libpython3.12-minimal` | `3.12.3-1ubuntu0.17` | `amd64` | `pool/main/p/python3.12/libpython3.12-minimal_3.12.3-1ubuntu0.17_amd64.deb` | 838,536 | `d646ad7112b5adec21ba0e1af015f04ae8ca7f5efdc619622547dd6673c4c14b` |
+| `libpython3.12-stdlib` | `3.12.3-1ubuntu0.17` | `amd64` | `pool/main/p/python3.12/libpython3.12-stdlib_3.12.3-1ubuntu0.17_amd64.deb` | 2,070,530 | `45d3f530ba1f9d6e879ad46b92046fabab13fe50a82450e4f65557a3bbad1489` |
+| `python3.12` | `3.12.3-1ubuntu0.17` | `amd64` | `pool/main/p/python3.12/python3.12_3.12.3-1ubuntu0.17_amd64.deb` | 650,732 | `6745c9463432e619d7402b117ad4ac86c31dcd3999ba20daa9e395f6f9909d86` |
+| `python3.12-minimal` | `3.12.3-1ubuntu0.17` | `amd64` | `pool/main/p/python3.12/python3.12-minimal_3.12.3-1ubuntu0.17_amd64.deb` | 2,334,634 | `d452689b9660845345a4c3e05e4ad82c082d5474e04031b7aa47f1a6d5610a6e` |
+
+The verified `Depends` records close the CPython packaging relationship:
+`python3.12` requires the exact-version minimal interpreter and standard
+library, while both lead to the exact-version minimal library. Each artifact
+was retrieved read-only from the same timestamped Canonical snapshot and its
+actual bytes matched the record's size and SHA-256. These artifact hashes prove
+the reviewed `.deb` identities only. They are not an installed-file hash,
+package-installation receipt, or live interpreter integrity measurement.
+
+`python3.12-venv` is deliberately deferred. None of the four runtime package
+records depends on it, and C27 defines interpreter/runtime provenance rather
+than a future venv bootstrap mechanism. It must not silently expand this slice
+to `pip`, setuptools, venv construction, or installation dependency
+provenance. The native dependencies named by the records—such as libc, OpenSSL,
+SQLite, ncurses, expat, and zlib—remain in the Ubuntu base/system-library trust
+boundary; C27 does not pin the complete operating-system dependency closure.
+
+`DevPythonInterpreterProvenance()` is a frozen, slotted, zero-input repository
+value. It exactly matches C24's CPython 3.12, Linux, Ubuntu 24.04, x86_64/amd64,
+glibc target and cannot accept caller-selected keys, packages, versions, hashes,
+indexes, suites, or architectures. C24 remains unchanged and continues to
+require `interpreter_integrity_required=True`. C27 performs no network access,
+host inspection, package operation, venv creation, `/opt` access, or activation
+on import or construction. It does not install or qualify anything.
+
+C29 must separately verify the actual host: bind its Ubuntu release and amd64
+architecture to C24/C27; validate installed package names, versions,
+architectures and package-manager records against this exact closure; establish
+how installed files map to the reviewed artifacts; hash and validate the actual
+interpreter and required installed runtime files without confusing them with
+`.deb` hashes; reject extra/substituted interpreter provenance; and combine that
+result with C28 wheel evidence before any provisioning or activation decision.
+
 ## C28 closed staged wheelhouse qualification
 
 `wheelhouse_qualification.py` performs an explicit, read-only qualification of
@@ -1023,10 +1126,11 @@ modify a wheelhouse; use a network or source-build fallback; run `pip`; install
 packages; create a venv; inspect or mutate `/opt`; contact a candidate image; or
 activate anything.
 
-C27 CPython interpreter provenance remains unresolved and is deliberately not
-attempted by C28. A later C29 must compare this reviewed staged-wheel evidence
-against the live host together with separately established interpreter evidence.
-C28 itself does not install anything and does not qualify a live host.
+C27 CPython interpreter provenance remains unresolved within C28 and is
+deliberately not attempted by that slice. The separately reviewed C27 evidence
+above now closes the repository provenance input. A later C29 must compare C27
+and this reviewed staged-wheel evidence against the live host.
+C28 itself does not install anything; it does not qualify a live host.
 
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
