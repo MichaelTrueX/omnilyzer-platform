@@ -186,7 +186,15 @@ def _revalidate_directories(
             raise OSError
 
 
-def _qualify(path: str, owned: list[int]) -> DevPipInstallerEvidence:
+def _qualify_open(
+    path: str, owned: list[int],
+) -> tuple[
+    DevPipInstallerEvidence,
+    int,
+    tuple[int, str, tuple[int, ...]],
+    list[tuple[int, str | None, int | None, tuple[int, ...]]],
+]:
+    """Qualify while retaining the exact descriptor for private C31B composition."""
     reviewed = _reviewed()
     artifact = reviewed.artifact
     directory_flags, file_flags = _flags()
@@ -216,7 +224,13 @@ def _qualify(path: str, owned: list[int]) -> DevPipInstallerEvidence:
     if _fingerprint(current) != expected or _entry_names(directory) != expected_names:
         raise OSError
     _revalidate_directories(opened_directories)
-    return DevPipInstallerEvidence(path, "sha256", artifact)
+    evidence = DevPipInstallerEvidence(path, "sha256", artifact)
+    return evidence, directory, (descriptor, artifact.filename, expected), opened_directories
+
+
+def _qualify(path: str, owned: list[int]) -> DevPipInstallerEvidence:
+    evidence, _directory, _file, _directories = _qualify_open(path, owned)
+    return evidence
 
 
 def _close(owned: list[int]) -> tuple[bool, BaseException | None]:
