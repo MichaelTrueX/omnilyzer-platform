@@ -46,3 +46,24 @@ with `-I` and a fixed direct-wheel `runpy` bootstrap that asserts the imported
 pip version and wheel origin. It does not use system pip, ensurepip, PATH lookup,
 or a network bootstrap. C31P installs nothing, and pip is not added to the
 runtime lock or accepted runtime wheelhouse.
+
+## C31A offline runtime installation and retained output evidence
+
+C31A fixes the future runtime installation to pip 26.2.1's reviewed
+direct-from-wheel bootstrap, isolated mode, a closed environment, umask 0022,
+and `install --no-input --disable-pip-version-check --no-cache-dir --no-index
+--only-binary=:all: --no-deps --require-hashes --no-compile`. Its find-links
+snapshot and requirements lock must be identity-bound provisioning inputs; a
+qualified untrusted pathname may not simply be reopened later.
+
+The compact retained installed-tree model is
+`provenance/python-runtime-py312-linux-x86_64-installed.json` (57,824 bytes,
+SHA-256
+`92f5bd9d8db6fecc5880b82103a81e7c23d3efac68b70e9fc8634104e52bbdbe`).
+It was derived from the four exact wheel bytes above after their filename,
+size and SHA-256 checks, using the separately reviewed pip wheel. It records
+wheel payload files, compiled extensions, distribution metadata, venv
+structure, exact symlink targets and deterministic pip-generated files.
+Installed `RECORD` data is hashed output evidence rather than a trust root.
+Pip itself is absent from the accepted runtime distributions, and bytecode is
+suppressed with `--no-compile` and rejected by the exact-tree qualifier.

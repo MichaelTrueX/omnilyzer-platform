@@ -257,6 +257,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(sum(item.kind == "runtime-data" for item in selection.files), 3)
         for excluded in ("application_manifest.py", "application_source_set.py", "host_provisioning_contract.py",
                          "installation_integrity_contract.py", "requirements-linux-x86_64-py312.lock",
+                         "dev_host_provisioning_plan.py", "python_environment_qualification.py",
                          "runtime/dev/host-nginx.conf"):
             self.assertNotIn("deployment/" + excluded, PATHS)
         self.assertFalse(any("/systemd/" in path for path in PATHS))
