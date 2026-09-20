@@ -27,3 +27,22 @@ python3 -m pip install \
 ```
 
 Task 014 C1 proved this command shape in a securely created temporary virtual environment after downloading the reviewed wheels to a temporary wheelhouse. Neither that temporary proof nor this repository creates, installs, or claims a production wheelhouse. Source builds remain forbidden.
+
+## Separate provisioning installer
+
+The command above records C1's historical dependency proof; it does not grant
+future provisioning authority to a system or PATH-selected pip. C31P separately
+reviews `pip-26.2.1-py3-none-any.whl` as a provisioning tool with exact size
+1,816,632 and SHA-256
+`71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e`.
+PyPI identifies that artifact as a Trusted Publishing upload from `pypa/pip`,
+commit `634a6ec1a5d9dcc2433571cdb2f4c58a4bb29caf`, tag
+`refs/tags/26.2.1`, workflow `.github/workflows/release.yml`, and Sigstore log
+index `2341605236`.
+
+The installer is staged and qualified separately from the exact four-wheel
+runtime closure. Future C31 execution uses the absolute C24 venv interpreter
+with `-I` and a fixed direct-wheel `runpy` bootstrap that asserts the imported
+pip version and wheel origin. It does not use system pip, ensurepip, PATH lookup,
+or a network bootstrap. C31P installs nothing, and pip is not added to the
+runtime lock or accepted runtime wheelhouse.
