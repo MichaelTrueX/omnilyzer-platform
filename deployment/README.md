@@ -1380,6 +1380,118 @@ unreviewed runtime distribution. C31P performs no host provisioning, venv
 construction, runtime-wheel installation, systemd lifecycle operation or
 activation.
 
+## C31A closed provisioning plan and Python runtime integrity
+
+C31A is an inert repository-side plan. It grants no mutation authority and
+performs none of its steps. Its closed order is:
+
+1. revalidate C17 configuration;
+2. reconstruct C23/C24 authority;
+3. revalidate the exact C26 application manifest and reviewed commit;
+4. construct C27 interpreter provenance;
+5. freshly qualify the C28 runtime wheelhouse;
+6. freshly qualify the C31P installer staging directory;
+7. run C29 pre-provision host qualification with that C28 evidence;
+8. create the exact C23 groups;
+9. create the exact C23 users;
+10. create the exact required directories;
+11. install the exact C26 application tree;
+12. install the exact C17 executor configuration;
+13. install the exact C22/C23 systemd assets;
+14. construct the exact no-pip venv;
+15. bind a fresh C31P qualification to installer consumption;
+16. bind a fresh C28 qualification to runtime-wheel consumption;
+17. install the exact four C24 runtime wheels;
+18. qualify the populated Python environment;
+19. establish initial deployment-state prerequisites;
+20. initialize replay state only under its existing lifecycle;
+21. establish audit prerequisites without destroying history; and
+22. verify post-provision convergence and integrity.
+
+C29 retains its pre-provision meaning: an absent future venv is acceptable and
+a populated venv is a conflict. C31A adds the separate, read-only
+`qualify_dev_python_environment()` post-provision boundary; it does not weaken
+or reuse C29 as a populated-environment check.
+
+Application installation authority is `reviewed Git blob bytes -> exact C26
+path, SHA-256 and 0644 mode -> closed installation source -> exact
+/opt/omnilyzer/deployment/app tree`. Future mechanics may use fixed
+`/usr/bin/git` to extract a blob at the exact reviewed commit, but must hash the
+captured bytes against C26 before any privileged installation. A working-tree
+file or Git object identity alone is never byte authority. The result is
+exactly 28 root-owned regular files under a root-owned 0755 directory hierarchy,
+with no symlinks or extra entries, followed by exact-tree verification.
+
+The no-pip venv command contract is exactly:
+
+```text
+/usr/bin/python3.12 -m venv --without-pip /opt/omnilyzer/deployment/venv
+```
+
+It uses the C27/C29-qualified system interpreter, an exact internal argv,
+`shell=False`, a fixed minimal environment, umask 0022, no ensurepip, no system
+site packages, no network and an absent or exact empty non-conflicting target.
+The fixed runtime installer uses the venv Python with C31P's `-I` direct-wheel
+bootstrap and these exact pip arguments:
+
+```text
+install --no-input --disable-pip-version-check --no-cache-dir --no-index \
+  --only-binary=:all: --no-deps --require-hashes --no-compile \
+  --find-links <identity-bound-runtime-wheel-snapshot> \
+  --requirement <identity-bound-requirements-lock>
+```
+
+The closed environment includes `PIP_CONFIG_FILE=/dev/null`, `PIP_NO_INDEX=1`,
+`PIP_NO_INPUT=1` and `PIP_DISABLE_PIP_VERSION_CHECK=1`. Pip remains a separate
+provisioning tool and is not installed as a runtime distribution.
+
+Fresh qualification is not treated as sufficient if a later operation reopens
+the same untrusted pathname. C31B must read and verify each C28/C31P source
+through retained descriptors, copy from those still-open descriptors into the
+fixed root-owned 0700 private input snapshot, re-hash and fsync the copy, and
+retain the snapshot identity through consumption. Cleanup may remove only the
+exact C30-created snapshot identity. Directory ownership alone does not confer
+byte trust. The exact requirements lock is bound into the same closed input
+mechanism.
+
+The retained
+`provenance/python-runtime-py312-linux-x86_64-installed.json` manifest was
+derived by installing the four exact, hash-verified C24 wheels with the exact
+C31P pip 26.2.1 wheel in isolated temporary no-pip CPython 3.12 environments.
+Its canonical bytes are 57,824 bytes with SHA-256
+`92f5bd9d8db6fecc5880b82103a81e7c23d3efac68b70e9fc8634104e52bbdbe`.
+It closes 237 entries: 197 regular files, 36 directories and four symlinks.
+Wheel payload and metadata files retain their reviewed wheel-derived hashes;
+compiled extensions are regular hashed payload files. None of these wheels has
+a `.data` mapping or wheel-provided symlink.
+
+Pip 26.2.1 deterministically creates four `INSTALLER` files containing
+`pip\n`, four empty `REQUESTED` files, rewrites four `RECORD` files, and creates
+the `cffi-gen-src` script. The retained manifest hashes the exact production-root
+forms of all of them. Installed `RECORD` is evidence to compare, not the trust
+source. The script includes the exact production venv shebang and is mode 0755;
+the other generated files are non-executable mode 0644. `--no-compile` is
+mandatory, and any `.pyc` or `__pycache__` entry is outside the exact tree and
+is rejected.
+
+The qualifier uses descriptor-relative no-follow traversal and requires exact
+root ownership, modes, entry set, regular-file sizes and SHA-256 values,
+symlink targets, named/opened identity and post-read identity. It also requires
+the exact four distribution identities (PyJWT 2.13.0, cryptography 50.0.1,
+cffi 2.1.1 and pycparser 3.0), the exact `pyvenv.cfg`, no system site packages,
+the reviewed `/usr/bin/python3.12` relationship, and no installed pip or extra
+runtime package.
+
+C31B still needs narrowly named C30 operations for C26 tree materialization,
+the identity-bound input snapshot, exact no-pip venv construction, exact
+offline installation, identity-bound snapshot cleanup, and closed
+state/replay/audit prerequisites. C31A does not add a general command, path,
+copy, write or remove API. Canonical initial no-active state bytes and their
+timestamp/event-id authority remain to be closed before initialization; replay
+must never replace an existing database, and audit provisioning must preserve
+history. Systemd daemon-reload/enable/start and live activation remain outside
+C31A and blocked by ADR 0011's protection prerequisite.
+
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
 The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
