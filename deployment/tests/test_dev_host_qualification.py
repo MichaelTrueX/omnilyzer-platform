@@ -431,6 +431,102 @@ class HostObservationTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 module._observe_application(manifest, requirement, root_requirement)
 
+    def test_w_reviewed_systemd_digests_qualify_exact_bytes_only(self):
+        assets = self.provisioning.installed_asset_requirements()
+        self.assertEqual(tuple(item.sha256 for item in assets), (
+            "4211b0a4498548a54c4aedeaeb419aef84fb76d16f9da5f60a40b20be1daf95f",
+            "00b4d6bef37a1582092ec927cd8501ff922c209f7b10542d264a9c48b74088fa",
+        ))
+        for asset in assets:
+            with self.subTest(asset=asset.source_path), tempfile.TemporaryDirectory() as temporary:
+                target = Path(temporary) / Path(asset.destination_path).name
+                reviewed = (ROOT / asset.source_path).read_bytes()
+                target.write_bytes(reviewed); target.chmod(asset.mode)
+                status = target.stat()
+                exact = module._observe_managed_path(
+                    str(target), "regular_file", asset.mode, status.st_uid, status.st_gid,
+                    expected_sha256=asset.sha256)
+                self.assertEqual(exact.state, "exact")
+
+                changed = bytes((reviewed[0] ^ 1,)) + reviewed[1:]
+                self.assertEqual(len(changed), len(reviewed))
+                target.write_bytes(changed); target.chmod(asset.mode)
+                with self.assertRaises(OSError):
+                    module._observe_managed_path(
+                        str(target), "regular_file", asset.mode,
+                        status.st_uid, status.st_gid, expected_sha256=asset.sha256)
+
+                target.unlink(); target.symlink_to("elsewhere")
+                with self.assertRaises(OSError):
+                    module._observe_managed_path(
+                        str(target), "regular_file", asset.mode,
+                        status.st_uid, status.st_gid, expected_sha256=asset.sha256)
+
+    def test_x_systemd_digest_observation_retains_metadata_checks(self):
+        asset = self.provisioning.installed_asset_requirements()[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "unit.socket"
+            target.write_bytes((ROOT / asset.source_path).read_bytes()); target.chmod(asset.mode)
+            status = target.stat()
+            for mode, uid, gid in (
+                    (0o600, status.st_uid, status.st_gid),
+                    (asset.mode, status.st_uid + 1, status.st_gid),
+                    (asset.mode, status.st_uid, status.st_gid + 1)):
+                target.chmod(mode)
+                with self.subTest(mode=mode, uid=uid, gid=gid), self.assertRaises(OSError):
+                    module._observe_managed_path(
+                        str(target), "regular_file", asset.mode, uid, gid,
+                        expected_sha256=asset.sha256)
+
+    def test_y_c29_uses_c23_digests_without_reading_checkout_sources(self):
+        calls = []
+
+        def observe(path, kind, mode, uid, gid, expected_bytes=None, expected_sha256=None):
+            calls.append((path, kind, mode, uid, gid, expected_bytes, expected_sha256))
+            return module.HostManagedPathObservation(path, kind, "absent", mode, uid, gid)
+
+        with patch.object(module, "_read_small_regular", side_effect=AssertionError), \
+             patch.object(module, "_observe_managed_path", side_effect=observe):
+            module._observe_paths(self.provisioning, self.configuration)
+        assets = self.provisioning.installed_asset_requirements()
+        asset_calls = calls[-len(assets):]
+        self.assertEqual(tuple(item[0] for item in asset_calls),
+                         tuple(item.destination_path for item in assets))
+        self.assertEqual(tuple(item[1] for item in asset_calls),
+                         ("regular_file", "regular_file"))
+        self.assertEqual(tuple(item[6] for item in asset_calls),
+                         tuple(item.sha256 for item in assets))
+        self.assertTrue(all(item[5] is None for item in asset_calls))
+        config_call = next(item for item in calls
+                           if item[0] == "/etc/omnilyzer/deployment/dev/executor.json")
+        self.assertEqual(config_call[5], self.configuration.canonical_bytes())
+        self.assertIsNone(config_call[6])
+
+    def test_z_forged_c23_asset_cache_cannot_redefine_digest(self):
+        contract = self.provisioning
+        original = contract.installed_asset_requirements()[0]
+        for digest in ("malformed", "0" * 64):
+            forged_asset = object.__new__(c23.HostInstalledAssetRequirement)
+            for field in dataclasses.fields(original):
+                object.__setattr__(forged_asset, field.name, getattr(original, field.name))
+            object.__setattr__(forged_asset, "sha256", digest)
+            forged_contract = object.__new__(c23.DevHostProvisioningContract)
+            for field in dataclasses.fields(contract):
+                object.__setattr__(forged_contract, field.name, getattr(contract, field.name))
+            object.__setattr__(forged_contract, "_assets", (
+                forged_asset, *contract.installed_asset_requirements()[1:]))
+            calls = []
+
+            def observe(path, kind, mode, uid, gid, expected_bytes=None, expected_sha256=None):
+                calls.append((path, expected_sha256))
+                return module.HostManagedPathObservation(path, kind, "absent", mode, uid, gid)
+
+            with self.subTest(digest=digest), \
+                 patch.object(module, "_observe_managed_path", side_effect=observe):
+                module._observe_paths(forged_contract, self.configuration)
+            asset_calls = calls[-2:]
+            self.assertEqual(asset_calls[0], (original.destination_path, original.sha256))
+
     def test_u_no_network_mutation_installation_or_activation_authority(self):
         source = Path(module.__file__).read_text(); tree = ast.parse(source)
         imports = set()

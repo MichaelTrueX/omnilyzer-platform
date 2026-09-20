@@ -10,6 +10,8 @@ from pathlib import Path
 import stat
 import unittest
 
+from deployment import host_provisioning_contract as provisioning_contract
+from deployment import installation_contract as installation_contract
 from deployment.host_service_layout import DevHostServiceLayout
 from deployment.unix_transport import PRODUCTION_EXECUTOR_SOCKET_PATH
 
@@ -313,7 +315,8 @@ class SystemdExecutorUnitTests(unittest.TestCase):
                 self.assertTrue(all(alias.name in ("ast", "hashlib", "stat", "unittest")
                                     for alias in node.names))
             elif isinstance(node, ast.ImportFrom):
-                self.assertIn(node.module, ("pathlib", "deployment.host_service_layout",
+                self.assertIn(node.module, ("pathlib", "deployment",
+                                            "deployment.host_service_layout",
                                             "deployment.unix_transport"))
             elif isinstance(node, ast.Call):
                 name = (node.func.id if isinstance(node.func, ast.Name)
@@ -341,6 +344,25 @@ class SystemdExecutorUnitTests(unittest.TestCase):
         for name, digest in _LOWER_CONTRACT_HASHES.items():
             with self.subTest(contract=name):
                 self.assertEqual(hashlib.sha256((_DEPLOYMENT / name).read_bytes()).hexdigest(), digest)
+
+    def test_w_c23_binds_exact_reviewed_asset_bytes(self):
+        installation = installation_contract.DevHostInstallationContract(
+            broker_uid=1201, broker_gid=1201,
+            executor_uid=1202, executor_gid=1202,
+            replay_group_gid=1203, socket_group_gid=1204,
+        )
+        assets = provisioning_contract.DevHostProvisioningContract(
+            installation=installation).installed_asset_requirements()
+        by_source = {item.source_path: item for item in assets}
+        self.assertEqual(set(by_source), {
+            "deployment/systemd/dev/" + self.socket_path.name,
+            "deployment/systemd/dev/" + self.service_path.name,
+        })
+        for path, raw in ((self.socket_path, self.socket_raw),
+                          (self.service_path, self.service_raw)):
+            source = "deployment/systemd/dev/" + path.name
+            with self.subTest(source=source):
+                self.assertEqual(hashlib.sha256(raw).hexdigest(), by_source[source].sha256)
 
     def test_adversarial_operational_changes_are_rejected(self):
         """Try altered directives in memory; never write or launch a unit."""

@@ -1188,9 +1188,32 @@ numeric ID already exists, both directions must match the reviewed identity;
 an existing user must have the exact primary and required supplementary group
 set. Existing reviewed paths must have exact type, mode and ownership with no
 symlinked component. Existing C17 configuration and systemd assets must also
-match their exact reviewed bytes. An existing future venv root must be empty;
-C29 cannot accept an unreviewed pre-populated venv. Conflicting pre-existing
-objects fail closed and are never repaired.
+match their exact reviewed bytes. C17 canonical bytes remain the configuration
+authority. For systemd units, C29 no longer reads the repository checkout as an
+expected-content source: it hashes each installed destination through bounded,
+descriptor-relative no-follow reads and compares it directly with the immutable
+C23 SHA-256 for that C22 asset. Missing, modified, same-size substituted,
+symlinked or metadata-conflicting units fail closed. Modified or missing checkout
+bytes therefore cannot redefine C29's installed-unit expectation. An existing
+future venv root must be empty; C29 cannot accept an unreviewed pre-populated
+venv. Conflicting pre-existing objects fail closed and are never repaired.
+
+The shared C22/C23 unit-content trust chain is:
+
+```text
+C22 reviewed unit bytes
+        |
+        v
+C23 immutable SHA-256
+       / \
+      v   v
+C29 installed-file check    C30 source-before-installation verification
+```
+
+C29 compares installed units with C23 digests; C30 compares captured candidate
+source bytes with the same digests before writing. Checkout bytes cannot alter
+C29's expectation, while a mutable checkout can only make C30 fail verification.
+Neither boundary performs systemd daemon-reload, enable, start or activation.
 
 An absent C21 application root is acceptable. If present, it must have C23
 metadata and its complete descriptor-relative tree must exactly match the
@@ -1216,6 +1239,63 @@ C30 remains the future narrowly privileged runtime boundary. C31 remains the
 future account/path/configuration/application/venv/package installation and
 provisioning mechanism. Live activation remains separately blocked by GitHub
 protection prerequisites and a later activation review.
+
+## C30 narrow privileged host runtime
+
+C30 implements repository-side primitives for the middle of the fixed
+`C29 -> C30 -> C31` sequence. It is separate from
+`RestrictedPrivilegedExecutor` and `DockerRuntimeAdapter`: those existing
+components retain the authenticated DEV deployment and Docker/Compose boundary,
+while C30 can only perform individual future host-provisioning mutations. C30
+does not change or compose either existing deployment boundary.
+
+`DevPrivilegedHostRuntime(*, configuration)` revalidates the exact C17 object,
+reconstructs C13/C21/C23 internally, and captures immutable closed authority.
+Its only explicit operations create or verify one reviewed group, create or
+verify one reviewed non-login service user with exact memberships, create or
+verify one reviewed directory, atomically install the exact constructor-bound
+C17 configuration, or atomically install one of C23's two repository-owned
+systemd assets. Each C23 asset mapping binds its C22 source path, destination,
+metadata and exact reviewed source SHA-256. Name, path and destination arguments
+are selectors into those closed C13/C21/C23 sets; unknown values fail before
+mutation. It does not expose a shell, arbitrary command, argv, environment,
+path, principal, mode, ownership, digest, file payload or source selector.
+
+Account creation uses only absolute `/usr/sbin/groupadd` and
+`/usr/sbin/useradd`, with internally generated argv, a closed environment,
+closed stdin/output, a finite timeout, collision checks in both name/ID
+directions and post-operation verification. Users have `/nonexistent` home and
+`/usr/sbin/nologin`; supplementary memberships are exactly C13/C23's set. No
+sudo or Docker membership is granted.
+
+Filesystem primitives traverse retained directory descriptors with
+`O_DIRECTORY | O_NOFOLLOW`, reject symlink components and conflicting existing
+objects, and use exact reviewed UID/GID/mode. Regular files use bounded writes,
+a same-directory exclusive temporary regular file, `fsync`, atomic replacement,
+post-install descriptor-relative verification and identity-bound cleanup on
+failure. Before privileged asset installation, C30 reads the bounded C23 source
+through descriptor-relative no-follow traversal, revalidates named/opened file
+identity, hashes the exact captured bytes and requires the C23 SHA-256. Checkout
+ownership is not content provenance: a mutable or replaced checkout can cause
+the operation to fail, but cannot authorize different unit bytes. This is the
+same immutable digest C29 uses to qualify an installed destination without
+consulting checkout bytes. A directory
+created by a failed invocation receives identity-bound, descriptor-relative
+`rmdir` cleanup only while its pathname still identifies that exact empty
+directory; cleanup never recurses or removes a pre-existing/substituted object.
+These primitives never repair an unreviewed ownership or mode conflict.
+
+Import and construction perform no host operation. No method runs
+automatically, and nothing in C30 installs or activates this helper. C30 does
+not perform provisioning order or convergence policy, application-tree
+installation, venv construction, wheel/pip/apt installation, state/replay/audit
+initialization, socket creation, systemd reload/enable/start, Docker or registry
+operations, networking, workflow changes or deployment activation. C31 must
+later supply the reviewed ordering, C26 application and C28 wheel orchestration,
+venv/bootstrap mechanics, initialization, convergence and the systemd lifecycle.
+No daemon-reload, enable, start or activation authority exists in C30.
+Live activation remains blocked by ADR 0011's GitHub protection prerequisite
+and a separate activation review.
 
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 

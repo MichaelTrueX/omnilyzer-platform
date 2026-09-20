@@ -44,6 +44,10 @@ _LIFECYCLES = (
     "must-contain-c17-canonical-config-before-activation",
     "future-systemd-socket-directory-creation-only",
 )
+_SYSTEMD_ASSET_SHA256 = (
+    "4211b0a4498548a54c4aedeaeb419aef84fb76d16f9da5f60a40b20be1daf95f",
+    "00b4d6bef37a1582092ec927cd8501ff922c209f7b10542d264a9c48b74088fa",
+)
 
 
 def _valid_id(value: object, *, positive: bool = False) -> bool:
@@ -140,10 +144,11 @@ class HostPathRequirement:
 
 @_dataclass(frozen=True, slots=True)
 class HostInstalledAssetRequirement:
-    """Describe a future repository-source to installed-destination mapping."""
+    """Bind one future installed destination to exact reviewed source bytes."""
 
     source_path: str
     destination_path: str
+    sha256: str
     mode: int
     owner_uid: int
     group_gid: int
@@ -153,6 +158,8 @@ class HostInstalledAssetRequirement:
         if (
             not _valid_path(self.source_path, absolute=False)
             or not _valid_path(self.destination_path, absolute=True)
+            or type(self.sha256) is not str
+            or _fullmatch(r"[0-9a-f]{64}", self.sha256) is None
             or not _valid_metadata(self.mode, self.owner_uid, self.group_gid)
         ):
             raise TypeError(_ERROR)
@@ -248,12 +255,17 @@ class DevHostProvisioningContract:
             or any(item.path in path_names for item in resources)
         ):
             raise ValueError(_ERROR)
-        assets = tuple(
+        assets = (
             HostInstalledAssetRequirement(
-                "deployment/systemd/dev/" + name,
-                "/etc/systemd/system/" + name, 0o644, 0, 0,
-            )
-            for name in (layout.executor_socket_unit_name, layout.executor_service_unit_name)
+                "deployment/systemd/dev/" + layout.executor_socket_unit_name,
+                "/etc/systemd/system/" + layout.executor_socket_unit_name,
+                _SYSTEMD_ASSET_SHA256[0], 0o644, 0, 0,
+            ),
+            HostInstalledAssetRequirement(
+                "deployment/systemd/dev/" + layout.executor_service_unit_name,
+                "/etc/systemd/system/" + layout.executor_service_unit_name,
+                _SYSTEMD_ASSET_SHA256[1], 0o644, 0, 0,
+            ),
         )
         object.__setattr__(self, "_layout", layout)
         object.__setattr__(self, "_groups", groups)
