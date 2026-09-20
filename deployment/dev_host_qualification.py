@@ -44,6 +44,7 @@ _PAYLOAD_PATH = "provenance/python3.12-3.12.3-1ubuntu0.17-amd64-payload.json"
 _PAYLOAD_SIZE = 127763
 _PAYLOAD_SHA256 = "8e1b6d6a96105e0d8d38a6749768101b0d4603f9568dffbf2a247bea0ee16319"
 _CHUNK = 64 * 1024
+_MAX_MANAGED_FILE_BYTES = 64 * 1024
 
 
 class HostQualificationError(Exception):
@@ -436,9 +437,14 @@ def _kind_matches(mode: int, kind: str) -> bool:
 
 
 def _observe_managed_path(path: str, kind: str, mode: int, uid: int, gid: int,
-                          expected_bytes: bytes | None = None) -> HostManagedPathObservation:
+                          expected_bytes: bytes | None = None,
+                          expected_sha256: str | None = None) -> HostManagedPathObservation:
     owned = []
     try:
+        if expected_sha256 is not None:
+            if expected_bytes is not None or kind != "regular_file": raise OSError
+            try: _digest(expected_sha256)
+            except Exception: raise OSError from None
         parent, name = _open_parent(path, owned)
         if parent is None:
             return HostManagedPathObservation(path, kind, "absent", mode, uid, gid)
@@ -453,7 +459,7 @@ def _observe_managed_path(path: str, kind: str, mode: int, uid: int, gid: int,
             if kind == "directory": flags |= _os.O_DIRECTORY
             descriptor = _os.open(name, flags, dir_fd=parent); owned.append(descriptor)
             opened = _os.fstat(descriptor)
-            if (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino): raise OSError
+            if _fingerprint(named) != _fingerprint(opened): raise OSError
             if expected_bytes is not None:
                 data = bytearray()
                 while len(data) <= len(expected_bytes):
@@ -461,6 +467,16 @@ def _observe_managed_path(path: str, kind: str, mode: int, uid: int, gid: int,
                     if not chunk: break
                     data.extend(chunk)
                 if bytes(data) != expected_bytes: raise OSError
+            elif expected_sha256 is not None:
+                if opened.st_size < 0 or opened.st_size > _MAX_MANAGED_FILE_BYTES: raise OSError
+                digest = _hashlib.sha256(); remaining = opened.st_size
+                while remaining:
+                    chunk = _os.read(descriptor, min(_CHUNK, remaining))
+                    if not chunk: raise OSError
+                    digest.update(chunk); remaining -= len(chunk)
+                if _os.read(descriptor, 1) != b"" or digest.hexdigest() != expected_sha256:
+                    raise OSError
+            if _fingerprint(_os.fstat(descriptor)) != _fingerprint(opened): raise OSError
         if _fingerprint(_named_status(path)) != _fingerprint(named): raise OSError
         return HostManagedPathObservation(path, kind, "exact", mode, uid, gid)
     finally:
@@ -468,6 +484,8 @@ def _observe_managed_path(path: str, kind: str, mode: int, uid: int, gid: int,
 
 
 def _observe_paths(contract: _c23.DevHostProvisioningContract, configuration):
+    if type(contract) is not _c23.DevHostProvisioningContract: raise OSError
+    _c23.DevHostProvisioningContract.__post_init__(contract)
     observations = []
     config_path = "/etc/omnilyzer/deployment/dev/executor.json"
     for item in (*contract.path_requirements(), *contract.runtime_resource_requirements()):
@@ -488,9 +506,9 @@ def _observe_paths(contract: _c23.DevHostProvisioningContract, configuration):
             finally:
                 for descriptor in reversed(owned): _os.close(descriptor)
     for asset in contract.installed_asset_requirements():
-        source = _read_small_regular(_os.path.join(_os.path.dirname(__file__), asset.source_path.removeprefix("deployment/")), 65536)
         observations.append(_observe_managed_path(asset.destination_path, "regular_file", asset.mode,
-                                                  asset.owner_uid, asset.group_gid, source))
+                                                  asset.owner_uid, asset.group_gid,
+                                                  expected_sha256=asset.sha256))
     return tuple(observations)
 
 
