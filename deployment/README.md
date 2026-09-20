@@ -1482,15 +1482,109 @@ cffi 2.1.1 and pycparser 3.0), the exact `pyvenv.cfg`, no system site packages,
 the reviewed `/usr/bin/python3.12` relationship, and no installed pip or extra
 runtime package.
 
-C31B still needs narrowly named C30 operations for C26 tree materialization,
+C31B supplies narrowly named closed mechanics for C26 tree materialization,
 the identity-bound input snapshot, exact no-pip venv construction, exact
-offline installation, identity-bound snapshot cleanup, and closed
-state/replay/audit prerequisites. C31A does not add a general command, path,
-copy, write or remove API. Canonical initial no-active state bytes and their
+offline installation and identity-bound snapshot cleanup. Closed
+state/replay/audit prerequisites remain deferred. Neither C31A nor C31B adds a
+general command, path, copy, write or remove API. Canonical initial no-active state bytes and their
 timestamp/event-id authority remain to be closed before initialization; replay
 must never replace an existing database, and audit provisioning must preserve
 history. Systemd daemon-reload/enable/start and live activation remain outside
 C31A and blocked by ADR 0011's protection prerequisite.
+
+## C31B narrow privileged provisioning mechanics
+
+`DevHostProvisioningMechanics` is an inert, constructor-bound C31B facade. It
+is separate from, and does not broaden, `RestrictedPrivilegedExecutor`,
+`DockerRuntimeAdapter`, or C30's existing public API. It exposes only two
+explicit mechanics: materialize the exact C26 application tree, and construct
+the exact reviewed Python environment from fixed qualified inputs. Import and
+construction do no I/O. The facade is not composed into the broker, executor,
+listener, service units or workflow and has not been installed or invoked on
+the DEV host.
+
+Application materialization opens the caller-selected repository location
+without following symlink components and retains that directory descriptor.
+Fixed `/usr/bin/git --no-replace-objects` reads only the exact 28 C25 paths at
+the C17/C26 40-character commit through `/proc/self/fd`; lazy fetch, replacement
+objects, prompts and Git configuration are disabled. All blob bytes are
+captured within fixed bounds and independently SHA-256 checked against C26
+before the application destination is mutated. Dirty working-tree bytes never
+participate. The fixed C23 application root must already have exact ownership
+and mode. Existing entries must be an exact subset, missing 0755 directories
+and 0644 files are created descriptor-relative, and each file uses an exclusive
+same-directory temporary inode plus a no-replace hard-link publication step,
+file/directory fsync and final complete-tree verification. Conflicts, symlinks
+and extra entries fail closed; no arbitrary pruning or recursive deletion is
+available.
+
+C31B privately composes C28 and C31P through their existing qualification logic
+while their verified source descriptors remain open. It copies only from those
+descriptors into this fixed single-use structure:
+
+```text
+/opt/omnilyzer/deployment/.provisioning-inputs/       root:root 0700
+    pip/                                               root:root 0700
+        pip-26.2.1-py3-none-any.whl                    root:root 0400
+    wheels/                                            root:root 0700
+        <the exact four C24 wheel filenames>           root:root 0400
+    requirements/                                      root:root 0700
+        requirements-linux-x86_64-py312.lock           root:root 0400
+```
+
+The source wheelhouse must still have exactly four entries and the installer
+staging directory exactly one. The fixed repository lock is opened beneath a
+retained repository descriptor with no-follow traversal and must match C24's
+SHA-256
+`13c7b3f0050f9aff0a94ab324a66276638f8b1b9dd0c62232ec205b24d874d0d`.
+Every snapshot file is streamed in bounded chunks, rehashed, fsynced, reopened
+read-only and retained by inode. C28/C31P source descriptors and directories
+are revalidated after copying. Immediately before venv construction, before
+pip, after pip and during cleanup, the snapshot names, inode metadata, complete
+entry sets and file hashes are revalidated. A pre-existing snapshot root is
+never reused.
+
+Fresh exact C29 evidence is required before Python construction. It must bind
+the C27 package/platform payload, the same C28 wheelhouse, and an absent exact
+C23 venv target. The construction process is exactly:
+
+```text
+/usr/bin/python3.12 -m venv --without-pip \
+  /opt/omnilyzer/deployment/venv
+```
+
+It uses `shell=False`, stdin/stdout/stderr disconnected, a fixed timeout,
+umask 0022 and only `HOME=/nonexistent`, `LANG=C`, `LC_ALL=C` and
+`PATH=/usr/bin:/bin`. An existing target is accepted only when it is the exact
+empty C23 directory. No ensurepip, system pip or inherited Python environment
+is used.
+
+Runtime installation executes the C31P bootstrap with the exact venv Python,
+`-I`, the retained private pip-wheel pathname, the private four-wheel directory
+and the private C24 lock. Its arguments remain exactly `--no-input`,
+`--disable-pip-version-check`, `--no-cache-dir`, `--no-index`,
+`--only-binary=:all:`, `--no-deps`, `--require-hashes`, `--no-compile`, the
+fixed `--find-links`, and the fixed `--requirement`. The closed environment
+also fixes `PIP_CONFIG_FILE=/dev/null`, `PIP_DISABLE_PIP_VERSION_CHECK=1`,
+`PIP_NO_INDEX=1` and `PIP_NO_INPUT=1`; no proxy, cache, index, compiler, source
+build, dependency discovery or installer upgrade authority exists.
+
+A zero return code is insufficient. C31B revalidates the retained snapshot and
+then invokes C31A's `qualify_dev_python_environment()`; only its exact 237-entry
+evidence permits the operation to return. Snapshot cleanup first proves every
+created file and directory still has its recorded identity and that no unknown
+entry exists, then removes only those fixed names descriptor-relative and
+fsyncs parents. Partial application/snapshot artifacts receive the same
+identity-bound cleanup where their complete known structure can be proven.
+Substituted, unknown or nonempty state is never recursively removed. A failed
+venv is deliberately left for operator inspection because safe generic tree
+removal cannot be proven; C31B never destroys a pre-existing venv.
+
+Deployment-state initialization, replay initialization, audit prerequisites,
+the complete 22-step orchestration and every systemd lifecycle operation remain
+deferred. C31B performs no Docker, registry, candidate-image, workflow, OIDC or
+activation operation. Actual host provisioning and live activation remain
+prohibited by ADR 0011's protection prerequisite.
 
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 

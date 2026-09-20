@@ -291,12 +291,17 @@ def _close(owned: list[int]) -> tuple[bool, BaseException | None]:
     return failed, control
 
 
-def _qualify(
+def _qualify_open(
     path: str,
     requirement: "_integrity.PythonEnvironmentIntegrityRequirement",
     owned: list[int],
-) -> DevWheelhouseEvidence:
-    """Perform one complete read-only qualification while descriptors are owned."""
+) -> tuple[
+    DevWheelhouseEvidence,
+    int,
+    tuple[tuple[int, str, tuple[int, ...]], ...],
+    list[tuple[int, str | None, int | None, tuple[int, ...]]],
+]:
+    """Qualify while retaining exact descriptors for private C31B composition."""
     directory_flags, file_flags = _flags()
     opened, directory = _open_path(path, directory_flags, owned)
     expected_names = tuple(sorted(wheel.filename for wheel in requirement.wheels))
@@ -318,7 +323,20 @@ def _qualify(
         raise OSError
     _revalidate_files(directory, opened_files)
     _revalidate_directories(opened)
-    return DevWheelhouseEvidence(path, "sha256", tuple(files), requirement)
+    evidence = DevWheelhouseEvidence(path, "sha256", tuple(files), requirement)
+    return evidence, directory, tuple(opened_files), opened
+
+
+def _qualify(
+    path: str,
+    requirement: "_integrity.PythonEnvironmentIntegrityRequirement",
+    owned: list[int],
+) -> DevWheelhouseEvidence:
+    """Perform one complete read-only qualification while descriptors are owned."""
+    evidence, _directory, _files, _directories = _qualify_open(
+        path, requirement, owned,
+    )
+    return evidence
 
 
 def qualify_dev_wheelhouse(
