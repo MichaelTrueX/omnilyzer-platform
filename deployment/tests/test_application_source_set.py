@@ -166,6 +166,7 @@ class ApplicationSourceSetTests(unittest.TestCase):
         excluded = {
             "application_source_set.py", "host_service_layout.py", "host_provisioning_contract.py",
             "installation_integrity_contract.py", "pyproject.toml",
+            "python_interpreter_provenance.py",
             "requirements-linux-x86_64-py312.lock", "DEPENDENCIES.md", "README.md",
             "runtime/dev/README.md", "runtime/dev/host-nginx.conf", "oidc_verifier.py",
             "broker_composition.py", "runtime.py",
@@ -174,7 +175,8 @@ class ApplicationSourceSetTests(unittest.TestCase):
         for path in self.paths:
             self.assertTrue(path.startswith("deployment/"))
             self.assertFalse(any(path.startswith("deployment/" + prefix + "/")
-                                 for prefix in ("tests", "schemas", "systemd", "environments")))
+                                 for prefix in ("tests", "schemas", "systemd", "environments",
+                                                "provenance")))
         self.assertIn("deployment/broker.py", self.paths)
         self.assertIn("deployment/jwks.py", self.paths)
 
