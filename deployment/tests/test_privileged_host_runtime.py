@@ -4,6 +4,7 @@ import ast
 import builtins
 from contextlib import ExitStack
 import dataclasses
+import hashlib
 import importlib
 import inspect
 import os
@@ -86,7 +87,8 @@ class PublicBoundaryTests(unittest.TestCase):
             mocked = [stack.enter_context(patch.object(owner, name, side_effect=AssertionError(name)))
                       for owner, name in (
                           (subprocess, "run"), (os, "mkdir"), (os, "write"),
-                          (os, "replace"), (os, "unlink"), (os, "fchmod"), (os, "fchown"),
+                          (os, "replace"), (os, "unlink"), (os, "rmdir"),
+                          (os, "fchmod"), (os, "fchown"),
                           (builtins, "open"))]
             module.DevPrivilegedHostRuntime(configuration=self.configuration)
             for item in mocked:
@@ -170,17 +172,26 @@ class PublicBoundaryTests(unittest.TestCase):
 
         asset = self.authority.assets[0]
         expected = module.HostMutationEvidence("regular_file", asset.destination_path, "created")
-        with patch.object(module, "_read_reviewed_source", return_value=b"unit\n") as read, \
-             patch.object(module, "_install_atomic", return_value=expected) as install:
+        reviewed = (ROOT / asset.source_path).read_bytes()
+        with patch.object(module, "_install_atomic", return_value=expected) as install:
             self.assertEqual(self.runtime.install_required_asset(asset.destination_path), expected)
-        self.assertEqual(read.call_count, 1)
         requirement, payload, directories = install.call_args.args
         self.assertEqual((requirement.path, requirement.mode,
                           requirement.owner_uid, requirement.group_gid),
                          (asset.destination_path, asset.mode,
                           asset.owner_uid, asset.group_gid))
-        self.assertEqual(payload, b"unit\n")
+        self.assertEqual(payload, reviewed)
+        self.assertEqual(hashlib.sha256(payload).hexdigest(), asset.sha256)
         self.assertIs(directories, self.authority.directories)
+
+        with patch.object(module, "_read_reviewed_source", side_effect=OSError), \
+             patch.object(module, "_install_atomic") as install, \
+             self.assertRaises(module.HostRuntimeError) as caught:
+            self.runtime.install_required_asset(asset.destination_path)
+        self.assertEqual(str(caught.exception), ERROR)
+        install.assert_not_called()
+        with self.assertRaises(TypeError):
+            self.runtime.install_required_asset(asset.destination_path, asset.sha256)
 
 
 class AccountPrimitiveTests(unittest.TestCase):
@@ -251,8 +262,56 @@ class AccountPrimitiveTests(unittest.TestCase):
         run.assert_not_called()
 
 
+class ReviewedSourceTests(unittest.TestCase):
+    def test_l_exact_digest_succeeds_and_changed_bytes_fail(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "unit.service"
+            reviewed = b"[Service]\nExecStart=/reviewed\n"
+            digest = hashlib.sha256(reviewed).hexdigest()
+            source.write_bytes(reviewed)
+            self.assertEqual(module._read_reviewed_source(str(source), digest), reviewed)
+            source.write_bytes(reviewed + b"# changed\n")
+            with self.assertRaises(OSError):
+                module._read_reviewed_source(str(source), digest)
+            source.write_bytes(b"x" * (module._MAX_FILE_BYTES + 1))
+            with self.assertRaises(OSError):
+                module._read_reviewed_source(str(source), digest)
+            for malformed in ("", "A" * 64, "0" * 63, "g" * 64):
+                with self.assertRaises(OSError):
+                    module._read_reviewed_source(str(source), malformed)
+
+    def test_m_source_and_parent_symlinks_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); real = root / "real"; real.mkdir()
+            source = real / "unit.service"; source.write_bytes(b"reviewed\n")
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            file_link = real / "linked.service"; file_link.symlink_to(source.name)
+            parent_link = root / "linked-parent"; parent_link.symlink_to(real, target_is_directory=True)
+            for candidate in (file_link, parent_link / source.name):
+                with self.subTest(candidate=candidate), self.assertRaises(OSError):
+                    module._read_reviewed_source(str(candidate), digest)
+
+    def test_n_source_replacement_during_read_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "unit.service"
+            replacement = Path(temporary) / "replacement.service"
+            reviewed = b"reviewed\n"; source.write_bytes(reviewed)
+            replacement.write_bytes(reviewed)
+            digest = hashlib.sha256(reviewed).hexdigest()
+            read_exact = module._read_exact
+
+            def replace_after_read(descriptor, size):
+                payload = read_exact(descriptor, size)
+                os.replace(replacement, source)
+                return payload
+
+            with patch.object(module, "_read_exact", side_effect=replace_after_read), \
+                 self.assertRaises(OSError):
+                module._read_reviewed_source(str(source), digest)
+
+
 class FilesystemPrimitiveTests(unittest.TestCase):
-    def test_l_directory_creation_and_exact_existing_directory(self):
+    def test_o_directory_creation_and_exact_existing_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
             parent, child, _ = temporary_authorities(temporary)
             created = module._ensure_directory(child, (parent, child))
@@ -261,7 +320,7 @@ class FilesystemPrimitiveTests(unittest.TestCase):
             unchanged = module._ensure_directory(child, (parent, child))
             self.assertEqual(unchanged.outcome, "unchanged")
 
-    def test_m_directory_wrong_type_mode_and_symlink_parent_fail(self):
+    def test_p_directory_wrong_type_mode_and_symlink_parent_fail(self):
         with tempfile.TemporaryDirectory() as temporary:
             parent, child, _ = temporary_authorities(temporary)
             Path(child.path).write_bytes(b"wrong")
@@ -281,7 +340,70 @@ class FilesystemPrimitiveTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 module._ensure_directory(child, (parent, child))
 
-    def test_n_atomic_file_create_unchanged_and_replace(self):
+    def test_q_new_directory_failure_cleanup_is_identity_bound_and_nonrecursive(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent, child, _ = temporary_authorities(temporary)
+            with patch.object(module._os, "fchmod", side_effect=OSError), \
+                 self.assertRaises(OSError):
+                module._ensure_directory(child, (parent, child))
+            self.assertFalse(Path(child.path).exists())
+
+        with tempfile.TemporaryDirectory() as temporary:
+            parent, child, _ = temporary_authorities(temporary)
+            module._ensure_directory(child, (parent, child))
+            with patch.object(module, "_revalidate_chain", side_effect=OSError), \
+                 patch.object(module._os, "rmdir") as rmdir, self.assertRaises(OSError):
+                module._ensure_directory(child, (parent, child))
+            rmdir.assert_not_called()
+            self.assertTrue(Path(child.path).is_dir())
+
+        with tempfile.TemporaryDirectory() as temporary:
+            parent, child, _ = temporary_authorities(temporary)
+            original = Path(child.path + "-original")
+
+            def substitute(*_arguments):
+                os.rename(child.path, original)
+                os.mkdir(child.path, 0o700)
+                raise OSError
+
+            with patch.object(module._os, "fchmod", side_effect=substitute), \
+                 self.assertRaises(OSError):
+                module._ensure_directory(child, (parent, child))
+            self.assertTrue(original.is_dir())
+            self.assertTrue(Path(child.path).is_dir())
+
+        with tempfile.TemporaryDirectory() as temporary:
+            parent, child, _ = temporary_authorities(temporary)
+
+            def make_nonempty(*_arguments):
+                (Path(child.path) / "attacker-entry").write_bytes(b"x")
+                raise OSError
+
+            with patch.object(module._os, "fchmod", side_effect=make_nonempty), \
+                 self.assertRaises(OSError):
+                module._ensure_directory(child, (parent, child))
+            self.assertEqual(tuple(path.name for path in Path(child.path).iterdir()),
+                             ("attacker-entry",))
+
+    def test_r_directory_cleanup_failure_is_a_generic_public_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent, child, _ = temporary_authorities(temporary)
+            _, runtime_instance = runtime()
+            authority = object.__getattribute__(runtime_instance, "_authority")
+            object.__setattr__(runtime_instance, "_authority", dataclasses.replace(
+                authority, directories=(parent, child)))
+
+            def fail_with_nonempty_directory(*_arguments):
+                (Path(child.path) / "entry").write_bytes(b"x")
+                raise OSError("host detail")
+
+            with patch.object(module._os, "fchmod", side_effect=fail_with_nonempty_directory), \
+                 self.assertRaises(module.HostRuntimeError) as caught:
+                runtime_instance.create_required_directory(child.path)
+            self.assertEqual(str(caught.exception), ERROR)
+            self.assertIsNone(caught.exception.__cause__)
+
+    def test_s_atomic_file_create_unchanged_and_replace(self):
         with tempfile.TemporaryDirectory() as temporary:
             parent, child, file = temporary_authorities(temporary)
             module._ensure_directory(child, (parent, child))
@@ -296,7 +418,7 @@ class FilesystemPrimitiveTests(unittest.TestCase):
             self.assertEqual((stat.S_IMODE(status.st_mode), status.st_uid, status.st_gid),
                              (file.mode, file.owner_uid, file.group_gid))
 
-    def test_o_file_symlink_wrong_type_and_mode_conflicts_fail(self):
+    def test_t_file_symlink_wrong_type_and_mode_conflicts_fail(self):
         for kind in ("symlink", "directory", "wrong_mode"):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temporary:
                 parent, child, file = temporary_authorities(temporary)
@@ -307,7 +429,7 @@ class FilesystemPrimitiveTests(unittest.TestCase):
                 with self.assertRaises(OSError):
                     module._install_atomic(file, b"reviewed", (parent, child))
 
-    def test_p_existing_file_wrong_uid_and_gid_fail(self):
+    def test_u_existing_file_wrong_uid_and_gid_fail(self):
         for field in ("owner_uid", "group_gid"):
             with self.subTest(field=field), tempfile.TemporaryDirectory() as temporary:
                 parent, child, file = temporary_authorities(temporary)
@@ -319,7 +441,7 @@ class FilesystemPrimitiveTests(unittest.TestCase):
                 with self.assertRaises(OSError):
                     module._install_atomic(conflicting, b"reviewed", (parent, child))
 
-    def test_q_failed_atomic_write_removes_only_owned_temporary(self):
+    def test_v_failed_atomic_write_removes_only_owned_temporary(self):
         with tempfile.TemporaryDirectory() as temporary:
             parent, child, file = temporary_authorities(temporary)
             module._ensure_directory(child, (parent, child))
@@ -328,7 +450,7 @@ class FilesystemPrimitiveTests(unittest.TestCase):
             self.assertFalse(Path(file.path).exists())
             self.assertFalse((Path(child.path) / module._TEMPORARY_NAME).exists())
 
-    def test_r_bounded_payload_and_substitution_failure(self):
+    def test_w_bounded_payload_and_substitution_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
             parent, child, file = temporary_authorities(temporary)
             module._ensure_directory(child, (parent, child))
@@ -340,7 +462,7 @@ class FilesystemPrimitiveTests(unittest.TestCase):
 
 
 class StaticBoundaryTests(unittest.TestCase):
-    def test_s_no_general_command_path_network_or_activation_authority(self):
+    def test_x_no_general_command_path_network_or_activation_authority(self):
         source = Path(module.__file__).read_text(); tree = ast.parse(source)
         imports = set()
         for node in ast.walk(tree):
@@ -359,7 +481,7 @@ class StaticBoundaryTests(unittest.TestCase):
         self.assertFalse(hasattr(module.DevPrivilegedHostRuntime, "write"))
         self.assertFalse(hasattr(module.DevPrivilegedHostRuntime, "copy"))
 
-    def test_t_documented_separation_authority_and_deferrals(self):
+    def test_y_documented_separation_authority_and_deferrals(self):
         documentation = (ROOT / "deployment/README.md").read_text()
         section = documentation.split("## C30 narrow privileged host runtime", 1)[1]
         for required in (
