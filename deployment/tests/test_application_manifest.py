@@ -260,6 +260,8 @@ class RepositoryTests(unittest.TestCase):
                          "dev_host_provisioning_plan.py", "python_environment_qualification.py",
                          "dev_host_provisioning_mechanics.py",
                          "dev_persistent_state_prerequisites.py",
+                         "dev_post_provision_qualification.py",
+                         "dev_host_provisioning_orchestration.py",
                          "runtime/dev/host-nginx.conf"):
             self.assertNotIn("deployment/" + excluded, PATHS)
         self.assertFalse(any("/systemd/" in path for path in PATHS))
