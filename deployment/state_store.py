@@ -651,7 +651,7 @@ class FilesystemDeploymentStateStore:
         group_gid = _configuration_integer(expected_group_gid)
         configuration = _build_configuration(
             path="/var/lib/omnilyzer/deployment/dev/state.json",
-            owner_uid=owner_uid, group_gid=group_gid, owned_start=2,
+            owner_uid=owner_uid, group_gid=group_gid, owned_start=4,
         )
         object.__setattr__(self, "_configuration", configuration)
 

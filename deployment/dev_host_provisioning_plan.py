@@ -58,9 +58,9 @@ _STEP_ROWS = (
     (16, "bind-fresh-c28-qualification-to-consumption", "C31B/C30"),
     (17, "install-exact-c24-runtime-wheels", "C31B/C30"),
     (18, "qualify-post-install-python-environment", "C31A"),
-    (19, "establish-initial-deployment-state-prerequisites", "C31B"),
-    (20, "initialize-replay-under-existing-lifecycle", "C31B"),
-    (21, "establish-audit-prerequisites-preserving-history", "C31B"),
+    (19, "establish-initial-deployment-state-prerequisites", "C31C"),
+    (20, "initialize-replay-under-existing-lifecycle", "C31C"),
+    (21, "establish-audit-prerequisites-preserving-history", "C31C"),
     (22, "verify-post-provision-convergence-and-integrity", "C31B"),
 )
 
@@ -106,12 +106,10 @@ _C30_EXTENSIONS = (
     "construct-exact-no-pip-venv",
     "install-exact-offline-runtime-wheels",
     "remove-own-identity-bound-input-snapshot",
-    "establish-deployment-state-initialization-boundary",
-    "establish-replay-and-audit-prerequisites",
 )
 _LIFECYCLE = (
-    "deployment-state: C31B/C31C must define canonical no-active bytes and "
-    "timestamp/event-id authority; initialize only an absent exact path; never reset existing state",
+    "deployment-state: C31C owns fixed canonical no-active bootstrap bytes and "
+    "sentinel metadata; initialize only an absent exact path; never reset existing state",
     "replay: initialize only an already-secured empty directory; never replace a database",
     "audit: establish prerequisites only; preserve every existing history entry",
 )

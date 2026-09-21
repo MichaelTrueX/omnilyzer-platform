@@ -125,6 +125,12 @@ class ApiAndInertnessTests(StateStoreTestCase):
         )
         signature = inspect.signature(FilesystemDeploymentStateStore)
         self.assertNotIn("path", signature.parameters)
+        production = FilesystemDeploymentStateStore(
+            expected_owner_uid=2001, expected_group_gid=2002,
+        )
+        self.assertEqual(
+            object.__getattribute__(production, "_configuration").owned_start, 4,
+        )
         forbidden = {
             "initialize", "repair", "reset", "delete", "create", "migrate",
             "enumerate", "status", "chmod", "chown", "unlink", "temporary",

@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import multiprocessing
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import stat
 import subprocess
@@ -1107,6 +1108,7 @@ class CorrectiveSQLitePolicyTests(ReplayTestCase):
         ):
             self.assertEqual(observed.count(required), 3)
 
+
     def test_extension_loading_is_disabled_before_schema_queries(self) -> None:
         events: list[str] = []
         real_connect = sqlite3.connect
@@ -1149,6 +1151,114 @@ class CorrectiveSQLitePolicyTests(ReplayTestCase):
         ):
             self.unavailable(lambda: self.consume(), "extension-marker")
         self.assertTrue(closed)
+
+
+class DescriptorBoundValidationTests(ReplayTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.initialize()
+        self.consume("retained-jti", run_id=7)
+
+    def _replacement(self, name: str = "replacement.sqlite3") -> Path:
+        value = self.directory.parent / f"{self.directory.name}-{name}"
+        shutil.copy2(self.path, value)
+        self.addCleanup(lambda: value.unlink(missing_ok=True))
+        return value
+
+    def test_validate_opens_sqlite_through_the_retained_database_descriptor(self) -> None:
+        replacement = self._replacement()
+        replacement.write_bytes(b"malformed replacement")
+        replacement.chmod(DATABASE_MODE)
+        held = self.directory.parent / f"{self.directory.name}-held.sqlite3"
+        self.addCleanup(lambda: held.unlink(missing_ok=True))
+        real_connect = sqlite3.connect
+        observed = []
+        uris = []
+
+        def connect(database_uri, *args, **kwargs):
+            uris.append(str(database_uri))
+            os.replace(self.path, held)
+            os.replace(replacement, self.path)
+            try:
+                connection = real_connect(database_uri, *args, **kwargs)
+                observed.extend(
+                    connection.execute("SELECT jti FROM consumptions").fetchall()
+                )
+                return connection
+            finally:
+                os.replace(self.path, replacement)
+                os.replace(held, self.path)
+
+        before = self.path.read_bytes()
+        with patch("deployment.replay_sqlite.sqlite3.connect", side_effect=connect):
+            self.guard.validate()
+        self.assertEqual(len(uris), 1)
+        self.assertRegex(uris[0], r"^file:///proc/self/fd/[0-9]+\?mode=ro$")
+        self.assertEqual(observed, [("retained-jti",)])
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_temporary_valid_name_cannot_hide_malformed_retained_database(self) -> None:
+        valid = self._replacement("valid.sqlite3")
+        self.path.write_bytes(b"malformed original")
+        self.path.chmod(DATABASE_MODE)
+        held = self.directory.parent / f"{self.directory.name}-held.sqlite3"
+        self.addCleanup(lambda: held.unlink(missing_ok=True))
+        real_connect = sqlite3.connect
+
+        def connect(database_uri, *args, **kwargs):
+            os.replace(self.path, held)
+            os.replace(valid, self.path)
+            try:
+                return real_connect(database_uri, *args, **kwargs)
+            finally:
+                os.replace(self.path, valid)
+                os.replace(held, self.path)
+
+        with patch("deployment.replay_sqlite.sqlite3.connect", side_effect=connect):
+            self.unavailable(self.guard.validate)
+        self.assertEqual(self.path.read_bytes(), b"malformed original")
+
+    def test_validate_is_query_only_and_preserves_bytes_metadata_and_rows(self) -> None:
+        before = self.path.read_bytes()
+        with self.direct() as connection:
+            metadata = connection.execute("SELECT * FROM metadata").fetchall()
+            rows = connection.execute("SELECT * FROM consumptions").fetchall()
+        statements = []
+        real_connect = sqlite3.connect
+
+        class RecordingProxy(ConnectionProxy):
+            def execute(self, sql, parameters=()):
+                statements.append(sql)
+                return super().execute(sql, parameters)
+
+        with patch(
+            "deployment.replay_sqlite.sqlite3.connect",
+            side_effect=lambda *args, **kwargs: RecordingProxy(
+                real_connect(*args, **kwargs)
+            ),
+        ):
+            self.guard.validate()
+        forbidden = ("INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "VACUUM")
+        self.assertFalse(any(
+            sql.lstrip().upper().startswith(forbidden) for sql in statements
+        ))
+        self.assertNotIn(f"PRAGMA max_page_count={MAX_PAGE_COUNT}", statements)
+        self.assertEqual(self.path.read_bytes(), before)
+        with self.direct() as connection:
+            self.assertEqual(
+                connection.execute("SELECT * FROM metadata").fetchall(), metadata,
+            )
+            self.assertEqual(
+                connection.execute("SELECT * FROM consumptions").fetchall(), rows,
+            )
+
+    def test_validate_rejects_a_journal_without_recovery_or_removal(self) -> None:
+        journal = self.directory / "replay.sqlite3-journal"
+        journal.write_bytes(b"retained journal")
+        journal.chmod(DATABASE_MODE)
+        before = journal.read_bytes()
+        self.unavailable(self.guard.validate)
+        self.assertEqual(journal.read_bytes(), before)
 
 
 class CorrectiveSemanticsTests(ReplayTestCase):
@@ -1209,6 +1319,8 @@ class CorrectiveSemanticsTests(ReplayTestCase):
         guard = self.make_guard(current_time=clock)
         self.path.unlink()
         guard.initialize()
+        self.assertEqual(calls, 1)
+        guard.validate()
         self.assertEqual(calls, 1)
         guard.consume(
             "clock-jti", expires_at=NOW + 100, request_hash=HASH_A,
@@ -1280,7 +1392,7 @@ class CorrectiveSemanticsTests(ReplayTestCase):
         }
         self.assertEqual(
             public,
-            {"initialize", "consume", "begin_execution", "finish_execution"},
+            {"initialize", "validate", "consume", "begin_execution", "finish_execution"},
         )
 
     def test_maximum_configuration_bound_is_accepted(self) -> None:
