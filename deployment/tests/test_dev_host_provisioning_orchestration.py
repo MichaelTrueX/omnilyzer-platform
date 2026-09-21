@@ -5,11 +5,11 @@ import dataclasses
 import hashlib
 import importlib
 import inspect
-import multiprocessing
 import os
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -258,14 +258,27 @@ class FakePersistent:
         )
 
 
-def process_lock_contender(path, result):
-    try:
-        value = module._acquire_process_lock(path)
-    except OSError:
-        result.put("blocked")
-    else:
-        module._release_process_lock(value)
-        result.put("acquired")
+def independent_lock_attempt(path):
+    repository = str(Path(module.__file__).resolve().parents[1])
+    source = """
+import sys
+sys.path.insert(0, sys.argv[1])
+from deployment.dev_host_provisioning_orchestration import (
+    _acquire_process_lock, _release_process_lock,
+)
+try:
+    held = _acquire_process_lock(sys.argv[2])
+except OSError:
+    raise SystemExit(23)
+_release_process_lock(held)
+"""
+    return subprocess.run(
+        (sys.executable, "-I", "-c", source, repository, str(path)),
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, cwd="/",
+        env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+        shell=False, close_fds=True, timeout=5, check=False,
+    )
 
 
 class OrchestrationTests(unittest.TestCase):
@@ -452,7 +465,7 @@ class OrchestrationTests(unittest.TestCase):
                 pip_installer_staging="/installer",
             )
 
-    def test_f_same_instance_and_cross_process_invocations_are_nonblocking(self):
+    def test_f_same_instance_invocations_are_nonblocking(self):
         local = object.__getattribute__(self.value, "_lock")
         local.acquire()
         try:
@@ -464,27 +477,65 @@ class OrchestrationTests(unittest.TestCase):
         finally:
             local.release()
 
+    def test_g_independent_process_directory_lock_and_cloexec(self):
         with tempfile.TemporaryDirectory(prefix="task014-c31d-lock-") as temporary:
-            path = Path(temporary) / "python3.12"
-            path.write_bytes(b"lock anchor")
-            held = module._acquire_process_lock(str(path))
-            context = multiprocessing.get_context("fork")
-            results = context.Queue()
-            process = context.Process(
-                target=process_lock_contender, args=(str(path), results),
+            anchor = Path(temporary) / "usr" / "bin"
+            anchor.mkdir(parents=True)
+            held = module._acquire_process_lock(str(anchor))
+            blocked = independent_lock_attempt(anchor)
+            self.assertEqual(blocked.returncode, 23)
+            self.assertTrue(
+                module._fcntl.fcntl(held.descriptor, module._fcntl.F_GETFD)
+                & module._fcntl.FD_CLOEXEC,
             )
-            process.start(); process.join(timeout=5)
-            self.assertFalse(process.is_alive())
-            self.assertEqual(results.get(timeout=1), "blocked")
+            probe = subprocess.run(
+                (sys.executable, "-I", "-c",
+                 "import os,sys\ntry: os.fstat(int(sys.argv[1]))\n"
+                 "except OSError: raise SystemExit(0)\nraise SystemExit(1)",
+                 str(held.descriptor)),
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, cwd="/", env={"LC_ALL": "C"},
+                shell=False, close_fds=False, timeout=5, check=False,
+            )
+            self.assertEqual(probe.returncode, 0)
             module._release_process_lock(held)
-            process = context.Process(
-                target=process_lock_contender, args=(str(path), results),
-            )
-            process.start(); process.join(timeout=5)
-            self.assertFalse(process.is_alive())
-            self.assertEqual(results.get(timeout=1), "acquired")
+            acquired = independent_lock_attempt(anchor)
+            self.assertEqual(acquired.returncode, 0)
 
-    def test_g_failure_at_every_sequence_position_stops_later_steps(self):
+    def test_h_child_python_replacement_does_not_split_directory_lock(self):
+        with tempfile.TemporaryDirectory(prefix="task014-c31d-replace-") as temporary:
+            anchor = Path(temporary) / "usr" / "bin"
+            anchor.mkdir(parents=True)
+            interpreter = anchor / "python3.12"
+            interpreter.write_bytes(b"first inode")
+            held = module._acquire_process_lock(str(anchor))
+            replacement = anchor / "replacement"
+            replacement.write_bytes(b"second inode")
+            os.replace(replacement, interpreter)
+            self.assertEqual(independent_lock_attempt(anchor).returncode, 23)
+            module._release_process_lock(held)
+            self.assertEqual(independent_lock_attempt(anchor).returncode, 0)
+
+    def test_i_anchor_symlink_and_replacement_fail_closed(self):
+        with tempfile.TemporaryDirectory(prefix="task014-c31d-anchor-") as temporary:
+            root = Path(temporary)
+            real = root / "real"
+            real.mkdir()
+            link = root / "link"
+            link.symlink_to(real, target_is_directory=True)
+            with self.assertRaises(OSError):
+                module._acquire_process_lock(str(link))
+
+            parent = root / "usr"
+            anchor = parent / "bin"
+            anchor.mkdir(parents=True)
+            held = module._acquire_process_lock(str(anchor))
+            anchor.rename(parent / "old-bin")
+            anchor.mkdir()
+            with self.assertRaises(OSError):
+                module._release_process_lock(held)
+
+    def test_j_failure_at_every_sequence_position_stops_later_steps(self):
         real_step = module._step
         for target in range(1, 23):
             with self.subTest(sequence=target):
@@ -512,6 +563,12 @@ class OrchestrationTests(unittest.TestCase):
 
 class BoundaryTests(unittest.TestCase):
     def test_h_public_api_construction_inert_and_no_activation_authority(self):
+        self.assertEqual(module._PROCESS_LOCK_ANCHOR, "/usr/bin")
+        self.assertEqual(
+            inspect.signature(module._acquire_process_lock)
+            .parameters["path"].default,
+            "/usr/bin",
+        )
         self.assertEqual(module.__all__, (
             "ProvisioningOrchestrationError", "ProvisioningStepEvidence",
             "DevHostProvisioningEvidence", "DevHostProvisioningOrchestrator",

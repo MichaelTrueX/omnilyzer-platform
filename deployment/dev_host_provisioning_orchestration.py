@@ -34,7 +34,7 @@ __all__ = (
 _ERROR = "DEV host provisioning orchestration is unavailable"
 _MODEL_ERROR = "DEV host provisioning orchestration evidence is invalid"
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
-_SYSTEM_PYTHON = "/usr/bin/python3.12"
+_PROCESS_LOCK_ANCHOR = "/usr/bin"
 _CONFIG_PATH = "/etc/omnilyzer/deployment/dev/executor.json"
 _FUTURE_DIRECTORY = "future-systemd-socket-directory-creation-only"
 
@@ -147,9 +147,6 @@ class _ProcessLock:
         tuple[int, int | None, str | None, tuple[int, ...]], ...
     ]
     descriptor: int
-    parent: int
-    name: str
-    fingerprint: tuple[int, ...]
 
 
 @_dataclass(frozen=True, slots=True)
@@ -197,16 +194,14 @@ def _locator(value: object) -> str:
     return value
 
 
-def _lock_fingerprint(value: _os.stat_result) -> tuple[int, ...]:
+def _lock_identity(value: _os.stat_result) -> tuple[int, ...]:
     return (
-        value.st_mode, value.st_ino, value.st_dev, value.st_nlink,
-        value.st_uid, value.st_gid, value.st_size,
-        value.st_mtime_ns, value.st_ctime_ns,
+        value.st_mode, value.st_dev, value.st_ino, value.st_uid, value.st_gid,
     )
 
 
-def _acquire_process_lock(path: str = _SYSTEM_PYTHON) -> _ProcessLock:
-    """Nonblocking cross-process exclusion anchored to the fixed interpreter."""
+def _acquire_process_lock(path: str = _PROCESS_LOCK_ANCHOR) -> _ProcessLock:
+    """Nonblocking exclusion anchored to one retained directory identity."""
 
     path = _locator(path)
     descriptors = []
@@ -217,12 +212,16 @@ def _acquire_process_lock(path: str = _SYSTEM_PYTHON) -> _ProcessLock:
         root = _os.open("/", flags | _os.O_DIRECTORY)
         descriptors.append(root)
         root_opened = _os.fstat(root)
-        if _lock_fingerprint(root_opened) != _lock_fingerprint(root_named):
+        if (
+            not _stat.S_ISDIR(root_opened.st_mode)
+            or _stat.S_ISLNK(root_named.st_mode)
+            or _lock_identity(root_opened) != _lock_identity(root_named)
+        ):
             raise OSError
-        chain.append((root, None, None, _lock_fingerprint(root_opened)))
+        chain.append((root, None, None, _lock_identity(root_opened)))
         parent = root
         parts = path[1:].split("/")
-        for component in parts[:-1]:
+        for component in parts:
             named = _os.stat(component, dir_fd=parent, follow_symlinks=False)
             if not _stat.S_ISDIR(named.st_mode) or _stat.S_ISLNK(named.st_mode):
                 raise OSError
@@ -231,29 +230,18 @@ def _acquire_process_lock(path: str = _SYSTEM_PYTHON) -> _ProcessLock:
             )
             descriptors.append(child)
             opened = _os.fstat(child)
-            if _lock_fingerprint(opened) != _lock_fingerprint(named):
+            if (
+                not _stat.S_ISDIR(opened.st_mode)
+                or _lock_identity(opened) != _lock_identity(named)
+            ):
                 raise OSError
             chain.append((
-                child, parent, component, _lock_fingerprint(opened),
+                child, parent, component, _lock_identity(opened),
             ))
             parent = child
-        name = parts[-1]
-        named = _os.stat(name, dir_fd=parent, follow_symlinks=False)
-        descriptor = _os.open(name, flags, dir_fd=parent)
-        descriptors.append(descriptor)
-        opened = _os.fstat(descriptor)
-        fingerprint = _lock_fingerprint(opened)
-        if (
-            not _stat.S_ISREG(opened.st_mode)
-            or _stat.S_ISLNK(opened.st_mode)
-            or opened.st_nlink != 1
-            or fingerprint != _lock_fingerprint(named)
-        ):
-            raise OSError
+        descriptor = parent
         _fcntl.flock(descriptor, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
-        return _ProcessLock(
-            tuple(chain), descriptor, parent, name, fingerprint,
-        )
+        return _ProcessLock(tuple(chain), descriptor)
     except BaseException as error:
         for descriptor in reversed(descriptors):
             try:
@@ -269,28 +257,24 @@ def _release_process_lock(value: _ProcessLock) -> None:
     failed = False
     try:
         descriptor = value.descriptor
-        named = _os.stat(value.name, dir_fd=value.parent, follow_symlinks=False)
-        if (
-            _lock_fingerprint(_os.fstat(descriptor)) != value.fingerprint
-            or _lock_fingerprint(named) != value.fingerprint
-        ):
+        if not value.directory_chain or value.directory_chain[-1][0] != descriptor:
             failed = True
-        for directory, parent, name, fingerprint in value.directory_chain:
+        for directory, parent, name, identity in value.directory_chain:
             current = (
                 _os.stat("/", follow_symlinks=False)
                 if parent is None
                 else _os.stat(name, dir_fd=parent, follow_symlinks=False)
             )
             if (
-                _lock_fingerprint(_os.fstat(directory)) != fingerprint
-                or _lock_fingerprint(current) != fingerprint
+                _stat.S_ISLNK(current.st_mode)
+                or not _stat.S_ISDIR(current.st_mode)
+                or _lock_identity(_os.fstat(directory)) != identity
+                or _lock_identity(current) != identity
             ):
                 failed = True
         _fcntl.flock(descriptor, _fcntl.LOCK_UN)
     except _CONTROL:
-        descriptors = tuple(item[0] for item in value.directory_chain) + (
-            value.descriptor,
-        )
+        descriptors = tuple(item[0] for item in value.directory_chain)
         for descriptor in reversed(descriptors):
             try:
                 _os.close(descriptor)
@@ -299,9 +283,7 @@ def _release_process_lock(value: _ProcessLock) -> None:
         raise
     except Exception:
         failed = True
-    descriptors = tuple(item[0] for item in value.directory_chain) + (
-        value.descriptor,
-    )
+    descriptors = tuple(item[0] for item in value.directory_chain)
     for descriptor in reversed(descriptors):
         try:
             _os.close(descriptor)
