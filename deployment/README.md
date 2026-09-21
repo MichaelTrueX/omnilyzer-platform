@@ -1687,11 +1687,19 @@ groups, users, installed files, a successful venv, deployment state, replay
 history and audit history are never removed or reset after a later failure.
 
 One instance uses a nonblocking thread lock, while independent processes use a
-nonblocking kernel `flock` retained on the exact opened `/usr/bin/python3.12`
-inode. That fixed C27/C29-qualified interpreter is already mandatory, creates no
-lock-file state, and its named/opened identity is revalidated before release.
-Thus two privileged processes cannot both pass preflight and provision
-concurrently, without introducing lock-file cleanup or repair authority.
+nonblocking kernel `flock` retained on the exact opened `/usr/bin` directory.
+The anchor is fixed internally, opened descriptor-relative with no symlink
+following, and retained across the already-converged probe and all 22 steps.
+Its stable identity is the directory mode/type, device, inode, UID and GID;
+volatile size, mtime and ctime are deliberately excluded. Replacing a child
+such as `/usr/bin/python3.12` therefore neither creates a second lock object nor
+causes a false identity failure. The complete named/opened directory chain is
+revalidated before release, and all descriptors are close-on-exec. This creates
+no lock-file state and prevents independent cooperating provisioning processes
+from both passing preflight without adding lock-file cleanup or repair
+authority. C27/C29 separately retain responsibility for qualifying the exact
+system interpreter bytes; the directory lock supplies exclusion, not Python
+provenance.
 
 C31D does not require the executor socket, an audit file in a pristine audit
 directory, enabled units or active services. It performs no daemon reload,
