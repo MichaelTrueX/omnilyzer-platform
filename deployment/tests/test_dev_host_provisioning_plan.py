@@ -275,12 +275,12 @@ class ProvisioningPlanTests(unittest.TestCase):
 
     def test_i_state_replay_audit_are_non_destructive_plan_requirements(self):
         text = " ".join(self.plan.lifecycle_requirements)
-        self.assertIn("must define canonical no-active bytes", text)
+        self.assertIn("fixed canonical no-active bootstrap bytes", text)
         self.assertIn("never reset existing state", text)
         self.assertIn("never replace a database", text)
         self.assertIn("preserve every existing history entry", text)
-        self.assertIn("establish-deployment-state-initialization-boundary",
-                      self.plan.c30_extensions)
+        self.assertNotIn("establish-deployment-state-initialization-boundary",
+                         self.plan.c30_extensions)
         self.assertNotIn("reset", self.plan.c30_extensions)
         self.assertNotIn("delete", self.plan.c30_extensions)
 
