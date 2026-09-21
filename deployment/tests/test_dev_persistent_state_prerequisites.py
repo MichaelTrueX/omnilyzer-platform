@@ -674,7 +674,7 @@ class BoundaryTests(unittest.TestCase):
         ))
         self.assertEqual(tuple(row[0] for row in rows), tuple(range(1, 23)))
         self.assertEqual(rows[21], (
-            22, "verify-post-provision-convergence-and-integrity", "C31B",
+            22, "verify-post-provision-convergence-and-integrity", "C31D",
         ))
 
 
