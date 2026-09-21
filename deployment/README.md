@@ -1647,8 +1647,59 @@ The combined verifier is read-only and reports explicit initial/existing,
 replay-verified and pristine/existing-history observations; it does not claim
 activation readiness. C31C changes no C30 public API, is not connected to the
 broker, executor, service or workflow, and has not been invoked against the DEV
-host. Step 22, full orchestration, systemd lifecycle, actual host provisioning,
-OIDC activation and live deployment remain deferred and prohibited by ADR 0011.
+host. C31C did not own step 22 or full orchestration; C31D now supplies that
+still-inert verifier and composition. Systemd lifecycle, actual host
+provisioning, OIDC activation and live deployment remain prohibited by ADR 0011.
+
+## C31D post-provision verification and closed orchestration
+
+C31D keeps the pre- and post-provision meanings separate. C29 remains the
+read-only qualifier for an absent or exact-empty future venv before the first
+mutation. The distinct `qualify_dev_provisioned_host()` boundary is step 22: it
+requires the exact C27 platform, packages and artifact-derived payload, all C23
+principals, every pre-activation directory, C17 configuration bytes, both C23
+systemd-file digests, the exact C26 application tree, the C31A 237-entry Python
+environment, and C31C state/replay/audit verification. It also requires
+`/opt/omnilyzer/deployment/.provisioning-inputs` to be absent. The C31B
+application scan rejects its known temporary filename as an extra entry. The
+verifier is descriptor-bound and read-only; it repairs, initializes, appends,
+installs and removes nothing.
+
+The closed `DevHostProvisioningOrchestrator` composes the C31A order without
+adding destination, command or package authority. Its only operation inputs are
+the repository, runtime-wheelhouse and installer-staging source locators. It
+revalidates C17/C23/C24, derives C26 from exact reviewed Git blobs, constructs
+C27, obtains fresh C28 and C31P evidence, and requires C29 before the first
+mutation. It then invokes C30 in C23 group, user and directory order, invokes
+C31B application materialization, installs only the C17 file and two reviewed
+unit files, and invokes C31B's single Python operation. That single operation
+represents steps 14–18, and all five step observations are recorded only after
+the complete C31B operation and C31A Python qualification return successfully.
+C31C remains responsible for steps 19–21. C31D's read-only convergence verifier
+is the final step 22, after which orchestration stops.
+
+Before mutation, C31D probes full convergence. A completely converged host
+returns an explicit `already-converged` observation without C29 or any mutation.
+If that probe fails, it grants no authority: C29 must still establish the exact
+pre-provision state before C30 or C31B can run. Ambiguous partial state therefore
+fails closed. Provisioning is monotonic and has no transactional rollback:
+groups, users, installed files, a successful venv, deployment state, replay
+history and audit history are never removed or reset after a later failure.
+
+One instance uses a nonblocking thread lock, while independent processes use a
+nonblocking kernel `flock` retained on the exact opened `/usr/bin/python3.12`
+inode. That fixed C27/C29-qualified interpreter is already mandatory, creates no
+lock-file state, and its named/opened identity is revalidated before release.
+Thus two privileged processes cannot both pass preflight and provision
+concurrently, without introducing lock-file cleanup or repair authority.
+
+C31D does not require the executor socket, an audit file in a pristine audit
+directory, enabled units or active services. It performs no daemon reload,
+enable, start, socket bind, Docker or registry action. The modules remain inert,
+uninstalled and uncomposed with broker, executor, listener, service and workflow
+paths, and have not been invoked on the real DEV host. Systemd lifecycle, actual
+host provisioning, protected GitHub environment/OIDC activation, registry
+consumer activation and live deployment remain prohibited by ADR 0011.
 
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 

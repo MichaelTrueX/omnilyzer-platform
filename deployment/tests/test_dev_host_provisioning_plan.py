@@ -130,6 +130,7 @@ class ProvisioningPlanTests(unittest.TestCase):
                          tuple(range(1, 23)))
         self.assertEqual(tuple(step.identifier for step in self.plan.steps), expected)
         self.assertEqual(len(set(expected)), 22)
+        self.assertEqual(self.plan.steps[-1].boundary, "C31D")
 
     def test_c_exact_application_and_no_pip_venv_contracts(self):
         self.assertEqual(self.plan.reviewed_commit, self.configuration.reviewed_commit)

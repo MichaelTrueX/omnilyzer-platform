@@ -61,7 +61,7 @@ _STEP_ROWS = (
     (19, "establish-initial-deployment-state-prerequisites", "C31C"),
     (20, "initialize-replay-under-existing-lifecycle", "C31C"),
     (21, "establish-audit-prerequisites-preserving-history", "C31C"),
-    (22, "verify-post-provision-convergence-and-integrity", "C31B"),
+    (22, "verify-post-provision-convergence-and-integrity", "C31D"),
 )
 
 _VENV_ARGV = (
