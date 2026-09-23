@@ -335,15 +335,16 @@ initiated. The current `ExecutorRequest` and replay identity contract remains
 GitHub-oriented and C11 does not weaken or generalize it to non-GitHub
 identities.
 
-Omnilyzer must later support restricted-network applications such as Bisma
-in a restricted or private network, where external deployment initiation or
-external health monitoring may be prohibited. A separately approved future
-profile may allow an authorized manual/local trigger from inside the corporate
-network while preserving the same immutable release, exact OCI digest,
+Omnilyzer must later support applications in restricted or private networks
+where external deployment initiation or external health monitoring may be
+prohibited. A separately approved future profile may allow an explicitly
+authorized manual/local trigger from inside the private network while
+preserving the same immutable release, exact OCI digest,
 SBOM/provenance/signature requirements, deployment engine, state and audit
 controls, and migration and blue/green semantics. C11 does not implement that
-trigger. Monitoring may later be internal to the private network, or outbound-only telemetry
-if the applicable network policy permits; C11 implements no monitoring functionality.
+trigger. Monitoring may later be internal to the private network, or use
+outbound-only telemetry if the applicable network policy permits; C11
+implements no monitoring functionality.
 
 ### Inert GitHub-authorized DEV broker composition
 
@@ -357,8 +358,8 @@ request to the reviewed broker core.
 
 This GitHub DEV authorization profile is intentionally separate from C11's
 executor composition, and the current GitHub OIDC and `ExecutorRequest`
-identity semantics remain unchanged. Restricted-network applications such as
-Bisma may later require a separately reviewed manual/local authorization
+identity semantics remain unchanged. Restricted-network applications may
+later require a separately reviewed manual/local authorization
 profile, but C12 neither implements nor generalizes for that profile. Any such
 future profile must preserve release verification, exact-digest enforcement,
 state and audit controls, migration behavior, and the executor boundary. The
@@ -389,9 +390,9 @@ the required host resources and services.
 
 This host-resource isolation contract does not assume every future deployment
 is GitHub-triggered. C12 and the current request/replay identity semantics remain
-GitHub-oriented. A future restricted-network profile for applications such as
-Bisma may require a separately reviewed local/manual authorization mechanism
-and an explicit identity-schema extension or version. C13 implements neither;
+GitHub-oriented. A future restricted-network profile may require a separately
+reviewed local/manual authorization mechanism and an explicit identity-schema
+extension or version. C13 implements neither;
 compatible profiles must retain exact-digest release verification, deployment
 controls, and the reusable C11 executor boundary.
 
@@ -408,7 +409,7 @@ shell command, or retry surface.
 C14 introduced the client as non-live repository code without wiring it into
 the executor composition. C15 performs that composition closure as described
 below. C14 changed no workflow, environment, installation contract, service,
-or activation authority, and introduced no special Bisma fork; the same
+or activation authority, and introduced no application-specific fork; the same
 deployment engine remains reusable within any future separately reviewed
 restricted-network authorization profile.
 

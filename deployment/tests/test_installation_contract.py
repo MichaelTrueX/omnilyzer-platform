@@ -460,7 +460,8 @@ class PublicAndStructuralTests(unittest.TestCase):
             "SQLiteReplayGuard(", "FilesystemAuditSink(",
             "FilesystemDeploymentStateStore(", "UnixExecutorTransport(",
             "UnixExecutorListener(", "DevExecutorComposition(",
-            "GitHubDevBrokerComposition(", "Bisma", "manual authorization",
+            "GitHubDevBrokerComposition(", "restricted-network",
+            "manual authorization",
         ):
             self.assertNotIn(forbidden, source)
 

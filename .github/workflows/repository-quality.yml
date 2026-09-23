@@ -90,24 +90,44 @@ jobs:
                   "OPENSSH PRIVATE KEY",
               )
           )
+
+          def contains_name(source, name):
+              overlap = b""
+              while chunk := source.read(64 * 1024):
+                  window = overlap + chunk
+                  if name in window.lower():
+                      return True
+                  overlap = window[-(len(name) - 1):]
+              return False
+
           marked_files = []
+          disallowed_name_files = []
+          disallowed_name = b"ae" + b"ven"
           for path in sorted(repository_files):
               candidate = Path(path)
-              if not candidate.is_file() or candidate.stat().st_size > 5_000_000:
+              if not candidate.is_file():
                   continue
               try:
-                  content = candidate.read_bytes()
+                  if candidate.stat().st_size <= 5_000_000:
+                      content = candidate.read_bytes()
+                      if disallowed_name in content.lower():
+                          disallowed_name_files.append(path)
+                      if any(marker in content for marker in private_markers):
+                          marked_files.append(path)
+                  else:
+                      with candidate.open("rb") as source:
+                          if contains_name(source, disallowed_name):
+                              disallowed_name_files.append(path)
               except OSError as error:
                   print(f"Unable to inspect {path}: {error}", file=sys.stderr)
                   sys.exit(1)
-              if any(marker in content for marker in private_markers):
-                  marked_files.append(path)
 
           failures = {
               "Missing required files": missing,
               "Tracked disallowed environment files": tracked_env,
               "Tracked private-key file extensions": private_files,
               "Tracked private-key content markers": marked_files,
+              "Disallowed organization name": disallowed_name_files,
           }
           failed = False
           for label, values in failures.items():

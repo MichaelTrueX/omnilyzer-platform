@@ -288,7 +288,9 @@ class ClosedSurfaceTests(unittest.TestCase):
             ".runtime", ".execution", ".identity",
         }))
         lowered = SOURCE.read_text(encoding="utf-8").lower()
-        for alternate in ("bisma", "manual auth", "local auth", "password", "ssh"):
+        for alternate in (
+            "restricted-network", "manual auth", "local auth", "password", "ssh",
+        ):
             self.assertNotIn(alternate, lowered)
 
 
