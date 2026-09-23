@@ -47,4 +47,4 @@ Destructive migrations require explicit approval, backups appropriate to the ris
 
 Production should eventually scale horizontally, so application instances must not depend on memory-only shared state or mutable local source. OCI containers, simple initial orchestration, Nginx, and pgBackRest remain **TO VALIDATE**. Kubernetes is not initially required and needs demonstrated operational justification before introduction.
 
-Historically, source development is located under `/home/trusthansen/repos/`, while deployed websites have lived under `/var/www/`. These paths describe current history, not platform requirements. Development source and deployment artifacts must remain conceptually and operationally separate regardless of future host layout.
+Development source and deployment artifacts must remain conceptually and operationally separate regardless of host layout. A developer checkout is not a production deployment artifact.

@@ -344,7 +344,7 @@ class HostProvisioningContractTests(unittest.TestCase):
                      self.layout.executor_service_unit_name):
             self.assertNotIn(name, literals)
         source = inspect.getsource(module)
-        for forbidden in ("trusthansen", "/home/", "/repos/", "useradd", "groupadd", "systemctl", "pip install"):
+        for forbidden in ("/home/", "/Users/", "/repos/", "useradd", "groupadd", "systemctl", "pip install"):
             self.assertNotIn(forbidden, source)
 
     def test_t_exact_value_class_field_shapes(self):

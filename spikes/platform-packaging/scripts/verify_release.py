@@ -11,6 +11,11 @@ from common import load_json, sha256_file
 
 
 FORBIDDEN = re.compile(r"(?:^|/)(?:\.git|\.env|__pycache__|node_modules|dist|\.venv)(?:/|$)|(?:\.pem|\.key)$", re.I)
+DEVELOPER_PATH = re.compile(rb"/(?:home|users|repos?|workspaces?)/|[a-z]:\\users\\", re.I)
+
+
+def has_sensitive_content(content):
+    return DEVELOPER_PATH.search(content) is not None or b"PRIVATE KEY" in content
 
 
 def validate_release_set(manifest):
@@ -59,7 +64,7 @@ def inspect_archives(release_dir: Path):
                     if not (name in allowed_package or ".dist-info/" in name):
                         raise AssertionError(f"unexpected wheel member: {name}")
                     content = archive.read(name)
-                    if b"/home/trusthansen/repos/omnilyzer-platform" in content or b"PRIVATE KEY" in content:
+                    if has_sensitive_content(content):
                         raise AssertionError(f"sensitive/source path content in wheel: {name}")
                 metadata = next(name for name in names if name.endswith(".dist-info/METADATA"))
                 if f"Version: {item['artifactPackageVersion']}" not in archive.read(metadata).decode():
@@ -83,5 +88,5 @@ def inspect_archives(release_dir: Path):
                 for member in archive.getmembers():
                     if member.isfile():
                         content = archive.extractfile(member).read()
-                        if b"/home/trusthansen/repos/omnilyzer-platform" in content or b"PRIVATE KEY" in content:
+                        if has_sensitive_content(content):
                             raise AssertionError(f"sensitive/source path content in npm artifact: {member.name}")

@@ -7,10 +7,23 @@ SPIKE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SPIKE_ROOT / "scripts"))
 
 from validate_compatibility import major, validate_contract_change
-from verify_release import validate_release_set
+from verify_release import has_sensitive_content, validate_release_set
 
 
 class PolicyTests(unittest.TestCase):
+    def test_release_content_rejects_generic_developer_paths_and_keys(self):
+        for content in (
+            b"/home/developer/repos/project/file.py",
+            b"/Users/developer/workspaces/project/file.py",
+            b"/repos/project/file.py",
+            b"/workspace/project/file.py",
+            b"C:\\Users\\developer\\repos\\project\\file.py",
+            b"-----BEGIN PRIVATE " + b"KEY-----",
+        ):
+            with self.subTest(content=content):
+                self.assertTrue(has_sensitive_content(content))
+        self.assertFalse(has_sensitive_content(b"public package metadata"))
+
     def test_semver_shape(self):
         self.assertEqual(major("1.1.0"), 1)
         with self.assertRaises(AssertionError):

@@ -39,6 +39,17 @@ preserve and report them unless precedence is explicit and unambiguous.
   out of this file; load them on demand. Do not relocate existing rules into
   skills without a separately scoped task.
 
+## External service costs
+
+Do not introduce a production dependency on paid SaaS, a commercial license,
+paid API tier, or mandatory subscription without explicit user approval. Before
+selecting an external service, verify that the exact required feature is
+available under the intended free, open-source, or self-hosted model; whether
+private repositories or projects change pricing; and whether usage-based billing
+is mandatory. Consider a free, open-source, or self-hosted alternative. If a
+paid dependency appears necessary, stop before implementation and report the
+exact dependency, paid feature, expected cost, and alternatives.
+
 ## Security and authentication
 
 Never simplify away authentication, authorization, tenant isolation,

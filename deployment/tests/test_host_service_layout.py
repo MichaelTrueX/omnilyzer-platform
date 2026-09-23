@@ -77,7 +77,7 @@ class HostServiceLayoutTests(unittest.TestCase):
             self.assertTrue(module._valid_path(value))
             self.assertTrue(PurePosixPath(value).is_absolute())
             self.assertEqual(str(PurePosixPath(value)), value)
-            for forbidden in ("/home/", "trusthansen", "/tmp/", "../", "./", "/repos/"):
+            for forbidden in ("/home/", "/Users/", "/tmp/", "../", "./", "/repos/"):
                 self.assertNotIn(forbidden, value)
 
     def test_path_relationships(self):
@@ -166,7 +166,8 @@ class HostServiceLayoutTests(unittest.TestCase):
                     if isinstance(node, ast.Constant) and type(node.value) is str]
         self.assertNotIn(PRODUCTION_EXECUTOR_SOCKET_PATH, literals)
         for value in literals:
-            self.assertNotIn("trusthansen", value)
+            self.assertNotIn("/home/", value)
+            self.assertNotIn("/Users/", value)
             self.assertNotIn("/repos/", value)
             self.assertNotIn("omnilyzer-platform", value)
         self.assertFalse(any("uid" in name or "gid" in name for name in FIELD_NAMES))

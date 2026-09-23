@@ -235,7 +235,7 @@ class SystemdExecutorUnitTests(unittest.TestCase):
         self.assertEqual(self.service_text.count("\nExecStart="), 1)
         self.assertEqual(self.service["ExecStart"], " ".join(self.layout.executor_exec_argv))
         for forbidden in ("/bin/sh", "/bin/bash", "sh -c", "bash -c", "/usr/bin/env",
-                          "python -c", "/home/", "trusthansen", "repos/omnilyzer-platform"):
+                          "python -c", "/home/", "/Users/", "/repos/"):
             self.assertNotIn(forbidden, self.service["ExecStart"])
         self.assertTrue(self.service["ExecStart"].startswith("/opt/"))
 
