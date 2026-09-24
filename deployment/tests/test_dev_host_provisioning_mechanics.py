@@ -492,6 +492,27 @@ class SnapshotAndProcessTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 module._venv_precondition(authority)
 
+    def test_l_c29_exact_empty_venv_evidence_is_accepted(self):
+        from deployment.tests.test_dev_host_provisioning_orchestration import (
+            fixtures, host_evidence,
+        )
+        configuration, manifest, _integrity, provisioning, wheels, _installer = fixtures()
+        with tempfile.TemporaryDirectory() as parent:
+            _mechanics, authority, _application, _venv = temporary_mechanics(
+                configuration, parent,
+            )
+            host = host_evidence(configuration, manifest, wheels, provisioning)
+            managed = tuple(
+                dataclasses.replace(
+                    item, state="exact", owner_uid=authority.venv_uid,
+                    group_gid=authority.venv_gid,
+                )
+                if item.path == authority.integrity.python_environment_requirement().root
+                else item for item in host.managed_paths
+            )
+            host = dataclasses.replace(host, managed_paths=managed)
+            module._validate_host_qualification(authority, host, wheels.wheelhouse_path)
+
     def test_m_exact_venv_and_pip_argv_environment_and_post_qualification_gate(self):
         with tempfile.TemporaryDirectory() as parent:
             repository, configuration, _manifest = repository_fixture(parent)

@@ -32,6 +32,7 @@ import deployment.python_environment_qualification as python_environment
 import deployment.python_interpreter_provenance as c27
 import deployment.wheelhouse_qualification as c28
 from deployment.tests.test_executor_service_config import configuration_values
+from deployment.tests.test_dev_host_provisioning_mechanics import repository_fixture, git
 
 
 ERROR = "DEV host provisioning orchestration is unavailable"
@@ -439,6 +440,245 @@ class OrchestrationTests(unittest.TestCase):
         ))
         names = [item[0] for item in self.events]
         self.assertEqual(names, ["manifest", "post", "wheels", "installer", "c29"])
+
+    def test_c_retained_exact_previous_config_blocks_current_c29(self):
+        previous = c17.DevExecutorServiceConfiguration(**configuration_values(
+            reviewed_commit="c8646e1ef72f0cbab4878d383f7765f07aef8417",
+        ))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "executor.json"
+            path.write_bytes(previous.canonical_bytes())
+            path.chmod(0o640)
+            with self.assertRaises(OSError):
+                c29._observe_managed_path(
+                    str(path), "regular_file", 0o640, os.getuid(), os.getgid(),
+                    self.configuration.canonical_bytes(),
+                )
+            self.assertEqual(c29._observe_managed_path(
+                str(path), "regular_file", 0o640, os.getuid(), os.getgid(),
+                previous.canonical_bytes(),
+            ).state, "exact")
+            path.chmod(0o600)
+            with self.assertRaises(OSError):
+                c29._observe_managed_path(
+                    str(path), "regular_file", 0o640, os.getuid(), os.getgid(),
+                    previous.canonical_bytes(),
+                )
+            path.chmod(0o640)
+            with self.assertRaises(OSError):
+                c29._observe_managed_path(
+                    str(path), "regular_file", 0o640, os.getuid() + 1,
+                    os.getgid(), previous.canonical_bytes(),
+                )
+            path.unlink()
+            target = Path(directory) / "target"
+            target.write_bytes(previous.canonical_bytes())
+            path.symlink_to(target)
+            with self.assertRaises(OSError):
+                c29._observe_managed_path(
+                    str(path), "regular_file", 0o640, os.getuid(), os.getgid(),
+                    previous.canonical_bytes(),
+                )
+            path.unlink()
+            self.assertEqual(c29._observe_managed_path(
+                str(path), "regular_file", 0o640, os.getuid(), os.getgid(),
+                self.configuration.canonical_bytes(),
+            ).state, "absent")
+            path.write_bytes(self.configuration.canonical_bytes())
+            path.chmod(0o640)
+            self.assertEqual(c29._observe_managed_path(
+                str(path), "regular_file", 0o640, os.getuid(), os.getgid(),
+                self.configuration.canonical_bytes(),
+            ).state, "exact")
+
+    def test_c_pinned_recovery_qualifies_previous_config_and_identical_tree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository, previous, previous_manifest = repository_fixture(directory)
+            prior_commit = previous.reviewed_commit
+            (repository / "recovery-note.txt").write_text("reviewed change\n")
+            git(repository, "add", "recovery-note.txt")
+            git(repository, "commit", "--quiet", "-m", "recovery")
+            current_commit = git(repository, "rev-parse", "HEAD").decode().strip()
+            current = c17.DevExecutorServiceConfiguration(**configuration_values(
+                reviewed_commit=current_commit,
+            ))
+            manifest = c26.generate_dev_application_manifest(
+                repository_root=str(repository), reviewed_commit=current_commit,
+            )
+            config_path = Path(directory) / "executor.json"
+            config_path.write_bytes(previous.canonical_bytes())
+            config_path.chmod(0o640)
+            qualified = object()
+            original_output = c26._output
+            def output_without_predecessor(root, arguments, maximum):
+                if prior_commit in arguments:
+                    raise AssertionError("predecessor Git object was requested")
+                return original_output(root, arguments, maximum)
+            def qualify_previous(**values):
+                observed = c29._observe_managed_path(
+                    str(config_path), "regular_file", 0o640,
+                    os.getuid(), os.getgid(),
+                    values["configuration"].canonical_bytes(),
+                )
+                self.assertEqual(observed.state, "exact")
+                return qualified
+            with patch.object(module, "_CONFIG_PATH", str(config_path)), \
+                 patch.object(module, "_RECOVERY_COMMIT", prior_commit), \
+                 patch.object(module, "_RECOVERY_BASE_COMMIT", prior_commit), \
+                 patch.object(module, "_RECOVERY_CONFIG_SHA256",
+                              hashlib.sha256(previous.canonical_bytes()).hexdigest()), \
+                 patch.object(module, "_RECOVERY_MANIFEST_SHA256",
+                              hashlib.sha256(previous_manifest.canonical_bytes()).hexdigest()), \
+                 patch.object(c26, "_output", side_effect=output_without_predecessor), \
+                 patch.object(c29, "qualify_dev_host", side_effect=qualify_previous) as qualify:
+                self.assertIs(module._qualify_reviewed_recovery(
+                    current, manifest, self.wheels, str(repository),
+                ), qualified)
+                args = qualify.call_args.kwargs
+                self.assertEqual(args["configuration"].canonical_bytes(),
+                                 previous.canonical_bytes())
+                self.assertEqual(args["application_manifest"].reviewed_commit,
+                                 prior_commit)
+                self.assertEqual(args["application_manifest"].entries,
+                                 manifest.entries)
+
+                shallow = Path(directory) / "shallow"
+                git(repository, "clone", "--quiet", "--depth=1",
+                    "file://" + str(repository), str(shallow))
+                with self.assertRaises(subprocess.CalledProcessError):
+                    git(shallow, "cat-file", "-e", prior_commit)
+                shallow_manifest = c26.generate_dev_application_manifest(
+                    repository_root=str(shallow), reviewed_commit=current_commit,
+                )
+                self.assertEqual(shallow_manifest.entries, manifest.entries)
+                self.assertIs(module._qualify_reviewed_recovery(
+                    current, shallow_manifest, self.wheels, str(shallow),
+                ), qualified)
+
+                tree = git(repository, "rev-parse", current_commit + "^{tree}").decode().strip()
+                merge_commit = git(
+                    repository, "commit-tree", tree, "-p", current_commit,
+                    "-p", prior_commit, "-m", "recovery merge",
+                ).decode().strip()
+                git(repository, "reset", "--hard", merge_commit)
+                merge_current = c17.DevExecutorServiceConfiguration(**configuration_values(
+                    reviewed_commit=merge_commit,
+                ))
+                merge_manifest = c26.generate_dev_application_manifest(
+                    repository_root=str(repository), reviewed_commit=merge_commit,
+                )
+                self.assertIs(module._qualify_reviewed_recovery(
+                    merge_current, merge_manifest, self.wheels, str(repository),
+                ), qualified)
+                git(repository, "reset", "--hard", current_commit)
+                qualify.reset_mock()
+
+                with patch.object(module, "_RECOVERY_MANIFEST_SHA256", "0" * 64):
+                    with self.assertRaises(OSError):
+                        module._qualify_reviewed_recovery(
+                            current, manifest, self.wheels, str(repository),
+                        )
+                qualify.assert_not_called()
+
+                with patch.object(module, "_RECOVERY_BASE_COMMIT", "0" * 40):
+                    with self.assertRaises(OSError):
+                        module._qualify_reviewed_recovery(
+                            current, manifest, self.wheels, str(repository),
+                        )
+                qualify.assert_not_called()
+
+                (repository / "unrelated-note.txt").write_text("unrelated change\n")
+                git(repository, "add", "unrelated-note.txt")
+                git(repository, "commit", "--quiet", "-m", "unrelated")
+                unrelated_commit = git(repository, "rev-parse", "HEAD").decode().strip()
+                unrelated_current = c17.DevExecutorServiceConfiguration(**configuration_values(
+                    reviewed_commit=unrelated_commit,
+                ))
+                unrelated_manifest = c26.generate_dev_application_manifest(
+                    repository_root=str(repository), reviewed_commit=unrelated_commit,
+                )
+                with self.assertRaises(OSError):
+                    module._qualify_reviewed_recovery(
+                        unrelated_current, unrelated_manifest, self.wheels, str(repository),
+                    )
+                qualify.assert_not_called()
+
+                config_path.write_bytes(previous.canonical_bytes() + b" ")
+                with self.assertRaises(OSError):
+                    module._qualify_reviewed_recovery(
+                        current, manifest, self.wheels, str(repository),
+                    )
+                config_path.write_bytes(previous.canonical_bytes())
+                config_path.chmod(0o600)
+                with self.assertRaises(OSError):
+                    module._qualify_reviewed_recovery(
+                        current, manifest, self.wheels, str(repository),
+                    )
+                config_path.chmod(0o640)
+                unrelated = c17.DevExecutorServiceConfiguration(**configuration_values(
+                    reviewed_commit="b" * 40,
+                ))
+                config_path.write_bytes(unrelated.canonical_bytes())
+                with self.assertRaises(OSError):
+                    module._qualify_reviewed_recovery(
+                        current, manifest, self.wheels, str(repository),
+                    )
+                config_path.write_bytes(previous.canonical_bytes())
+                config_path.unlink()
+                config_path.symlink_to(Path(directory) / "other")
+                with self.assertRaises(OSError):
+                    module._qualify_reviewed_recovery(
+                        current, manifest, self.wheels, str(repository),
+                    )
+                config_path.unlink()
+                config_path.write_bytes(previous.canonical_bytes())
+                git(repository, "reset", "--hard", prior_commit)
+                selected = repository / DevApplicationSourceSet().files[0].repository_path
+                selected.write_bytes(b"changed selected bytes\n")
+                git(repository, "add", ".")
+                git(repository, "commit", "--quiet", "-m", "changed application")
+                changed_commit = git(repository, "rev-parse", "HEAD").decode().strip()
+                changed = c17.DevExecutorServiceConfiguration(**configuration_values(
+                    reviewed_commit=changed_commit,
+                ))
+                changed_manifest = c26.generate_dev_application_manifest(
+                    repository_root=str(repository), reviewed_commit=changed_commit,
+                )
+                self.assertEqual(
+                    git(repository, "rev-list", "--parents", "-n", "1", changed_commit)
+                    .decode().split(), [changed_commit, prior_commit],
+                )
+                self.assertNotEqual(changed_manifest.entries, manifest.entries)
+                qualify.reset_mock()
+                with self.assertRaises(OSError):
+                    module._qualify_reviewed_recovery(
+                        changed, changed_manifest, self.wheels, str(repository),
+                    )
+                qualify.assert_not_called()
+
+    def test_c_recovery_evidence_is_code_pinned_not_caller_selected(self):
+        self.assertEqual(tuple(inspect.signature(module.DevHostProvisioningOrchestrator.provision)
+                               .parameters),
+                         ("self", "repository_root", "wheelhouse_path",
+                          "pip_installer_staging"))
+        self.assertEqual(module._RECOVERY_COMMIT,
+                         "c8646e1ef72f0cbab4878d383f7765f07aef8417")
+        self.assertEqual(module._RECOVERY_BASE_COMMIT,
+                         "fdae74dd656f421211b0c2463c6eecb217edccde")
+        self.assertEqual(module._RECOVERY_CONFIG_SHA256,
+                         "0d464f4c0792ddfc184b2fc65b4a46d7e233abf6471167e80ed2e728d9f6837c")
+        self.assertEqual(module._RECOVERY_MANIFEST_SHA256,
+                         "2743932cfb2e8d431f56de25aaab6c77177c52165ea3f35ca80281602909e69a")
+
+    def test_c_proven_recovery_reaches_atomic_configuration_step(self):
+        with patch.object(module, "_qualify_reviewed_recovery",
+                          return_value=self.host) as recovery:
+            result = self.invoke(c29_value=c29.HostQualificationError("prior config"))
+        self.assertEqual(result.operation, "initial-provisioning")
+        self.assertEqual(recovery.call_count, 1)
+        names = [item[0] for item in self.events]
+        self.assertLess(names.index("application"), names.index("configuration"))
+        self.assertLess(names.index("configuration"), names.index("python"))
 
     def test_c_leftover_snapshot_fails_before_mutation(self):
         self.assert_failure(6, 7, False,

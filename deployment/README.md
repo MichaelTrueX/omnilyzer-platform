@@ -1768,6 +1768,30 @@ early directories with an exact empty application root and empty venv; the
 application observation remains `absent`. Later resources may still be absent.
 Any nonempty incomplete application root or populated venv blocks retry.
 
+The reviewed c8646e1 partial state has a narrower C31-only recovery path.
+Ordinary C29 still requires the current C17 bytes and current C26 application
+manifest. If that qualification fails, C31 may requalify once against the
+code-pinned predecessor commit `c8646e1ef72f0cbab4878d383f7765f07aef8417`
+and canonical C17 SHA-256
+`0d464f4c0792ddfc184b2fc65b4a46d7e233abf6471167e80ed2e728d9f6837c`.
+The current reviewed commit must have the pinned recovery base commit
+`fdae74dd656f421211b0c2463c6eecb217edccde` as a direct parent.
+The retained file must parse as exact canonical C17, name that predecessor,
+and agree with the new C17 in every field except `reviewed_commit`. The
+current 28 C26 entries, reconstructed with the predecessor commit and fixed
+manifest fields, must hash to the pinned canonical C26 SHA-256
+`2743932cfb2e8d431f56de25aaab6c77177c52165ea3f35ca80281602909e69a`.
+This does not require the predecessor Git object. C29 then checks the entire
+host against those predecessor inputs, including exact file metadata and the
+complete application tree. The host file cannot select recovery authority.
+An unrelated, modified, incomplete, or changed-application predecessor fails
+before mutation. Application byte changes need a separately reviewed migration
+because C31B currently refuses to replace pre-existing application files.
+Once this preflight succeeds, C31B accepts the exact empty venv observation
+that its own precondition already verifies, and C30 retains its atomic C17
+replacement. This exception does not activate deployment or authorize a host
+retry.
+
 One instance uses a nonblocking thread lock, while independent processes use a
 nonblocking kernel `flock` retained on the exact opened `/usr/bin` directory.
 The anchor is fixed internally, opened descriptor-relative with no symlink

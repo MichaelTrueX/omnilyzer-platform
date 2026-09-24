@@ -1311,7 +1311,7 @@ def _validate_host_qualification(
     if (
         len(venv) != 1
         or venv[0].kind != "directory"
-        or venv[0].state != "absent"
+        or venv[0].state not in ("absent", "exact")
         or venv[0].mode != 0o755
         or (venv[0].owner_uid, venv[0].group_gid)
         != (authority.venv_uid, authority.venv_gid)

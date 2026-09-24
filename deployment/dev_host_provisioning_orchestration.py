@@ -38,6 +38,12 @@ _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _PROCESS_LOCK_ANCHOR = "/usr/bin"
 _CONFIG_PATH = "/etc/omnilyzer/deployment/dev/executor.json"
 _FUTURE_DIRECTORY = "future-systemd-socket-directory-creation-only"
+# Reviewed recovery evidence for the retained C31 state from c8646e1. This is
+# code-owned authority, never a caller-selected prior configuration or commit.
+_RECOVERY_COMMIT = "c8646e1ef72f0cbab4878d383f7765f07aef8417"
+_RECOVERY_BASE_COMMIT = "fdae74dd656f421211b0c2463c6eecb217edccde"
+_RECOVERY_CONFIG_SHA256 = "0d464f4c0792ddfc184b2fc65b4a46d7e233abf6471167e80ed2e728d9f6837c"
+_RECOVERY_MANIFEST_SHA256 = "2743932cfb2e8d431f56de25aaab6c77177c52165ea3f35ca80281602909e69a"
 
 _STEP_OUTCOMES = {
     1: ("verified",), 2: ("verified",), 3: ("verified",),
@@ -240,6 +246,55 @@ def _locator(value: object) -> str:
     ):
         raise ValueError
     return value
+
+
+def _qualify_reviewed_recovery(
+    configuration: _c17.DevExecutorServiceConfiguration,
+    manifest: _c26.DevApplicationManifest,
+    wheels: _c28.DevWheelhouseEvidence,
+    repository_root: str,
+) -> _c29.DevHostQualificationEvidence:
+    """Requalify one pinned predecessor with reviewed lineage and C26 bytes."""
+    if configuration.reviewed_commit == _RECOVERY_COMMIT:
+        raise OSError
+    commit = _c26._output(
+        repository_root, ("cat-file", "commit", configuration.reviewed_commit), 65536,
+    )
+    headers, separator, _message = commit.partition(b"\n\n")
+    parent_header = b"parent " + _RECOVERY_BASE_COMMIT.encode("ascii")
+    if not separator or parent_header not in headers.split(b"\n"):
+        raise OSError
+    raw = _c29._read_small_regular(
+        _CONFIG_PATH, _c17.MAX_EXECUTOR_SERVICE_CONFIG_BYTES,
+    )
+    if _hashlib.sha256(raw).hexdigest() != _RECOVERY_CONFIG_SHA256:
+        raise OSError
+    previous = _c17.parse_canonical_executor_service_configuration(raw)
+    if previous.reviewed_commit != _RECOVERY_COMMIT:
+        raise OSError
+    current_fields = configuration.to_dict()
+    previous_fields = previous.to_dict()
+    current_fields.pop("reviewed_commit")
+    previous_fields.pop("reviewed_commit")
+    if current_fields != previous_fields:
+        raise OSError
+
+    # C31B cannot replace application files. The pinned canonical predecessor
+    # manifest proves all 28 selected entries without requiring its Git object.
+    previous_manifest = _c26.DevApplicationManifest(
+        "canonical-relative-file-set-v1", "sha256",
+        _RECOVERY_COMMIT, manifest.entries,
+    )
+    if (
+        _hashlib.sha256(previous_manifest.canonical_bytes()).hexdigest()
+        != _RECOVERY_MANIFEST_SHA256
+    ):
+        raise OSError
+    return _c29.qualify_dev_host(
+        configuration=previous,
+        application_manifest=previous_manifest,
+        wheelhouse_evidence=wheels,
+    )
 
 
 def _lock_identity(value: _os.stat_result) -> tuple[int, ...]:
@@ -471,11 +526,16 @@ class DevHostProvisioningOrchestrator:
                 )
                 if plan.steps != _c31a._STEPS:
                     raise OSError
-                host = _c29.qualify_dev_host(
-                    configuration=configuration,
-                    application_manifest=manifest,
-                    wheelhouse_evidence=wheels,
-                )
+                try:
+                    host = _c29.qualify_dev_host(
+                        configuration=configuration,
+                        application_manifest=manifest,
+                        wheelhouse_evidence=wheels,
+                    )
+                except _c29.HostQualificationError:
+                    host = _qualify_reviewed_recovery(
+                        configuration, manifest, wheels, repository_root,
+                    )
                 if type(host) is not _c29.DevHostQualificationEvidence:
                     raise OSError
                 _c29.DevHostQualificationEvidence.__post_init__(host)
