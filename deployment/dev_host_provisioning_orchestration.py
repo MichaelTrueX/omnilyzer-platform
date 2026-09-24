@@ -41,7 +41,9 @@ _FUTURE_DIRECTORY = "future-systemd-socket-directory-creation-only"
 # Reviewed recovery evidence for the retained C31 state from c8646e1. This is
 # code-owned authority, never a caller-selected prior configuration or commit.
 _RECOVERY_COMMIT = "c8646e1ef72f0cbab4878d383f7765f07aef8417"
+_RECOVERY_BASE_COMMIT = "fdae74dd656f421211b0c2463c6eecb217edccde"
 _RECOVERY_CONFIG_SHA256 = "0d464f4c0792ddfc184b2fc65b4a46d7e233abf6471167e80ed2e728d9f6837c"
+_RECOVERY_MANIFEST_SHA256 = "2743932cfb2e8d431f56de25aaab6c77177c52165ea3f35ca80281602909e69a"
 
 _STEP_OUTCOMES = {
     1: ("verified",), 2: ("verified",), 3: ("verified",),
@@ -252,8 +254,15 @@ def _qualify_reviewed_recovery(
     wheels: _c28.DevWheelhouseEvidence,
     repository_root: str,
 ) -> _c29.DevHostQualificationEvidence:
-    """Requalify one pinned predecessor; require identical C25 application bytes."""
+    """Requalify one pinned predecessor with reviewed lineage and C26 bytes."""
     if configuration.reviewed_commit == _RECOVERY_COMMIT:
+        raise OSError
+    commit = _c26._output(
+        repository_root, ("cat-file", "commit", configuration.reviewed_commit), 65536,
+    )
+    headers, separator, _message = commit.partition(b"\n\n")
+    parent_header = b"parent " + _RECOVERY_BASE_COMMIT.encode("ascii")
+    if not separator or parent_header not in headers.split(b"\n"):
         raise OSError
     raw = _c29._read_small_regular(
         _CONFIG_PATH, _c17.MAX_EXECUTOR_SERVICE_CONFIG_BYTES,
@@ -270,31 +279,17 @@ def _qualify_reviewed_recovery(
     if current_fields != previous_fields:
         raise OSError
 
-    # The existing C31B installer cannot replace application files. Prove the
-    # predecessor Git blobs are byte-identical to the current C26 manifest
-    # before C29 can accept the retained tree and before any mutation begins.
-    paths = tuple(entry.path for entry in manifest.entries)
-    tree = _c26._tree(_c26._output(
-        repository_root,
-        ("ls-tree", "-r", "-z", "--full-tree", _RECOVERY_COMMIT, "--", *paths),
-        16384,
-    ), paths)
-    total = 0
-    for entry, (_path, blob) in zip(manifest.entries, tree, strict=True):
-        size_raw = _c26._output(repository_root, ("cat-file", "-s", blob), 32)
-        if not size_raw.endswith(b"\n") or not size_raw[:-1].isdigit():
-            raise OSError
-        size = int(size_raw[:-1])
-        total += size
-        if size > _c26._MAX_BLOB_BYTES or total > _c26._MAX_TOTAL_BYTES:
-            raise OSError
-        payload = _c26._output(repository_root, ("cat-file", "blob", blob), size)
-        if len(payload) != size or _hashlib.sha256(payload).hexdigest() != entry.sha256:
-            raise OSError
+    # C31B cannot replace application files. The pinned canonical predecessor
+    # manifest proves all 28 selected entries without requiring its Git object.
     previous_manifest = _c26.DevApplicationManifest(
-        manifest.manifest_kind, manifest.digest_algorithm,
+        "canonical-relative-file-set-v1", "sha256",
         _RECOVERY_COMMIT, manifest.entries,
     )
+    if (
+        _hashlib.sha256(previous_manifest.canonical_bytes()).hexdigest()
+        != _RECOVERY_MANIFEST_SHA256
+    ):
+        raise OSError
     return _c29.qualify_dev_host(
         configuration=previous,
         application_manifest=previous_manifest,

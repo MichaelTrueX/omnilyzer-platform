@@ -1774,10 +1774,14 @@ manifest. If that qualification fails, C31 may requalify once against the
 code-pinned predecessor commit `c8646e1ef72f0cbab4878d383f7765f07aef8417`
 and canonical C17 SHA-256
 `0d464f4c0792ddfc184b2fc65b4a46d7e233abf6471167e80ed2e728d9f6837c`.
+The current reviewed commit must have the pinned recovery base commit
+`fdae74dd656f421211b0c2463c6eecb217edccde` as a direct parent.
 The retained file must parse as exact canonical C17, name that predecessor,
 and agree with the new C17 in every field except `reviewed_commit`. The
-predecessor Git tree must contain the same 28 regular C25 files with identical
-SHA-256 bytes as the newly reviewed C26 manifest. C29 then checks the entire
+current 28 C26 entries, reconstructed with the predecessor commit and fixed
+manifest fields, must hash to the pinned canonical C26 SHA-256
+`2743932cfb2e8d431f56de25aaab6c77177c52165ea3f35ca80281602909e69a`.
+This does not require the predecessor Git object. C29 then checks the entire
 host against those predecessor inputs, including exact file metadata and the
 complete application tree. The host file cannot select recovery authority.
 An unrelated, modified, incomplete, or changed-application predecessor fails
