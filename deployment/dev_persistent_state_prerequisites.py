@@ -6,6 +6,8 @@ import hashlib as _hashlib
 import io as _io
 import json as _json
 import os as _os
+from pathlib import Path as _Path
+import sqlite3 as _sqlite3
 import stat as _stat
 import sys as _sys
 import threading as _threading
@@ -446,6 +448,59 @@ def _verify_replay(authority: _Authority) -> PersistentPrerequisiteEvidence:
     return PersistentPrerequisiteEvidence(
         _REPLAY_PATH, "replay_database", "verified", 1,
     )
+
+
+def _verify_initial_replay(authority: _Authority) -> None:
+    """Read-only C31 recovery proof of an exact store with zero consumptions."""
+    guard = _replay_guard(authority)
+    directory: int | None = None
+    database: int | None = None
+    connection: _sqlite3.Connection | None = None
+    failed = False
+    try:
+        directory = guard._open_directory()
+        guard._validate_quiescent_filesystem(directory)
+        database = _os.open(
+            _replay.REPLAY_FILENAME, _os.O_RDONLY | _os.O_NOFOLLOW | _os.O_CLOEXEC,
+            dir_fd=directory,
+        )
+        guard._validate_bound_file(directory, database)
+        connection = _sqlite3.connect(
+            _Path(f"/proc/self/fd/{database}").as_uri() + "?mode=ro",
+            uri=True, timeout=guard._busy_timeout_ms / 1000,
+            isolation_level=None,
+        )
+        connection.enable_load_extension(False)
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("PRAGMA trusted_schema=OFF")
+        connection.execute("PRAGMA temp_store=MEMORY")
+        connection.execute(f"PRAGMA busy_timeout={guard._busy_timeout_ms}")
+        guard._validate_bound_file(directory, database)
+        guard._validate_open_store(connection, require_connection_limit=False)
+        if connection.execute("SELECT 1 FROM consumptions LIMIT 1").fetchone() is not None:
+            raise OSError
+        guard._validate_quiescent_filesystem(directory)
+        guard._validate_bound_file(directory, database)
+    except _CONTROL:
+        raise
+    except Exception:
+        failed = True
+    finally:
+        for resource in (connection, database, directory):
+            if resource is not None:
+                try:
+                    if type(resource) is int:
+                        _os.close(resource)
+                    else:
+                        resource.close()
+                except _CONTROL:
+                    raise
+                except Exception:
+                    failed = True
+    if failed:
+        raise OSError(_ERROR) from None
 
 
 def _directory_identity(value: _os.stat_result) -> tuple[int, ...]:

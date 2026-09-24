@@ -249,9 +249,12 @@ class _PopulatedRecoveryPreflight:
             or type(self.deployment_state) is not str
             or self.deployment_state not in ("absent", "initial")
             or type(self.replay_state) is not str
-            or self.replay_state not in ("absent", "initialized")
-            or (self.deployment_state == "absent"
-                and self.replay_state != "absent")
+            or (self.c17_state, self.deployment_state, self.replay_state) not in (
+                ("predecessor", "absent", "absent"),
+                ("current", "absent", "absent"),
+                ("current", "initial", "absent"),
+                ("current", "initial", "initialized"),
+            )
         ):
             raise ValueError(_MODEL_ERROR)
         _python_environment.DevPythonEnvironmentEvidence.__post_init__(self.python)
@@ -398,7 +401,7 @@ def _qualify_recovery_persistent_state(
         _c31c.PersistentPrerequisiteEvidence.__post_init__(observed)
         if observed.outcome != "verified":
             raise OSError
-        _c31c._replay_guard(authority)._validate_initial()
+        _c31c._verify_initial_replay(authority)
         replay = "initialized"
     if state == "absent" and replay != "absent":
         raise OSError

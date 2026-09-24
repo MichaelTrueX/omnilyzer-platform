@@ -281,14 +281,6 @@ class SQLiteReplayGuard:
     def validate(self) -> None:
         """Read-only validate one already initialized exact replay store."""
 
-        self._validate(require_initial=False)
-
-    def _validate_initial(self) -> None:
-        """Read-only C31 recovery check for a store created but never consumed."""
-
-        self._validate(require_initial=True)
-
-    def _validate(self, *, require_initial: bool) -> None:
         directory_descriptor: int | None = None
         database_descriptor: int | None = None
         connection: sqlite3.Connection | None = None
@@ -315,10 +307,6 @@ class SQLiteReplayGuard:
             connection.execute(f"PRAGMA busy_timeout={self._busy_timeout_ms}")
             self._validate_bound_file(directory_descriptor, database_descriptor)
             self._validate_open_store(connection, require_connection_limit=False)
-            if (require_initial and connection.execute(
-                "SELECT 1 FROM consumptions LIMIT 1"
-            ).fetchone() is not None):
-                raise ReplayUnavailableError(_GENERIC_UNAVAILABLE)
             self._validate_quiescent_filesystem(directory_descriptor)
             self._validate_bound_file(directory_descriptor, database_descriptor)
         except (KeyboardInterrupt, SystemExit, GeneratorExit):

@@ -1820,7 +1820,10 @@ consumptions; and a pristine, empty audit directory. A valid active deployment
 state, replay consumption, audit history or residue is outside this recovery
 generation and blocks retry without deletion or repair. C31C still validates
 any audit entries before the empty-directory check, so malformed history also
-fails closed. Any mismatch blocks recovery without cleanup. On success, step 7 is reported as
+fails closed. The only admitted C17/state/replay tuples are predecessor/absent/absent,
+current/absent/absent, current/initial/absent, and current/initial/initialized;
+predecessor C17 with initialized state cannot follow the step order. Any mismatch
+blocks recovery without cleanup. On success, step 7 is reported as
 `populated-recovery-verified`. Steps 8–11 and 13–18 are `retained-exact`.
 If C17 is still the predecessor, step 12 uses C30's existing atomic replacement
 and reports `installed`. If C17 is already current, step 12 reports

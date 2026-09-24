@@ -702,8 +702,11 @@ class OrchestrationTests(unittest.TestCase):
                               "predecessor", "absent", "absent",
                           )) as recovery, \
              patch.object(authority.runtime, "install_executor_configuration",
-                          side_effect=replace_config):
+                          side_effect=replace_config), \
+             patch.object(authority.mechanics, "construct_python_environment",
+                          side_effect=AssertionError("venv or pip")) as python:
             result = self.invoke(c29_value=c29.HostQualificationError("populated venv"))
+        python.assert_not_called()
         self.assertEqual(result.operation, "populated-environment-recovery")
         self.assertEqual(recovery.call_count, 1)
         self.assertEqual(result.completed_steps[6].outcome,
@@ -716,6 +719,27 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual([item.outcome for item in result.completed_steps[7:18]],
                          ["retained-exact"] * 4 + ["installed"]
                          + ["retained-exact"] * 6)
+        self.assertFalse(any(item[0] == "python" for item in self.events))
+
+    def test_c_populated_recovery_preflight_has_exact_reachable_matrix(self):
+        python = python_environment.DevPythonEnvironmentEvidence()
+        allowed = {
+            ("predecessor", "absent", "absent"),
+            ("current", "absent", "absent"),
+            ("current", "initial", "absent"),
+            ("current", "initial", "initialized"),
+        }
+        for c17_state in ("predecessor", "current"):
+            for deployment_state in ("absent", "initial"):
+                for replay_state in ("absent", "initialized"):
+                    values = (c17_state, deployment_state, replay_state)
+                    with self.subTest(values=values):
+                        if values in allowed:
+                            preflight = module._PopulatedRecoveryPreflight(python, *values)
+                            module._PopulatedRecoveryPreflight.__post_init__(preflight)
+                        else:
+                            with self.assertRaises(ValueError):
+                                module._PopulatedRecoveryPreflight(python, *values)
 
     def test_c_populated_recovery_failure_has_no_mutation(self):
         with patch.object(module, "_qualify_populated_recovery", side_effect=OSError):
@@ -1039,7 +1063,7 @@ class OrchestrationTests(unittest.TestCase):
              patch.object(c31c, "_verify_state", return_value=state) as verify_state, \
              patch.object(c31c, "_verify_replay", return_value=replay) as verify_replay, \
              patch.object(c31c, "_audit_observation", return_value=audit) as verify_audit, \
-             patch.object(c31c, "_replay_guard") as guard:
+             patch.object(c31c, "_verify_initial_replay") as initial_replay:
             self.assertEqual(module._qualify_recovery_persistent_state(
                 self.configuration), ("absent", "absent"))
             state_exists = True
@@ -1050,7 +1074,7 @@ class OrchestrationTests(unittest.TestCase):
                 self.configuration), ("initial", "initialized"))
             self.assertGreaterEqual(verify_state.call_count, 2)
             self.assertEqual(verify_replay.call_count, 1)
-            self.assertEqual(guard.return_value._validate_initial.call_count, 1)
+            self.assertEqual(initial_replay.call_count, 1)
             self.assertEqual(verify_audit.call_count, 3)
 
             with patch.object(c31c, "_verify_state", return_value=dataclasses.replace(
@@ -1071,8 +1095,7 @@ class OrchestrationTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 module._qualify_recovery_persistent_state(self.configuration)
             audit_residue = False
-            with patch.object(c31c, "_replay_guard") as malformed:
-                malformed.return_value._validate_initial.side_effect = OSError
+            with patch.object(c31c, "_verify_initial_replay", side_effect=OSError):
                 with self.assertRaises(OSError):
                     module._qualify_recovery_persistent_state(self.configuration)
             state_exists = False

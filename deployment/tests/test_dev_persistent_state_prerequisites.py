@@ -295,6 +295,28 @@ class ReplayAndAuditTests(unittest.TestCase):
         self.sandbox = Sandbox()
         self.addCleanup(self.sandbox.close)
 
+    def test_recovery_replay_requires_exact_initial_store_without_writes(self):
+        path = self.sandbox.replay_directory / "replay.sqlite3"
+        guard = self.sandbox.guard()
+        guard.initialize()
+        before = path.read_bytes()
+        module._verify_initial_replay(self.sandbox.authority)
+        self.assertEqual(path.read_bytes(), before)
+        guard.consume(
+            "consumed-jti", expires_at=NOW + 100,
+            request_hash="a" * 64, run_id=1, run_attempt=1,
+        )
+        before = path.read_bytes()
+        with self.assertRaises(OSError):
+            module._verify_initial_replay(self.sandbox.authority)
+        self.assertEqual(path.read_bytes(), before)
+        with __import__("sqlite3").connect(path) as connection:
+            connection.execute("DROP TABLE consumptions")
+        before = path.read_bytes()
+        with self.assertRaises(OSError):
+            module._verify_initial_replay(self.sandbox.authority)
+        self.assertEqual(path.read_bytes(), before)
+
     def test_i_replay_initializes_once_with_clock_and_validates_read_only(self):
         with patch.object(replay.SQLiteReplayGuard, "initialize", wraps=self.sandbox.guard().initialize) as initialize:
             first = self.sandbox.value.initialize_replay()

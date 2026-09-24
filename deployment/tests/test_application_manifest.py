@@ -23,6 +23,8 @@ ROOT = Path(__file__).resolve().parents[2]
 UNAVAILABLE = "DEV application manifest evidence is unavailable"
 MODEL_ERROR = "DEV application manifest model is invalid"
 PATHS = tuple(item.repository_path for item in DevApplicationSourceSet().files)
+POPULATED_RECOVERY_PREDECESSOR = "c78e94f5e7c6b1a557ac041bdfb560bb82c1642b"
+POPULATED_RECOVERY_MANIFEST_SHA256 = "575d09be5933ea226313a20a958cbc5066cabcf20580e7343ee3034ac3a95f1e"
 
 
 def git(root, *arguments):
@@ -52,6 +54,26 @@ class Text(str):
 
 
 class ModelTests(unittest.TestCase):
+    def test_populated_recovery_preserves_every_c25_source_byte(self):
+        entries = []
+        for source in DevApplicationSourceSet().files:
+            path = source.repository_path
+            current = (ROOT / path).read_bytes()
+            predecessor = git(ROOT, "show", f"{POPULATED_RECOVERY_PREDECESSOR}:{path}")
+            self.assertEqual(current, predecessor, path)
+            entries.append(module.ApplicationManifestEntry(
+                path, hashlib.sha256(current).hexdigest(), "0644",
+            ))
+        self.assertEqual(len(entries), 28)
+        manifest = module.DevApplicationManifest(
+            "canonical-relative-file-set-v1", "sha256",
+            POPULATED_RECOVERY_PREDECESSOR, tuple(entries),
+        )
+        self.assertEqual(
+            hashlib.sha256(manifest.canonical_bytes()).hexdigest(),
+            POPULATED_RECOVERY_MANIFEST_SHA256,
+        )
+
     def test_exact_api(self):
         self.assertEqual(module.__all__, (
             "ApplicationManifestEvidenceError", "ApplicationManifestEntry",
