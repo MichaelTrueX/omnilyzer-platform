@@ -60,11 +60,12 @@ _STEP_OUTCOMES = {
 
 @_dataclass(frozen=True, slots=True)
 class ProvisioningFailureEvidence:
-    """Fixed plan position and mutation status; contains no failure payload."""
+    """Fixed plan position, mutation status and optional C31B phase."""
 
     last_completed_sequence: int
     failed_step: _c31a.ProvisioningStep
     mutation_started: bool
+    internal_phase: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -79,6 +80,11 @@ class ProvisioningFailureEvidence:
             or (self.last_completed_sequence >= 8
                 and not self.mutation_started
                 and self.last_completed_sequence != 22)
+            or (self.internal_phase is not None and (
+                type(self.internal_phase) is not str
+                or self.last_completed_sequence != 13
+                or self.internal_phase not in _c31b._PYTHON_PHASES
+            ))
         ):
             raise ValueError(_MODEL_ERROR)
 
@@ -95,10 +101,11 @@ class ProvisioningOrchestrationError(Exception):
 
 
 def _failure(completed: list["ProvisioningStepEvidence"],
-             mutation_started: bool) -> ProvisioningOrchestrationError:
+             mutation_started: bool,
+             internal_phase: str | None = None) -> ProvisioningOrchestrationError:
     last = completed[-1].sequence if completed else 0
     return ProvisioningOrchestrationError(ProvisioningFailureEvidence(
-        last, _c31a._STEPS[min(last, 21)], mutation_started,
+        last, _c31a._STEPS[min(last, 21)], mutation_started, internal_phase,
     ))
 
 
@@ -397,6 +404,7 @@ class DevHostProvisioningOrchestrator:
         process_lock = None
         result = None
         failed = False
+        internal_phase = None
         completed = []
         mutation_started = False
         try:
@@ -591,8 +599,15 @@ class DevHostProvisioningOrchestrator:
                 )
         except _CONTROL:
             raise
-        except Exception:
+        except Exception as error:
             failed = True
+            if (
+                len(completed) == 13
+                and type(error) is _c31b.ProvisioningMechanicsError
+                and type(error.phase) is str
+                and error.phase in _c31b._PYTHON_PHASES
+            ):
+                internal_phase = error.phase
         finally:
             active = _sys.exception()
             if process_lock is not None:
@@ -606,5 +621,5 @@ class DevHostProvisioningOrchestrator:
                     failed = True
             local.release()
         if failed or result is None:
-            raise _failure(completed, mutation_started) from None
+            raise _failure(completed, mutation_started, internal_phase) from None
         return result

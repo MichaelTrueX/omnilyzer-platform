@@ -1585,6 +1585,14 @@ Substituted, unknown or nonempty state is never recursively removed. A failed
 venv is deliberately left for operator inspection because safe generic tree
 removal cannot be proven; C31B never destroys a pre-existing venv.
 
+C31B Python-construction errors retain the generic public message and expose
+only a fixed internal phase label. The label distinguishes input and snapshot
+checks, the venv command, pre-install verification, offline pip,
+post-install qualification and cleanup. It includes no exception, subprocess
+output, source path or credential. A phase records where an error surfaced,
+not whether that phase made a persistent mutation. Existing identity-bound
+snapshot cleanup and failed-venv retention are unchanged.
+
 Deployment-state initialization, replay initialization and audit prerequisites
 are implemented separately by C31C. The complete 22-step orchestration and
 every systemd lifecycle operation remain deferred. C31B performs no Docker,
@@ -1731,11 +1739,14 @@ history and audit history are never removed or reset after a later failure.
 
 C31D failures carry only fixed `ProvisioningFailureEvidence`: the last
 completed sequence (zero if none), the next or failed C31A step with its fixed
-identifier and boundary, and whether a host mutation call was attempted. The
-message remains fixed and suppresses underlying exception details. Steps 14–18
-are one C31B Python operation; if it fails, none of those steps is marked
-complete and the failed step is reported as 14. A failure while releasing the
-lock after step 22 is attributed to step 22 even if verification completed.
+identifier and boundary, whether a host mutation call was attempted, and an
+optional fixed C31B internal phase at step 14. The message remains fixed and
+suppresses underlying exception details. Steps 14–18 are one C31B Python
+operation; if it fails, none of those steps is marked complete and the failed
+step is reported as 14, with the C31B phase when available. Earlier failure
+evidence has no phase and cannot be interpreted retroactively. A failure while
+releasing the lock after step 22 is attributed to step 22 even if verification
+completed.
 
 ### Partial-failure recovery
 

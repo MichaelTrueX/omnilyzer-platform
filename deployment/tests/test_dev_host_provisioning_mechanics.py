@@ -598,6 +598,38 @@ class SnapshotAndProcessTests(unittest.TestCase):
                     )
             self.assertNotIn("secret", str(caught.exception))
 
+    def test_o_python_failure_identifies_only_the_fixed_internal_phase(self):
+        configuration = c17.DevExecutorServiceConfiguration(**configuration_values())
+        mechanics = module.DevHostProvisioningMechanics(configuration=configuration)
+        for target, phase in (
+            ("_prepare_snapshot", "snapshot-preparation"),
+            ("_venv_precondition", "venv-precondition"),
+            ("_run_process", "venv-command"),
+            ("_verify_preinstall_venv", "preinstall-venv-verification"),
+        ):
+            with self.subTest(phase=phase), \
+                 patch.object(module, "_open_directory", return_value=(10, [])), \
+                 patch.object(module, "_validate_host_qualification"), \
+                 patch.object(module, "_prepare_snapshot", return_value=SimpleNamespace()), \
+                 patch.object(module, "_validate_snapshot"), \
+                 patch.object(module, "_venv_precondition"), \
+                 patch.object(module, "_python_argv", return_value=(("/usr/bin/python3.12",), ("/venv/python",))), \
+                 patch.object(module, "_run_process"), \
+                 patch.object(module, "_verify_preinstall_venv"), \
+                 patch.object(module, "_cleanup_snapshot"), \
+                 patch.object(module, "_close", return_value=(False, None)):
+                with patch.object(module, target, side_effect=OSError("secret subprocess or path")):
+                    with self.assertRaises(module.ProvisioningMechanicsError) as caught:
+                        mechanics.construct_python_environment(
+                            host_qualification=object(), repository_root="/repository",
+                            wheelhouse_path="/wheels", pip_installer_staging="/pip",
+                        )
+            self.assertEqual(caught.exception.phase, phase)
+            self.assertEqual(str(caught.exception), ERROR)
+            self.assertNotIn("secret", repr(caught.exception))
+        with self.assertRaises(ValueError):
+            module.ProvisioningMechanicsError("/tmp/secret")
+
     def test_p_control_exceptions_and_nonmutating_static_boundary(self):
         configuration = c17.DevExecutorServiceConfiguration(**configuration_values())
         mechanics = module.DevHostProvisioningMechanics(configuration=configuration)

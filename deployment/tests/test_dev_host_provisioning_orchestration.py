@@ -227,7 +227,7 @@ class FakeMechanics:
         self.events.append(("python", values))
         if self.fail_python:
             raise c31b.ProvisioningMechanicsError(
-                "DEV host provisioning mechanics are unavailable",
+                "snapshot-preparation",
             )
         return python_environment.DevPythonEnvironmentEvidence()
 
@@ -466,7 +466,13 @@ class OrchestrationTests(unittest.TestCase):
             return real_step(sequence, outcome)
 
         with patch.object(module, "_step", side_effect=step):
-            self.assert_failure(13, 14, True)
+            with self.assertRaises(module.ProvisioningOrchestrationError) as caught:
+                self.invoke()
+        self.assertEqual(caught.exception.evidence.last_completed_sequence, 13)
+        self.assertIs(caught.exception.evidence.failed_step, module._c31a._STEPS[13])
+        self.assertTrue(caught.exception.evidence.mutation_started)
+        self.assertEqual(caught.exception.evidence.internal_phase, "snapshot-preparation")
+        self.assertEqual(str(caught.exception), ERROR)
         self.assertNotIn(14, recorded)
         self.assertFalse({14, 15, 16, 17, 18, 19, 20, 21, 22} & set(recorded))
         self.assertNotIn("state", [item[0] for item in self.events])
@@ -609,6 +615,15 @@ class OrchestrationTests(unittest.TestCase):
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_failure_phase_accepts_only_fixed_c31b_labels_at_step_14(self):
+        step_14 = module._c31a._STEPS[13]
+        for phase in ("secret path", "venv-command /tmp/secret", 1, True):
+            with self.subTest(phase=phase), self.assertRaisesRegex(ValueError, module._MODEL_ERROR):
+                module.ProvisioningFailureEvidence(13, step_14, True, phase)
+        with self.assertRaisesRegex(ValueError, module._MODEL_ERROR):
+            module.ProvisioningFailureEvidence(12, module._c31a._STEPS[12], True,
+                                              "venv-command")
+
     def test_failure_error_rejects_unrelated_evidence(self):
         with self.assertRaisesRegex(ValueError, module._MODEL_ERROR):
             module.ProvisioningOrchestrationError(object())
