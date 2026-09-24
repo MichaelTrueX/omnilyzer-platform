@@ -46,7 +46,7 @@ _LIFECYCLES = (
 )
 _SYSTEMD_ASSET_SHA256 = (
     "4211b0a4498548a54c4aedeaeb419aef84fb76d16f9da5f60a40b20be1daf95f",
-    "00b4d6bef37a1582092ec927cd8501ff922c209f7b10542d264a9c48b74088fa",
+    "a79a89ccd97c1de6b7038337ab1f7089c4dad501532e376a71a811854d1e8c86",
 )
 
 
@@ -242,8 +242,6 @@ class DevHostProvisioningContract:
                                 0, installation.executor_gid, _LIFECYCLES[3]),
             HostPathRequirement("/var/lib/omnilyzer", "directory", 0o755, 0, 0, _LIFECYCLES[0]),
             HostPathRequirement("/var/lib/omnilyzer/deployment", "directory", 0o755, 0, 0, _LIFECYCLES[0]),
-            HostPathRequirement("/var/log/omnilyzer", "directory", 0o755, 0, 0, _LIFECYCLES[0]),
-            HostPathRequirement("/var/log/omnilyzer/deployment", "directory", 0o755, 0, 0, _LIFECYCLES[0]),
             HostPathRequirement(str(socket_directory.parent),
                                 "directory", 0o755, 0, 0, _LIFECYCLES[4]),
             HostPathRequirement(str(socket_directory),

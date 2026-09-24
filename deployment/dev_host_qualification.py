@@ -578,7 +578,7 @@ def _observe_application(manifest: _c26.DevApplicationManifest,
                     ("/".join(path.split("/")[:index]) for index in range(1, len(path.split("/"))))}
         found = set()
 
-        def scan(directory_fd: int, prefix: str) -> None:
+        def scan(directory_fd: int, prefix: str) -> bool:
             with _os.scandir(directory_fd) as iterator:
                 names = tuple(sorted(entry.name for entry in iterator))
             for child_name in names:
@@ -622,10 +622,14 @@ def _observe_application(manifest: _c26.DevApplicationManifest,
                     current = _os.stat(child_name, dir_fd=directory_fd, follow_symlinks=False)
                     if _fingerprint(current) != _fingerprint(opened): raise OSError
                     found.add(relative)
+            return bool(names)
 
-        scan(root_fd, "")
-        if found != set(expected) or _fingerprint(_named_status(requirement.root)) != _fingerprint(status):
+        root_nonempty = scan(root_fd, "")
+        if _fingerprint(_named_status(requirement.root)) != _fingerprint(status):
             raise OSError
+        if not root_nonempty:
+            return HostApplicationObservation(requirement.root, "absent", manifest.reviewed_commit, digest)
+        if found != set(expected): raise OSError
         return HostApplicationObservation(requirement.root, "exact", manifest.reviewed_commit, digest)
     finally:
         for descriptor in reversed(owned): _os.close(descriptor)

@@ -256,13 +256,14 @@ class ResourceRequirementTests(unittest.TestCase):
 
     def test_exact_resources_paths_kinds_and_modes(self) -> None:
         resources = requirements_by_path(contract())
+        self.assertFalse(any(path.startswith("/var/log/") for path in resources))
         self.assertEqual(set(resources), {
             "/var/lib/omnilyzer/deployment/dev",
             "/var/lib/omnilyzer/deployment/dev/state.json",
             "/var/lib/omnilyzer/deployment/authority",
             "/var/lib/omnilyzer/deployment/authority/replay.sqlite3",
-            "/var/log/omnilyzer/deployment/dev",
-            "/var/log/omnilyzer/deployment/dev/events.jsonl",
+            "/var/lib/omnilyzer/deployment/audit",
+            "/var/lib/omnilyzer/deployment/audit/events.jsonl",
             "/run/omnilyzer/deployment/executor.sock",
         })
         expected = {
@@ -272,8 +273,8 @@ class ResourceRequirementTests(unittest.TestCase):
             "/var/lib/omnilyzer/deployment/authority/replay.sqlite3": (
                 "sqlite_database", 0o660,
             ),
-            "/var/log/omnilyzer/deployment/dev": ("directory", 0o700),
-            "/var/log/omnilyzer/deployment/dev/events.jsonl": (
+            "/var/lib/omnilyzer/deployment/audit": ("directory", 0o700),
+            "/var/lib/omnilyzer/deployment/audit/events.jsonl": (
                 "regular_file", 0o600,
             ),
             "/run/omnilyzer/deployment/executor.sock": ("unix_socket", 0o660),
@@ -293,7 +294,7 @@ class ResourceRequirementTests(unittest.TestCase):
             "/var/lib/omnilyzer/deployment/authority/replay.sqlite3",
         )
         self.assertEqual((REPLAY_DIRECTORY_MODE, DATABASE_MODE), (0o770, 0o660))
-        self.assertEqual(str(AUDIT_PATH), "/var/log/omnilyzer/deployment/dev/events.jsonl")
+        self.assertEqual(str(AUDIT_PATH), "/var/lib/omnilyzer/deployment/audit/events.jsonl")
         self.assertEqual(
             PRODUCTION_EXECUTOR_SOCKET_PATH,
             "/run/omnilyzer/deployment/executor.sock",
@@ -328,8 +329,8 @@ class ResourceRequirementTests(unittest.TestCase):
         for path in (
             "/var/lib/omnilyzer/deployment/dev",
             "/var/lib/omnilyzer/deployment/dev/state.json",
-            "/var/log/omnilyzer/deployment/dev",
-            "/var/log/omnilyzer/deployment/dev/events.jsonl",
+            "/var/lib/omnilyzer/deployment/audit",
+            "/var/lib/omnilyzer/deployment/audit/events.jsonl",
         ):
             self.assertEqual(
                 (resources[path].owner_uid, resources[path].group_gid),
@@ -362,11 +363,11 @@ class ResourceRequirementTests(unittest.TestCase):
             "future-reviewed-replay-initialization-only",
         )
         self.assertEqual(
-            resources["/var/log/omnilyzer/deployment/dev"].lifecycle,
+            resources["/var/lib/omnilyzer/deployment/audit"].lifecycle,
             "must-exist-before-activation",
         )
         self.assertEqual(
-            resources["/var/log/omnilyzer/deployment/dev/events.jsonl"].lifecycle,
+            resources["/var/lib/omnilyzer/deployment/audit/events.jsonl"].lifecycle,
             "may-be-created-on-first-audit-append",
         )
         self.assertEqual(

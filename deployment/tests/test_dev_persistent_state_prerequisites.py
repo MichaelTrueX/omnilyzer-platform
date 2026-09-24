@@ -602,6 +602,10 @@ class ReplayAndAuditTests(unittest.TestCase):
 
 class BoundaryTests(unittest.TestCase):
     def test_o_public_api_inertness_fixed_errors_and_no_arbitrary_authority(self):
+        self.assertEqual(module._AUDIT_PATH,
+                         "/var/lib/omnilyzer/deployment/audit/events.jsonl")
+        self.assertEqual(module._AUDIT_DIRECTORY,
+                         "/var/lib/omnilyzer/deployment/audit")
         self.assertEqual(module.__all__, (
             "PersistentStatePrerequisiteError", "DevInitialStateEvidence",
             "PersistentPrerequisiteEvidence", "dev_initial_state",
@@ -621,7 +625,7 @@ class BoundaryTests(unittest.TestCase):
         })
         with self.assertRaisesRegex(ValueError, "evidence is invalid"):
             module.PersistentPrerequisiteEvidence(
-                "/var/log/omnilyzer/deployment/dev/events.jsonl",
+                "/var/lib/omnilyzer/deployment/audit/events.jsonl",
                 "audit_history", "existing", 0,
             )
         configuration = c17.DevExecutorServiceConfiguration(**configuration_values())
@@ -633,6 +637,17 @@ class BoundaryTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             module.DevPersistentStatePrerequisites(configuration=object())
         value = module.DevPersistentStatePrerequisites(configuration=configuration)
+        authority = object.__getattribute__(value, "_authority")
+        self.assertEqual(dataclasses.astuple(authority.audit_directory), (
+            module._AUDIT_DIRECTORY, "directory", 0o700,
+            configuration.executor_uid, configuration.executor_gid,
+            "must-exist-before-activation",
+        ))
+        self.assertEqual(dataclasses.astuple(authority.audit_file), (
+            module._AUDIT_PATH, "regular_file", 0o600,
+            configuration.executor_uid, configuration.executor_gid,
+            "may-be-created-on-first-audit-append",
+        ))
         with self.assertRaises(TypeError):
             value.initialize_replay(path="/tmp/escape")
         sandbox = Sandbox()
