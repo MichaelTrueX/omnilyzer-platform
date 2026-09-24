@@ -1,12 +1,15 @@
 """C31A closed plan and post-install Python environment tests."""
 
 import ast
+import base64
 import builtins
+import csv
 from contextlib import ExitStack
 import dataclasses
 import hashlib
 import importlib
 import inspect
+import io
 import json
 import os
 from pathlib import Path
@@ -30,6 +33,18 @@ from deployment.tests.test_executor_service_config import configuration_values
 
 PLAN_ERROR = "DEV host provisioning plan is invalid"
 ENVIRONMENT_ERROR = "DEV Python environment qualification is unavailable"
+
+
+def fixture_root_only(path, owner_uid, group_gid, owned):
+    """Test descendant integrity when sandbox /tmp has a non-root owner."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    owned.append(descriptor)
+    status = os.fstat(descriptor)
+    if (status.st_mode & 0o777, status.st_uid, status.st_gid) != (
+        0o755, owner_uid, group_gid,
+    ):
+        raise OSError
+    return descriptor, []
 
 
 def fixtures():
@@ -206,7 +221,7 @@ class ProvisioningPlanTests(unittest.TestCase):
         self.assertEqual(self.plan.runtime_manifest_size, 57824)
         self.assertEqual(
             self.plan.runtime_manifest_sha256,
-            "92f5bd9d8db6fecc5880b82103a81e7c23d3efac68b70e9fc8634104e52bbdbe",
+            "3966c1f4075e2813131f249eb02a473acf0e4d11be61b05f858678b668d2766b",
         )
         self.assertEqual(self.installer.artifact.filename,
                          "pip-26.2.1-py3-none-any.whl")
@@ -375,11 +390,85 @@ class PythonEnvironmentQualificationTests(unittest.TestCase):
                     **{override: "caller-selected"},
                 )
 
+    def test_cffi_record_uses_pip_csv_crlf_serialization(self):
+        """Rebuild pip 26.2.1's sorted, site-relative installed RECORD rows."""
+        site = "lib/python3.12/site-packages/"
+        record = site + "cffi-2.1.1.dist-info/RECORD"
+        wheel = c24.DevInstallationIntegrityContract(
+            configuration=self.configuration,
+        ).python_environment_requirement().wheels[2].filename
+        selected = [
+            entry for entry in self.entries
+            if entry["kind"] == "regular_file" and (
+                entry["source"] == wheel
+                or entry["path"] == "bin/cffi-gen-src"
+                or (entry["source"] == "pip-generated-metadata"
+                    and entry["path"].startswith(site + "cffi-2.1.1.dist-info/"))
+            )
+        ]
+        self.assertEqual(len(selected), 34)
+        rows = []
+        for entry in selected:
+            path = entry["path"]
+            relative = (
+                "../../../" + path if path.startswith("bin/")
+                else path.removeprefix(site)
+            )
+            digest = (
+                "sha256=" + base64.urlsafe_b64encode(
+                    bytes.fromhex(entry["sha256"])
+                ).rstrip(b"=").decode("ascii")
+                if path != record else ""
+            )
+            rows.append((relative, digest, str(entry["size"]) if digest else ""))
+        rows.sort(key=lambda row: row[0])
+        self.assertEqual(len(rows), 34)
+
+        def serialize(newline=None):
+            output = io.StringIO(newline="")
+            writer = csv.writer(output) if newline is None else csv.writer(
+                output, lineterminator=newline,
+            )
+            writer.writerows(rows)
+            return output.getvalue().encode("utf-8")
+
+        crlf, lf = serialize(), serialize("\n")
+        self.assertEqual((len(crlf), hashlib.sha256(crlf).hexdigest()), (
+            2665, "e17a08d7a6b2a942aca45d2e533ca3c805d02d069a6674fdda39ba5e90193200",
+        ))
+        self.assertEqual((len(lf), hashlib.sha256(lf).hexdigest()), (
+            2631, "7f43cc4e11358f6468993deccf1bcd24bc451b7464deb7ea7b14e4fba361abdb",
+        ))
+        bound = next(entry for entry in self.entries if entry["path"] == record)
+        self.assertEqual((bound["size"], bound["sha256"]),
+                         (len(crlf), hashlib.sha256(crlf).hexdigest()))
+        self.assertNotEqual((len(crlf), hashlib.sha256(crlf).hexdigest()),
+                            (len(lf), hashlib.sha256(lf).hexdigest()))
+        with tempfile.TemporaryDirectory() as parent:
+            root = Path(parent) / "venv"
+            root.mkdir()
+            root.chmod(0o755)
+            (root / "RECORD").write_bytes(crlf)
+            (root / "RECORD").chmod(0o644)
+            old = ({"path": "RECORD", "kind": "regular_file", "mode": "0644",
+                    "source": "fixture", "size": len(lf),
+                    "sha256": hashlib.sha256(lf).hexdigest()},)
+            corrected = ({**old[0], "size": bound["size"],
+                          "sha256": bound["sha256"]},)
+            with patch.object(environment_module, "_open_root", fixture_root_only):
+                with self.assertRaises(OSError):
+                    environment_module._observe_tree(
+                        str(root), old, os.getuid(), os.getgid(),
+                    )
+                environment_module._observe_tree(
+                    str(root), corrected, os.getuid(), os.getgid(),
+                )
+
     def test_l_retained_manifest_exact_wheel_and_generated_file_model(self):
         path = Path(environment_module.__file__).parent / environment_module._MANIFEST_PATH
         raw = path.read_bytes()
         self.assertEqual((len(raw), hashlib.sha256(raw).hexdigest()), (
-            57824, "92f5bd9d8db6fecc5880b82103a81e7c23d3efac68b70e9fc8634104e52bbdbe",
+            57824, "3966c1f4075e2813131f249eb02a473acf0e4d11be61b05f858678b668d2766b",
         ))
         self.assertEqual(len(self.entries), 237)
         self.assertEqual(sum(item["kind"] == "regular_file" for item in self.entries), 197)
@@ -415,6 +504,7 @@ class PythonEnvironmentQualificationTests(unittest.TestCase):
         self.assertEqual(sum(item["path"].endswith("/INSTALLER") for item in generated), 4)
         self.assertEqual(sum(item["path"].endswith("/REQUESTED") for item in generated), 4)
 
+    @patch.object(environment_module, "_open_root", fixture_root_only)
     def test_m_complete_exact_tree_passes_read_only_observation(self):
         with tempfile.TemporaryDirectory() as parent:
             root = Path(parent) / "venv"
@@ -437,6 +527,7 @@ class PythonEnvironmentQualificationTests(unittest.TestCase):
                           for path in sorted(root.rglob("*")))
         self.assertEqual(before, after)
 
+    @patch.object(environment_module, "_open_root", fixture_root_only)
     def test_n_modified_file_symlink_extra_pyc_and_pip_package_rejected(self):
         with tempfile.TemporaryDirectory() as parent:
             root, file, entries = self.mini_tree(parent)
@@ -464,6 +555,7 @@ class PythonEnvironmentQualificationTests(unittest.TestCase):
                         str(root), entries, os.getuid(), os.getgid(),
                     )
 
+    @patch.object(environment_module, "_open_root", fixture_root_only)
     def test_o_wrong_ownership_mode_and_path_substitution_rejected(self):
         with tempfile.TemporaryDirectory() as parent:
             root, file, entries = self.mini_tree(parent)
@@ -481,10 +573,10 @@ class PythonEnvironmentQualificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as parent:
             real = Path(parent) / "real"; real.mkdir()
             root, _file, entries = self.mini_tree(str(real))
-            alias = Path(parent) / "alias"; alias.symlink_to(real, target_is_directory=True)
+            alias = Path(parent) / "alias"; alias.symlink_to(root, target_is_directory=True)
             with self.assertRaises(OSError):
                 environment_module._observe_tree(
-                    str(alias / root.name), entries, os.getuid(), os.getgid(),
+                    str(alias), entries, os.getuid(), os.getgid(),
                 )
 
     def test_p_malformed_generated_metadata_manifest_rejected(self):

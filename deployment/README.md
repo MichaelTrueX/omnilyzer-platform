@@ -12,7 +12,7 @@ Later phases must activate each environment deliberately, supply merge-SHA-bound
 
 The repository is now public. `main` is protected by the active repository ruleset `Protect main`. The GitHub deployment environment `task014-dev` exists with `deployment_branch_policy.protected_branches=true` and `deployment_branch_policy.custom_branch_policies=false`. The branch/environment protection capability prerequisite is satisfied for DEV; these protections must remain enforced. ADR 0011's 2026-09-08 private-repository limitation remains historical context.
 
-A separate live-authority review is still required before C31 host provisioning, any host/runtime mutation, or deployment activation. `deployment/environments/dev.json` remains unchanged with `activation.deployment_enabled=false`, which must remain false pending reviewed activation. This documentation update enables no deployment workflow, OIDC, systemd, Docker execution, host provisioning, registry credentials, listener, or other live deployment authority.
+Further C31 host provisioning or retry requires separate authorization, and deployment activation remains prohibited. `deployment/environments/dev.json` remains unchanged with `activation.deployment_enabled=false`. This documentation update enables no deployment workflow, OIDC, systemd, Docker execution, host provisioning, registry credentials, listener, or other live deployment authority.
 
 ## Phase 2B2 deployment-authority and runtime contract
 
@@ -1465,7 +1465,7 @@ The retained
 derived by installing the four exact, hash-verified C24 wheels with the exact
 C31P pip 26.2.1 wheel in isolated temporary no-pip CPython 3.12 environments.
 Its canonical bytes are 57,824 bytes with SHA-256
-`92f5bd9d8db6fecc5880b82103a81e7c23d3efac68b70e9fc8634104e52bbdbe`.
+`3966c1f4075e2813131f249eb02a473acf0e4d11be61b05f858678b668d2766b`.
 It closes 237 entries: 197 regular files, 36 directories and four symlinks.
 Wheel payload and metadata files retain their reviewed wheel-derived hashes;
 compiled extensions are regular hashed payload files. None of these wheels has
@@ -1488,6 +1488,14 @@ cffi 2.1.1 and pycparser 3.0), the exact `pyvenv.cfg`, no system site packages,
 the reviewed `/usr/bin/python3.12` relationship, and no installed pip or extra
 runtime package.
 
+The cffi 2.1.1 installed `RECORD` has 34 rows. Pip 26.2.1 writes them through
+Python `csv.writer`, whose default line ending is CRLF. The initial retained
+manifest accidentally normalized this one file to LF (2,631 bytes,
+SHA-256 `7f43cc4e11358f6468993deccf1bcd24bc451b7464deb7ea7b14e4fba361abdb`).
+The corrected output evidence binds the actual CRLF file (2,665 bytes,
+SHA-256 `e17a08d7a6b2a942aca45d2e533ca3c805d02d069a6674fdda39ba5e90193200`).
+This changes no wheel input, installer command or C30 replacement behavior.
+
 C31B supplies narrowly named closed mechanics for C26 tree materialization,
 the identity-bound input snapshot, exact no-pip venv construction, exact
 offline installation and identity-bound snapshot cleanup. C31C supplies the
@@ -1505,8 +1513,9 @@ is separate from, and does not broaden, `RestrictedPrivilegedExecutor`,
 explicit mechanics: materialize the exact C26 application tree, and construct
 the exact reviewed Python environment from fixed qualified inputs. Import and
 construction do no I/O. The facade is not composed into the broker, executor,
-listener, service units or workflow and has not been installed or invoked on
-the DEV host.
+listener, service units or workflow. A separate C31 host operation reached
+Python qualification on the DEV host and failed closed as described below;
+this repository change authorizes no retry.
 
 Application materialization opens the caller-selected repository location
 without following symlink components and retains that directory descriptor.
@@ -1663,8 +1672,8 @@ replay-verified and pristine/existing-history observations; it does not claim
 activation readiness. C31C changes no C30 public API, is not connected to the
 broker, executor, service or workflow, and has not been invoked against the DEV
 host. C31C did not own step 22 or full orchestration; C31D now supplies that
-still-inert verifier and composition. Systemd lifecycle, actual host
-provisioning, OIDC activation and live deployment remain prohibited by ADR 0011.
+verifier and composition. Further host provisioning, systemd lifecycle, OIDC
+activation and live deployment remain prohibited pending separate review.
 
 ## C31D post-provision verification and closed orchestration
 
@@ -1792,6 +1801,38 @@ that its own precondition already verifies, and C30 retains its atomic C17
 replacement. This exception does not activate deployment or authorize a host
 retry.
 
+The later failed C31 step-14 run against `c78e94f5e7c6b1a557ac041bdfb560bb82c1642b`
+retained a populated Python environment after pip succeeded and the input
+snapshot was removed. A separate C31-only branch is pinned to that predecessor,
+its exact C17 SHA-256 `a570f9224ebeaa5d893299299b95734aaca28fc753eaa44bdabba8e7ac24b1b0`,
+and its exact C26 SHA-256 `575d09be5933ea226313a20a958cbc5066cabcf20580e7343ee3034ac3a95f1e`.
+The current reviewed commit must have that pinned predecessor as a direct parent;
+a merge with that direct parent is accepted, while descendants without it are
+not. The installed C17 must be either the exact pinned predecessor (agreeing
+with the new C17 except for `reviewed_commit`) or the exact current C17.
+Before any mutation, C31 checks the exact predecessor application tree, C23
+principals, directories and assets, C27 packages and installed payload, the
+corrected 237-entry Python tree, and absent `.provisioning-inputs`. C31C's
+read-only validators then admit only the states reachable across interrupted
+steps 19–22: absent deployment state or its exact canonical initial bytes;
+an empty replay directory or a fully validated initialized database with no
+consumptions; and a pristine, empty audit directory. A valid active deployment
+state, replay consumption, audit history or residue is outside this recovery
+generation and blocks retry without deletion or repair. C31C still validates
+any audit entries before the empty-directory check, so malformed history also
+fails closed. The only admitted C17/state/replay tuples are predecessor/absent/absent,
+current/absent/absent, current/initial/absent, and current/initial/initialized;
+predecessor C17 with initialized state cannot follow the step order. Any mismatch
+blocks recovery without cleanup. On success, step 7 is reported as
+`populated-recovery-verified`. Steps 8–11 and 13–18 are `retained-exact`.
+If C17 is still the predecessor, step 12 uses C30's existing atomic replacement
+and reports `installed`. If C17 is already current, step 12 reports
+`retained-exact` and performs no rewrite. Steps 19–21 use C31C's existing
+idempotent operations: an absent state or replay is initialized, while exact
+prior results are preserved and revalidated. Final step 22 is rerunnable after
+a failure. Ordinary C29 remains strict about an empty pre-provision venv. This
+code path does not authorize a real host retry or deployment activation.
+
 One instance uses a nonblocking thread lock, while independent processes use a
 nonblocking kernel `flock` retained on the exact opened `/usr/bin` directory.
 The anchor is fixed internally, opened descriptor-relative with no symlink
@@ -1811,9 +1852,10 @@ C31D does not require the executor socket, an audit file in a pristine audit
 directory, enabled units or active services. It performs no daemon reload,
 enable, start, socket bind, Docker or registry action. The modules remain inert,
 uninstalled and uncomposed with broker, executor, listener, service and workflow
-paths, and have not been invoked on the real DEV host. Systemd lifecycle, actual
-host provisioning, deployment workflow environment attachment/OIDC activation, registry
-consumer activation and live deployment remain prohibited by ADR 0011.
+paths. A C31 run reached step 14 on the real DEV host and failed closed; the
+retained state is described above. A retry, systemd lifecycle, deployment
+workflow environment attachment/OIDC activation, registry consumer activation
+and live deployment remain prohibited pending separate review.
 
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
