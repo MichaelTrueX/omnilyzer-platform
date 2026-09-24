@@ -1683,6 +1683,35 @@ the complete C31B operation and C31A Python qualification return successfully.
 C31C remains responsible for steps 19–21. C31D's read-only convergence verifier
 is the final step 22, after which orchestration stops.
 
+### Operator execution boundary and authorization
+
+`omnidev` is the unprivileged Codex/development identity. The existing server
+administrator identity `trust` is the operator trust boundary. Root must never
+import or execute C31 deployment Python from the `omnidev`-writable development
+checkout, including through `PYTHONPATH`, the current directory, or a symlink
+into that checkout. After a separate one-time provisioning authorization, the
+administrator must prepare a separate exact-commit checkout or copy whose files
+and every parent directory are administrator-controlled and not writable by
+`omnidev` (including through group permissions or ACLs). Immediately before
+provisioning, the operator must verify that this execution tree is clean, its
+`HEAD` is the exact newly reviewed commit, its files still match that commit,
+there are no extra importable files (including ignored or untracked files),
+and C17 `reviewed_commit` names the same commit. The C31 `repository_root` and
+all deployment module imports must resolve within that verified tree. Any
+changed or extra file, commit mismatch, untrusted import path, or writable
+ancestor blocks execution. Do not give
+`omnidev` sudo, Docker, LXD, deployment authority, or write access to this
+tree. This boundary adds no permanent CI or root deployment credential. The
+reviewed baseline `4292d57ff50fbe105c1b1327cb8b5cd09da53491` identifies
+the pre-change review state; it does not authorize a later commit or host run.
+
+The C17 object used for prior C26/C28/C29 qualification is **not** provisioning
+authorization. The `628af866084f08763b31a44c8a484c5ae4c64db6697f4c4ceaad91bbf54ba72a`
+value exists as a test fixture only and must not silently become persisted live
+executor configuration. Actual C31 provisioning requires a separately reviewed
+real C17 configuration, including the approved exact `CANARY_IMAGE` digest,
+bound to the exact reviewed execution commit.
+
 Before mutation, C31D probes full convergence. A completely converged host
 returns an explicit `already-converged` observation without C29 or any mutation.
 If that probe fails, it grants no authority: C29 must still establish the exact
@@ -1690,6 +1719,29 @@ pre-provision state before C30 or C31B can run. Ambiguous partial state therefor
 fails closed. Provisioning is monotonic and has no transactional rollback:
 groups, users, installed files, a successful venv, deployment state, replay
 history and audit history are never removed or reset after a later failure.
+
+C31D failures carry only fixed `ProvisioningFailureEvidence`: the last
+completed sequence (zero if none), the next or failed C31A step with its fixed
+identifier and boundary, and whether a host mutation call was attempted. The
+message remains fixed and suppresses underlying exception details. Steps 14–18
+are one C31B Python operation; if it fails, none of those steps is marked
+complete and the failed step is reported as 14. A failure while releasing the
+lock after step 22 is attributed to step 22 even if verification completed.
+
+### Partial-failure recovery
+
+Stop after any failure and retain existing resources and evidence. A failure
+in steps 1–7 implies no intended managed mutation. From step 8 onward, earlier
+successful resources can remain, including a resource created within the
+failed step. Use the fixed failure evidence to locate the boundary, then
+inspect the host with the existing read-only C29 pre-provision and C31D
+post-provision qualification boundaries, alongside fresh C28 and C31P source
+qualification where relevant. Diagnose any partial or invalid application,
+venv, snapshot, deployment state, or replay data explicitly before retry;
+never blindly delete or recreate it. Only a fully converged rerun returns
+`already-converged` without mutation. Arbitrary partial failure is not
+guaranteed to converge on retry; a failed qualification blocks further
+provisioning until the exact condition and recovery are reviewed.
 
 One instance uses a nonblocking thread lock, while independent processes use a
 nonblocking kernel `flock` retained on the exact opened `/usr/bin` directory.

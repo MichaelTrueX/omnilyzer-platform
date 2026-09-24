@@ -26,6 +26,7 @@ from . import wheelhouse_qualification as _c28
 
 __all__ = (
     "ProvisioningOrchestrationError",
+    "ProvisioningFailureEvidence",
     "ProvisioningStepEvidence",
     "DevHostProvisioningEvidence",
     "DevHostProvisioningOrchestrator",
@@ -57,8 +58,48 @@ _STEP_OUTCOMES = {
 }
 
 
+@_dataclass(frozen=True, slots=True)
+class ProvisioningFailureEvidence:
+    """Fixed plan position and mutation status; contains no failure payload."""
+
+    last_completed_sequence: int
+    failed_step: _c31a.ProvisioningStep
+    mutation_started: bool
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.last_completed_sequence) is not int
+            or not 0 <= self.last_completed_sequence <= 22
+            or type(self.failed_step) is not _c31a.ProvisioningStep
+            or self.failed_step is not _c31a._STEPS[
+                min(self.last_completed_sequence, 21)
+            ]
+            or type(self.mutation_started) is not bool
+            or (self.mutation_started and self.last_completed_sequence < 7)
+            or (self.last_completed_sequence >= 8
+                and not self.mutation_started
+                and self.last_completed_sequence != 22)
+        ):
+            raise ValueError(_MODEL_ERROR)
+
+
 class ProvisioningOrchestrationError(Exception):
-    """The exact C31D sequence could not complete or be verified."""
+    """Fixed failure message with closed, immutable operator evidence."""
+
+    def __init__(self, evidence: ProvisioningFailureEvidence) -> None:
+        if type(evidence) is not ProvisioningFailureEvidence:
+            raise ValueError(_MODEL_ERROR)
+        ProvisioningFailureEvidence.__post_init__(evidence)
+        self.evidence = evidence
+        super().__init__(_ERROR)
+
+
+def _failure(completed: list["ProvisioningStepEvidence"],
+             mutation_started: bool) -> ProvisioningOrchestrationError:
+    last = completed[-1].sequence if completed else 0
+    return ProvisioningOrchestrationError(ProvisioningFailureEvidence(
+        last, _c31a._STEPS[min(last, 21)], mutation_started,
+    ))
 
 
 @_dataclass(frozen=True, slots=True)
@@ -352,10 +393,12 @@ class DevHostProvisioningOrchestrator:
 
         local = object.__getattribute__(self, "_lock")
         if not local.acquire(blocking=False):
-            raise ProvisioningOrchestrationError(_ERROR) from None
+            raise _failure([], False) from None
         process_lock = None
         result = None
         failed = False
+        completed = []
+        mutation_started = False
         try:
             repository_root = _locator(repository_root)
             wheelhouse_path = _locator(wheelhouse_path)
@@ -363,7 +406,6 @@ class DevHostProvisioningOrchestrator:
             process_lock = _acquire_process_lock()
             authority = object.__getattribute__(self, "_authority")
             configuration = authority.configuration
-            completed = []
 
             _c17.DevExecutorServiceConfiguration.__post_init__(configuration)
             completed.append(_step(1, "verified"))
@@ -438,8 +480,10 @@ class DevHostProvisioningOrchestrator:
 
                 mutation_outcomes = []
                 for requirement in provisioning.group_requirements():
+                    create_group = authority.runtime.create_required_group
+                    mutation_started = True
                     evidence = _mutation(
-                        authority.runtime.create_required_group(requirement.name),
+                        create_group(requirement.name),
                         kind="group", resource=requirement.name,
                     )
                     mutation_outcomes.append(evidence.outcome)
@@ -562,5 +606,5 @@ class DevHostProvisioningOrchestrator:
                     failed = True
             local.release()
         if failed or result is None:
-            raise ProvisioningOrchestrationError(_ERROR) from None
+            raise _failure(completed, mutation_started) from None
         return result
