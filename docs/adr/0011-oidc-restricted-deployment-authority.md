@@ -13,9 +13,13 @@ The decision question is:
 
 Task 014 Phase 2B2 discovery found no dedicated deployment identity, no self-hosted runner, no GitHub-to-DEV transport, and no read-only deployment consumer for the release evidence or OCI candidate. A personal host account has both Docker and sudo membership. Docker-group membership is effectively high privilege and is not a narrow deployment boundary. A workflow compromise must not become an unrestricted Docker daemon or host shell compromise merely because it reached a deployment endpoint.
 
-The current private repository/account capability cannot enforce the branch and GitHub environment protections required by this decision. Consequently, architecture work and repository-side, non-live implementation may proceed before those protections become enforceable, but **no live deployment workflow or DEV deployment may be enabled** until the required private-repository branch and GitHub environment protections are enforceable. PR names do not determine authority. The boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
+On 2026-09-08, the private repository/account capability could not enforce the branch and GitHub environment protections required by this decision. That historical limitation restricted work to architecture and inert repository-side implementation until the protection capability prerequisite could be satisfied.
 
-Before that prerequisite is resolved, work is limited to:
+As of 2026-09-24, the repository is public, `main` is protected by the active repository ruleset `Protect main`, and the GitHub deployment environment `task014-dev` exists with `deployment_branch_policy.protected_branches=true` and `deployment_branch_policy.custom_branch_policies=false`. The branch/environment protection capability prerequisite is now satisfied for DEV.
+
+This satisfies only the protection capability prerequisite. A separate live-authority review is still required before C31 host provisioning, any host/runtime mutation, or deployment activation. `deployment/environments/dev.json` remains unchanged with `activation.deployment_enabled=false`, which must remain false pending reviewed activation. This documentation update enables no deployment workflow, OIDC, systemd, Docker execution, host provisioning, registry credentials, listener, or other live deployment authority. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
+
+Pending that separate live-authority review, work remains limited to:
 
 - closed verifier and authorization code;
 - durable replay code;
@@ -25,7 +29,7 @@ Before that prerequisite is resolved, work is limited to:
 - inert, uninstalled systemd, Nginx, and layout fixtures; and
 - deterministic repository tests and static validation.
 
-Until the prerequisite is resolved and the live-authority change is separately reviewed, the following remain prohibited:
+Until the live-authority change is separately reviewed, the following remain prohibited:
 
 - `id-token: write` in a deployment workflow;
 - GitHub environment attachment or a deployment job;
@@ -59,7 +63,7 @@ A persistent runner would execute repository workflow code on the DEV host. Givi
 
 ### E. Pull-based deployment agent
 
-A local agent consuming signed desired state can be narrowly designed and may become appropriate at larger scale. For the current private repository it would normally require a persistent GitHub credential, webhook trust, or an additional desired-state service. That added control plane is not justified for the initial DEV topology.
+A local agent consuming signed desired state can be narrowly designed and may become appropriate at larger scale. For the private repository evaluated on 2026-09-08, it would normally have required a persistent GitHub credential, webhook trust, or an additional desired-state service. That added control plane is not justified for the initial DEV topology.
 
 ### F. Operator-mediated restricted deployment command
 
@@ -123,14 +127,14 @@ Branch and environment protection are necessary but do not replace runtime autho
 
 ## Operational implications
 
-Later implementation requires all of the following, none of which exists yet:
+Live operation requires all of the following; the protected GitHub environment now exists for DEV, while the remaining operational requirements still require separate review and validation:
 
 - a dedicated non-login host deployment identity;
 - a deployment broker service;
 - a privileged executor service or narrowly privileged helper;
 - root-owned deployment configuration;
 - a TLS endpoint and DNS;
-- a protected GitHub environment;
+- a protected GitHub environment (`task014-dev` now satisfies the DEV protection capability prerequisite);
 - OIDC signature and JWKS validation, including rotation and error handling;
 - durable replay-state persistence;
 - logging, monitoring, restart, and recovery behavior;
@@ -141,7 +145,7 @@ Operational validation must cover concurrent replay attempts, unavailable or cor
 
 ## Migration and rollback implications
 
-Adoption proceeds through inert repository-side implementation, non-live contracts, and deterministic tests before host or GitHub activation. This sequencing does not depend on a PR name. Live deployment remains absolutely prohibited until the private-repository branch and GitHub environment protections required by this ADR can be enforced and the live-authority change is separately reviewed.
+Adoption proceeds through inert repository-side implementation, non-live contracts, and deterministic tests before host or GitHub activation. This sequencing does not depend on a PR name. The DEV protection capability prerequisite is satisfied as of 2026-09-24; the protections must remain enforced. C31 host provisioning, host/runtime mutation, and live deployment remain prohibited until the live-authority change is separately reviewed.
 
 The authority can be withdrawn by disabling GitHub environment activation, revoking or disabling the broker's OIDC trust policy, stopping the broker and executor, and removing public broker ingress. Immutable release artifacts and deployment state and audit evidence must be retained.
 

@@ -4,9 +4,15 @@ Task 014 consumes accepted Task 013 release outputs and controls their ordered d
 
 ## Phase 1 boundary
 
-Phase 1 is a repository-side, non-live foundation. All three environment files set `deployment_enabled` to `false`, leave runtime configuration, secret, and ingress references unset, and name only the intended future GitHub environments. The `Platform promotion request` workflow has one read-only gate job. It validates and hashes a request, confirms the selected environment remains disabled, and then exits. It has no deployment job, environment attachment, OIDC permission, registry credential, or runtime adapter.
+Phase 1 is a repository-side, non-live foundation. All three environment files set `deployment_enabled` to `false`, leave runtime configuration, secret, and ingress references unset, and name the intended GitHub environments without attaching a deployment job. The `Platform promotion request` workflow has one read-only gate job. It validates and hashes a request, confirms the selected environment remains disabled, and then exits. It has no deployment job, environment attachment, OIDC permission, registry credential, or runtime adapter.
 
-Later phases must activate each environment deliberately, supply merge-SHA-bound references, configure protected GitHub environments, and validate live ingress, migration, health, switching, rollback, ownership, restart/recovery, registry authorization, TLS, and audit rotation. PROD requires explicit approval. No repository file assumes those protections exist.
+Later phases must activate each environment deliberately, supply merge-SHA-bound references, maintain required branch and environment protections, configure them for later stages, and validate live ingress, migration, health, switching, rollback, ownership, restart/recovery, registry authorization, TLS, and audit rotation. PROD requires explicit approval. The current DEV protection state is recorded below; deployment remains disabled.
+
+## GitHub protection state (2026-09-24)
+
+The repository is now public. `main` is protected by the active repository ruleset `Protect main`. The GitHub deployment environment `task014-dev` exists with `deployment_branch_policy.protected_branches=true` and `deployment_branch_policy.custom_branch_policies=false`. The branch/environment protection capability prerequisite is satisfied for DEV; these protections must remain enforced. ADR 0011's 2026-09-08 private-repository limitation remains historical context.
+
+A separate live-authority review is still required before C31 host provisioning, any host/runtime mutation, or deployment activation. `deployment/environments/dev.json` remains unchanged with `activation.deployment_enabled=false`, which must remain false pending reviewed activation. This documentation update enables no deployment workflow, OIDC, systemd, Docker execution, host provisioning, registry credentials, listener, or other live deployment authority.
 
 ## Phase 2B2 deployment-authority and runtime contract
 
@@ -24,7 +30,7 @@ The JWKS cache is memory-only, serialized, atomically replaced only after comple
 
 The dedicated [dependency contract](DEPENDENCIES.md) records the CPython 3.12 Linux x86_64 target, exact direct and transitive pins, accepted binary-wheel filenames, hashes, licenses, and provenance. C1 neither creates nor claims a reviewed production wheelhouse or host installation.
 
-C1 adds no replay persistence, broker HTTP API, Unix transport, executor, registry consumer, audit projection, installation asset, workflow authority, listener, or deployment activation. Required private-repository branch and GitHub environment protections remain an absolute prerequisite before any live workflow or DEV deployment can be enabled.
+C1 adds no replay persistence, broker HTTP API, Unix transport, executor, registry consumer, audit projection, installation asset, workflow authority, listener, or deployment activation. A separate live-authority review remains an absolute prerequisite before any live workflow or DEV deployment can be enabled.
 
 ### Durable SQLite replay boundary
 
@@ -40,7 +46,7 @@ Each consumption durably binds only the bounded JTI, expiry-plus-skew retention 
 
 The only states are `consumed`, `executing`, and `finished`, with only forward one-time transitions. Every transition matches the complete binding. A consumed row may begin execution only while its retention remains valid. Expired consumed and finished rows may be cleaned, but an executing row is never deleted automatically and continues to count toward capacity. If an executor crashes after entering `executing`, the request is never automatically retried or reset; later operator reconciliation requires separate review. The persistent watermark never moves backward, rejects wall-clock rollback beyond the authorization skew, and prevents a small rollback from resurrecting an already expired and removed identity.
 
-The durable replay code remains non-live: there is no installed state, broker, transport, executor wiring, listener, service, registry access, or deployment activation. Required private-repository branch and GitHub environment protections, activation-time filesystem qualification, and a separate live-authority review remain absolute prerequisites before the store or any live workflow or DEV deployment can be enabled.
+The durable replay code remains non-live: there is no installed state, broker, transport, executor wiring, listener, service, registry access, or deployment activation. Maintained branch and GitHub environment protections, activation-time filesystem qualification, and a separate live-authority review remain absolute prerequisites before the store or any live workflow or DEV deployment can be enabled.
 
 ### Restricted broker core
 
@@ -312,8 +318,8 @@ execution inside the interpreter.
 C10 does not compose the executor process and did not access the production
 state path during implementation or testing. Its real-filesystem tests use
 only secured temporary directories and remove only test-created objects. All
-environments remain disabled, and enforceable private-repository branch and
-environment protections remain an absolute prerequisite for activation.
+environments remain disabled, and a separate live-authority review remains
+an absolute prerequisite for activation.
 
 ### Inert DEV executor composition and restricted networks
 
@@ -383,8 +389,8 @@ declared without querying or changing host group state.
 C13 remains repository-only and performs no host preflight or provisioning. It
 does not inspect or create a path, initialize replay, write initial state,
 create an audit file or socket, install a systemd asset, or start a service.
-DEV, STAGING, and PROD remain disabled, and the unresolved required GitHub
-protection prerequisite is unchanged. A later separately reviewed slice must
+DEV, STAGING, and PROD remain disabled pending separate live-authority review.
+A later separately reviewed slice must
 qualify complete ancestor chains and provision, initialize, install, and start
 the required host resources and services.
 
@@ -527,7 +533,7 @@ and creates, installs, enables, or starts no systemd asset. It provisions no
 host resource and does not automatically activate deployment authority. A
 later separately reviewed slice may define inert systemd service/socket assets
 or another host entry mechanism. Deployment remains disabled pending the
-existing protection prerequisite.
+separate live-authority review.
 
 ### Closed DEV executor service process entrypoint
 
@@ -545,8 +551,8 @@ and no direct filesystem, socket, Docker, subprocess, or systemd behavior. It
 adds no package or console-script installation and chooses neither an absolute
 interpreter path nor a repository installation directory. No systemd service
 or socket asset exists yet, no host resource is provisioned, and no deployment
-authority is activated. Deployment remains disabled pending the existing
-protection prerequisite. A later separately reviewed slice may bind a systemd
+authority is activated. Deployment remains disabled pending the separate
+live-authority review. A later separately reviewed slice may bind a systemd
 service asset to this reviewed module execution contract.
 
 ### Inert DEV host-service layout
@@ -931,8 +937,8 @@ reviewed slice.
 C25 does not make `/opt/omnilyzer/deployment/app` exist. No host is modified, no
 application is installed, no venv is built, no dependency is installed, and no
 systemd asset is installed or started. No packaging, archive, copy, Docker or
-candidate operation occurs. Live activation remains blocked by the unproven or
-unavailable GitHub private-repository deployment protection prerequisite.
+candidate operation occurs. Live activation remains blocked by the separate
+live-authority review requirement.
 
 ## C26 deterministic DEV application manifest evidence
 
@@ -988,8 +994,8 @@ C26 does not qualify the host, inspect the application root or live venv, create
 `/opt` application paths, install application files, create a venv, stage wheels,
 prove CPython interpreter provenance, or install packages. It does not install
 systemd assets, enable/start services, use Docker, contact the candidate, alter
-workflows or activate deployment. GitHub private-repository deployment
-protections remain unproven/unavailable; the activation blocker remains absolute.
+workflows or activate deployment. Separate live-authority review
+remains mandatory; the activation blocker remains absolute.
 
 ## C27 reviewed CPython interpreter provenance
 
@@ -1238,8 +1244,7 @@ does not chmod, chown, repair, delete or replace; does not execute Docker or
 systemd; contacts no registry or candidate; and grants no activation authority.
 C30 remains the future narrowly privileged runtime boundary. C31 remains the
 future account/path/configuration/application/venv/package installation and
-provisioning mechanism. Live activation remains separately blocked by GitHub
-protection prerequisites and a later activation review.
+provisioning mechanism. Live activation remains blocked pending separate live-authority review.
 
 ## C30 narrow privileged host runtime
 
@@ -1295,8 +1300,7 @@ operations, networking, workflow changes or deployment activation. C31 must
 later supply the reviewed ordering, C26 application and C28 wheel orchestration,
 venv/bootstrap mechanics, initialization, convergence and the systemd lifecycle.
 No daemon-reload, enable, start or activation authority exists in C30.
-Live activation remains blocked by ADR 0011's GitHub protection prerequisite
-and a separate activation review.
+Live activation remains blocked by ADR 0011's separate live-authority review requirement.
 
 ## C31P reviewed pip installer provenance and qualification
 
@@ -1490,7 +1494,7 @@ separate state/replay/audit prerequisites. None of C31A, C31B, or C31C adds a
 general command, path, copy, write or remove API. Replay must never replace an
 existing database, and audit provisioning must preserve history. Systemd
 daemon-reload/enable/start and live activation remain outside C31A and blocked
-by ADR 0011's protection prerequisite.
+by ADR 0011's separate live-authority review requirement.
 
 ## C31B narrow privileged provisioning mechanics
 
@@ -1584,8 +1588,8 @@ Deployment-state initialization, replay initialization and audit prerequisites
 are implemented separately by C31C. The complete 22-step orchestration and
 every systemd lifecycle operation remain deferred. C31B performs no Docker,
 registry, candidate-image, workflow, OIDC or activation operation. Actual host
-provisioning and live activation remain prohibited by ADR 0011's protection
-prerequisite.
+provisioning and live activation remain prohibited by ADR 0011's separate
+live-authority review requirement.
 
 ## C31C closed DEV persistent-state prerequisites
 
@@ -1707,14 +1711,14 @@ directory, enabled units or active services. It performs no daemon reload,
 enable, start, socket bind, Docker or registry action. The modules remain inert,
 uninstalled and uncomposed with broker, executor, listener, service and workflow
 paths, and have not been invoked on the real DEV host. Systemd lifecycle, actual
-host provisioning, protected GitHub environment/OIDC activation, registry
+host provisioning, deployment workflow environment attachment/OIDC activation, registry
 consumer activation and live deployment remain prohibited by ADR 0011.
 
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
-The required private-repository branch and GitHub environment protections are not enforceable with the currently observed repository/account capability. Repository-side, non-live implementation is permitted before that prerequisite becomes enforceable. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
+The DEV branch/environment protection capability prerequisite is satisfied as recorded above. Separate live-authority review remains mandatory. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
 
-Permitted before the prerequisite is resolved:
+Permitted pending separate live-authority review:
 
 - closed verifier and authorization code;
 - durable replay code;
@@ -1724,7 +1728,7 @@ Permitted before the prerequisite is resolved:
 - inert, uninstalled systemd, Nginx, and layout fixtures; and
 - deterministic repository tests and static validation.
 
-Prohibited until the prerequisite is resolved and the live-authority change is separately reviewed:
+Prohibited until the live-authority change is separately reviewed:
 
 - `id-token: write` in a deployment workflow;
 - GitHub environment attachment or a deployment job;
@@ -1736,7 +1740,7 @@ Prohibited until the prerequisite is resolved and the live-authority change is s
 - environment activation or populated live runtime references; and
 - any static-key, personal-account, SSH, self-hosted-runner, or weakened-policy workaround.
 
-Therefore **no live deployment workflow or DEV deployment may be enabled** until the required private-repository branch and GitHub environment protections are enforceable. Live JWT/JWKS behavior, replay installation and wiring, broker/executor hardening, Unix-socket permissions, zot and Forgejo read-only consumers, host services, TLS/DNS/network integration, restart/reconciliation, and the first DEV deployment all remain to validate.
+Therefore **no live deployment workflow or DEV deployment may be enabled** until the live-authority change is separately reviewed. Live JWT/JWKS behavior, replay installation and wiring, broker/executor hardening, Unix-socket permissions, zot and Forgejo read-only consumers, host services, TLS/DNS/network integration, restart/reconciliation, and the first DEV deployment all remain to validate.
 
 ## Promotion identity and trust
 
@@ -1772,7 +1776,7 @@ The Python parser is the authoritative semantic boundary and requires exact buil
 
 The filesystem audit sink, `FilesystemAuditSink`, independently reconstructs and validates the complete event before persistence, so direct dataclass construction cannot bypass schema, identity, artifact, timestamp, lifecycle, size, or secret-marker checks. Stored records contain no compact JWT, bearer token, claims JSON, credentials, canonical request bytes, HTTP headers, responses, subprocess output, or secrets. The existing canonical JSONL, hash chain, duplicate rejection, rotation, retention, owner-controlled modes, size bounds, and tamper-evidence behavior remain in place; the sink is not root-tamper-resistant.
 
-This remains inert repository code. No broker currently creates the events, no executor or transport is wired to the sink, no production audit path was accessed or initialized, and no live end-to-end audit evidence is claimed. Required private-repository branch and GitHub environment protections and a separate live-authority activation review remain mandatory before any deployment authority can be enabled.
+This remains inert repository code. No broker currently creates the events, no executor or transport is wired to the sink, no production audit path was accessed or initialized, and no live end-to-end audit evidence is claimed. Maintained branch and GitHub environment protections and a separate live-authority activation review remain mandatory before any deployment authority can be enabled.
 
 ## Local validation
 
