@@ -306,7 +306,8 @@ class OrchestrationTests(unittest.TestCase):
             persistent=FakePersistent(self.events),
         ))
 
-    def invoke(self, post_values=None, c29_value=None, snapshot_state="absent"):
+    def invoke(self, post_values=None, c29_value=None, snapshot_state="absent",
+               release_error=None):
         if post_values is None:
             post_values = (
                 post.PostProvisionQualificationError(
@@ -348,7 +349,8 @@ class OrchestrationTests(unittest.TestCase):
             )
 
         with patch.object(module, "_acquire_process_lock", return_value=object()), \
-             patch.object(module, "_release_process_lock"), \
+             patch.object(module, "_release_process_lock",
+                          side_effect=release_error), \
              patch.object(module._c26, "generate_dev_application_manifest",
                           side_effect=generated), \
              patch.object(module._c28, "qualify_dev_wheelhouse", side_effect=wheels), \
@@ -364,6 +366,21 @@ class OrchestrationTests(unittest.TestCase):
                 wheelhouse_path=self.wheels.wheelhouse_path,
                 pip_installer_staging=self.installer.staging_directory,
             )
+
+    def assert_failure(self, expected_last, expected_failed, mutation_started,
+                       invoke=None):
+        with self.assertRaises(module.ProvisioningOrchestrationError) as caught:
+            (invoke or self.invoke)()
+        error = caught.exception
+        self.assertEqual(str(error), ERROR)
+        evidence = error.evidence
+        self.assertIs(type(evidence), module.ProvisioningFailureEvidence)
+        self.assertEqual(evidence.last_completed_sequence, expected_last)
+        self.assertIs(evidence.failed_step, module._c31a._STEPS[expected_failed - 1])
+        self.assertEqual(evidence.mutation_started, mutation_started)
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            evidence.mutation_started = False
+        self.assertNotIn("secret", repr(evidence))
 
     def test_a_exact_initial_twenty_two_step_composition(self):
         result = self.invoke()
@@ -409,17 +426,23 @@ class OrchestrationTests(unittest.TestCase):
         )
         self.assertEqual([item[0] for item in self.events], ["manifest", "post"])
 
+    def test_converged_lock_release_failure_reports_no_mutation(self):
+        self.assert_failure(22, 22, False, lambda: self.invoke(
+            post_values=(self.post,),
+            release_error=OSError("secret lock detail"),
+        ))
+        self.assertEqual([item[0] for item in self.events], ["manifest", "post"])
+
     def test_c_partial_state_c29_failure_permits_no_mutation(self):
-        with self.assertRaisesRegex(module.ProvisioningOrchestrationError, ERROR):
-            self.invoke(c29_value=c29.HostQualificationError(
-                "DEV host qualification is unavailable",
-            ))
+        self.assert_failure(6, 7, False, lambda: self.invoke(
+            c29_value=c29.HostQualificationError("secret preflight detail"),
+        ))
         names = [item[0] for item in self.events]
         self.assertEqual(names, ["manifest", "post", "wheels", "installer", "c29"])
 
     def test_c_leftover_snapshot_fails_before_mutation(self):
-        with self.assertRaisesRegex(module.ProvisioningOrchestrationError, ERROR):
-            self.invoke(snapshot_state="exact")
+        self.assert_failure(6, 7, False,
+                            lambda: self.invoke(snapshot_state="exact"))
         mutation = {
             "group", "user", "directory", "application", "configuration",
             "asset", "python", "state", "replay", "audit",
@@ -443,11 +466,35 @@ class OrchestrationTests(unittest.TestCase):
             return real_step(sequence, outcome)
 
         with patch.object(module, "_step", side_effect=step):
-            with self.assertRaisesRegex(module.ProvisioningOrchestrationError, ERROR):
-                self.invoke()
+            self.assert_failure(13, 14, True)
         self.assertNotIn(14, recorded)
         self.assertFalse({14, 15, 16, 17, 18, 19, 20, 21, 22} & set(recorded))
         self.assertNotIn("state", [item[0] for item in self.events])
+
+    def test_failure_at_first_mutation_reports_attempt_without_completion(self):
+        authority = object.__getattribute__(self.value, "_authority")
+        with patch.object(authority.runtime, "create_required_group",
+                          side_effect=OSError("secret group detail")):
+            self.assert_failure(7, 8, True)
+        self.assertNotIn("user", [item[0] for item in self.events])
+
+    def test_persistent_state_and_replay_failures_identify_boundary(self):
+        authority = object.__getattribute__(self.value, "_authority")
+        for method, last, failed in (
+            ("initialize_deployment_state", 18, 19),
+            ("initialize_replay", 19, 20),
+        ):
+            with self.subTest(method=method):
+                self.events.clear()
+                with patch.object(authority.persistent, method,
+                                  side_effect=OSError("secret state detail")):
+                    self.assert_failure(last, failed, True)
+
+    def test_final_qualification_failure_reports_completed_prerequisites(self):
+        self.assert_failure(21, 22, True, lambda: self.invoke(post_values=(
+            post.PostProvisionQualificationError("precheck unavailable"),
+            post.PostProvisionQualificationError("secret final detail"),
+        )))
 
     def test_e_fixed_inputs_errors_and_control_exceptions(self):
         with self.assertRaisesRegex(module.ProvisioningOrchestrationError, ERROR):
@@ -562,6 +609,18 @@ class OrchestrationTests(unittest.TestCase):
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_failure_error_rejects_unrelated_evidence(self):
+        with self.assertRaisesRegex(ValueError, module._MODEL_ERROR):
+            module.ProvisioningOrchestrationError(object())
+
+    def test_failure_error_rejects_evidence_subclass(self):
+        class AlternateEvidence(module.ProvisioningFailureEvidence):
+            pass
+
+        evidence = AlternateEvidence(0, module._c31a._STEPS[0], False)
+        with self.assertRaisesRegex(ValueError, module._MODEL_ERROR):
+            module.ProvisioningOrchestrationError(evidence)
+
     def test_h_public_api_construction_inert_and_no_activation_authority(self):
         self.assertEqual(module._PROCESS_LOCK_ANCHOR, "/usr/bin")
         self.assertEqual(
@@ -570,7 +629,8 @@ class BoundaryTests(unittest.TestCase):
             "/usr/bin",
         )
         self.assertEqual(module.__all__, (
-            "ProvisioningOrchestrationError", "ProvisioningStepEvidence",
+            "ProvisioningOrchestrationError", "ProvisioningFailureEvidence",
+            "ProvisioningStepEvidence",
             "DevHostProvisioningEvidence", "DevHostProvisioningOrchestrator",
         ))
         self.assertEqual(
