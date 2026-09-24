@@ -44,19 +44,26 @@ _RECOVERY_COMMIT = "c8646e1ef72f0cbab4878d383f7765f07aef8417"
 _RECOVERY_BASE_COMMIT = "fdae74dd656f421211b0c2463c6eecb217edccde"
 _RECOVERY_CONFIG_SHA256 = "0d464f4c0792ddfc184b2fc65b4a46d7e233abf6471167e80ed2e728d9f6837c"
 _RECOVERY_MANIFEST_SHA256 = "2743932cfb2e8d431f56de25aaab6c77177c52165ea3f35ca80281602909e69a"
+# Exact C31 step-14 failure predecessor. The populated environment is retained;
+# these constants cannot be supplied by the caller or read from the host.
+_POPULATED_RECOVERY_COMMIT = "c78e94f5e7c6b1a557ac041bdfb560bb82c1642b"
+_POPULATED_RECOVERY_BASE_COMMIT = "c78e94f5e7c6b1a557ac041bdfb560bb82c1642b"
+_POPULATED_RECOVERY_CONFIG_SHA256 = "a570f9224ebeaa5d893299299b95734aaca28fc753eaa44bdabba8e7ac24b1b0"
+_POPULATED_RECOVERY_MANIFEST_SHA256 = "575d09be5933ea226313a20a958cbc5066cabcf20580e7343ee3034ac3a95f1e"
 
 _STEP_OUTCOMES = {
     1: ("verified",), 2: ("verified",), 3: ("verified",),
     4: ("verified",), 5: ("verified",), 6: ("verified",),
-    7: ("verified",),
-    8: ("created", "unchanged"),
-    9: ("created", "unchanged"),
-    10: ("created", "unchanged"),
-    11: ("materialized", "unchanged"),
-    12: ("installed", "unchanged"),
-    13: ("installed", "unchanged"),
-    14: ("created",), 15: ("verified",), 16: ("verified",),
-    17: ("installed",), 18: ("verified",),
+    7: ("verified", "populated-recovery-verified"),
+    8: ("created", "unchanged", "retained-exact"),
+    9: ("created", "unchanged", "retained-exact"),
+    10: ("created", "unchanged", "retained-exact"),
+    11: ("materialized", "unchanged", "retained-exact"),
+    12: ("installed", "unchanged", "retained-exact"),
+    13: ("installed", "unchanged", "retained-exact"),
+    14: ("created", "retained-exact"), 15: ("verified", "retained-exact"),
+    16: ("verified", "retained-exact"),
+    17: ("installed", "retained-exact"), 18: ("verified", "retained-exact"),
     19: ("initialized", "unchanged", "existing"),
     20: ("initialized", "existing"),
     21: ("pristine", "existing"),
@@ -157,7 +164,10 @@ class DevHostProvisioningEvidence:
     def __post_init__(self, configuration: object, application_manifest: object) -> None:
         try:
             if (
-                self.operation not in ("initial-provisioning", "already-converged")
+                self.operation not in (
+                    "initial-provisioning", "already-converged",
+                    "populated-environment-recovery",
+                )
                 or type(self.operation) is not str
                 or type(configuration) is not _c17.DevExecutorServiceConfiguration
                 or type(application_manifest) is not _c26.DevApplicationManifest
@@ -179,12 +189,23 @@ class DevHostProvisioningEvidence:
             for item in self.completed_steps:
                 ProvisioningStepEvidence.__post_init__(item)
             sequences = tuple(item.sequence for item in self.completed_steps)
-            expected = (
-                tuple(range(1, 23))
-                if self.operation == "initial-provisioning"
-                else (1, 2, 3, 22)
-            )
+            expected = (1, 2, 3, 22) if self.operation == "already-converged" else tuple(range(1, 23))
             if sequences != expected:
+                raise ValueError
+            if self.operation == "populated-environment-recovery":
+                if (
+                    self.completed_steps[6].outcome != "populated-recovery-verified"
+                    or any(item.outcome != "retained-exact"
+                           for item in (*self.completed_steps[7:11],
+                                        *self.completed_steps[12:18]))
+                    or self.completed_steps[11].outcome not in ("installed", "retained-exact")
+                ):
+                    raise ValueError
+            elif (
+                any(item.outcome == "retained-exact" for item in self.completed_steps)
+                or any(item.sequence == 7 and item.outcome != "verified"
+                       for item in self.completed_steps)
+            ):
                 raise ValueError
             _post.DevPostProvisionEvidence.__post_init__(
                 self.convergence, configuration, application_manifest,
@@ -211,6 +232,29 @@ class _Authority:
     runtime: _c30.DevPrivilegedHostRuntime
     mechanics: _c31b.DevHostProvisioningMechanics
     persistent: _c31c.DevPersistentStatePrerequisites
+
+
+@_dataclass(frozen=True, slots=True)
+class _PopulatedRecoveryPreflight:
+    python: _python_environment.DevPythonEnvironmentEvidence
+    c17_state: str
+    deployment_state: str
+    replay_state: str
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.python) is not _python_environment.DevPythonEnvironmentEvidence
+            or type(self.c17_state) is not str
+            or self.c17_state not in ("predecessor", "current")
+            or type(self.deployment_state) is not str
+            or self.deployment_state not in ("absent", "initial")
+            or type(self.replay_state) is not str
+            or self.replay_state not in ("absent", "initialized")
+            or (self.deployment_state == "absent"
+                and self.replay_state != "absent")
+        ):
+            raise ValueError(_MODEL_ERROR)
+        _python_environment.DevPythonEnvironmentEvidence.__post_init__(self.python)
 
 
 def _build_authority(configuration: object) -> _Authority:
@@ -295,6 +339,171 @@ def _qualify_reviewed_recovery(
         application_manifest=previous_manifest,
         wheelhouse_evidence=wheels,
     )
+
+
+def _require_empty_persistent_directory(path: str) -> None:
+    """Verify a C23-created directory still has no step-19--21 entries."""
+    owned = []
+    try:
+        parent, name = _c29._open_parent(path, owned)
+        if parent is None:
+            raise OSError
+        named = _os.stat(name, dir_fd=parent, follow_symlinks=False)
+        directory = _os.open(
+            name, _os.O_RDONLY | _os.O_DIRECTORY | _os.O_NOFOLLOW | _os.O_CLOEXEC,
+            dir_fd=parent,
+        )
+        owned.append(directory)
+        opened = _os.fstat(directory)
+        if _c29._fingerprint(named) != _c29._fingerprint(opened):
+            raise OSError
+        with _os.scandir(directory) as iterator:
+            if any(True for _entry in iterator):
+                raise OSError
+        if (
+            _c29._fingerprint(_os.fstat(directory)) != _c29._fingerprint(opened)
+            or _c29._fingerprint(
+                _os.stat(name, dir_fd=parent, follow_symlinks=False)
+            ) != _c29._fingerprint(opened)
+        ):
+            raise OSError
+    finally:
+        for descriptor in reversed(owned):
+            _os.close(descriptor)
+
+
+def _qualify_recovery_persistent_state(
+    configuration: _c17.DevExecutorServiceConfiguration,
+) -> tuple[str, str]:
+    """Read-only C31C check for only states reachable before activation."""
+    authority = _c31c._build_authority(configuration)
+    try:
+        _require_empty_persistent_directory(_c31c._STATE_PATH.rsplit("/", 1)[0])
+        state = "absent"
+    except OSError:
+        observed = _c31c._verify_state(authority)
+        if type(observed) is not _c31c.PersistentPrerequisiteEvidence:
+            raise OSError
+        _c31c.PersistentPrerequisiteEvidence.__post_init__(observed)
+        if observed.outcome != "verified-initial":
+            raise OSError
+        state = "initial"
+    try:
+        _require_empty_persistent_directory(_c31c._REPLAY_PATH.rsplit("/", 1)[0])
+        replay = "absent"
+    except OSError:
+        observed = _c31c._verify_replay(authority)
+        if type(observed) is not _c31c.PersistentPrerequisiteEvidence:
+            raise OSError
+        _c31c.PersistentPrerequisiteEvidence.__post_init__(observed)
+        if observed.outcome != "verified":
+            raise OSError
+        _c31c._replay_guard(authority)._validate_initial()
+        replay = "initialized"
+    if state == "absent" and replay != "absent":
+        raise OSError
+    audit = _c31c._audit_observation(authority)
+    if type(audit) is not _c31c.PersistentPrerequisiteEvidence:
+        raise OSError
+    _c31c.PersistentPrerequisiteEvidence.__post_init__(audit)
+    if audit.outcome != "pristine" or audit.entry_count != 0:
+        raise OSError
+    _require_empty_persistent_directory(_c31c._AUDIT_DIRECTORY)
+    return state, replay
+
+
+def _qualify_populated_recovery(
+    configuration: _c17.DevExecutorServiceConfiguration,
+    manifest: _c26.DevApplicationManifest,
+    wheels: _c28.DevWheelhouseEvidence,
+    repository_root: str,
+) -> _PopulatedRecoveryPreflight:
+    """Prove the one retained step-14 state without granting C29 new authority."""
+    if configuration.reviewed_commit == _POPULATED_RECOVERY_COMMIT:
+        raise OSError
+    commit = _c26._output(
+        repository_root, ("cat-file", "commit", configuration.reviewed_commit), 65536,
+    )
+    headers, separator, _message = commit.partition(b"\n\n")
+    parent_header = b"parent " + _POPULATED_RECOVERY_BASE_COMMIT.encode("ascii")
+    if not separator or parent_header not in headers.split(b"\n"):
+        raise OSError
+    raw = _c29._read_small_regular(_CONFIG_PATH, _c17.MAX_EXECUTOR_SERVICE_CONFIG_BYTES)
+    if raw == configuration.canonical_bytes():
+        c17_state = "current"
+    else:
+        if _hashlib.sha256(raw).hexdigest() != _POPULATED_RECOVERY_CONFIG_SHA256:
+            raise OSError
+        previous = _c17.parse_canonical_executor_service_configuration(raw)
+        if previous.reviewed_commit != _POPULATED_RECOVERY_COMMIT:
+            raise OSError
+        current_fields = configuration.to_dict()
+        previous_fields = previous.to_dict()
+        current_fields.pop("reviewed_commit")
+        previous_fields.pop("reviewed_commit")
+        if current_fields != previous_fields:
+            raise OSError
+        c17_state = "predecessor"
+    previous_manifest = _c26.DevApplicationManifest(
+        "canonical-relative-file-set-v1", "sha256",
+        _POPULATED_RECOVERY_COMMIT, manifest.entries,
+    )
+    if (_hashlib.sha256(previous_manifest.canonical_bytes()).hexdigest()
+            != _POPULATED_RECOVERY_MANIFEST_SHA256):
+        raise OSError
+    integrity, provisioning, provenance = _post._authority(
+        configuration, manifest,
+    )
+    environment = integrity.python_environment_requirement()
+    _c28.DevWheelhouseEvidence.__post_init__(wheels, environment)
+    _c29._platform_observation()
+    _c29._query_packages(provenance)
+    _c29._observe_payload(_c29._load_payload(provenance))
+    groups, users = _c29._observe_principals(provisioning)
+    if any(item.state != "exact" for item in (*groups, *users)):
+        raise OSError
+    paths, persistent_directories, assets = _post._managed_requirements(provisioning)
+    for requirement in (*paths, *persistent_directories):
+        expected = raw if requirement.path == _CONFIG_PATH else None
+        observed = _c29._observe_managed_path(
+            requirement.path, requirement.kind, requirement.mode,
+            requirement.owner_uid, requirement.group_gid, expected,
+        )
+        if observed.state != "exact":
+            raise OSError
+    for asset in assets:
+        observed = _c29._observe_managed_path(
+            asset.destination_path, "regular_file", asset.mode,
+            asset.owner_uid, asset.group_gid, expected_sha256=asset.sha256,
+        )
+        if observed.state != "exact":
+            raise OSError
+    application_requirement = integrity.application_requirement()
+    roots = tuple(item for item in paths if item.path == application_requirement.root)
+    if len(roots) != 1 or _c29._observe_application(
+        previous_manifest, application_requirement, roots[0],
+    ).state != "exact":
+        raise OSError
+    persistent_roots = {
+        _c31c._STATE_PATH.rsplit("/", 1)[0],
+        _c31c._REPLAY_PATH.rsplit("/", 1)[0],
+        _c31c._AUDIT_DIRECTORY,
+    }
+    if {item.path for item in persistent_directories} != persistent_roots:
+        raise OSError
+    snapshot = _c29._observe_managed_path(
+        _post._SNAPSHOT_PATH, "directory", 0o700, 0, 0,
+    )
+    if snapshot.state != "absent":
+        raise OSError
+    python = _python_environment.qualify_dev_python_environment(
+        configuration=configuration,
+    )
+    if type(python) is not _python_environment.DevPythonEnvironmentEvidence:
+        raise OSError
+    _python_environment.DevPythonEnvironmentEvidence.__post_init__(python)
+    state, replay = _qualify_recovery_persistent_state(configuration)
+    return _PopulatedRecoveryPreflight(python, c17_state, state, replay)
 
 
 def _lock_identity(value: _os.stat_result) -> tuple[int, ...]:
@@ -462,6 +671,7 @@ class DevHostProvisioningOrchestrator:
         internal_phase = None
         completed = []
         mutation_started = False
+        populated_recovery = False
         try:
             repository_root = _locator(repository_root)
             wheelhouse_path = _locator(wheelhouse_path)
@@ -526,6 +736,7 @@ class DevHostProvisioningOrchestrator:
                 )
                 if plan.steps != _c31a._STEPS:
                     raise OSError
+                recovered_python = None
                 try:
                     host = _c29.qualify_dev_host(
                         configuration=configuration,
@@ -533,112 +744,158 @@ class DevHostProvisioningOrchestrator:
                         wheelhouse_evidence=wheels,
                     )
                 except _c29.HostQualificationError:
-                    host = _qualify_reviewed_recovery(
-                        configuration, manifest, wheels, repository_root,
-                    )
-                if type(host) is not _c29.DevHostQualificationEvidence:
-                    raise OSError
-                _c29.DevHostQualificationEvidence.__post_init__(host)
+                    try:
+                        host = _qualify_reviewed_recovery(
+                            configuration, manifest, wheels, repository_root,
+                        )
+                    except _CONTROL:
+                        raise
+                    except Exception:
+                        recovered_python = _qualify_populated_recovery(
+                            configuration, manifest, wheels, repository_root,
+                        )
+                if recovered_python is None:
+                    if type(host) is not _c29.DevHostQualificationEvidence:
+                        raise OSError
+                    _c29.DevHostQualificationEvidence.__post_init__(host)
+                else:
+                    if type(recovered_python) is not _PopulatedRecoveryPreflight:
+                        raise OSError
+                    _PopulatedRecoveryPreflight.__post_init__(recovered_python)
+                    populated_recovery = True
                 snapshot = _c29._observe_managed_path(
                     _post._SNAPSHOT_PATH, "directory", 0o700, 0, 0,
                 )
                 if snapshot.state != "absent":
                     raise OSError
-                completed.append(_step(7, "verified"))
-
-                mutation_outcomes = []
-                for requirement in provisioning.group_requirements():
-                    create_group = authority.runtime.create_required_group
-                    mutation_started = True
-                    evidence = _mutation(
-                        create_group(requirement.name),
-                        kind="group", resource=requirement.name,
-                    )
-                    mutation_outcomes.append(evidence.outcome)
-                completed.append(_step(8, _created_outcome(mutation_outcomes)))
-                mutation_outcomes = []
-                for requirement in provisioning.user_requirements():
-                    evidence = _mutation(
-                        authority.runtime.create_required_user(requirement.name),
-                        kind="user", resource=requirement.name,
-                    )
-                    mutation_outcomes.append(evidence.outcome)
-                completed.append(_step(9, _created_outcome(mutation_outcomes)))
-                mutation_outcomes = []
-                for requirement in _directory_requirements(provisioning):
-                    evidence = _mutation(
-                        authority.runtime.create_required_directory(requirement.path),
-                        kind="directory", resource=requirement.path,
-                    )
-                    mutation_outcomes.append(evidence.outcome)
-                completed.append(_step(10, _created_outcome(mutation_outcomes)))
-
-                application = authority.mechanics.materialize_application_tree(
-                    repository_root=repository_root,
-                    application_manifest=manifest,
-                )
-                if type(application) is not _c31b.ApplicationMaterializationEvidence:
-                    raise OSError
-                _c31b.ApplicationMaterializationEvidence.__post_init__(application)
-                if (
-                    application.reviewed_commit != configuration.reviewed_commit
-                    or application.manifest_sha256 != _hashlib.sha256(
-                        manifest.canonical_bytes()
-                    ).hexdigest()
-                ):
-                    raise OSError
-                completed.append(_step(11, application.outcome))
-                config_result = _mutation(
-                    authority.runtime.install_executor_configuration(),
-                    kind="regular_file", resource=_CONFIG_PATH,
-                )
                 completed.append(_step(
-                    12, "unchanged" if config_result.outcome == "unchanged" else "installed",
-                ))
-                asset_outcomes = []
-                assets = provisioning.installed_asset_requirements()
-                if len(assets) != 2:
-                    raise OSError
-                for asset in assets:
-                    asset_result = _mutation(
-                        authority.runtime.install_required_asset(asset.destination_path),
-                        kind="regular_file", resource=asset.destination_path,
-                    )
-                    asset_outcomes.append(asset_result.outcome)
-                completed.append(_step(
-                    13,
-                    "unchanged" if set(asset_outcomes) == {"unchanged"} else "installed",
+                    7, "populated-recovery-verified" if populated_recovery else "verified",
                 ))
 
-                python = authority.mechanics.construct_python_environment(
-                    host_qualification=host,
-                    repository_root=repository_root,
-                    wheelhouse_path=wheelhouse_path,
-                    pip_installer_staging=pip_installer_staging,
-                )
-                if type(python) is not _python_environment.DevPythonEnvironmentEvidence:
-                    raise OSError
-                _python_environment.DevPythonEnvironmentEvidence.__post_init__(python)
-                for sequence, outcome in (
-                    (14, "created"), (15, "verified"), (16, "verified"),
-                    (17, "installed"), (18, "verified"),
-                ):
-                    completed.append(_step(sequence, outcome))
+                if recovered_python is None:
+                    mutation_outcomes = []
+                    for requirement in provisioning.group_requirements():
+                        create_group = authority.runtime.create_required_group
+                        mutation_started = True
+                        evidence = _mutation(
+                            create_group(requirement.name),
+                            kind="group", resource=requirement.name,
+                        )
+                        mutation_outcomes.append(evidence.outcome)
+                    completed.append(_step(8, _created_outcome(mutation_outcomes)))
+                    mutation_outcomes = []
+                    for requirement in provisioning.user_requirements():
+                        evidence = _mutation(
+                            authority.runtime.create_required_user(requirement.name),
+                            kind="user", resource=requirement.name,
+                        )
+                        mutation_outcomes.append(evidence.outcome)
+                    completed.append(_step(9, _created_outcome(mutation_outcomes)))
+                    mutation_outcomes = []
+                    for requirement in _directory_requirements(provisioning):
+                        evidence = _mutation(
+                            authority.runtime.create_required_directory(requirement.path),
+                            kind="directory", resource=requirement.path,
+                        )
+                        mutation_outcomes.append(evidence.outcome)
+                    completed.append(_step(10, _created_outcome(mutation_outcomes)))
 
+                    application = authority.mechanics.materialize_application_tree(
+                        repository_root=repository_root,
+                        application_manifest=manifest,
+                    )
+                    if type(application) is not _c31b.ApplicationMaterializationEvidence:
+                        raise OSError
+                    _c31b.ApplicationMaterializationEvidence.__post_init__(application)
+                    if (
+                        application.reviewed_commit != configuration.reviewed_commit
+                        or application.manifest_sha256 != _hashlib.sha256(
+                            manifest.canonical_bytes()
+                        ).hexdigest()
+                    ):
+                        raise OSError
+                    completed.append(_step(11, application.outcome))
+                    config_result = _mutation(
+                        authority.runtime.install_executor_configuration(),
+                        kind="regular_file", resource=_CONFIG_PATH,
+                    )
+                    completed.append(_step(
+                        12, "unchanged" if config_result.outcome == "unchanged" else "installed",
+                    ))
+                    asset_outcomes = []
+                    assets = provisioning.installed_asset_requirements()
+                    if len(assets) != 2:
+                        raise OSError
+                    for asset in assets:
+                        asset_result = _mutation(
+                            authority.runtime.install_required_asset(asset.destination_path),
+                            kind="regular_file", resource=asset.destination_path,
+                        )
+                        asset_outcomes.append(asset_result.outcome)
+                    completed.append(_step(
+                        13,
+                        "unchanged" if set(asset_outcomes) == {"unchanged"} else "installed",
+                    ))
+
+                    python = authority.mechanics.construct_python_environment(
+                        host_qualification=host,
+                        repository_root=repository_root,
+                        wheelhouse_path=wheelhouse_path,
+                        pip_installer_staging=pip_installer_staging,
+                    )
+                    if type(python) is not _python_environment.DevPythonEnvironmentEvidence:
+                        raise OSError
+                    _python_environment.DevPythonEnvironmentEvidence.__post_init__(python)
+                    for sequence, outcome in (
+                        (14, "created"), (15, "verified"), (16, "verified"),
+                        (17, "installed"), (18, "verified"),
+                    ):
+                        completed.append(_step(sequence, outcome))
+
+                else:
+                    for sequence in range(8, 12):
+                        completed.append(_step(sequence, "retained-exact"))
+                    if recovered_python.c17_state == "predecessor":
+                        mutation_started = True
+                        config_result = _mutation(
+                            authority.runtime.install_executor_configuration(),
+                            kind="regular_file", resource=_CONFIG_PATH,
+                        )
+                        if config_result.outcome != "replaced":
+                            raise OSError
+                        completed.append(_step(12, "installed"))
+                    else:
+                        completed.append(_step(12, "retained-exact"))
+                    for sequence in range(13, 19):
+                        completed.append(_step(sequence, "retained-exact"))
+
+                mutation_started = True
                 state = authority.persistent.initialize_deployment_state()
                 if type(state) is not _c31c.PersistentPrerequisiteEvidence:
                     raise OSError
                 _c31c.PersistentPrerequisiteEvidence.__post_init__(state)
+                if populated_recovery and state.outcome != (
+                    "initialized" if recovered_python.deployment_state == "absent"
+                    else "unchanged"
+                ):
+                    raise OSError
                 completed.append(_step(19, state.outcome))
                 replay = authority.persistent.initialize_replay()
                 if type(replay) is not _c31c.PersistentPrerequisiteEvidence:
                     raise OSError
                 _c31c.PersistentPrerequisiteEvidence.__post_init__(replay)
+                if populated_recovery and replay.outcome != (
+                    "initialized" if recovered_python.replay_state == "absent"
+                    else "existing"
+                ):
+                    raise OSError
                 completed.append(_step(20, replay.outcome))
                 audit = authority.persistent.prepare_audit()
                 if type(audit) is not _c31c.PersistentPrerequisiteEvidence:
                     raise OSError
                 _c31c.PersistentPrerequisiteEvidence.__post_init__(audit)
+                if populated_recovery and audit.outcome != "pristine":
+                    raise OSError
                 completed.append(_step(21, audit.outcome))
 
                 convergence = _post.qualify_dev_provisioned_host(
@@ -652,7 +909,8 @@ class DevHostProvisioningOrchestrator:
                 )
                 completed.append(_step(22, "verified"))
                 result = DevHostProvisioningEvidence(
-                    "initial-provisioning", configuration.reviewed_commit,
+                    ("populated-environment-recovery" if populated_recovery
+                     else "initial-provisioning"), configuration.reviewed_commit,
                     _hashlib.sha256(manifest.canonical_bytes()).hexdigest(),
                     plan.steps, tuple(completed), convergence,
                     configuration, manifest,

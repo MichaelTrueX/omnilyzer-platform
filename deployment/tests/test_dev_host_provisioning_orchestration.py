@@ -27,6 +27,7 @@ import deployment.host_provisioning_contract as c23
 import deployment.installation_integrity_contract as c24
 import deployment.pip_installer_provenance as c31p
 import deployment.pip_installer_qualification as pip_qualification
+from deployment.policy import DeploymentPolicyError
 import deployment.privileged_host_runtime as c30
 import deployment.python_environment_qualification as python_environment
 import deployment.python_interpreter_provenance as c27
@@ -669,6 +670,14 @@ class OrchestrationTests(unittest.TestCase):
                          "0d464f4c0792ddfc184b2fc65b4a46d7e233abf6471167e80ed2e728d9f6837c")
         self.assertEqual(module._RECOVERY_MANIFEST_SHA256,
                          "2743932cfb2e8d431f56de25aaab6c77177c52165ea3f35ca80281602909e69a")
+        self.assertEqual(module._POPULATED_RECOVERY_COMMIT,
+                         "c78e94f5e7c6b1a557ac041bdfb560bb82c1642b")
+        self.assertEqual(module._POPULATED_RECOVERY_BASE_COMMIT,
+                         "c78e94f5e7c6b1a557ac041bdfb560bb82c1642b")
+        self.assertEqual(module._POPULATED_RECOVERY_CONFIG_SHA256,
+                         "a570f9224ebeaa5d893299299b95734aaca28fc753eaa44bdabba8e7ac24b1b0")
+        self.assertEqual(module._POPULATED_RECOVERY_MANIFEST_SHA256,
+                         "575d09be5933ea226313a20a958cbc5066cabcf20580e7343ee3034ac3a95f1e")
 
     def test_c_proven_recovery_reaches_atomic_configuration_step(self):
         with patch.object(module, "_qualify_reviewed_recovery",
@@ -679,6 +688,424 @@ class OrchestrationTests(unittest.TestCase):
         names = [item[0] for item in self.events]
         self.assertLess(names.index("application"), names.index("configuration"))
         self.assertLess(names.index("configuration"), names.index("python"))
+
+    def test_c_populated_recovery_resumes_at_persistent_state(self):
+        authority = object.__getattribute__(self.value, "_authority")
+        def replace_config():
+            self.events.append(("configuration", module._CONFIG_PATH))
+            return c30.HostMutationEvidence(
+                "regular_file", module._CONFIG_PATH, "replaced",
+            )
+        with patch.object(module, "_qualify_populated_recovery",
+                          return_value=module._PopulatedRecoveryPreflight(
+                              python_environment.DevPythonEnvironmentEvidence(),
+                              "predecessor", "absent", "absent",
+                          )) as recovery, \
+             patch.object(authority.runtime, "install_executor_configuration",
+                          side_effect=replace_config):
+            result = self.invoke(c29_value=c29.HostQualificationError("populated venv"))
+        self.assertEqual(result.operation, "populated-environment-recovery")
+        self.assertEqual(recovery.call_count, 1)
+        self.assertEqual(result.completed_steps[6].outcome,
+                         "populated-recovery-verified")
+        self.assertEqual([item[0] for item in self.events if item[0] in {
+            "group", "user", "directory", "application", "configuration", "asset", "python",
+        }], ["configuration"])
+        self.assertEqual([item[0] for item in self.events][-4:],
+                         ["state", "replay", "audit", "post"])
+        self.assertEqual([item.outcome for item in result.completed_steps[7:18]],
+                         ["retained-exact"] * 4 + ["installed"]
+                         + ["retained-exact"] * 6)
+
+    def test_c_populated_recovery_failure_has_no_mutation(self):
+        with patch.object(module, "_qualify_populated_recovery", side_effect=OSError):
+            self.assert_failure(6, 7, False, lambda: self.invoke(
+                c29_value=c29.HostQualificationError("populated venv"),
+            ))
+        self.assertFalse(any(item[0] in {
+            "group", "user", "directory", "application", "configuration", "asset", "python",
+            "state", "replay", "audit",
+        } for item in self.events))
+
+    def test_c_populated_recovery_config_replacement_failure_blocks_c31c(self):
+        authority = object.__getattribute__(self.value, "_authority")
+        with patch.object(module, "_qualify_populated_recovery",
+                          return_value=module._PopulatedRecoveryPreflight(
+                              python_environment.DevPythonEnvironmentEvidence(),
+                              "predecessor", "absent", "absent",
+                          )), \
+             patch.object(authority.runtime, "install_executor_configuration",
+                          side_effect=OSError):
+            self.assert_failure(11, 12, True, lambda: self.invoke(
+                c29_value=c29.HostQualificationError("populated venv"),
+            ))
+        self.assertFalse(any(item[0] in {"python", "state", "replay", "audit"}
+                             for item in self.events))
+
+    def test_c_current_c17_resumes_partial_c31c_without_python_or_replacement(self):
+        authority = object.__getattribute__(self.value, "_authority")
+        for state_phase, replay_phase in (
+            ("absent", "absent"),
+            ("initial", "absent"),
+            ("initial", "initialized"),
+        ):
+            with self.subTest(state=state_phase, replay=replay_phase):
+                self.events.clear()
+                preflight = module._PopulatedRecoveryPreflight(
+                    python_environment.DevPythonEnvironmentEvidence(),
+                    "current", state_phase, replay_phase,
+                )
+                state_outcome = "initialized" if state_phase == "absent" else "unchanged"
+                replay_outcome = "initialized" if replay_phase == "absent" else "existing"
+                state = c31c.PersistentPrerequisiteEvidence(
+                    c31c._STATE_PATH, "deployment_state", state_outcome, 1,
+                )
+                replay = c31c.PersistentPrerequisiteEvidence(
+                    c31c._REPLAY_PATH, "replay_database", replay_outcome, 1,
+                )
+                with patch.object(module, "_qualify_populated_recovery",
+                                  return_value=preflight), \
+                     patch.object(authority.runtime, "install_executor_configuration",
+                                  side_effect=AssertionError("C17 rewrite")) as install, \
+                     patch.object(authority.mechanics, "construct_python_environment",
+                                  side_effect=AssertionError("venv or pip")) as python, \
+                     patch.object(authority.persistent, "initialize_deployment_state",
+                                  return_value=state) as initialize_state, \
+                     patch.object(authority.persistent, "initialize_replay",
+                                  return_value=replay) as initialize_replay:
+                    result = self.invoke(c29_value=c29.HostQualificationError("populated"))
+                self.assertEqual(result.operation, "populated-environment-recovery")
+                self.assertEqual(result.completed_steps[11].outcome, "retained-exact")
+                self.assertEqual(result.completed_steps[18].outcome, state_outcome)
+                self.assertEqual(result.completed_steps[19].outcome, replay_outcome)
+                install.assert_not_called()
+                python.assert_not_called()
+                initialize_state.assert_called_once()
+                initialize_replay.assert_called_once()
+
+    def test_c_step22_failure_reruns_with_current_exact_state(self):
+        authority = object.__getattribute__(self.value, "_authority")
+        preflight = module._PopulatedRecoveryPreflight(
+            python_environment.DevPythonEnvironmentEvidence(),
+            "current", "initial", "initialized",
+        )
+        state = c31c.PersistentPrerequisiteEvidence(
+            c31c._STATE_PATH, "deployment_state", "unchanged", 1,
+        )
+        replay = c31c.PersistentPrerequisiteEvidence(
+            c31c._REPLAY_PATH, "replay_database", "existing", 1,
+        )
+        with patch.object(module, "_qualify_populated_recovery", return_value=preflight), \
+             patch.object(authority.runtime, "install_executor_configuration",
+                          side_effect=AssertionError("C17 rewrite")), \
+             patch.object(authority.mechanics, "construct_python_environment",
+                          side_effect=AssertionError("venv or pip")), \
+             patch.object(authority.persistent, "initialize_deployment_state",
+                          return_value=state), \
+             patch.object(authority.persistent, "initialize_replay",
+                          return_value=replay):
+            self.assert_failure(21, 22, True, lambda: self.invoke(
+                c29_value=c29.HostQualificationError("populated"),
+                post_values=(post.PostProvisionQualificationError(),
+                             post.PostProvisionQualificationError()),
+            ))
+            self.events.clear()
+            result = self.invoke(c29_value=c29.HostQualificationError("populated"))
+        self.assertEqual(result.operation, "populated-environment-recovery")
+        self.assertEqual(result.completed_steps[11].outcome, "retained-exact")
+        self.assertFalse(any(item[0] in {"python", "configuration", "application"}
+                             for item in self.events))
+
+    def test_c_recovery_rejects_c31c_outcome_change_after_preflight(self):
+        authority = object.__getattribute__(self.value, "_authority")
+        preflight = module._PopulatedRecoveryPreflight(
+            python_environment.DevPythonEnvironmentEvidence(),
+            "current", "initial", "initialized",
+        )
+        with patch.object(module, "_qualify_populated_recovery", return_value=preflight), \
+             patch.object(authority.persistent, "initialize_deployment_state",
+                          return_value=c31c.PersistentPrerequisiteEvidence(
+                              c31c._STATE_PATH, "deployment_state", "existing", 1,
+                          )), \
+             patch.object(authority.persistent, "initialize_replay") as replay:
+            self.assert_failure(18, 19, True, lambda: self.invoke(
+                c29_value=c29.HostQualificationError("populated"),
+            ))
+            replay.assert_not_called()
+        with patch.object(module, "_qualify_populated_recovery", return_value=preflight), \
+             patch.object(authority.persistent, "initialize_deployment_state",
+                          return_value=c31c.PersistentPrerequisiteEvidence(
+                              c31c._STATE_PATH, "deployment_state", "unchanged", 1,
+                          )), \
+             patch.object(authority.persistent, "initialize_replay",
+                          return_value=c31c.PersistentPrerequisiteEvidence(
+                              c31c._REPLAY_PATH, "replay_database", "initialized", 1,
+                          )):
+            self.assert_failure(19, 20, True, lambda: self.invoke(
+                c29_value=c29.HostQualificationError("populated"),
+            ))
+
+    def test_c_populated_recovery_proves_pinned_predecessor_and_exact_host(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository, previous, previous_manifest = repository_fixture(directory)
+            (repository / "recovery-note.txt").write_text("reviewed correction\n")
+            git(repository, "add", "recovery-note.txt")
+            git(repository, "commit", "--quiet", "-m", "reviewed correction")
+            current_commit = git(repository, "rev-parse", "HEAD").decode().strip()
+            current = c17.DevExecutorServiceConfiguration(**configuration_values(
+                reviewed_commit=current_commit,
+            ))
+            manifest = c26.generate_dev_application_manifest(
+                repository_root=str(repository), reviewed_commit=current_commit,
+            )
+            python = python_environment.DevPythonEnvironmentEvidence()
+            observations = []
+
+            def observe(path, kind, mode, uid, gid, expected=None, **kwargs):
+                observations.append((path, expected, kwargs))
+                return c29.HostManagedPathObservation(
+                    path, kind, "absent" if path == post._SNAPSHOT_PATH else "exact",
+                    mode, uid, gid,
+                )
+
+            with ExitStack() as stack:
+                read_config = stack.enter_context(patch.object(
+                    c29, "_read_small_regular", return_value=previous.canonical_bytes()))
+                stack.enter_context(patch.object(module, "_POPULATED_RECOVERY_COMMIT",
+                                                 previous.reviewed_commit))
+                stack.enter_context(patch.object(module, "_POPULATED_RECOVERY_BASE_COMMIT",
+                                                 previous.reviewed_commit))
+                stack.enter_context(patch.object(module, "_POPULATED_RECOVERY_CONFIG_SHA256",
+                    hashlib.sha256(previous.canonical_bytes()).hexdigest()))
+                stack.enter_context(patch.object(module, "_POPULATED_RECOVERY_MANIFEST_SHA256",
+                    hashlib.sha256(previous_manifest.canonical_bytes()).hexdigest()))
+                stack.enter_context(patch.object(c29, "_platform_observation"))
+                stack.enter_context(patch.object(c29, "_query_packages"))
+                stack.enter_context(patch.object(c29, "_load_payload", return_value=()))
+                stack.enter_context(patch.object(c29, "_observe_payload"))
+                stack.enter_context(patch.object(c29, "_observe_principals",
+                    return_value=(self.post.groups, self.post.users)))
+                observed = stack.enter_context(patch.object(c29, "_observe_managed_path",
+                    side_effect=observe))
+                application = stack.enter_context(patch.object(c29, "_observe_application",
+                    return_value=self.post.application))
+                persistent = stack.enter_context(patch.object(module,
+                    "_qualify_recovery_persistent_state", return_value=("absent", "absent")))
+                environment = stack.enter_context(patch.object(
+                    python_environment, "qualify_dev_python_environment", return_value=python))
+                qualified = module._qualify_populated_recovery(
+                    current, manifest, self.wheels, str(repository),
+                )
+                self.assertIs(qualified.python, python)
+                self.assertEqual(qualified.c17_state, "predecessor")
+                self.assertEqual(persistent.call_count, 1)
+                self.assertEqual(environment.call_count, 1)
+                self.assertEqual(application.call_count, 1)
+                self.assertEqual(application.call_args.args[0].reviewed_commit,
+                                 previous.reviewed_commit)
+                self.assertIn((module._CONFIG_PATH, previous.canonical_bytes(), {}), observations)
+                self.assertEqual(observed.call_args.args[0], post._SNAPSHOT_PATH)
+
+                # A failed later C31C step leaves the newly installed C17.
+                read_config.return_value = current.canonical_bytes()
+                qualified = module._qualify_populated_recovery(
+                    current, manifest, self.wheels, str(repository),
+                )
+                self.assertIs(qualified.python, python)
+                self.assertEqual(qualified.c17_state, "current")
+                read_config.return_value = previous.canonical_bytes()
+
+                # A merge still has the pinned predecessor as a direct parent.
+                tree = git(repository, "rev-parse", current_commit + "^{tree}").decode().strip()
+                merge_commit = git(repository, "commit-tree", tree,
+                                   "-p", current_commit,
+                                   "-p", previous.reviewed_commit,
+                                   "-m", "recovery merge").decode().strip()
+                merged = c17.DevExecutorServiceConfiguration(**configuration_values(
+                    reviewed_commit=merge_commit,
+                ))
+                git(repository, "reset", "--hard", merge_commit)
+                merged_manifest = c26.generate_dev_application_manifest(
+                    repository_root=str(repository), reviewed_commit=merge_commit,
+                )
+                self.assertIs(module._qualify_populated_recovery(
+                    merged, merged_manifest, self.wheels, str(repository),
+                ).python, python)
+
+                git(repository, "reset", "--hard", current_commit)
+                (repository / "unrelated.txt").write_text("unrelated\n")
+                git(repository, "add", "unrelated.txt")
+                git(repository, "commit", "--quiet", "-m", "unrelated")
+                unrelated_commit = git(repository, "rev-parse", "HEAD").decode().strip()
+                unrelated = c17.DevExecutorServiceConfiguration(**configuration_values(
+                    reviewed_commit=unrelated_commit,
+                ))
+                unrelated_manifest = c26.generate_dev_application_manifest(
+                    repository_root=str(repository), reviewed_commit=unrelated_commit,
+                )
+                with self.assertRaises(OSError):
+                    module._qualify_populated_recovery(
+                        unrelated, unrelated_manifest, self.wheels, str(repository),
+                    )
+
+                with patch.object(c29, "_observe_application", side_effect=OSError):
+                    with self.assertRaises(OSError):
+                        module._qualify_populated_recovery(
+                            current, manifest, self.wheels, str(repository),
+                        )
+                with patch.object(python_environment, "qualify_dev_python_environment",
+                                  side_effect=python_environment.PythonEnvironmentQualificationError()):
+                    with self.assertRaises(python_environment.PythonEnvironmentQualificationError):
+                        module._qualify_populated_recovery(
+                            current, manifest, self.wheels, str(repository),
+                        )
+                with patch.object(module, "_qualify_recovery_persistent_state",
+                                  side_effect=OSError):
+                    with self.assertRaises(OSError):
+                        module._qualify_populated_recovery(
+                            current, manifest, self.wheels, str(repository),
+                        )
+                with patch.object(c29, "_observe_managed_path", side_effect=lambda
+                                  path, kind, mode, uid, gid, expected=None, **kwargs:
+                                  c29.HostManagedPathObservation(path, kind, "exact", mode, uid, gid)):
+                    with self.assertRaises(OSError):
+                        module._qualify_populated_recovery(
+                            current, manifest, self.wheels, str(repository),
+                        )
+                read_config.return_value = previous.canonical_bytes() + b" "
+                with self.assertRaises(OSError):
+                    module._qualify_populated_recovery(
+                        current, manifest, self.wheels, str(repository),
+                    )
+                third = c17.DevExecutorServiceConfiguration(**configuration_values(
+                    reviewed_commit="b" * 40,
+                ))
+                read_config.return_value = third.canonical_bytes()
+                with self.assertRaises(OSError):
+                    module._qualify_populated_recovery(
+                        current, manifest, self.wheels, str(repository),
+                    )
+                read_config.return_value = previous.canonical_bytes()
+                with patch.object(module, "_POPULATED_RECOVERY_MANIFEST_SHA256", "0" * 64):
+                    with self.assertRaises(OSError):
+                        module._qualify_populated_recovery(
+                            current, manifest, self.wheels, str(repository),
+                        )
+                with patch.object(module, "_POPULATED_RECOVERY_COMMIT", "0" * 40):
+                    with self.assertRaises(OSError):
+                        module._qualify_populated_recovery(
+                            current, manifest, self.wheels, str(repository),
+                        )
+
+    def test_c_populated_recovery_requires_empty_persistent_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "state"
+            root.mkdir()
+            module._require_empty_persistent_directory(str(root))
+            (root / "unexpected").write_bytes(b"partial state")
+            with self.assertRaises(OSError):
+                module._require_empty_persistent_directory(str(root))
+            (root / "unexpected").unlink()
+            alias = Path(directory) / "alias"
+            alias.symlink_to(root, target_is_directory=True)
+            with self.assertRaises(OSError):
+                module._require_empty_persistent_directory(str(alias))
+
+    def test_c_populated_recovery_accepts_only_reachable_c31c_states(self):
+        authority = c31c._build_authority(self.configuration)
+        state = c31c.PersistentPrerequisiteEvidence(
+            c31c._STATE_PATH, "deployment_state", "verified-initial", 1,
+        )
+        replay = c31c.PersistentPrerequisiteEvidence(
+            c31c._REPLAY_PATH, "replay_database", "verified", 1,
+        )
+        audit = c31c.PersistentPrerequisiteEvidence(
+            c31c._AUDIT_PATH, "audit_history", "pristine", 0,
+        )
+        state_exists = False
+        replay_exists = False
+        audit_residue = False
+        def empty(path):
+            if path == c31c._STATE_PATH.rsplit("/", 1)[0] and state_exists:
+                raise OSError
+            if path == c31c._REPLAY_PATH.rsplit("/", 1)[0] and replay_exists:
+                raise OSError
+            if path == c31c._AUDIT_DIRECTORY and audit_residue:
+                raise OSError
+
+        with patch.object(c31c, "_build_authority", return_value=authority), \
+             patch.object(module, "_require_empty_persistent_directory",
+                          side_effect=empty), \
+             patch.object(c31c, "_verify_state", return_value=state) as verify_state, \
+             patch.object(c31c, "_verify_replay", return_value=replay) as verify_replay, \
+             patch.object(c31c, "_audit_observation", return_value=audit) as verify_audit, \
+             patch.object(c31c, "_replay_guard") as guard:
+            self.assertEqual(module._qualify_recovery_persistent_state(
+                self.configuration), ("absent", "absent"))
+            state_exists = True
+            self.assertEqual(module._qualify_recovery_persistent_state(
+                self.configuration), ("initial", "absent"))
+            replay_exists = True
+            self.assertEqual(module._qualify_recovery_persistent_state(
+                self.configuration), ("initial", "initialized"))
+            self.assertGreaterEqual(verify_state.call_count, 2)
+            self.assertEqual(verify_replay.call_count, 1)
+            self.assertEqual(guard.return_value._validate_initial.call_count, 1)
+            self.assertEqual(verify_audit.call_count, 3)
+
+            with patch.object(c31c, "_verify_state", return_value=dataclasses.replace(
+                state, outcome="verified-existing")):
+                with self.assertRaises(OSError):
+                    module._qualify_recovery_persistent_state(self.configuration)
+            with patch.object(c31c, "_verify_replay", side_effect=OSError):
+                with self.assertRaises(OSError):
+                    module._qualify_recovery_persistent_state(self.configuration)
+            with patch.object(c31c, "_audit_observation", side_effect=OSError):
+                with self.assertRaises(OSError):
+                    module._qualify_recovery_persistent_state(self.configuration)
+            with patch.object(c31c, "_audit_observation", return_value=dataclasses.replace(
+                audit, outcome="existing", entry_count=1)):
+                with self.assertRaises(OSError):
+                    module._qualify_recovery_persistent_state(self.configuration)
+            audit_residue = True
+            with self.assertRaises(OSError):
+                module._qualify_recovery_persistent_state(self.configuration)
+            audit_residue = False
+            with patch.object(c31c, "_replay_guard") as malformed:
+                malformed.return_value._validate_initial.side_effect = OSError
+                with self.assertRaises(OSError):
+                    module._qualify_recovery_persistent_state(self.configuration)
+            state_exists = False
+            with self.assertRaises(OSError):
+                module._qualify_recovery_persistent_state(self.configuration)
+
+    def test_c_recovery_uses_c31c_audit_validator_for_unknown_and_malformed_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            authority = c31c._build_authority(self.configuration)
+            file = dataclasses.replace(
+                authority.audit_file, path=str(root / "events.jsonl"),
+                uid=os.getuid(), gid=os.getgid(),
+            )
+            authority = dataclasses.replace(authority, audit_file=file)
+
+            def open_audit(_authority):
+                descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                return [descriptor], []
+
+            with patch.object(c31c, "_open_audit_directory", side_effect=open_audit):
+                unknown = root / "unknown"
+                unknown.write_bytes(b"unexpected")
+                unknown.chmod(0o600)
+                with self.assertRaises(OSError):
+                    c31c._audit_observation(authority)
+                unknown.unlink()
+                history = root / "events.jsonl"
+                history.write_bytes(b"malformed history\n")
+                history.chmod(0o600)
+                with self.assertRaises(DeploymentPolicyError):
+                    c31c._audit_observation(authority)
 
     def test_c_leftover_snapshot_fails_before_mutation(self):
         self.assert_failure(6, 7, False,

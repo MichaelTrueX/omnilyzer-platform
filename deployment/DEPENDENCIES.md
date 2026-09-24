@@ -59,11 +59,16 @@ qualified untrusted pathname may not simply be reopened later.
 The compact retained installed-tree model is
 `provenance/python-runtime-py312-linux-x86_64-installed.json` (57,824 bytes,
 SHA-256
-`92f5bd9d8db6fecc5880b82103a81e7c23d3efac68b70e9fc8634104e52bbdbe`).
+`3966c1f4075e2813131f249eb02a473acf0e4d11be61b05f858678b668d2766b`).
 It was derived from the four exact wheel bytes above after their filename,
 size and SHA-256 checks, using the separately reviewed pip wheel. It records
 wheel payload files, compiled extensions, distribution metadata, venv
 structure, exact symlink targets and deterministic pip-generated files.
 Installed `RECORD` data is hashed output evidence rather than a trust root.
+The cffi 2.1.1 installed `RECORD` has 34 rows and is 2,665 bytes with SHA-256
+`e17a08d7a6b2a942aca45d2e533ca3c805d02d069a6674fdda39ba5e90193200`.
+Pip 26.2.1 uses Python `csv.writer`'s CRLF line ending; the earlier LF-normalized
+provenance entry was 2,631 bytes with SHA-256
+`7f43cc4e11358f6468993deccf1bcd24bc451b7464deb7ea7b14e4fba361abdb`.
 Pip itself is absent from the accepted runtime distributions, and bytecode is
 suppressed with `--no-compile` and rejected by the exact-tree qualifier.

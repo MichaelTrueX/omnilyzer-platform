@@ -140,6 +140,16 @@ class ReplayTestCase(unittest.TestCase):
 
 
 class InitializationAndFilesystemTests(ReplayTestCase):
+    def test_recovery_initial_validation_requires_empty_valid_store(self) -> None:
+        self.initialize()
+        self.guard._validate_initial()
+        self.consume()
+        self.guard.validate()
+        self.unavailable(self.guard._validate_initial)
+        with self.direct() as connection:
+            connection.execute("DROP TABLE consumptions")
+        self.unavailable(self.guard._validate_initial)
+
     def test_construction_performs_no_filesystem_action_and_production_is_untouched(self) -> None:
         missing = self.directory / "missing" / "replay.sqlite3"
         with (
