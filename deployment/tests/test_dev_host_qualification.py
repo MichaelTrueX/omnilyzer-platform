@@ -161,6 +161,45 @@ class ModelAndCompositionTests(unittest.TestCase):
         self.assertEqual(result.wheel_files, self.wheels.files)
         self.assertEqual(result.payload_manifest_sha256, module._PAYLOAD_SHA256)
 
+    def test_c_step_ten_partial_state_is_acceptable(self):
+        configuration = c17.DevExecutorServiceConfiguration(**configuration_values(
+            broker_uid=990, broker_gid=990, executor_uid=991, executor_gid=991,
+            replay_group_gid=992, socket_group_gid=993,
+        ))
+        provisioning = c23.DevHostProvisioningContract(
+            installation=configuration.installation_contract())
+        values = fake_observations(provisioning, self.manifest, self.wheels)
+        early = {
+            "/opt/omnilyzer", "/opt/omnilyzer/deployment",
+            "/opt/omnilyzer/deployment/app", "/opt/omnilyzer/deployment/venv",
+            "/etc/omnilyzer", "/etc/omnilyzer/deployment",
+            "/etc/omnilyzer/deployment/dev", "/var/lib/omnilyzer",
+            "/var/lib/omnilyzer/deployment",
+        }
+        groups = tuple(dataclasses.replace(item, state="exact") for item in values[1])
+        users = tuple(dataclasses.replace(item, state="exact") for item in values[2])
+        self.assertEqual(tuple(item.gid for item in groups), (990, 991, 992, 993))
+        self.assertEqual(tuple(item.uid for item in users), (990, 991))
+        paths = tuple(dataclasses.replace(item, state="exact") if item.path in early else item
+                      for item in values[3])
+        self.assertEqual({item.path for item in paths if item.state == "exact"}, early)
+        self.assertEqual(next(item.state for item in paths
+                              if item.path == "/var/lib/omnilyzer/deployment/audit"), "absent")
+        with patch.object(module, "_platform_observation", return_value=values[0]), \
+             patch.object(module, "_query_packages", return_value=values[4]), \
+             patch.object(module, "_observe_payload", return_value=values[5]), \
+             patch.object(module, "_observe_principals", return_value=(groups, users)), \
+             patch.object(module, "_observe_paths", return_value=paths), \
+             patch.object(module, "_observe_application", return_value=values[6]):
+            result = module.qualify_dev_host(
+                configuration=configuration, application_manifest=self.manifest,
+                wheelhouse_evidence=self.wheels)
+        self.assertEqual({item.state for item in result.groups}, {"exact"})
+        self.assertEqual({item.state for item in result.users}, {"exact"})
+        self.assertEqual(result.application.state, "absent")
+        self.assertEqual(next(item.state for item in result.managed_paths
+                              if item.path == "/opt/omnilyzer/deployment/venv"), "exact")
+
     def test_d_forged_c26_c27_c28_and_commit_mismatch_rejected(self):
         forged_manifest = object.__new__(c26.DevApplicationManifest)
         for field in dataclasses.fields(self.manifest):
@@ -357,6 +396,27 @@ class HostObservationTests(unittest.TestCase):
              patch.object(module._pwd, "getpwuid", return_value=SimpleNamespace(pw_name="unrelated")):
             with self.assertRaises(OSError): module._observe_principals(self.provisioning)
 
+    def test_n_exact_existing_users_groups_and_memberships(self):
+        groups = self.provisioning.group_requirements()
+        users = self.provisioning.user_requirements()
+        by_group_name = {item.name: SimpleNamespace(gr_gid=item.gid) for item in groups}
+        by_group_id = {item.gid: SimpleNamespace(gr_name=item.name) for item in groups}
+        by_user_name = {item.name: SimpleNamespace(pw_uid=item.uid, pw_gid=item.primary_gid)
+                        for item in users}
+        by_user_id = {item.uid: SimpleNamespace(pw_name=item.name) for item in users}
+        memberships = {item.name: (item.primary_gid, *item.supplementary_gids)
+                       for item in users}
+        with patch.object(module._grp, "getgrnam", side_effect=by_group_name.__getitem__), \
+             patch.object(module._grp, "getgrgid", side_effect=by_group_id.__getitem__), \
+             patch.object(module._pwd, "getpwnam", side_effect=by_user_name.__getitem__), \
+             patch.object(module._pwd, "getpwuid", side_effect=by_user_id.__getitem__), \
+             patch.object(module._os, "getgrouplist", side_effect=lambda name, _gid: memberships[name]):
+            observed_groups, observed_users = module._observe_principals(self.provisioning)
+        self.assertEqual({item.state for item in observed_groups}, {"exact"})
+        self.assertEqual({item.state for item in observed_users}, {"exact"})
+        self.assertEqual(tuple(item.supplementary_gids for item in observed_users),
+                         tuple(item.supplementary_gids for item in users))
+
     def test_o_application_absence_is_acceptable(self):
         manifest = SimpleNamespace(entries=(), reviewed_commit="a" * 40,
                                    canonical_bytes=lambda: b"manifest\n")
@@ -366,6 +426,42 @@ class HostObservationTests(unittest.TestCase):
             "must-contain-reviewed-application-before-activation")
         self.assertEqual(module._observe_application(
             manifest, requirement, root_requirement).state, "absent")
+
+    def test_o_exact_empty_application_root_is_absent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, source, manifest, requirement, root_requirement = application_fixture(temporary)
+            source.unlink(); source.parent.rmdir()
+            self.assertEqual(module._observe_application(
+                manifest, requirement, root_requirement).state, "absent")
+            root.chmod(0o775)
+            with self.assertRaises(OSError):
+                module._observe_application(manifest, requirement, root_requirement)
+            root.chmod(0o755)
+            real_stat = os.stat
+
+            def wrong_owner(path, *args, **kwargs):
+                status = real_stat(path, *args, **kwargs)
+                if path == "app":
+                    return changed_status(status, st_uid=status.st_uid + 1)
+                return status
+
+            with patch.object(module._os, "stat", side_effect=wrong_owner), self.assertRaises(OSError):
+                module._observe_application(manifest, requirement, root_requirement)
+            root.rmdir()
+            root.symlink_to(temporary, target_is_directory=True)
+            with self.assertRaises(OSError):
+                module._observe_application(manifest, requirement, root_requirement)
+
+    def test_o_nonempty_incomplete_application_root_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, source, manifest, requirement, root_requirement = application_fixture(temporary)
+            source.unlink()
+            with self.assertRaises(OSError):
+                module._observe_application(manifest, requirement, root_requirement)
+            source.parent.rmdir()
+            (root / "unreviewed").write_bytes(b"")
+            with self.assertRaises(OSError):
+                module._observe_application(manifest, requirement, root_requirement)
 
     def test_p_exact_application_tree_qualifies(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -435,7 +531,7 @@ class HostObservationTests(unittest.TestCase):
         assets = self.provisioning.installed_asset_requirements()
         self.assertEqual(tuple(item.sha256 for item in assets), (
             "4211b0a4498548a54c4aedeaeb419aef84fb76d16f9da5f60a40b20be1daf95f",
-            "00b4d6bef37a1582092ec927cd8501ff922c209f7b10542d264a9c48b74088fa",
+            "a79a89ccd97c1de6b7038337ab1f7089c4dad501532e376a71a811854d1e8c86",
         ))
         for asset in assets:
             with self.subTest(asset=asset.source_path), tempfile.TemporaryDirectory() as temporary:
@@ -501,6 +597,28 @@ class HostObservationTests(unittest.TestCase):
                            if item[0] == "/etc/omnilyzer/deployment/dev/executor.json")
         self.assertEqual(config_call[5], self.configuration.canonical_bytes())
         self.assertIsNone(config_call[6])
+
+    def test_y_empty_venv_allowed_and_populated_venv_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            venv = Path(temporary) / "venv"
+            venv.mkdir(mode=0o755)
+
+            def observe(path, kind, mode, uid, gid, expected_bytes=None,
+                        expected_sha256=None):
+                state = "exact" if path == self.provisioning.service_layout().virtualenv_root else "absent"
+                return module.HostManagedPathObservation(path, kind, state, mode, uid, gid)
+
+            def open_parent(_path, owned):
+                descriptor = os.open(temporary, os.O_RDONLY | os.O_DIRECTORY)
+                owned.append(descriptor)
+                return descriptor, "venv"
+
+            with patch.object(module, "_observe_managed_path", side_effect=observe), \
+                 patch.object(module, "_open_parent", side_effect=open_parent):
+                module._observe_paths(self.provisioning, self.configuration)
+                (venv / "unexpected").write_bytes(b"content")
+                with self.assertRaises(OSError):
+                    module._observe_paths(self.provisioning, self.configuration)
 
     def test_z_forged_c23_asset_cache_cannot_redefine_digest(self):
         contract = self.provisioning

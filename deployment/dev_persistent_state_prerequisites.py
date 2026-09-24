@@ -35,7 +35,8 @@ _BOOTSTRAP_TIMESTAMP = "1970-01-01T00:00:00Z"
 _BOOTSTRAP_EVENT_ID = "bootstrap-initial-state-v1"
 _STATE_PATH = "/var/lib/omnilyzer/deployment/dev/state.json"
 _REPLAY_PATH = "/var/lib/omnilyzer/deployment/authority/replay.sqlite3"
-_AUDIT_PATH = "/var/log/omnilyzer/deployment/dev/events.jsonl"
+_AUDIT_PATH = str(_audit.AUDIT_PATH)
+_AUDIT_DIRECTORY = str(_audit.AUDIT_PATH.parent)
 _MAX_AUDIT_ENTRIES = _audit.ROTATION_RETENTION + 2
 _AUDIT_HISTORY_LIMIT = _audit.ROTATE_BYTES + _audit.MAX_EVENT_BYTES
 # gzip's DEFLATE framing overhead is far below this conservative finite bound.
@@ -215,7 +216,7 @@ def _build_authority(configuration: object) -> _Authority:
                 "sqlite_database", 0o660, 0, installation.replay_group_gid,
                 "future-reviewed-replay-initialization-only",
             ),
-            "/var/log/omnilyzer/deployment/dev": (
+            _AUDIT_DIRECTORY: (
                 "directory", 0o700, installation.executor_uid,
                 installation.executor_gid, "must-exist-before-activation",
             ),
@@ -234,7 +235,7 @@ def _build_authority(configuration: object) -> _Authority:
             configuration, _c30.DevPrivilegedHostRuntime(configuration=configuration),
             values["/var/lib/omnilyzer/deployment/dev"], values[_STATE_PATH],
             values["/var/lib/omnilyzer/deployment/authority"], values[_REPLAY_PATH],
-            values["/var/log/omnilyzer/deployment/dev"], values[_AUDIT_PATH],
+            values[_AUDIT_DIRECTORY], values[_AUDIT_PATH],
             lambda: int(_time.time()),
         )
     except _CONTROL:

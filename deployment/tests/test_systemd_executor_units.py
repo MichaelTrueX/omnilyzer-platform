@@ -38,7 +38,7 @@ _HARDENING = (
     ("PrivateDevices", "yes"),
     ("ProtectHome", "yes"),
     ("ProtectSystem", "strict"),
-    ("ReadWritePaths", "/var/lib/omnilyzer/deployment /var/log/omnilyzer/deployment"),
+    ("ReadWritePaths", "/var/lib/omnilyzer/deployment"),
     ("ProtectControlGroups", "yes"),
     ("ProtectKernelModules", "yes"),
     ("ProtectKernelTunables", "yes"),

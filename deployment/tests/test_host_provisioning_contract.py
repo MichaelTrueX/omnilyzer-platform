@@ -43,8 +43,6 @@ _EXPECTED_PATHS = (
      "must-contain-c17-canonical-config-before-activation"),
     ("/var/lib/omnilyzer", "directory", 0o755, 0, 0, "must-exist-before-activation"),
     ("/var/lib/omnilyzer/deployment", "directory", 0o755, 0, 0, "must-exist-before-activation"),
-    ("/var/log/omnilyzer", "directory", 0o755, 0, 0, "must-exist-before-activation"),
-    ("/var/log/omnilyzer/deployment", "directory", 0o755, 0, 0, "must-exist-before-activation"),
     ("/run/omnilyzer", "directory", 0o755, 0, 0,
      "future-systemd-socket-directory-creation-only"),
     ("/run/omnilyzer/deployment", "directory", 0o755, 0, 0,
@@ -209,7 +207,10 @@ class HostProvisioningContractTests(unittest.TestCase):
     def test_i_exact_ordered_additional_paths(self):
         self.assertEqual(tuple(dataclasses.astuple(item) for item in self.contract.path_requirements()),
                          _EXPECTED_PATHS)
-        self.assertEqual(len(self.contract.path_requirements()), 14)
+        self.assertEqual(len(self.contract.path_requirements()), 12)
+        self.assertFalse(any(item.path.startswith("/var/log/")
+                             for item in (*self.contract.path_requirements(),
+                                          *self.contract.runtime_resource_requirements())))
         for requirement in self.contract.path_requirements():
             self.assertIs(type(requirement.path), str)
             self.assertTrue(PurePosixPath(requirement.path).is_absolute())
@@ -260,7 +261,7 @@ class HostProvisioningContractTests(unittest.TestCase):
         self.assertEqual(len(assets), 2)
         digests = (
             "4211b0a4498548a54c4aedeaeb419aef84fb76d16f9da5f60a40b20be1daf95f",
-            "00b4d6bef37a1582092ec927cd8501ff922c209f7b10542d264a9c48b74088fa",
+            "a79a89ccd97c1de6b7038337ab1f7089c4dad501532e376a71a811854d1e8c86",
         )
         for item, name, digest in zip(
                 assets,

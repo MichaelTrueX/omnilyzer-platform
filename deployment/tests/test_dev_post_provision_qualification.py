@@ -81,7 +81,7 @@ def observations(configuration, manifest, provisioning):
             "replay_database", "verified", 1,
         ),
         c31c.PersistentPrerequisiteEvidence(
-            "/var/log/omnilyzer/deployment/dev/events.jsonl",
+            "/var/lib/omnilyzer/deployment/audit/events.jsonl",
             "audit_history", "pristine", 0,
         ),
     )

@@ -653,7 +653,7 @@ PrivateTmp=yes
 PrivateDevices=yes
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/omnilyzer/deployment /var/log/omnilyzer/deployment
+ReadWritePaths=/var/lib/omnilyzer/deployment
 ProtectControlGroups=yes
 ProtectKernelModules=yes
 ProtectKernelTunables=yes
@@ -669,9 +669,9 @@ AmbientCapabilities=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ```
 
-Persistent read/write allowances cover only `/var/lib/omnilyzer/deployment`
-and `/var/log/omnilyzer/deployment`, including reviewed state/replay/audit
-resources. Under `ProtectSystem=strict`, `/etc` service configuration and `/opt`
+The sole persistent read/write allowance is `/var/lib/omnilyzer/deployment`,
+including reviewed state, replay and audit resources. Under
+`ProtectSystem=strict`, `/etc` service configuration and `/opt`
 application/venv remain read-only. Existing resource validators retain exact
 ownership/mode authority; these directives provision nothing.
 
@@ -752,8 +752,6 @@ metadata are:
 | `/etc/omnilyzer/deployment/dev/executor.json` | regular_file | 0640 | 0:executor_gid | C17 canonical config before activation |
 | `/var/lib/omnilyzer` | directory | 0755 | 0:0 | Must exist before activation |
 | `/var/lib/omnilyzer/deployment` | directory | 0755 | 0:0 | Must exist before activation |
-| `/var/log/omnilyzer` | directory | 0755 | 0:0 | Must exist before activation |
-| `/var/log/omnilyzer/deployment` | directory | 0755 | 0:0 | Must exist before activation |
 | `/run/omnilyzer` | directory | 0755 | 0:0 | Future systemd socket-directory creation only |
 | `/run/omnilyzer/deployment` | directory | 0755 | 0:0 | Future systemd socket-directory creation only |
 
@@ -1222,15 +1220,18 @@ source bytes with the same digests before writing. Checkout bytes cannot alter
 C29's expectation, while a mutable checkout can only make C30 fail verification.
 Neither boundary performs systemd daemon-reload, enable, start or activation.
 
-An absent C21 application root is acceptable. If present, it must have C23
-metadata and its complete descriptor-relative tree must exactly match the
-revalidated C26 manifest bound to C17/C24 `reviewed_commit`: no missing, extra,
-symlinked, wrong-mode or wrong-hash file is accepted. C23's closed application
-root metadata is projected across the installed tree: every C26 file must have
-the reviewed installation UID/GID, while every implicit structural directory
-must have that ownership and the exact reviewed `0755` directory mode. Thus
+An absent C21 application root is acceptable. An existing root with exact C23
+directory metadata and no entries is also observed as absent for C31 step-10
+recovery. A nonempty root must have a complete descriptor-relative tree that
+exactly matches the revalidated C26 manifest bound to C17/C24
+`reviewed_commit`: no missing, extra, symlinked, wrong-mode or wrong-hash file
+is accepted. C23's closed application root metadata is projected across the
+installed tree: every C26 file must have the reviewed installation UID/GID,
+while every implicit structural directory must have that ownership and the
+exact reviewed `0755` directory mode. Thus
 neither broker nor executor may own or write installed application code or its
-directories. Opened/named identity and post-read checks cover both files and
+directories. Opened/named
+identity and post-read checks cover both files and
 directories. C29 reads but never regenerates application trust from host bytes;
 C31 still owns installation and convergence.
 
@@ -1636,13 +1637,14 @@ C31C rerun, and the guard's existing failed-initialization quarantine behavior
 remains intact.
 
 Audit preparation creates or validates only the exact executor-owned `0700`
-audit directory. It deliberately leaves `events.jsonl` absent in pristine
-state: `FilesystemAuditSink` retains sole authority to create that `0600` file
-on the first real audit append. If current or rotated history exists, C31C
-validates exact file metadata and the existing bounded hash-chain parser while
-retaining opened identities. Plain bytes are read only from those descriptors;
-compressed rotations are read under a finite physical bound and decompressed
-from the captured bytes under the existing decompressed-history bound. Both the
+`/var/lib/omnilyzer/deployment/audit` directory, separate from the hardened
+state store under `dev`. It deliberately leaves `events.jsonl` absent in
+pristine state: `FilesystemAuditSink` retains sole authority to create that
+`0600` file on the first real audit append. If current or rotated history
+exists, C31C validates exact file metadata and the existing bounded hash-chain
+parser while retaining opened identities. Plain bytes are read only from those
+descriptors; compressed rotations are read under a finite physical bound and
+decompressed from the captured bytes under the existing decompressed-history bound. Both the
 opened and final named identities are revalidated, so pathname replacement
 cannot supply different validation bytes. C31C never appends, truncates,
 replaces, rotates or deletes anything. Unknown or unsafe directory entries fail
@@ -1706,11 +1708,18 @@ reviewed baseline `4292d57ff50fbe105c1b1327cb8b5cd09da53491` identifies
 the pre-change review state; it does not authorize a later commit or host run.
 
 The C17 object used for prior C26/C28/C29 qualification is **not** provisioning
-authorization. The `628af866084f08763b31a44c8a484c5ae4c64db6697f4c4ceaad91bbf54ba72a`
-value exists as a test fixture only and must not silently become persisted live
-executor configuration. Actual C31 provisioning requires a separately reviewed
-real C17 configuration, including the approved exact `CANARY_IMAGE` digest,
-bound to the exact reviewed execution commit.
+authorization. The manifest digest
+`sha256:628af866084f08763b31a44c8a484c5ae4c64db6697f4c4ceaad91bbf54ba72a`
+is a published Task 013 release artifact: Platform release run 34139853319
+(run #7), version 0.14.2, source SHA
+`9d29fa1a4010e6e72676580c36a94c1e97e8794b`, repository
+`omnilyzer/task013-release-canary`. The zot and Forgejo publication jobs
+succeeded, and downstream Cosign verification of that exact registry identity
+succeeded, including transparency-log and certificate checks. The digest also
+appears in tests; that occurrence alone grants no C17 authority. A real C17
+requires separate review of the release evidence and the complete C17
+configuration, including its exact `CANARY_IMAGE` digest and the newly reviewed
+execution commit. This repository change does not create or persist a live C17.
 
 Before mutation, C31D probes full convergence. A completely converged host
 returns an explicit `already-converged` observation without C29 or any mutation.
@@ -1742,6 +1751,11 @@ never blindly delete or recreate it. Only a fully converged rerun returns
 `already-converged` without mutation. Arbitrary partial failure is not
 guaranteed to converge on retry; a failed qualification blocks further
 provisioning until the exact condition and recovery are reviewed.
+
+For a step-10 failure, C29 can accept exact existing C23 groups, users and
+early directories with an exact empty application root and empty venv; the
+application observation remains `absent`. Later resources may still be absent.
+Any nonempty incomplete application root or populated venv blocks retry.
 
 One instance uses a nonblocking thread lock, while independent processes use a
 nonblocking kernel `flock` retained on the exact opened `/usr/bin` directory.

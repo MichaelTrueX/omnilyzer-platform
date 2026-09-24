@@ -165,7 +165,7 @@ def post_evidence(configuration, manifest, provisioning):
             "replay_database", "verified", 1,
         ),
         c31c.PersistentPrerequisiteEvidence(
-            "/var/log/omnilyzer/deployment/dev/events.jsonl",
+            "/var/lib/omnilyzer/deployment/audit/events.jsonl",
             "audit_history", "pristine", 0,
         ),
     )
@@ -253,7 +253,7 @@ class FakePersistent:
     def prepare_audit(self):
         self.events.append(("audit",))
         return c31c.PersistentPrerequisiteEvidence(
-            "/var/log/omnilyzer/deployment/dev/events.jsonl",
+            "/var/lib/omnilyzer/deployment/audit/events.jsonl",
             "audit_history", "pristine", 0,
         )
 

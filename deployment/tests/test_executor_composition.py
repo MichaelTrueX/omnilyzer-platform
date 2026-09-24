@@ -383,7 +383,7 @@ class ConstructionTests(unittest.TestCase):
             str(PRODUCTION_REPLAY_DATABASE),
             "/var/lib/omnilyzer/deployment/authority/replay.sqlite3",
         )
-        self.assertEqual(str(AUDIT_PATH), "/var/log/omnilyzer/deployment/dev/events.jsonl")
+        self.assertEqual(str(AUDIT_PATH), "/var/lib/omnilyzer/deployment/audit/events.jsonl")
         self.assertEqual(
             PRODUCTION_EXECUTOR_SOCKET_PATH,
             "/run/omnilyzer/deployment/executor.sock",

@@ -215,7 +215,7 @@ class DevPostProvisionEvidence:
                      "deployment_state", "verified-initial"),
                     ("/var/lib/omnilyzer/deployment/authority/replay.sqlite3",
                      "replay_database", "verified"),
-                    ("/var/log/omnilyzer/deployment/dev/events.jsonl",
+                    ("/var/lib/omnilyzer/deployment/audit/events.jsonl",
                      "audit_history", "pristine"),
                 ),
                 (
@@ -223,7 +223,7 @@ class DevPostProvisionEvidence:
                      "deployment_state", "verified-existing"),
                     ("/var/lib/omnilyzer/deployment/authority/replay.sqlite3",
                      "replay_database", "verified"),
-                    ("/var/log/omnilyzer/deployment/dev/events.jsonl",
+                    ("/var/lib/omnilyzer/deployment/audit/events.jsonl",
                      "audit_history", "existing"),
                 ),
                 (
@@ -231,7 +231,7 @@ class DevPostProvisionEvidence:
                      "deployment_state", "verified-initial"),
                     ("/var/lib/omnilyzer/deployment/authority/replay.sqlite3",
                      "replay_database", "verified"),
-                    ("/var/log/omnilyzer/deployment/dev/events.jsonl",
+                    ("/var/lib/omnilyzer/deployment/audit/events.jsonl",
                      "audit_history", "existing"),
                 ),
                 (
@@ -239,7 +239,7 @@ class DevPostProvisionEvidence:
                      "deployment_state", "verified-existing"),
                     ("/var/lib/omnilyzer/deployment/authority/replay.sqlite3",
                      "replay_database", "verified"),
-                    ("/var/log/omnilyzer/deployment/dev/events.jsonl",
+                    ("/var/lib/omnilyzer/deployment/audit/events.jsonl",
                      "audit_history", "pristine"),
                 ),
             ):

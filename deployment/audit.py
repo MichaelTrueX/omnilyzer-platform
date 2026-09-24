@@ -68,7 +68,7 @@ EXECUTION_IDENTITY_FIELDS = {
     "promotion_request_sha256", "executor_request_sha256",
 }
 SENSITIVE_MARKERS = ("password=", "secret=", "token=", "credential=")
-AUDIT_PATH = Path("/var/log/omnilyzer/deployment/dev/events.jsonl")
+AUDIT_PATH = Path("/var/lib/omnilyzer/deployment/audit/events.jsonl")
 MAX_EVENT_BYTES = 16 * 1024
 ROTATE_BYTES = 10 * 1024 * 1024
 ROTATION_RETENTION = 14
