@@ -62,10 +62,24 @@ _PIP_ENVIRONMENT = {
     "PIP_NO_INDEX": "1",
     "PIP_NO_INPUT": "1",
 }
+_PYTHON_PHASES = (
+    "operation-entry", "host-qualification", "repository-open",
+    "snapshot-preparation", "repository-revalidation", "snapshot-validation",
+    "venv-precondition", "argv-construction", "venv-command",
+    "preinstall-venv-verification", "post-venv-snapshot-validation",
+    "pip-command", "post-pip-snapshot-validation", "python-qualification",
+    "snapshot-cleanup", "descriptor-cleanup",
+)
 
 
 class ProvisioningMechanicsError(Exception):
     """One closed C31B mechanic could not complete exactly."""
+
+    def __init__(self, phase: str | None = None) -> None:
+        if phase is not None and (type(phase) is not str or phase not in _PYTHON_PHASES):
+            raise ValueError(_MODEL_ERROR)
+        self.phase = phase
+        super().__init__(_ERROR)
 
 
 @_dataclass(frozen=True, slots=True)
@@ -1323,7 +1337,7 @@ class DevHostProvisioningMechanics:
     def _enter(self) -> _Authority:
         lock = object.__getattribute__(self, "_lock")
         if not lock.acquire(blocking=False):
-            raise ProvisioningMechanicsError(_ERROR) from None
+            raise ProvisioningMechanicsError() from None
         return object.__getattribute__(self, "_authority")
 
     def materialize_application_tree(
@@ -1339,7 +1353,7 @@ class DevHostProvisioningMechanics:
         except _CONTROL:
             raise
         except Exception:
-            raise ProvisioningMechanicsError(_ERROR) from None
+            raise ProvisioningMechanicsError() from None
         finally:
             object.__getattribute__(self, "_lock").release()
 
@@ -1349,36 +1363,55 @@ class DevHostProvisioningMechanics:
         pip_installer_staging: str,
     ) -> _python_qualification.DevPythonEnvironmentEvidence:
         """Snapshot exact inputs, construct/install offline, and require C31A evidence."""
-        authority = self._enter()
+        try:
+            authority = self._enter()
+        except _CONTROL:
+            raise
+        except Exception:
+            raise ProvisioningMechanicsError("operation-entry") from None
         owned: list[int] = []
         source_owned: list[int] = []
         snapshot = None
         snapshot_build: dict[str, object] = {}
+        phase = "host-qualification"
         try:
             _validate_host_qualification(
                 authority, host_qualification, wheelhouse_path,
             )
             # The repository root is caller-selected only to locate the fixed C24 lock.
+            phase = "repository-open"
             repository, repository_chain = _open_directory(repository_root, owned)
+            phase = "snapshot-preparation"
             snapshot = _prepare_snapshot(
                 authority, repository, wheelhouse_path, pip_installer_staging,
                 owned, source_owned, snapshot_build,
             )
+            phase = "repository-revalidation"
             _revalidate_chain(repository_chain)
+            phase = "snapshot-validation"
             _validate_snapshot(snapshot, authority)
+            phase = "venv-precondition"
             _venv_precondition(authority)
+            phase = "argv-construction"
             venv_argv, pip_argv = _python_argv(authority, snapshot)
+            phase = "venv-command"
             _run_process(venv_argv, _VENV_ENVIRONMENT, _VENV_TIMEOUT)
+            phase = "preinstall-venv-verification"
             _verify_preinstall_venv(authority)
+            phase = "post-venv-snapshot-validation"
             _validate_snapshot(snapshot, authority)
+            phase = "pip-command"
             _run_process(pip_argv, _PIP_ENVIRONMENT, _PIP_TIMEOUT)
+            phase = "post-pip-snapshot-validation"
             _validate_snapshot(snapshot, authority)
+            phase = "python-qualification"
             evidence = _python_qualification.qualify_dev_python_environment(
                 configuration=authority.configuration,
             )
             if type(evidence) is not _python_qualification.DevPythonEnvironmentEvidence:
                 raise OSError
             _python_qualification.DevPythonEnvironmentEvidence.__post_init__(evidence)
+            phase = "snapshot-cleanup"
             _cleanup_snapshot(snapshot, authority)
             snapshot = None
             snapshot_build.clear()
@@ -1386,7 +1419,7 @@ class DevHostProvisioningMechanics:
         except _CONTROL:
             raise
         except Exception:
-            raise ProvisioningMechanicsError(_ERROR) from None
+            raise ProvisioningMechanicsError(phase) from None
         finally:
             # Never recursively remove a failed venv.  It remains for operator review.
             active = _sys.exception()
@@ -1400,7 +1433,7 @@ class DevHostProvisioningMechanics:
                     raise
             except BaseException:
                 if active is None:
-                    raise ProvisioningMechanicsError(_ERROR) from None
+                    raise ProvisioningMechanicsError("snapshot-cleanup") from None
             finally:
                 source_failed, source_control = _close(source_owned)
                 owned_failed, owned_control = _close(owned)
@@ -1409,4 +1442,4 @@ class DevHostProvisioningMechanics:
                 if control is not None and not isinstance(active, _CONTROL):
                     raise control
                 if (source_failed or owned_failed) and active is None:
-                    raise ProvisioningMechanicsError(_ERROR) from None
+                    raise ProvisioningMechanicsError("descriptor-cleanup") from None
