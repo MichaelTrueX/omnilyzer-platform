@@ -38,6 +38,10 @@ _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _PROCESS_LOCK_ANCHOR = "/usr/bin"
 _CONFIG_PATH = "/etc/omnilyzer/deployment/dev/executor.json"
 _FUTURE_DIRECTORY = "future-systemd-socket-directory-creation-only"
+# Reviewed recovery evidence for the retained C31 state from c8646e1. This is
+# code-owned authority, never a caller-selected prior configuration or commit.
+_RECOVERY_COMMIT = "c8646e1ef72f0cbab4878d383f7765f07aef8417"
+_RECOVERY_CONFIG_SHA256 = "0d464f4c0792ddfc184b2fc65b4a46d7e233abf6471167e80ed2e728d9f6837c"
 
 _STEP_OUTCOMES = {
     1: ("verified",), 2: ("verified",), 3: ("verified",),
@@ -240,6 +244,62 @@ def _locator(value: object) -> str:
     ):
         raise ValueError
     return value
+
+
+def _qualify_reviewed_recovery(
+    configuration: _c17.DevExecutorServiceConfiguration,
+    manifest: _c26.DevApplicationManifest,
+    wheels: _c28.DevWheelhouseEvidence,
+    repository_root: str,
+) -> _c29.DevHostQualificationEvidence:
+    """Requalify one pinned predecessor; require identical C25 application bytes."""
+    if configuration.reviewed_commit == _RECOVERY_COMMIT:
+        raise OSError
+    raw = _c29._read_small_regular(
+        _CONFIG_PATH, _c17.MAX_EXECUTOR_SERVICE_CONFIG_BYTES,
+    )
+    if _hashlib.sha256(raw).hexdigest() != _RECOVERY_CONFIG_SHA256:
+        raise OSError
+    previous = _c17.parse_canonical_executor_service_configuration(raw)
+    if previous.reviewed_commit != _RECOVERY_COMMIT:
+        raise OSError
+    current_fields = configuration.to_dict()
+    previous_fields = previous.to_dict()
+    current_fields.pop("reviewed_commit")
+    previous_fields.pop("reviewed_commit")
+    if current_fields != previous_fields:
+        raise OSError
+
+    # The existing C31B installer cannot replace application files. Prove the
+    # predecessor Git blobs are byte-identical to the current C26 manifest
+    # before C29 can accept the retained tree and before any mutation begins.
+    paths = tuple(entry.path for entry in manifest.entries)
+    tree = _c26._tree(_c26._output(
+        repository_root,
+        ("ls-tree", "-r", "-z", "--full-tree", _RECOVERY_COMMIT, "--", *paths),
+        16384,
+    ), paths)
+    total = 0
+    for entry, (_path, blob) in zip(manifest.entries, tree, strict=True):
+        size_raw = _c26._output(repository_root, ("cat-file", "-s", blob), 32)
+        if not size_raw.endswith(b"\n") or not size_raw[:-1].isdigit():
+            raise OSError
+        size = int(size_raw[:-1])
+        total += size
+        if size > _c26._MAX_BLOB_BYTES or total > _c26._MAX_TOTAL_BYTES:
+            raise OSError
+        payload = _c26._output(repository_root, ("cat-file", "blob", blob), size)
+        if len(payload) != size or _hashlib.sha256(payload).hexdigest() != entry.sha256:
+            raise OSError
+    previous_manifest = _c26.DevApplicationManifest(
+        manifest.manifest_kind, manifest.digest_algorithm,
+        _RECOVERY_COMMIT, manifest.entries,
+    )
+    return _c29.qualify_dev_host(
+        configuration=previous,
+        application_manifest=previous_manifest,
+        wheelhouse_evidence=wheels,
+    )
 
 
 def _lock_identity(value: _os.stat_result) -> tuple[int, ...]:
@@ -471,11 +531,16 @@ class DevHostProvisioningOrchestrator:
                 )
                 if plan.steps != _c31a._STEPS:
                     raise OSError
-                host = _c29.qualify_dev_host(
-                    configuration=configuration,
-                    application_manifest=manifest,
-                    wheelhouse_evidence=wheels,
-                )
+                try:
+                    host = _c29.qualify_dev_host(
+                        configuration=configuration,
+                        application_manifest=manifest,
+                        wheelhouse_evidence=wheels,
+                    )
+                except _c29.HostQualificationError:
+                    host = _qualify_reviewed_recovery(
+                        configuration, manifest, wheels, repository_root,
+                    )
                 if type(host) is not _c29.DevHostQualificationEvidence:
                     raise OSError
                 _c29.DevHostQualificationEvidence.__post_init__(host)
