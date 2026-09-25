@@ -1,6 +1,6 @@
 # Task 014 DEV runtime (reviewed, non-live)
 
-This directory defines the production-owned synthetic Task 014 DEV deployment boundary. It is not installed and nothing invokes it automatically. DEV remains disabled; PR D must bind these bytes to this PR's eventual merge SHA. This Nginx selection is only for the synthetic Task 014 DEV deployment boundary, not a production-wide base-image decision.
+This directory defines the production-owned synthetic Task 014 DEV deployment boundary. C31 installed runtime assets, but no service or deployment is activated. DEV remains disabled; activation must bind these bytes to a reviewed merge SHA. This Nginx selection is only for the synthetic Task 014 DEV deployment boundary, not a production-wide base-image decision.
 
 ## Qualified deployment Nginx
 
@@ -63,7 +63,7 @@ State remains schema v1 at `/var/lib/omnilyzer/deployment/dev/state.json`, with 
 
 PR B supplies the durable filesystem audit sink. It writes canonical one-record-per-line JSON to `/var/lib/omnilyzer/deployment/audit/events.jsonl`, modes 0700/0600, using serialized `O_APPEND` and fsync. It rejects malformed, partial, noncanonical, duplicate, oversized (over 16 KiB), or chain-invalid history. `previous_event_sha256` links full records. This is tamper-evident and owner-controlled, not root-tamper-resistant; remote/WORM audit is deferred.
 
-The complete broker/executor OIDC execution identity remains in the closed executor-request contract. The current `AuditEvent` does not persist every one of those fields. PR C **must** project and persist the actor ID, workflow ref/SHA, GitHub run ID/attempt, promotion-request SHA, OIDC JTI, and OIDC timestamps into live audit evidence before deployment activation. PR B does not implement that live broker/executor wiring.
+The complete broker/executor OIDC execution identity is in the closed executor-request contract. Audit schema 2 and its complete identity projection are implemented in the repository. Live broker/executor wiring and deployment activation remain separately reviewed work.
 
 Rotation occurs before crossing 10 MiB or on a new UTC day, uses atomic rename and never copytruncate, retains 14 rotations, and delays gzip until the following rotation. The next active record links to the renamed file's final record. After retention deletes old history, the oldest retained predecessor is an explicit anchor; continuity is verified across all retained files, not deleted history. Host ownership and live rotation/restart validation remain PR C work.
 
