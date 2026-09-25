@@ -777,7 +777,7 @@ class BrokerStaticAuthorityTests(unittest.TestCase):
             name for name, value in vars(RestrictedDeploymentBroker).items()
             if not name.startswith("_") and callable(value)
         }
-        self.assertEqual(public, {"authorize_and_forward"})
+        self.assertEqual(public, {"authorize_and_forward", "authorize_promotion_and_forward"})
 
     def test_source_has_no_mutable_global_collections(self) -> None:
         tree = ast.parse((ROOT / "deployment/broker.py").read_text())

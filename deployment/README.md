@@ -77,6 +77,40 @@ live implementation of that verifier. The accepted identity policy validates
 revision. Activation must add an independently reviewed revision binding and
 resolve the release-run evidence gap before treating either as live authority.
 
+## C32C inert broker integration
+
+`broker_integration.py` adds a supplied-value handler for one exact canonical
+DEV `PromotionRequest` and compact OIDC token. It rejects unknown and
+noncanonical promotion fields and bounds both inputs before invoking the
+existing broker. The broker now supports a constructor-bound request builder:
+it cryptographically verifies the token through its verifier, reauthorizes the
+exact returned identity, invokes C32B's fixed-route release acquisition and
+injected signature/release-run checks, constructs the existing
+`ExecutorRequest`, reparses and binds its final canonical bytes, consumes replay
+against their SHA-256, and sends those same bytes once through the existing
+transport. The executor independently reparses and validates them. The prior
+canonical-byte broker API remains available to existing inert callers.
+
+This is repository implemented and deterministically tested, not installed,
+activated, or live validated. The handler has no listener, service entrypoint,
+credential exchange, or production composition. Read credentials should remain
+inside the future unprivileged environment-local broker, separately scoped for
+zot and Forgejo; they must not be given to arbitrary GitHub workflow code.
+The real Sigstore/OCI verifier requires a separately reviewed trust-root and
+verification design. The release-run verifier requires independent Task 013
+run-to-artifact evidence, potentially a verified GitHub run/artifact source;
+the promotion's run ID alone is insufficient. Before activation, a reviewed
+authority must also pin `workflow_sha` to the approved workflow revision,
+independently of the token and request agreeing with each other. No current
+main commit is made permanent authority here.
+
+`broker.py` is selected by C25/C26 and its repository bytes have changed; the
+new integration module is not selected. The completed C31 installed application
+tree therefore must not be treated as this C32C generation. A separately
+designed, integrity-checked post-C31 update and source-set review are required
+before installing or composing C32C on the host. C31 recovery and host state
+are unchanged. Deployment activation remains prohibited.
+
 ## Phase 2B2 deployment-authority and runtime contract
 
 [ADR 0011](../docs/adr/0011-oidc-restricted-deployment-authority.md) selects a GitHub-hosted deployment job attached to a protected environment, short-lived GitHub Actions OIDC, an unprivileged restricted broker, a closed canonical request over a local Unix-domain socket, and a narrow privileged executor. The broker has no Docker socket. The executor must parse and independently revalidate the request and exposes no shell, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image, or arbitrary environment.
