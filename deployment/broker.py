@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from .execution import (
     MAX_CANONICAL_REQUEST_BYTES,
+    ExecutorRequest,
     ExecutorRequestError,
     ExecutorTransport,
     bind_request_to_identity,
@@ -131,12 +132,13 @@ class RestrictedDeploymentBroker:
 
     def __init__(
         self, *, verifier: object, replay_guard: ReplayGuard,
-        transport: ExecutorTransport,
+        transport: ExecutorTransport, request_builder: object | None = None,
     ) -> None:
         object.__setattr__(self, "_operations", (
             _bound_operation(verifier, "verify"),
             _bound_operation(replay_guard, "consume"),
             _bound_operation(transport, "send"),
+            None if request_builder is None else _bound_operation(request_builder, "build"),
         ))
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -145,15 +147,39 @@ class RestrictedDeploymentBroker:
     def authorize_and_forward(
         self, *, compact_token: str, canonical_request: bytes, received_at: int,
     ) -> bytes:
-        if (type(compact_token) is not str
-                or type(canonical_request) is not bytes
-                or type(received_at) is not int
-                or received_at < 0
-                or not canonical_request
+        if (type(canonical_request) is not bytes or not canonical_request
                 or len(canonical_request) > MAX_CANONICAL_REQUEST_BYTES):
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
+        return self._authorize(
+            compact_token=compact_token, received_at=received_at,
+            canonical_request=canonical_request, promotion=None,
+        )
 
-        verify, consume, send = object.__getattribute__(self, "_operations")
+    def authorize_promotion_and_forward(
+        self, *, compact_token: str, promotion: object, received_at: int,
+    ) -> bytes:
+        """Build the final request after verification, before replay and transport."""
+
+        return self._authorize(
+            compact_token=compact_token, received_at=received_at,
+            canonical_request=None, promotion=promotion,
+        )
+
+    def _authorize(
+        self, *, compact_token: str, received_at: int,
+        canonical_request: bytes | None, promotion: object | None,
+    ) -> bytes:
+        if (type(compact_token) is not str
+                or type(received_at) is not int
+                or received_at < 0
+                or (canonical_request is not None and (
+                    type(canonical_request) is not bytes or not canonical_request
+                    or len(canonical_request) > MAX_CANONICAL_REQUEST_BYTES))):
+            raise BrokerRejectedError(REJECTED_MESSAGE) from None
+
+        verify, consume, send, build = object.__getattribute__(self, "_operations")
+        if canonical_request is None and (build is None or promotion is None):
+            raise BrokerRejectedError(REJECTED_MESSAGE) from None
         normalize_identity = _normalize_identity
         authorization = authorize_verified_github_oidc
         expected_identity_fields = IDENTITY_FIELDS
@@ -175,6 +201,14 @@ class RestrictedDeploymentBroker:
                 returned_identity, received_at=received_at,
                 authorization=authorization, expected_fields=expected_identity_fields,
             )
+            if canonical_request is None:
+                constructed = build(promotion, identity, received_at=received_at)
+                if type(constructed) is not ExecutorRequest:
+                    raise ExecutorRequestError("constructed executor request type is invalid")
+                canonical_request = constructed.canonical_bytes()
+                if (type(canonical_request) is not bytes or not canonical_request
+                        or len(canonical_request) > MAX_CANONICAL_REQUEST_BYTES):
+                    raise ExecutorRequestError("constructed executor request bytes are invalid")
             request = parse_request(canonical_request)
             bind_identity(request, identity)
         except (OIDCAuthorizationError, ExecutorRequestError):
@@ -190,7 +224,7 @@ class RestrictedDeploymentBroker:
                 or any(character not in "0123456789abcdef" for character in request_hash)):
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         try:
-            consume(
+            consume_result = consume(
                 identity.jti,
                 expires_at=identity.expires_at,
                 request_hash=request_hash,
@@ -202,6 +236,8 @@ class RestrictedDeploymentBroker:
         except ReplayError:
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        if consume_result is not None:
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
         try:
