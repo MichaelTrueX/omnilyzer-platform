@@ -50,7 +50,7 @@ def fixture_root_only(path, owner_uid, group_gid, owned):
 def fixtures():
     configuration = c17.DevExecutorServiceConfiguration(**configuration_values())
     integrity = c24.DevInstallationIntegrityContract(configuration=configuration)
-    paths = tuple(item.repository_path for item in DevApplicationSourceSet().files)
+    paths = c26._predecessor_paths()
     manifest = c26.DevApplicationManifest(
         "canonical-relative-file-set-v1",
         "sha256",

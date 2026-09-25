@@ -49,14 +49,15 @@ class RuntimeAssetTests(unittest.TestCase):
         self.assertNotIn("sha256:" + "0" * 64, self.raw)
         self.assertNotIn("cgr.dev/chainguard/nginx:latest", self.raw)
 
-    def test_audit_documentation_defers_complete_oidc_projection_to_pr_c(self) -> None:
+    def test_audit_documentation_records_complete_oidc_projection(self) -> None:
         runtime_documentation = (RUNTIME / "README.md").read_text()
         deployment_documentation = (ROOT / "deployment/README.md").read_text()
         for documentation in (runtime_documentation, deployment_documentation):
             self.assertIn("filesystem audit sink", documentation)
-            self.assertIn("current `AuditEvent` does not persist", documentation)
+            self.assertIn("schema 2", documentation)
             self.assertIn("PR C", documentation)
             self.assertIn("OIDC JTI", documentation)
+        self.assertIn("complete identity projection", runtime_documentation)
 
     def test_real_compose_required_variable_contract_without_runtime_mutation(self) -> None:
         docker = shutil.which("docker")

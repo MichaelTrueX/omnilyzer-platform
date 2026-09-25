@@ -56,8 +56,7 @@ class Text(str):
 class ModelTests(unittest.TestCase):
     def test_legacy_populated_recovery_predecessor_c26_is_pinned(self):
         entries = []
-        for source in DevApplicationSourceSet().files:
-            path = source.repository_path
+        for path in module._predecessor_paths():
             predecessor = git(ROOT, "show", f"{POPULATED_RECOVERY_PREDECESSOR}:{path}")
             entries.append(module.ApplicationManifestEntry(
                 path, hashlib.sha256(predecessor).hexdigest(), "0644",
@@ -205,7 +204,7 @@ class ModelTests(unittest.TestCase):
              patch.object(os.path, "realpath", side_effect=AssertionError("path inspection")), \
              patch.object(socket, "socket", side_effect=AssertionError("network on import")):
             importlib.reload(module)
-            self.assertEqual(len(fixture().entries), 28)
+            self.assertEqual(len(fixture().entries), 31)
 
     def test_no_operational_authority(self):
         tree = ast.parse((ROOT / "deployment/application_manifest.py").read_text())
@@ -272,8 +271,8 @@ class RepositoryTests(unittest.TestCase):
             self.assertEqual(entry.sha256, hashlib.sha256(raw).hexdigest())
             self.assertEqual(entry.mode, "0644")
         selection = DevApplicationSourceSet()
-        self.assertEqual(len(manifest.entries), 28)
-        self.assertEqual(sum(item.kind == "python-module" for item in selection.files), 25)
+        self.assertEqual(len(manifest.entries), 31)
+        self.assertEqual(sum(item.kind == "python-module" for item in selection.files), 28)
         self.assertEqual(sum(item.kind == "runtime-data" for item in selection.files), 3)
         for excluded in ("application_manifest.py", "application_source_set.py", "host_provisioning_contract.py",
                          "installation_integrity_contract.py", "requirements-linux-x86_64-py312.lock",

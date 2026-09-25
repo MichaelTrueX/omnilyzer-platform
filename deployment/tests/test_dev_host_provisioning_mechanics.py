@@ -46,10 +46,10 @@ def repository_fixture(parent):
     git(repository, "init", "--quiet")
     git(repository, "config", "user.email", "test@example.invalid")
     git(repository, "config", "user.name", "Test")
-    for item in DevApplicationSourceSet().files:
-        path = repository / item.repository_path
+    for relative in c26._predecessor_paths():
+        path = repository / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes((item.repository_path + "\n").encode())
+        path.write_bytes((relative + "\n").encode())
     lock = ROOT / "deployment/requirements-linux-x86_64-py312.lock"
     target_lock = repository / "deployment/requirements-linux-x86_64-py312.lock"
     target_lock.write_bytes(lock.read_bytes())
@@ -59,8 +59,16 @@ def repository_fixture(parent):
     configuration = c17.DevExecutorServiceConfiguration(
         **configuration_values(reviewed_commit=commit),
     )
-    manifest = c26.generate_dev_application_manifest(
-        repository_root=str(repository), reviewed_commit=commit,
+    paths = c26._predecessor_paths()
+    records = c26._tree(git(repository, "ls-tree", "-r", "-z", "--full-tree",
+                            commit, "--", *paths), paths)
+    assert git(repository, "rev-parse", "HEAD").strip().decode() == commit
+    manifest = c26.DevApplicationManifest(
+        "canonical-relative-file-set-v1", "sha256", commit,
+        tuple(c26.ApplicationManifestEntry(
+            relative, hashlib.sha256(git(repository, "cat-file", "blob", oid)).hexdigest(),
+            "0644",
+        ) for relative, oid in records),
     )
     return repository, configuration, manifest
 

@@ -70,6 +70,19 @@ def _paths() -> tuple[str, ...]:
     return tuple(item.repository_path for item in files)
 
 
+# C31 installed this exact predecessor selection. It remains parseable for
+# pinned recovery; generation always uses the current C25 selection.
+_C31_ADDITIONS = frozenset({
+    "deployment/broker_integration.py",
+    "deployment/oidc_verifier.py",
+    "deployment/release_consumer.py",
+})
+
+
+def _predecessor_paths() -> tuple[str, ...]:
+    return tuple(path for path in _paths() if path not in _C31_ADDITIONS)
+
+
 @_dataclass(frozen=True, slots=True)
 class ApplicationManifestEntry:
     """One canonical relative path, raw-blob SHA-256 and required installed mode."""
@@ -102,14 +115,16 @@ class DevApplicationManifest:
             if (type(self.manifest_kind) is not str
                     or self.manifest_kind != "canonical-relative-file-set-v1"
                     or type(self.digest_algorithm) is not str or self.digest_algorithm != "sha256"
-                    or type(self.entries) is not tuple or len(self.entries) != 28):
+                    or type(self.entries) is not tuple
+                    or len(self.entries) not in (28, 31)):
                 raise ValueError(_MODEL_ERROR)
             for entry in self.entries:
                 if type(entry) is not ApplicationManifestEntry:
                     raise ValueError(_MODEL_ERROR)
                 # Call validation directly: do not manufacture additional evidence entries.
                 ApplicationManifestEntry.__post_init__(entry)
-            if tuple(entry.path for entry in self.entries) != _paths():
+            paths = tuple(entry.path for entry in self.entries)
+            if paths not in (_paths(), _predecessor_paths()):
                 raise ValueError(_MODEL_ERROR)
         except Exception:
             raise ValueError(_MODEL_ERROR) from None
@@ -241,7 +256,7 @@ def generate_dev_application_manifest(*, repository_root: str, reviewed_commit: 
         if type(selection) is not _DevApplicationSourceSet or type(selection.files) is not tuple:
             raise ValueError(_UNAVAILABLE)
         paths = tuple(item.repository_path for item in selection.files)
-        if len(paths) != 28 or paths != _paths() or paths != tuple(sorted(set(paths))):
+        if len(paths) != 31 or paths != _paths() or paths != tuple(sorted(set(paths))):
             raise ValueError(_UNAVAILABLE)
         for item in selection.files:
             if type(item) is not _ApplicationSourceFile:

@@ -220,7 +220,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(set(json.loads((ROOT / "deployment/environments/dev.json").read_text())["activation"]),
                          {"deployment_enabled", "verified_at"})
         self.assertIs(json.loads((ROOT / "deployment/environments/dev.json").read_text())["activation"]["deployment_enabled"], False)
-        self.assertNotIn("deployment/broker_integration.py", [item.repository_path for item in __import__(
+        self.assertIn("deployment/broker_integration.py", [item.repository_path for item in __import__(
             "deployment.application_source_set", fromlist=["DevApplicationSourceSet"]
         ).DevApplicationSourceSet().files])
 

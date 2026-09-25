@@ -39,13 +39,28 @@ from deployment.tests.test_dev_host_provisioning_mechanics import repository_fix
 ERROR = "DEV host provisioning orchestration is unavailable"
 
 
+def legacy_manifest(repository, commit):
+    paths = c26._predecessor_paths()
+    records = c26._tree(git(repository, "ls-tree", "-r", "-z", "--full-tree",
+                            commit, "--", *paths), paths)
+    if git(repository, "rev-parse", "HEAD").strip().decode() != commit:
+        raise AssertionError("fixture HEAD changed")
+    return c26.DevApplicationManifest(
+        "canonical-relative-file-set-v1", "sha256", commit,
+        tuple(c26.ApplicationManifestEntry(
+            path, hashlib.sha256(git(repository, "cat-file", "blob", oid)).hexdigest(),
+            "0644",
+        ) for path, oid in records),
+    )
+
+
 def fixtures():
     configuration = c17.DevExecutorServiceConfiguration(**configuration_values())
     manifest = c26.DevApplicationManifest(
         "canonical-relative-file-set-v1", "sha256", configuration.reviewed_commit,
         tuple(
-            c26.ApplicationManifestEntry(item.repository_path, "a" * 64, "0644")
-            for item in DevApplicationSourceSet().files
+            c26.ApplicationManifestEntry(path, "a" * 64, "0644")
+            for path in c26._predecessor_paths()
         ),
     )
     integrity = c24.DevInstallationIntegrityContract(configuration=configuration)
@@ -503,9 +518,7 @@ class OrchestrationTests(unittest.TestCase):
             current = c17.DevExecutorServiceConfiguration(**configuration_values(
                 reviewed_commit=current_commit,
             ))
-            manifest = c26.generate_dev_application_manifest(
-                repository_root=str(repository), reviewed_commit=current_commit,
-            )
+            manifest = legacy_manifest(repository, current_commit)
             config_path = Path(directory) / "executor.json"
             config_path.write_bytes(previous.canonical_bytes())
             config_path.chmod(0o640)
@@ -548,9 +561,7 @@ class OrchestrationTests(unittest.TestCase):
                     "file://" + str(repository), str(shallow))
                 with self.assertRaises(subprocess.CalledProcessError):
                     git(shallow, "cat-file", "-e", prior_commit)
-                shallow_manifest = c26.generate_dev_application_manifest(
-                    repository_root=str(shallow), reviewed_commit=current_commit,
-                )
+                shallow_manifest = legacy_manifest(shallow, current_commit)
                 self.assertEqual(shallow_manifest.entries, manifest.entries)
                 self.assertIs(module._qualify_reviewed_recovery(
                     current, shallow_manifest, self.wheels, str(shallow),
@@ -565,9 +576,7 @@ class OrchestrationTests(unittest.TestCase):
                 merge_current = c17.DevExecutorServiceConfiguration(**configuration_values(
                     reviewed_commit=merge_commit,
                 ))
-                merge_manifest = c26.generate_dev_application_manifest(
-                    repository_root=str(repository), reviewed_commit=merge_commit,
-                )
+                merge_manifest = legacy_manifest(repository, merge_commit)
                 self.assertIs(module._qualify_reviewed_recovery(
                     merge_current, merge_manifest, self.wheels, str(repository),
                 ), qualified)
@@ -595,9 +604,7 @@ class OrchestrationTests(unittest.TestCase):
                 unrelated_current = c17.DevExecutorServiceConfiguration(**configuration_values(
                     reviewed_commit=unrelated_commit,
                 ))
-                unrelated_manifest = c26.generate_dev_application_manifest(
-                    repository_root=str(repository), reviewed_commit=unrelated_commit,
-                )
+                unrelated_manifest = legacy_manifest(repository, unrelated_commit)
                 with self.assertRaises(OSError):
                     module._qualify_reviewed_recovery(
                         unrelated_current, unrelated_manifest, self.wheels, str(repository),
@@ -642,9 +649,7 @@ class OrchestrationTests(unittest.TestCase):
                 changed = c17.DevExecutorServiceConfiguration(**configuration_values(
                     reviewed_commit=changed_commit,
                 ))
-                changed_manifest = c26.generate_dev_application_manifest(
-                    repository_root=str(repository), reviewed_commit=changed_commit,
-                )
+                changed_manifest = legacy_manifest(repository, changed_commit)
                 self.assertEqual(
                     git(repository, "rev-list", "--parents", "-n", "1", changed_commit)
                     .decode().split(), [changed_commit, prior_commit],
@@ -1011,9 +1016,7 @@ class OrchestrationTests(unittest.TestCase):
             current = c17.DevExecutorServiceConfiguration(**configuration_values(
                 reviewed_commit=current_commit,
             ))
-            manifest = c26.generate_dev_application_manifest(
-                repository_root=str(repository), reviewed_commit=current_commit,
-            )
+            manifest = legacy_manifest(repository, current_commit)
             python = python_environment.DevPythonEnvironmentEvidence()
             observations = []
 
@@ -1081,9 +1084,7 @@ class OrchestrationTests(unittest.TestCase):
                     reviewed_commit=merge_commit,
                 ))
                 git(repository, "reset", "--hard", merge_commit)
-                merged_manifest = c26.generate_dev_application_manifest(
-                    repository_root=str(repository), reviewed_commit=merge_commit,
-                )
+                merged_manifest = legacy_manifest(repository, merge_commit)
                 self.assertIs(module._qualify_populated_recovery(
                     merged, merged_manifest, self.wheels, str(repository),
                 ).python, python)
@@ -1096,9 +1097,7 @@ class OrchestrationTests(unittest.TestCase):
                 unrelated = c17.DevExecutorServiceConfiguration(**configuration_values(
                     reviewed_commit=unrelated_commit,
                 ))
-                unrelated_manifest = c26.generate_dev_application_manifest(
-                    repository_root=str(repository), reviewed_commit=unrelated_commit,
-                )
+                unrelated_manifest = legacy_manifest(repository, unrelated_commit)
                 with self.assertRaises(OSError):
                     module._qualify_populated_recovery(
                         unrelated, unrelated_manifest, self.wheels, str(repository),
