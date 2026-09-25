@@ -21,7 +21,7 @@ from deployment.tests.test_execution import valid_request as executor_request_va
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOYMENT_ROOT = ROOT / "deployment"
 WORKFLOW_PATH = ROOT / ".github/workflows/platform-promote.yml"
-PLATFORM_RELEASE_SHA256 = "53485cfafd1d1b8cdf0b1cb80c34bab12be12bfc07d7f7e6629a8c489be53471"
+PLATFORM_RELEASE_SHA256 = "8dbb6ceef9acbfdc301444b30e602138ccee38da47d16ea410bfb67a05f63c39"
 TASK008_PROTECTED = {
     ".github/workflows/task008-publish.yml": "0d6bd4a5715e6366250c427c959401e13b1f63b79786717a99b3816fd87a74b8",
     ".github/workflows/task008-consume.yml": "2712a221da0e4c4502fc2bc7dea6096cc015d8e0527a95a37f476c3fe3c7d5d1",

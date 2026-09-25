@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 from release.build_release import local_canary
-from release.provenance import create
+from release.provenance import WORKFLOW_REF, create, release_execution
 from release.prepare_scan_roots import extract_npm, extract_wheel
 from release.release_plan import materialize
 from release.verify_handoff import HandoffError, verify
@@ -19,6 +19,25 @@ SHA = "f2575b9a90c0f3a03ec0730c2a5ff7fea1ed17e5"
 
 
 class BuildHandoffTests(unittest.TestCase):
+    def test_release_execution_rejects_unreviewed_or_malformed_context(self) -> None:
+        values = {
+            "repository": "MichaelTrueX/omnilyzer-platform", "repository_id": "1350104356",
+            "workflow_ref": WORKFLOW_REF, "workflow_sha": SHA,
+            "run_id": "34088735049", "run_attempt": "1",
+            "event_name": "workflow_dispatch", "source_commit": SHA,
+        }
+        self.assertEqual(release_execution(**values)["run_id"], 34088735049)
+        for field, bad in (
+            ("repository", "attacker/repo"), ("repository_id", "1"),
+            ("workflow_ref", "attacker/workflow"), ("workflow_sha", "a" * 40),
+            ("run_id", "0"), ("run_id", "01"), ("run_id", "9223372036854775808"),
+            ("run_id", True), ("run_attempt", "0"), ("run_attempt", "1.0"),
+            ("run_attempt", "9223372036854775808"),
+            ("event_name", "push"), ("source_commit", "f" * 40),
+        ):
+            with self.subTest(field=field, bad=bad), self.assertRaises(ValueError):
+                release_execution(**{**values, field: bad})
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         base = Path(self.temp.name)
@@ -104,7 +123,12 @@ class BuildHandoffTests(unittest.TestCase):
             "manifest_digest": build["expected_oci_manifest_digest"],
         }))
         output = Path(self.temp.name) / "evidence"
-        create(self.handoff, publication, output, ROOT, "1.2.3", SHA)
+        execution = release_execution(
+            repository="MichaelTrueX/omnilyzer-platform", repository_id="1350104356",
+            workflow_ref=WORKFLOW_REF, workflow_sha=SHA, run_id="34088735049",
+            run_attempt="1", event_name="workflow_dispatch", source_commit=SHA,
+        )
+        create(self.handoff, publication, output, ROOT, "1.2.3", SHA, execution=execution)
         final = json.loads((output / "release-manifest.json").read_text())
         self.assertRegex(final["oci"]["manifest_digest"], r"^sha256:[0-9a-f]{64}$")
         self.assertEqual(final["oci"]["deployment_identity"],
@@ -112,3 +136,7 @@ class BuildHandoffTests(unittest.TestCase):
         self.assertRegex(final["build_manifest_sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(final["vulnerability_policy_result_sha256"], r"^[0-9a-f]{64}$")
         self.assertIn("no formal SLSA", (output / "release-provenance.json").read_text())
+        provenance = json.loads((output / "release-provenance.json").read_text())
+        self.assertEqual(provenance["execution"], execution)
+        self.assertEqual(provenance["schema_version"], 2)
+        self.assertEqual(final["schema_version"], 2)

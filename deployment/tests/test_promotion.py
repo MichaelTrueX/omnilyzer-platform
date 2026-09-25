@@ -23,6 +23,68 @@ from deployment.tests.fixtures import (
 
 
 class PromotionIdentityTests(unittest.TestCase):
+    def test_signed_execution_fields_fail_closed_even_with_mocked_signature_result(self) -> None:
+        manifest, provenance = evidence()
+        baseline = json.loads(provenance)
+        mutations = [
+            ("run_id", 1), ("run_id", 0), ("run_id", True),
+            ("run_id", 2**63), ("run_id", "34088735049"),
+            ("run_attempt", 0), ("run_attempt", True),
+            ("run_attempt", 2**63), ("run_attempt", 1.0),
+            ("workflow_ref", "attacker/release.yml@refs/heads/main"),
+            ("workflow_sha", "f" * 40),
+            ("repository", "attacker/repository"),
+            ("repository_id", 1),
+            ("event_name", "push"),
+            ("source_commit", "f" * 40),
+        ]
+        for field, value in mutations:
+            changed = json.loads(provenance)
+            changed["execution"][field] = value
+            raw = canonical_bytes(changed)
+            linked = json.loads(manifest)
+            linked["provenance"]["sha256"] = hashlib.sha256(raw).hexdigest()
+            linked_raw = canonical_bytes(linked)
+            candidate = replace(request(), provenance_sha256=hashlib.sha256(raw).hexdigest(),
+                                release_manifest_sha256=hashlib.sha256(linked_raw).hexdigest())
+            with self.subTest(field=field, value=value), self.assertRaises(DeploymentPolicyError):
+                verify_release_evidence(candidate, linked_raw, raw,
+                                        sigstore_result(), oci_signature_result())
+        for changed in ({**baseline, "execution": {**baseline["execution"], "unknown": 1}},
+                        {**baseline, "execution": {key: value for key, value in baseline["execution"].items()
+                                                    if key != "run_id"}},
+                        {key: value for key, value in baseline.items() if key != "execution"},
+                        {**baseline, "schema_version": 1}):
+            raw = canonical_bytes(changed)
+            linked = json.loads(manifest)
+            linked["provenance"]["sha256"] = hashlib.sha256(raw).hexdigest()
+            linked_raw = canonical_bytes(linked)
+            candidate = replace(request(), provenance_sha256=hashlib.sha256(raw).hexdigest(),
+                                release_manifest_sha256=hashlib.sha256(linked_raw).hexdigest())
+            with self.subTest(changed=changed), self.assertRaises(DeploymentPolicyError):
+                verify_release_evidence(candidate, linked_raw, raw,
+                                        sigstore_result(), oci_signature_result())
+
+    def test_post_sign_mutation_breaks_exact_hash_chain(self) -> None:
+        manifest, provenance = evidence()
+        with self.assertRaisesRegex(DeploymentPolicyError, "release manifest hash"):
+            verify_release_evidence(request(), manifest + b" ", provenance,
+                                    sigstore_result(), oci_signature_result())
+        changed = json.loads(provenance)
+        changed["execution"]["run_id"] += 1
+        raw = canonical_bytes(changed)
+        with self.assertRaisesRegex(DeploymentPolicyError, "provenance hash"):
+            verify_release_evidence(request(), manifest, raw,
+                                    sigstore_result(), oci_signature_result())
+        candidate = replace(request(), provenance_sha256=hashlib.sha256(raw).hexdigest())
+        with self.assertRaises(DeploymentPolicyError):
+            verify_release_evidence(candidate, manifest, raw,
+                                    sigstore_result(), oci_signature_result())
+        candidate = replace(request(), originating_release_run_id=1)
+        with self.assertRaises(DeploymentPolicyError):
+            verify_release_evidence(candidate, manifest, provenance,
+                                    sigstore_result(), oci_signature_result())
+
     def test_valid_exact_digest_and_evidence_are_accepted(self) -> None:
         candidate = request()
         manifest, provenance = evidence()

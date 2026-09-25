@@ -98,24 +98,35 @@ def execution_identity() -> dict[str, object]:
 
 
 def evidence() -> tuple[bytes, bytes]:
-    manifest = canonical_bytes({
-        "schema_version": 1,
+    provenance = canonical_bytes({
+        "schema_version": 2,
+        "statement_type": "https://omnilyzer.ai/release-provenance/v2",
         "platform_version": VERSION,
         "source_commit": SOURCE_SHA,
+        "execution": {
+            "repository": "MichaelTrueX/omnilyzer-platform",
+            "repository_id": 1350104356,
+            "workflow_ref": EXPECTED_RELEASE_WORKFLOW,
+            "workflow_sha": SOURCE_SHA,
+            "run_id": 34088735049,
+            "run_attempt": 1,
+            "event_name": "workflow_dispatch",
+            "source_commit": SOURCE_SHA,
+        },
+        "subjects": {"oci_manifest_digest": DIGEST},
+        "claim": "build-once release evidence; no formal SLSA level is asserted",
+    })
+    manifest = canonical_bytes({
+        "schema_version": 2,
+        "platform_version": VERSION,
+        "source_commit": SOURCE_SHA,
+        "provenance": {"filename": "release-provenance.json", "sha256": hashlib.sha256(provenance).hexdigest()},
         "oci": {
             "registry": "https://oci-dev.omnilyzer.ai",
             "repository": REPOSITORY,
             "manifest_digest": DIGEST,
             "deployment_identity": f"{REPOSITORY}@{DIGEST}",
         },
-    })
-    provenance = canonical_bytes({
-        "schema_version": 1,
-        "platform_version": VERSION,
-        "source_commit": SOURCE_SHA,
-        "workflow_ref": EXPECTED_RELEASE_WORKFLOW,
-        "subjects": {"oci_manifest_digest": DIGEST},
-        "claim": "build-once release evidence; no formal SLSA level is asserted",
     })
     return manifest, provenance
 

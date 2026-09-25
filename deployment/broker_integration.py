@@ -1,7 +1,7 @@
 """Inert C32C DEV promotion handler; no listener or production composition.
 
 Only a later reviewed environment-local broker may supply the credential,
-signature, release-run, replay, and transport implementations. Construction
+signature, replay, and transport implementations. Construction
 does not call any collaborator or create installation/activation authority.
 """
 
@@ -15,7 +15,7 @@ from .oidc_verifier import MAX_COMPACT_TOKEN_BYTES
 from .policy import DeploymentPolicyError
 from .promotion import PromotionRequest
 from .release_consumer import (
-    ForgejoEvidenceConsumer, ReleaseRunVerifier, ReleaseSignatureVerifier,
+    ForgejoEvidenceConsumer, ReleaseSignatureVerifier,
     ZotCandidateConsumer, acquire_and_construct_dev_request,
 )
 
@@ -24,17 +24,16 @@ MAX_PROMOTION_REQUEST_BYTES = 4096
 
 
 class _ReleaseRequestBuilder:
-    __slots__ = ("_zot", "_forgejo", "_signatures", "_release_run", "_runtime", "_ingress")
+    __slots__ = ("_zot", "_forgejo", "_signatures", "_runtime", "_ingress")
 
     def __init__(
         self, *, zot: ZotCandidateConsumer, forgejo: ForgejoEvidenceConsumer,
-        signatures: ReleaseSignatureVerifier, release_run: ReleaseRunVerifier,
+        signatures: ReleaseSignatureVerifier,
         runtime: RuntimeConfigurationReference, ingress: IngressReference,
     ) -> None:
         object.__setattr__(self, "_zot", zot)
         object.__setattr__(self, "_forgejo", forgejo)
         object.__setattr__(self, "_signatures", signatures)
-        object.__setattr__(self, "_release_run", release_run)
         object.__setattr__(self, "_runtime", runtime)
         object.__setattr__(self, "_ingress", ingress)
 
@@ -47,7 +46,7 @@ class _ReleaseRequestBuilder:
     ) -> ExecutorRequest:
         return acquire_and_construct_dev_request(
             promotion, identity, self._runtime, self._ingress,
-            self._zot, self._forgejo, self._signatures, self._release_run,
+            self._zot, self._forgejo, self._signatures,
             received_at=received_at,
         )
 
@@ -60,12 +59,12 @@ class InertDevPromotionHandler:
     def __init__(
         self, *, verifier: object, replay_guard: object, transport: object,
         zot: ZotCandidateConsumer, forgejo: ForgejoEvidenceConsumer,
-        signatures: ReleaseSignatureVerifier, release_run: ReleaseRunVerifier,
+        signatures: ReleaseSignatureVerifier,
         runtime: RuntimeConfigurationReference, ingress: IngressReference,
     ) -> None:
         builder = _ReleaseRequestBuilder(
             zot=zot, forgejo=forgejo, signatures=signatures,
-            release_run=release_run, runtime=runtime, ingress=ingress,
+            runtime=runtime, ingress=ingress,
         )
         broker = RestrictedDeploymentBroker(
             verifier=verifier, replay_guard=replay_guard, transport=transport,
