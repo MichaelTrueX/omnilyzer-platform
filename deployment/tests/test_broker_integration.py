@@ -17,7 +17,7 @@ from deployment.jwks import OIDCVerificationError, OIDCVerificationUnavailable
 from deployment.tests.test_broker import Replay, Transport, Verifier
 from deployment.tests.test_execution import ingress_reference, runtime_reference
 from deployment.tests.test_execution import valid_request
-from deployment.tests.test_identity import NOW, valid_claims
+from deployment.tests.test_identity import NOW, WORKFLOW_SHA, valid_claims
 from deployment.tests.test_release_consumer import Signatures, setup
 
 
@@ -25,12 +25,14 @@ ROOT = Path(__file__).resolve().parents[2]
 TOKEN = "exact.compact.token"
 
 
-def fixture(*, verifier=None, replay=None, transport=None, signatures=None, runtime=None, ingress=None):
+def fixture(*, verifier=None, replay=None, transport=None, signatures=None,
+            runtime=None, ingress=None, expected_workflow_sha=WORKFLOW_SHA):
     promotion, _, zot, forgejo, zot_factory, forgejo_factory = setup()
     selected_verifier = verifier or Verifier()
     selected_replay = replay or Replay()
     selected_transport = transport or Transport()
     handler = InertDevPromotionHandler(
+        expected_workflow_sha=expected_workflow_sha,
         verifier=selected_verifier, replay_guard=selected_replay,
         transport=selected_transport, zot=zot, forgejo=forgejo,
         signatures=signatures or Signatures(),
@@ -69,13 +71,32 @@ class IntegrationTests(unittest.TestCase):
         raw = transport.calls[0]
         request = parse_canonical_request(raw)
         self.assertEqual(request.promotion_request_sha256, promotion.sha256())
-        self.assertEqual(request.github_workflow_sha, authorize_verified_github_oidc(valid_claims(), received_at=NOW).workflow_sha)
+        self.assertNotEqual(request.source_sha, request.github_workflow_sha)
+        self.assertEqual(request.github_workflow_sha, authorize_verified_github_oidc(valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA).workflow_sha)
         self.assertEqual(replay.calls[0]["request_hash"], hashlib.sha256(raw).hexdigest())
         self.assertEqual(replay.calls[0]["jti"], request.oidc_jti)
         other, _, _, other_replay, other_transport, _, _ = fixture()
         invoke(other, promotion)
         self.assertEqual(other_transport.calls, [raw])
         self.assertEqual(other_replay.calls[0]["request_hash"], replay.calls[0]["request_hash"])
+
+    def test_reviewed_revision_rejects_unrelated_identity_before_release_or_replay(self):
+        release_source_sha = setup()[0].source_sha
+        self.assertNotEqual(release_source_sha, WORKFLOW_SHA)
+        for authority in ("f" * 40, release_source_sha):
+            handler, promotion, verifier, replay, transport, zot, forgejo = fixture(
+                expected_workflow_sha=authority,
+            )
+            with self.subTest(authority=authority), self.assertRaises(BrokerRejectedError):
+                invoke(handler, promotion)
+            self.assertEqual(verifier.calls, [(TOKEN, NOW)])
+            self.assertEqual(replay.calls, [])
+            self.assertEqual(transport.calls, [])
+            self.assertEqual(zot.calls, [])
+            self.assertEqual(forgejo.calls, [])
+        for authority in (None, True, "", "0" * 40):
+            with self.subTest(authority=authority), self.assertRaises(ValueError):
+                fixture(expected_workflow_sha=authority)
 
     def test_malformed_or_oversized_input_never_reaches_verifier(self):
         handler, promotion, verifier, replay, transport, _, _ = fixture()
@@ -104,7 +125,7 @@ class IntegrationTests(unittest.TestCase):
                 invoke(handler, promotion)
             self.assertEqual(replay.calls, [])
             self.assertEqual(transport.calls, [])
-        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW)
+        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         for altered in (replace(identity, repository_id=1), replace(identity, workflow_ref="other")):
             handler, promotion, _, replay, transport, _, _ = fixture(verifier=Verifier(result=altered))
             with self.assertRaises(BrokerRejectedError):
@@ -156,6 +177,7 @@ class IntegrationTests(unittest.TestCase):
 
         verifier, replay, transport = Verifier(), Replay(), Transport()
         broker = RestrictedDeploymentBroker(
+            expected_workflow_sha=WORKFLOW_SHA,
             verifier=verifier, replay_guard=replay, transport=transport,
             request_builder=SubstitutingBuilder(),
         )

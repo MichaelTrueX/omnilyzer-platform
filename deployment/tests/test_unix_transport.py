@@ -19,7 +19,7 @@ from deployment.broker import BrokerUnavailableError, RestrictedDeploymentBroker
 from deployment.execution import ExecutorRequest, MAX_CANONICAL_REQUEST_BYTES
 from deployment.tests.test_broker import Replay, Verifier
 from deployment.tests.test_execution import valid_request
-from deployment.tests.test_identity import NOW
+from deployment.tests.test_identity import NOW, WORKFLOW_SHA
 import deployment.unix_transport as unix_transport
 from deployment.unix_transport import (
     ExecutorTransportUnavailableError,
@@ -1162,6 +1162,7 @@ class UnixTransportBrokerIntegrationTests(unittest.TestCase):
             transport = constructed(path)
             replay = Replay()
             broker = RestrictedDeploymentBroker(
+                expected_workflow_sha=WORKFLOW_SHA,
                 verifier=Verifier(), replay_guard=replay, transport=transport,
             )
             canonical = ExecutorRequest.from_dict(valid_request()).canonical_bytes()
@@ -1190,6 +1191,7 @@ class UnixTransportBrokerIntegrationTests(unittest.TestCase):
             transport = constructed(path)
             replay = Replay()
             broker = RestrictedDeploymentBroker(
+                expected_workflow_sha=WORKFLOW_SHA,
                 verifier=Verifier(), replay_guard=replay, transport=transport,
             )
             with self.assertRaises(BrokerUnavailableError):

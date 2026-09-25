@@ -27,6 +27,7 @@ from .identity import (
     ReplayGuard,
     ReplayUnavailableError,
     authorize_verified_github_oidc,
+    validate_expected_workflow_sha,
 )
 from .jwks import OIDCVerificationError, OIDCVerificationUnavailable
 
@@ -70,6 +71,7 @@ def _bound_operation(dependency: object, name: str) -> Callable[..., Any]:
 
 def _normalize_identity(
     identity: AuthorizedGitHubIdentity, *, received_at: int,
+    expected_workflow_sha: str,
     authorization: Callable[..., AuthorizedGitHubIdentity],
     expected_fields: frozenset[str],
 ) -> AuthorizedGitHubIdentity:
@@ -122,18 +124,23 @@ def _normalize_identity(
         "exp": values["expires_at"],
         "jti": values["jti"],
     }
-    return authorization(claims, received_at=received_at)
+    return authorization(
+        claims, received_at=received_at,
+        expected_workflow_sha=expected_workflow_sha,
+    )
 
 
 class RestrictedDeploymentBroker:
     """Closed verifier -> request -> replay -> opaque-transport sequence."""
 
-    __slots__ = ("_operations",)
+    __slots__ = ("_operations", "_expected_workflow_sha")
 
     def __init__(
-        self, *, verifier: object, replay_guard: ReplayGuard,
+        self, *, expected_workflow_sha: str, verifier: object, replay_guard: ReplayGuard,
         transport: ExecutorTransport, request_builder: object | None = None,
     ) -> None:
+        object.__setattr__(self, "_expected_workflow_sha",
+                           validate_expected_workflow_sha(expected_workflow_sha))
         object.__setattr__(self, "_operations", (
             _bound_operation(verifier, "verify"),
             _bound_operation(replay_guard, "consume"),
@@ -142,6 +149,9 @@ class RestrictedDeploymentBroker:
         ))
 
     def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("broker collaborators are immutable")
+
+    def __delattr__(self, name: str) -> None:
         raise AttributeError("broker collaborators are immutable")
 
     def authorize_and_forward(
@@ -178,6 +188,7 @@ class RestrictedDeploymentBroker:
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
 
         verify, consume, send, build = object.__getattribute__(self, "_operations")
+        expected_workflow_sha = object.__getattribute__(self, "_expected_workflow_sha")
         if canonical_request is None and (build is None or promotion is None):
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         normalize_identity = _normalize_identity
@@ -199,6 +210,7 @@ class RestrictedDeploymentBroker:
         try:
             identity = normalize_identity(
                 returned_identity, received_at=received_at,
+                expected_workflow_sha=expected_workflow_sha,
                 authorization=authorization, expected_fields=expected_identity_fields,
             )
             if canonical_request is None:

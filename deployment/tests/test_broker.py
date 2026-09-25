@@ -36,7 +36,7 @@ from deployment.identity import (
 from deployment.jwks import OIDCVerificationError, OIDCVerificationUnavailable
 from deployment.replay_sqlite import SQLiteReplayGuard
 from deployment.tests.test_execution import valid_request
-from deployment.tests.test_identity import NOW, valid_claims
+from deployment.tests.test_identity import NOW, WORKFLOW_SHA, valid_claims
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -45,7 +45,7 @@ RESPONSE = b'{"accepted":true}\n'
 
 
 def identity() -> AuthorizedGitHubIdentity:
-    return authorize_verified_github_oidc(valid_claims(), received_at=NOW)
+    return authorize_verified_github_oidc(valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
 
 
 def request_bytes(raw: dict[str, object] | None = None) -> bytes:
@@ -114,6 +114,7 @@ def broker(*, verifier: Verifier | None = None, replay: Replay | None = None,
     selected_transport = transport or Transport()
     return (
         RestrictedDeploymentBroker(
+            expected_workflow_sha=WORKFLOW_SHA,
             verifier=selected_verifier,
             replay_guard=selected_replay,
             transport=selected_transport,
@@ -154,6 +155,7 @@ class BrokerPublicContractTests(unittest.TestCase):
             dependencies[index] = object()
             with self.subTest(index=index), self.assertRaises(TypeError):
                 RestrictedDeploymentBroker(
+                    expected_workflow_sha=WORKFLOW_SHA,
                     verifier=dependencies[0], replay_guard=dependencies[1],
                     transport=dependencies[2],
                 )
@@ -165,6 +167,7 @@ class BrokerPublicContractTests(unittest.TestCase):
                 raise AssertionError("construction-side-effect")
         with self.assertRaises(TypeError):
             RestrictedDeploymentBroker(
+                expected_workflow_sha=WORKFLOW_SHA,
                 verifier=PropertyVerifier(), replay_guard=Replay(), transport=Transport(),
             )
 
@@ -201,6 +204,7 @@ class BrokerPublicContractTests(unittest.TestCase):
         class SubTransport(Transport):
             pass
         result = RestrictedDeploymentBroker(
+            expected_workflow_sha=WORKFLOW_SHA,
             verifier=SubVerifier(), replay_guard=SubReplay(), transport=SubTransport(),
         )
         self.assertEqual(result.authorize_and_forward(
@@ -276,7 +280,28 @@ class BrokerSuccessAndOrderingTests(unittest.TestCase):
                 compact_token=TOKEN, canonical_request=request_bytes(), received_at=NOW,
             )
         authorize.assert_called_once()
-        self.assertEqual(authorize.call_args.kwargs, {"received_at": NOW})
+        self.assertEqual(authorize.call_args.kwargs, {
+            "received_at": NOW, "expected_workflow_sha": WORKFLOW_SHA,
+        })
+
+    def test_broker_rejects_verifier_identity_with_other_reviewed_revision(self) -> None:
+        verifier, replay, transport = Verifier(), Replay(), Transport()
+        with self.assertRaises(TypeError):
+            RestrictedDeploymentBroker(
+                verifier=verifier, replay_guard=replay, transport=transport,
+            )
+        result = RestrictedDeploymentBroker(
+            expected_workflow_sha="f" * 40,
+            verifier=verifier, replay_guard=replay, transport=transport,
+        )
+        with self.assertRaises(BrokerRejectedError):
+            result.authorize_and_forward(
+                compact_token=TOKEN, canonical_request=request_bytes(), received_at=NOW,
+            )
+        self.assertEqual(replay.calls, [])
+        self.assertEqual(transport.calls, [])
+        with self.assertRaises(AttributeError):
+            result._expected_workflow_sha = WORKFLOW_SHA
 
     def test_empty_exact_bytes_response_is_allowed(self) -> None:
         result, _, _, _ = broker(transport=Transport(b""))
@@ -297,6 +322,7 @@ class BrokerSuccessAndOrderingTests(unittest.TestCase):
                 )
         replay = MutatingReplay()
         holder["broker"] = RestrictedDeploymentBroker(
+            expected_workflow_sha=WORKFLOW_SHA,
             verifier=Verifier(), replay_guard=replay, transport=original_transport,
         )
         self.assertEqual(holder["broker"].authorize_and_forward(
@@ -630,6 +656,7 @@ class BrokerFailureAndResponseTests(unittest.TestCase):
                     raise ReplayError("duplicate")
         replay = DefiniteReplay()
         holder["broker"] = RestrictedDeploymentBroker(
+            expected_workflow_sha=WORKFLOW_SHA,
             verifier=Verifier(), replay_guard=replay, transport=ReentrantTransport(),
         )
         with self.assertRaises(BrokerUnavailableError):
@@ -701,6 +728,7 @@ class BrokerSQLiteIntegrationTests(unittest.TestCase):
             guard = self.make_guard(directory)
             guard.initialize()
             first = RestrictedDeploymentBroker(
+            expected_workflow_sha=WORKFLOW_SHA,
                 verifier=Verifier(), replay_guard=guard, transport=Transport(),
             )
             first.authorize_and_forward(
@@ -708,6 +736,7 @@ class BrokerSQLiteIntegrationTests(unittest.TestCase):
             )
             second_transport = Transport()
             second = RestrictedDeploymentBroker(
+            expected_workflow_sha=WORKFLOW_SHA,
                 verifier=Verifier(), replay_guard=self.make_guard(directory),
                 transport=second_transport,
             )
@@ -732,6 +761,7 @@ class BrokerSQLiteIntegrationTests(unittest.TestCase):
                         transports += 1
                     return RESPONSE
             result = RestrictedDeploymentBroker(
+            expected_workflow_sha=WORKFLOW_SHA,
                 verifier=Verifier(), replay_guard=guard, transport=CountingTransport(),
             )
             outcomes: list[str] = []

@@ -75,9 +75,9 @@ The Task 014 policy requires its closed execution identity, approved repository
 and workflow, source/workflow SHA, positive run ID and attempt, and exact
 promotion run ID. The manifest hashes the provenance and the promotion request
 hashes both evidence blobs. Schema 1 evidence is ineligible for this path.
-The accepted deployment OIDC identity policy still validates `workflow_sha` as
-an exact SHA without pinning it to a reviewed revision. That separate activation
-blocker remains.
+At C32E, the deployment OIDC identity policy validated `workflow_sha` syntax
+without a reviewed revision. C32F closes that repository-code gap as described
+below; installation of its independent authority remains an activation blocker.
 
 ## C32C inert broker integration
 
@@ -101,15 +101,35 @@ zot and Forgejo; they must not be given to arbitrary GitHub workflow code.
 The real Sigstore/OCI verifier requires a separately reviewed trust-root and
 verification design. The signed Task 013 schema 2 provenance replaces the
 separate release-run verifier; the promotion's run ID alone remains insufficient.
-Before activation, a reviewed authority must also pin `workflow_sha` to the
-approved workflow revision, independently of the token and request agreeing
-with each other. No current
-main commit is made permanent authority here.
+Before activation, a reviewed authority must supply the approved deployment
+workflow revision independently of the token and request. No current main
+commit is made permanent authority here.
 
 C32E changes repository source and tests only. Any separately reported C32D
 host update remains a distinct operation; these C32E bytes are neither installed
-nor activated by this change. The production Sigstore/OCI verifier and release
-workflow revision authority remain activation blockers.
+nor activated by this change. The production Sigstore/OCI verifier and reviewed
+deployment workflow revision authority remain activation blockers.
+
+## C32F reviewed deployment workflow revision contract
+
+`workflow_ref` selects the approved deployment workflow path and `main` ref;
+`workflow_sha` identifies the exact workflow-code revision. Cryptographic JWT
+verification alone does not prove that the workflow revision was reviewed.
+`authorize_verified_github_oidc()` therefore requires an exact nonzero lowercase
+40-character expected workflow SHA supplied independently of the verified
+claims. The OIDC verifier, restricted broker, inert promotion handler, and
+GitHub DEV broker composition capture that same explicit authority at
+construction and recheck it before replay or forwarding. There is no default,
+current-HEAD lookup, mutable-branch lookup, GitHub API lookup, or dependency on
+the promoted release source SHA. Main or workflow-code changes fail closed until
+the expected SHA is deliberately updated.
+
+The eventual live broker needs a separately reviewed, root-controlled broker
+authority/configuration source for this SHA, with broker-readable permissions
+that preserve broker/executor UID and group separation. The executor-only
+`executor.json` and its group are not a shortcut for broker authority. C32F
+creates no live config, service, listener, credential, host update, or deployment
+authority; `deployment_enabled` remains false.
 
 `broker.py` was selected in the installed C31 tree, but its C32C bytes differ.
 C32D now reviews `broker_integration.py`, `release_consumer.py` and the former's
@@ -501,8 +521,9 @@ import or construction. Its only public operation delegates a later explicit
 request to the reviewed broker core.
 
 This GitHub DEV authorization profile is intentionally separate from C11's
-executor composition, and the current GitHub OIDC and `ExecutorRequest`
-identity semantics remain unchanged. Restricted-network applications may
+executor composition. C32F adds an explicit expected workflow SHA to this
+composition; `ExecutorRequest` identity fields remain unchanged.
+Restricted-network applications may
 later require a separately reviewed manual/local authorization
 profile, but C12 neither implements nor generalizes for that profile. Any such
 future profile must preserve release verification, exact-digest enforcement,

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from .broker import BrokerRejectedError, REJECTED_MESSAGE, RestrictedDeploymentBroker
 from .execution import ExecutorRequest, IngressReference, RuntimeConfigurationReference
-from .identity import AuthorizedGitHubIdentity
+from .identity import AuthorizedGitHubIdentity, validate_expected_workflow_sha
 from .jwks import OIDCVerificationError, parse_bounded_json
 from .oidc_verifier import MAX_COMPACT_TOKEN_BYTES
 from .policy import DeploymentPolicyError
@@ -24,20 +24,26 @@ MAX_PROMOTION_REQUEST_BYTES = 4096
 
 
 class _ReleaseRequestBuilder:
-    __slots__ = ("_zot", "_forgejo", "_signatures", "_runtime", "_ingress")
+    __slots__ = ("_zot", "_forgejo", "_signatures", "_runtime", "_ingress",
+                 "_expected_workflow_sha")
 
     def __init__(
         self, *, zot: ZotCandidateConsumer, forgejo: ForgejoEvidenceConsumer,
-        signatures: ReleaseSignatureVerifier,
+        signatures: ReleaseSignatureVerifier, expected_workflow_sha: str,
         runtime: RuntimeConfigurationReference, ingress: IngressReference,
     ) -> None:
         object.__setattr__(self, "_zot", zot)
         object.__setattr__(self, "_forgejo", forgejo)
         object.__setattr__(self, "_signatures", signatures)
+        object.__setattr__(self, "_expected_workflow_sha",
+                           validate_expected_workflow_sha(expected_workflow_sha))
         object.__setattr__(self, "_runtime", runtime)
         object.__setattr__(self, "_ingress", ingress)
 
     def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("DEV release builder collaborators are immutable")
+
+    def __delattr__(self, name: str) -> None:
         raise AttributeError("DEV release builder collaborators are immutable")
 
     def build(
@@ -48,6 +54,7 @@ class _ReleaseRequestBuilder:
             promotion, identity, self._runtime, self._ingress,
             self._zot, self._forgejo, self._signatures,
             received_at=received_at,
+            expected_workflow_sha=object.__getattribute__(self, "_expected_workflow_sha"),
         )
 
 
@@ -59,20 +66,25 @@ class InertDevPromotionHandler:
     def __init__(
         self, *, verifier: object, replay_guard: object, transport: object,
         zot: ZotCandidateConsumer, forgejo: ForgejoEvidenceConsumer,
-        signatures: ReleaseSignatureVerifier,
+        signatures: ReleaseSignatureVerifier, expected_workflow_sha: str,
         runtime: RuntimeConfigurationReference, ingress: IngressReference,
     ) -> None:
         builder = _ReleaseRequestBuilder(
             zot=zot, forgejo=forgejo, signatures=signatures,
             runtime=runtime, ingress=ingress,
+            expected_workflow_sha=expected_workflow_sha,
         )
         broker = RestrictedDeploymentBroker(
+            expected_workflow_sha=expected_workflow_sha,
             verifier=verifier, replay_guard=replay_guard, transport=transport,
             request_builder=builder,
         )
         object.__setattr__(self, "_forward", broker.authorize_promotion_and_forward)
 
     def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("DEV promotion handler collaborators are immutable")
+
+    def __delattr__(self, name: str) -> None:
         raise AttributeError("DEV promotion handler collaborators are immutable")
 
     def handle(
