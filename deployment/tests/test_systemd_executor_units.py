@@ -92,8 +92,8 @@ _LOWER_CONTRACT_HASHES = {
     "executor_service_config_loader.py": "48b7b0b9224b4adf5d3f1f508ea034785e05618943c4df046cefb6d4a618dcf3",
     "executor_service_config.py": "812f678e2a1a176c8aee89372d03c7d5d8ec16b6c0208331263bea3b0d210f44",
     "systemd_socket_activation.py": "25d20dddba58958d3f247d91e66b660033306bcdae72e56d5bb25174d0b0b630",
-    "executor_composition.py": "9f34b0c76d168ac1096f8397df5f5f74e4e162481076955c8b2ae83099b7d3e7",
-    "installation_contract.py": "99817f9558c83e229df04a1997b863b050ee9c0746e09aecc9262d0f5b2e41eb",
+    "executor_composition.py": "65fff086559ae09d9aa244c60b17fc4bcbd585b36c58bb3c55db2fe928184005",
+    "installation_contract.py": "79682d5f0521dc852a4fdaad76fc65894f0cc1db47342965d90d5e342633c0e1",
     "executor_listener.py": "c8644f198c0ce9362a7b01ab0b050c875237a78db610bae9c7727da6f6f47def",
     "unix_transport.py": "db2a6b8c35bd483412d1d7fa8367cbca9aba4888b7aacc5a5fa83a7bda74d4da",
 }

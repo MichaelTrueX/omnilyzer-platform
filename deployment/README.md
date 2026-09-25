@@ -14,6 +14,48 @@ The repository is now public. `main` is protected by the active repository rules
 
 Further C31 host provisioning or retry requires separate authorization, and deployment activation remains prohibited. `deployment/environments/dev.json` remains unchanged with `activation.deployment_enabled=false`. This documentation update enables no deployment workflow, OIDC, systemd, Docker execution, host provisioning, registry credentials, listener, or other live deployment authority.
 
+## Pinned C31 step-20 recovery (separate authorization required)
+
+The failed C31 run from `e386cc07708fcb0b94fae5a7b9422a15c9e2c792`
+completed step 19 and failed closed at replay initialization in step 20. Its
+authorization was consumed. The new recovery accepts only a future reviewed
+commit with that exact commit as a direct parent. It proves the pinned
+old C17 and old C26. Every proposed current C17 field except
+`reviewed_commit` must reconstruct the pinned e386 C17 SHA-256 before
+readiness or recovery treats it as authority. Recovery also proves the retained
+237-entry Python environment, exact initial deployment state, absent or exact
+zero-consumption replay, pristine audit,
+absent provisioning snapshot, and exact old/current replay directory modes.
+The three changed C25 files migrate in a fixed order from exact Git blobs;
+only exact completed prefixes and a verified next-file stage may be resumed.
+An installed current C17 requires all three replacements; the predecessor C17
+requires the old replay-directory mode. Other step-order combinations fail
+closed.
+Before advancing past an existing application prefix, recovery retries the
+fixed deployment-directory sync. It likewise retries the exact C17 parent
+directory sync before advancing from an already-current C17.
+The replay directory transitions once from root:replay-group `0770` to
+root:replay-group `02770`; a rerun accepts the exact new mode. Unknown residue,
+an active deployment state, journal/WAL/SHM leftovers, or unrelated lineage
+blocks recovery without repair.
+
+Operator flow after review: merge the fix, use a trusted root-controlled exact
+commit execution tree, and run this one read-only command with the already
+qualified C28 and C31P staging locations:
+
+```sh
+python3 -B -m deployment.dev_c31_recovery_readiness --wheelhouse-path "$C28_WHEELHOUSE" --pip-installer-staging "$C31P_STAGING"
+```
+
+A successful result reports the reviewed commit, predecessor, C17, application,
+directory, deployment-state, replay and audit states, Python manifest, and
+whether a separate C31 authorization can be considered. The command never
+executes C31 or grants authorization. Only after a separate explicit approval
+may the operator invoke the exact reviewed C31 entry point once from the same
+trusted tree and staging locations. No systemd, Docker, registry/OIDC, or
+deployment activation follows from this recovery; `deployment_enabled` stays
+`false`.
+
 ## Phase 2B2 deployment-authority and runtime contract
 
 [ADR 0011](../docs/adr/0011-oidc-restricted-deployment-authority.md) selects a GitHub-hosted deployment job attached to a protected environment, short-lived GitHub Actions OIDC, an unprivileged restricted broker, a closed canonical request over a local Unix-domain socket, and a narrow privileged executor. The broker has no Docker socket. The executor must parse and independently revalidate the request and exposes no shell, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image, or arbitrary environment.
@@ -36,7 +78,7 @@ C1 adds no replay persistence, broker HTTP API, Unix transport, executor, regist
 
 `replay_sqlite.py` now supplies an inert, repository-only `SQLiteReplayGuard`. It provides explicit initialization, read-only `validate()`, and the closed `consume()`, `begin_execution()`, and `finish_execution()` operations, but no broker consumes it and no executor transitions it. This repository change does not install or initialize the production directory or database at `/var/lib/omnilyzer/deployment/authority/replay.sqlite3`, and it creates or opens no filesystem state merely by import or construction.
 
-Future reviewed installation must create the dedicated directory as mode `0770` and the database as mode `0660`, then provide reviewed numeric owner and group IDs. The directory is expected to be root-owned with a future reviewed deployment-authority group. The store rejects symlinks, hard links, permissive or mismatched ownership and modes, unexpected directory entries, and databases exceeding 16 MiB. It uses only standard-library SQLite, rollback-journal `DELETE` mode, 4096-byte pages, at most 4096 pages, at most 10,000 live rows, and a busy timeout no greater than 1,000 milliseconds. WAL and shared-memory files remain prohibited pending activation-time filesystem qualification.
+Future reviewed installation must create the dedicated replay directory as root:replay-group mode `02770` and the database as root:replay-group mode `0660`. The setgid bit makes new database and `DELETE` rollback-journal inodes inherit the reviewed replay GID even when the initializer, broker, and executor have different effective primary GIDs. The database owner remains exactly root. A transient journal may be owned only by root, the reviewed broker UID, or the reviewed executor UID; its replay GID, mode `0660`, regular-file type, single link, and size bound remain exact. This permits the other reviewed writer to recover a hot journal after a crash. The store rejects symlinks, hard links, permissive or mismatched ownership and modes, unexpected directory entries, and databases exceeding 16 MiB. It uses only standard-library SQLite, rollback-journal `DELETE` mode, 4096-byte pages, at most 4096 pages, at most 10,000 live rows, and a busy timeout no greater than 1,000 milliseconds. WAL and shared-memory files remain prohibited pending activation-time filesystem qualification.
 
 On Linux, each operation traverses every absolute directory component from `/` using retained directory descriptors and `O_DIRECTORY|O_NOFOLLOW`, then validates the final descriptor against the configured pathname. It opens and retains the database with `O_NOFOLLOW`, connects SQLite through the held authority-directory descriptor, and compares the named and held database identities before and after use. This prevents an ancestor or authority-directory symlink from redirecting SQLite, prevents a directory replacement after opening from redirecting access, and detects persistent database replacement. CPython 3.12's standard `sqlite3` API accepts only a filename or URI and exposes neither an existing-file-descriptor connection nor its SQLite VFS file handle. It therefore cannot prove that SQLite opened the previously validated database inode against an attacker able to replace and restore the database leaf name entirely between the library's internal `open` and the next identity comparison. The same filename-only limitation applies to replacement and restoration of the rollback journal between its bounded precheck and SQLite's internal recovery open. Activation must qualify the directory as writable only by the narrowly trusted authority principal; eliminating those residual windows would require a reviewed native SQLite VFS or a different storage boundary.
 
@@ -1638,7 +1680,7 @@ state is classified as existing and never overwritten; malformed content,
 metadata conflicts, symlinks, hard links and temporary residue fail closed.
 Failure cleanup may unlink only the exact inode created by that invocation.
 
-Replay preparation creates or validates only C13's exact root-owned `0770`
+Replay preparation creates or validates only C13's exact root-owned `02770`
 authority directory through C30. An empty directory receives exactly one call
 to `SQLiteReplayGuard.initialize()` using its real clock semantics; the replay
 clock is runtime monotonic state and is deliberately not the fixed deployment

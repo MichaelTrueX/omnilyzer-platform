@@ -211,7 +211,7 @@ def _build_authority(configuration: object) -> _Authority:
                 "must-contain-canonical-no-active-state-before-activation",
             ),
             "/var/lib/omnilyzer/deployment/authority": (
-                "directory", 0o770, 0, installation.replay_group_gid,
+                "directory", _replay.DIRECTORY_MODE, 0, installation.replay_group_gid,
                 "must-exist-before-replay-initialization",
             ),
             _REPLAY_PATH: (
@@ -405,6 +405,8 @@ def _replay_guard(authority: _Authority) -> _replay.SQLiteReplayGuard:
         authority.replay_database.path,
         expected_directory_uid=authority.replay_directory.uid,
         expected_directory_gid=authority.replay_directory.gid,
+        expected_broker_uid=authority.configuration.broker_uid,
+        expected_executor_uid=authority.configuration.executor_uid,
         current_time=authority.replay_clock,  # type: ignore[arg-type]
     )
 

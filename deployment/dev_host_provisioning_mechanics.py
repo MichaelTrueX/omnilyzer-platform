@@ -538,7 +538,8 @@ def _hash_opened(descriptor: int, size: int) -> str:
     return digest
 
 
-def _verify_application(root: int, manifest: _c26.DevApplicationManifest, uid: int, gid: int) -> None:
+def _verify_application(root: int, manifest: _c26.DevApplicationManifest, uid: int, gid: int,
+                        staging: tuple[str, tuple[int, ...]] | None = None) -> None:
     expected_files = {entry.path: entry for entry in manifest.entries}
     expected_directories = set()
     for path in expected_files:
@@ -602,6 +603,9 @@ def _verify_application(root: int, manifest: _c26.DevApplicationManifest, uid: i
                     found_files.add(relative)
                 finally:
                     _os.close(descriptor)
+            elif staging is not None and relative == staging[0]:
+                if _fingerprint(status) != staging[1]:
+                    raise OSError
             else:
                 raise OSError
 

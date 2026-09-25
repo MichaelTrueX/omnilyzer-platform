@@ -195,6 +195,7 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(projected, {
             "expected_replay_directory_uid": 0,
             "expected_replay_directory_gid": 3001,
+            "expected_broker_uid": 1001,
             "expected_executor_uid": 2001,
             "expected_executor_gid": 2002,
             "expected_socket_group_gid": 3002,
@@ -269,7 +270,7 @@ class ResourceRequirementTests(unittest.TestCase):
         expected = {
             "/var/lib/omnilyzer/deployment/dev": ("directory", 0o700),
             "/var/lib/omnilyzer/deployment/dev/state.json": ("regular_file", 0o600),
-            "/var/lib/omnilyzer/deployment/authority": ("directory", 0o770),
+            "/var/lib/omnilyzer/deployment/authority": ("directory", 0o2770),
             "/var/lib/omnilyzer/deployment/authority/replay.sqlite3": (
                 "sqlite_database", 0o660,
             ),
@@ -293,7 +294,7 @@ class ResourceRequirementTests(unittest.TestCase):
             str(PRODUCTION_REPLAY_DATABASE),
             "/var/lib/omnilyzer/deployment/authority/replay.sqlite3",
         )
-        self.assertEqual((REPLAY_DIRECTORY_MODE, DATABASE_MODE), (0o770, 0o660))
+        self.assertEqual((REPLAY_DIRECTORY_MODE, DATABASE_MODE), (0o2770, 0o660))
         self.assertEqual(str(AUDIT_PATH), "/var/lib/omnilyzer/deployment/audit/events.jsonl")
         self.assertEqual(
             PRODUCTION_EXECUTOR_SOCKET_PATH,

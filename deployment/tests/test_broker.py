@@ -697,7 +697,7 @@ class BrokerSQLiteIntegrationTests(unittest.TestCase):
 
     def test_real_sqlite_replay_persists_across_guard_restart(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            os.chmod(directory, 0o770)
+            os.chmod(directory, 0o2770)
             guard = self.make_guard(directory)
             guard.initialize()
             first = RestrictedDeploymentBroker(
@@ -719,7 +719,7 @@ class BrokerSQLiteIntegrationTests(unittest.TestCase):
 
     def test_concurrent_identical_requests_have_one_transport_winner(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            os.chmod(directory, 0o770)
+            os.chmod(directory, 0o2770)
             guard = self.make_guard(directory)
             guard.initialize()
             lock = threading.Lock()

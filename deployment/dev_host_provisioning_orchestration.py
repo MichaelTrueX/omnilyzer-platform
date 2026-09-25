@@ -15,6 +15,7 @@ from . import dev_host_provisioning_plan as _c31a
 from . import dev_host_qualification as _c29
 from . import dev_persistent_state_prerequisites as _c31c
 from . import dev_post_provision_qualification as _post
+from . import dev_step20_recovery as _step20
 from . import executor_service_config as _c17
 from . import host_provisioning_contract as _c23
 from . import installation_integrity_contract as _c24
@@ -54,18 +55,19 @@ _POPULATED_RECOVERY_MANIFEST_SHA256 = "575d09be5933ea226313a20a958cbc5066cabcf20
 _STEP_OUTCOMES = {
     1: ("verified",), 2: ("verified",), 3: ("verified",),
     4: ("verified",), 5: ("verified",), 6: ("verified",),
-    7: ("verified", "populated-recovery-verified"),
+    7: ("verified", "populated-recovery-verified", "step20-recovery-verified"),
     8: ("created", "unchanged", "retained-exact"),
     9: ("created", "unchanged", "retained-exact"),
-    10: ("created", "unchanged", "retained-exact"),
-    11: ("materialized", "unchanged", "retained-exact"),
+    10: ("created", "unchanged", "retained-exact", "retained-predecessor"),
+    11: ("materialized", "unchanged", "retained-exact", "migrated"),
     12: ("installed", "unchanged", "retained-exact"),
     13: ("installed", "unchanged", "retained-exact"),
     14: ("created", "retained-exact"), 15: ("verified", "retained-exact"),
     16: ("verified", "retained-exact"),
     17: ("installed", "retained-exact"), 18: ("verified", "retained-exact"),
     19: ("initialized", "unchanged", "existing"),
-    20: ("initialized", "existing"),
+    20: ("initialized", "existing", "migrated-directory-initialized",
+         "retained-directory-initialized", "retained-directory-existing"),
     21: ("pristine", "existing"),
     22: ("verified",),
 }
@@ -166,7 +168,7 @@ class DevHostProvisioningEvidence:
             if (
                 self.operation not in (
                     "initial-provisioning", "already-converged",
-                    "populated-environment-recovery",
+                    "populated-environment-recovery", "step20-recovery",
                 )
                 or type(self.operation) is not str
                 or type(configuration) is not _c17.DevExecutorServiceConfiguration
@@ -192,7 +194,21 @@ class DevHostProvisioningEvidence:
             expected = (1, 2, 3, 22) if self.operation == "already-converged" else tuple(range(1, 23))
             if sequences != expected:
                 raise ValueError
-            if self.operation == "populated-environment-recovery":
+            if self.operation == "step20-recovery":
+                if (
+                    self.completed_steps[6].outcome != "step20-recovery-verified"
+                    or self.completed_steps[10].outcome not in ("migrated", "retained-exact")
+                    or self.completed_steps[19].outcome not in (
+                        "migrated-directory-initialized", "retained-directory-initialized",
+                        "retained-directory-existing")
+                    or any(item.outcome != "retained-exact" for item in
+                           (*self.completed_steps[7:9], *self.completed_steps[12:18]))
+                    or self.completed_steps[9].outcome not in
+                       ("retained-exact", "retained-predecessor")
+                    or self.completed_steps[11].outcome not in ("installed", "retained-exact")
+                ):
+                    raise ValueError
+            elif self.operation == "populated-environment-recovery":
                 if (
                     self.completed_steps[6].outcome != "populated-recovery-verified"
                     or any(item.outcome != "retained-exact"
@@ -256,6 +272,38 @@ class _PopulatedRecoveryPreflight:
                 ("current", "initial", "initialized"),
             )
         ):
+            raise ValueError(_MODEL_ERROR)
+        _python_environment.DevPythonEnvironmentEvidence.__post_init__(self.python)
+
+
+@_dataclass(frozen=True, slots=True)
+class _Step20RecoveryPreflight:
+    python: _python_environment.DevPythonEnvironmentEvidence
+    c17_state: str
+    application: _step20.ApplicationState
+    replay_directory: str
+    replay_state: str
+
+    def __post_init__(self) -> None:
+        if (type(self.python) is not _python_environment.DevPythonEnvironmentEvidence
+            or self.c17_state not in ("predecessor", "current")
+            or type(self.application) is not _step20.ApplicationState
+            or type(self.application.replaced_count) is not int
+            or not 0 <= self.application.replaced_count <= len(_step20.CHANGED)
+            or ((self.application.stage_length is None) !=
+                (self.application.stage_mode is None))
+            or (self.application.stage_length is not None and (
+                type(self.application.stage_length) is not int
+                or not 0 <= self.application.stage_length <= _c31b._MAX_BLOB
+                or self.application.stage_mode not in (0o600, 0o644)
+                or self.application.replaced_count == len(_step20.CHANGED)))
+            or self.replay_directory not in ("old", "current")
+            or self.replay_state not in ("absent", "initialized")
+            or (self.c17_state == "current"
+                and self.application.replaced_count != len(_step20.CHANGED))
+            or (self.c17_state == "predecessor"
+                and self.replay_directory != "old")
+            or (self.replay_directory == "old" and self.replay_state != "absent")):
             raise ValueError(_MODEL_ERROR)
         _python_environment.DevPythonEnvironmentEvidence.__post_init__(self.python)
 
@@ -509,6 +557,64 @@ def _qualify_populated_recovery(
     return _PopulatedRecoveryPreflight(python, c17_state, state, replay)
 
 
+def _qualify_step20_recovery(
+    configuration: _c17.DevExecutorServiceConfiguration,
+    manifest: _c26.DevApplicationManifest,
+    wheels: _c28.DevWheelhouseEvidence,
+    repository_root: str,
+) -> _Step20RecoveryPreflight:
+    """Prove only the retained e386 step-20 failure and its own prefix states."""
+    _step20.verify_current_c17(configuration)
+    previous, _old_blobs, new_blobs = _step20.manifests(
+        repository_root, configuration, manifest,
+    )
+    raw = _c29._read_small_regular(_CONFIG_PATH, _c17.MAX_EXECUTOR_SERVICE_CONFIG_BYTES)
+    c17_state = _step20.classify_installed_c17(configuration, raw)
+    integrity, provisioning, provenance = _post._authority(configuration, manifest)
+    environment = integrity.python_environment_requirement()
+    _c28.DevWheelhouseEvidence.__post_init__(wheels, environment)
+    _c29._platform_observation()
+    _c29._query_packages(provenance)
+    _c29._observe_payload(_c29._load_payload(provenance))
+    groups, users = _c29._observe_principals(provisioning)
+    if any(item.state != "exact" for item in (*groups, *users)):
+        raise OSError
+    application = _step20.inspect_application(previous, manifest, new_blobs)
+    replay_directory = _step20.inspect_replay_directory(configuration.replay_group_gid)
+    paths, persistent_directories, assets = _post._managed_requirements(provisioning)
+    for requirement in (*paths, *persistent_directories):
+        if requirement.path == _step20.REPLAY_DIRECTORY and replay_directory == "old":
+            mode = _step20.OLD_REPLAY_MODE
+        else:
+            mode = requirement.mode
+        expected = raw if requirement.path == _CONFIG_PATH else None
+        observed = _c29._observe_managed_path(
+            requirement.path, requirement.kind, mode,
+            requirement.owner_uid, requirement.group_gid, expected,
+        )
+        if observed.state != "exact":
+            raise OSError
+    for asset in assets:
+        observed = _c29._observe_managed_path(
+            asset.destination_path, "regular_file", asset.mode,
+            asset.owner_uid, asset.group_gid, expected_sha256=asset.sha256,
+        )
+        if observed.state != "exact":
+            raise OSError
+    snapshot = _c29._observe_managed_path(_post._SNAPSHOT_PATH, "directory", 0o700, 0, 0)
+    if snapshot.state != "absent":
+        raise OSError
+    python = _python_environment.qualify_dev_python_environment(configuration=configuration)
+    if type(python) is not _python_environment.DevPythonEnvironmentEvidence:
+        raise OSError
+    _python_environment.DevPythonEnvironmentEvidence.__post_init__(python)
+    state, replay = _qualify_recovery_persistent_state(configuration)
+    if state != "initial" or (replay_directory == "old" and replay != "absent"):
+        raise OSError
+    return _Step20RecoveryPreflight(python, c17_state, application,
+                                    replay_directory, replay)
+
+
 def _lock_identity(value: _os.stat_result) -> tuple[int, ...]:
     return (
         value.st_mode, value.st_dev, value.st_ino, value.st_uid, value.st_gid,
@@ -675,6 +781,7 @@ class DevHostProvisioningOrchestrator:
         completed = []
         mutation_started = False
         populated_recovery = False
+        step20_recovery = False
         try:
             repository_root = _locator(repository_root)
             wheelhouse_path = _locator(wheelhouse_path)
@@ -754,17 +861,27 @@ class DevHostProvisioningOrchestrator:
                     except _CONTROL:
                         raise
                     except Exception:
-                        recovered_python = _qualify_populated_recovery(
-                            configuration, manifest, wheels, repository_root,
-                        )
+                        try:
+                            recovered_python = _qualify_step20_recovery(
+                                configuration, manifest, wheels, repository_root,
+                            )
+                            step20_recovery = True
+                        except _CONTROL:
+                            raise
+                        except Exception:
+                            recovered_python = _qualify_populated_recovery(
+                                configuration, manifest, wheels, repository_root,
+                            )
                 if recovered_python is None:
                     if type(host) is not _c29.DevHostQualificationEvidence:
                         raise OSError
                     _c29.DevHostQualificationEvidence.__post_init__(host)
                 else:
-                    if type(recovered_python) is not _PopulatedRecoveryPreflight:
+                    if type(recovered_python) not in (
+                        _PopulatedRecoveryPreflight, _Step20RecoveryPreflight,
+                    ):
                         raise OSError
-                    _PopulatedRecoveryPreflight.__post_init__(recovered_python)
+                    type(recovered_python).__post_init__(recovered_python)
                     populated_recovery = True
                 snapshot = _c29._observe_managed_path(
                     _post._SNAPSHOT_PATH, "directory", 0o700, 0, 0,
@@ -772,7 +889,9 @@ class DevHostProvisioningOrchestrator:
                 if snapshot.state != "absent":
                     raise OSError
                 completed.append(_step(
-                    7, "populated-recovery-verified" if populated_recovery else "verified",
+                    7, ("step20-recovery-verified" if step20_recovery
+                        else "populated-recovery-verified" if populated_recovery
+                        else "verified"),
                 ))
 
                 if recovered_python is None:
@@ -856,8 +975,21 @@ class DevHostProvisioningOrchestrator:
                         completed.append(_step(sequence, outcome))
 
                 else:
-                    for sequence in range(8, 12):
-                        completed.append(_step(sequence, "retained-exact"))
+                    for sequence in range(8, 11):
+                        completed.append(_step(
+                            sequence,
+                            "retained-predecessor" if sequence == 10 and step20_recovery
+                            and recovered_python.replay_directory == "old"
+                            else "retained-exact",
+                        ))
+                    if step20_recovery:
+                        mutation_started = True
+                        application_outcome = _step20.migrate_application(
+                            repository_root, configuration, manifest,
+                        )
+                        completed.append(_step(11, application_outcome))
+                    else:
+                        completed.append(_step(11, "retained-exact"))
                     if recovered_python.c17_state == "predecessor":
                         mutation_started = True
                         config_result = _mutation(
@@ -867,6 +999,15 @@ class DevHostProvisioningOrchestrator:
                         if config_result.outcome != "replaced":
                             raise OSError
                         completed.append(_step(12, "installed"))
+                    elif step20_recovery:
+                        mutation_started = True
+                        config_result = _mutation(
+                            authority.runtime.install_executor_configuration(),
+                            kind="regular_file", resource=_CONFIG_PATH,
+                        )
+                        if config_result.outcome != "unchanged":
+                            raise OSError
+                        completed.append(_step(12, "retained-exact"))
                     else:
                         completed.append(_step(12, "retained-exact"))
                     for sequence in range(13, 19):
@@ -877,12 +1018,21 @@ class DevHostProvisioningOrchestrator:
                 if type(state) is not _c31c.PersistentPrerequisiteEvidence:
                     raise OSError
                 _c31c.PersistentPrerequisiteEvidence.__post_init__(state)
-                if populated_recovery and state.outcome != (
-                    "initialized" if recovered_python.deployment_state == "absent"
-                    else "unchanged"
-                ):
-                    raise OSError
+                if populated_recovery:
+                    if step20_recovery:
+                        if state.outcome != "unchanged":
+                            raise OSError
+                    elif state.outcome != (
+                        "initialized" if recovered_python.deployment_state == "absent"
+                        else "unchanged"
+                    ):
+                        raise OSError
                 completed.append(_step(19, state.outcome))
+                directory_outcome = None
+                if step20_recovery:
+                    directory_outcome = _step20.migrate_replay_directory(
+                        configuration.replay_group_gid,
+                    )
                 replay = authority.persistent.initialize_replay()
                 if type(replay) is not _c31c.PersistentPrerequisiteEvidence:
                     raise OSError
@@ -892,7 +1042,14 @@ class DevHostProvisioningOrchestrator:
                     else "existing"
                 ):
                     raise OSError
-                completed.append(_step(20, replay.outcome))
+                if step20_recovery:
+                    replay_outcome = (
+                        "migrated-directory-" if directory_outcome == "migrated"
+                        else "retained-directory-"
+                    ) + replay.outcome
+                else:
+                    replay_outcome = replay.outcome
+                completed.append(_step(20, replay_outcome))
                 audit = authority.persistent.prepare_audit()
                 if type(audit) is not _c31c.PersistentPrerequisiteEvidence:
                     raise OSError
@@ -912,7 +1069,8 @@ class DevHostProvisioningOrchestrator:
                 )
                 completed.append(_step(22, "verified"))
                 result = DevHostProvisioningEvidence(
-                    ("populated-environment-recovery" if populated_recovery
+                    ("step20-recovery" if step20_recovery
+                     else "populated-environment-recovery" if populated_recovery
                      else "initial-provisioning"), configuration.reviewed_commit,
                     _hashlib.sha256(manifest.canonical_bytes()).hexdigest(),
                     plan.steps, tuple(completed), convergence,
