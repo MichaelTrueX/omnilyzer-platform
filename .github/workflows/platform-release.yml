@@ -317,6 +317,13 @@ jobs:
         env:
           RELEASE_VERSION: ${{ github.event.inputs.version }}
           SOURCE_SHA: ${{ github.sha }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_REPOSITORY_ID: ${{ github.repository_id }}
+          RELEASE_WORKFLOW_REF: ${{ github.workflow_ref }}
+          RELEASE_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          RELEASE_EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           python3 -m release.verify_handoff \
@@ -328,7 +335,14 @@ jobs:
             --oci-publication "$RUNNER_TEMP/zot-result/oci-publication.json" \
             --output "$RUNNER_TEMP/platform-release-evidence" \
             --repository "$GITHUB_WORKSPACE" --version "$RELEASE_VERSION" \
-            --source-sha "$SOURCE_SHA"
+            --source-sha "$SOURCE_SHA" \
+            --github-repository "$RELEASE_REPOSITORY" \
+            --github-repository-id "$RELEASE_REPOSITORY_ID" \
+            --github-workflow-ref "$RELEASE_WORKFLOW_REF" \
+            --github-workflow-sha "$RELEASE_WORKFLOW_SHA" \
+            --github-run-id "$RELEASE_RUN_ID" \
+            --github-run-attempt "$RELEASE_RUN_ATTEMPT" \
+            --github-event-name "$RELEASE_EVENT_NAME"
       - name: Install pinned Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.0
         with:

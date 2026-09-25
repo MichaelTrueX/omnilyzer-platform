@@ -66,7 +66,7 @@ MANIFEST_FIELDS = frozenset({
 })
 PROVENANCE_FIELDS = frozenset({
     "schema_version", "statement_type", "claim", "platform_version",
-    "source_commit", "workflow_ref", "subjects",
+    "source_commit", "execution", "subjects",
 })
 
 
@@ -105,20 +105,6 @@ class ReleaseSignatureVerifier(Protocol):
         self, manifest: bytes, provenance: bytes, manifest_bundle: bytes,
         provenance_bundle: bytes, image_reference: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]: ...
-
-
-class ReleaseRunVerifier(Protocol):
-    """Independently establish that the selected Task 013 run produced these hashes.
-
-    Task 013's current published bytes omit the run ID. No production verifier
-    is supplied by C32B; later activation must establish this binding.
-    """
-
-    def verify_release_run(
-        self, run_id: int, release_manifest_sha256: str,
-        provenance_sha256: str, source_sha: str, release_version: str,
-        manifest_digest: str,
-    ) -> bool: ...
 
 
 def _credential(value: object, expected_type: type, now: int) -> str:
@@ -216,7 +202,7 @@ def _get(
     return body, normalized
 
 
-def _json(raw: bytes, fields: frozenset[str], *, schema: bool = True) -> dict[str, Any]:
+def _json(raw: bytes, fields: frozenset[str], *, schema: int | None = 1) -> dict[str, Any]:
     failed = False
     try:
         value = parse_bounded_json(
@@ -224,8 +210,8 @@ def _json(raw: bytes, fields: frozenset[str], *, schema: bool = True) -> dict[st
             maximum_depth=12, maximum_nodes=4096, maximum_array=256,
             maximum_string=MAX_EVIDENCE_BYTES,
         )
-        if set(value) != fields or (schema and (
-            type(value["schema_version"]) is not int or value["schema_version"] != 1
+        if set(value) != fields or (schema is not None and (
+            type(value["schema_version"]) is not int or value["schema_version"] != schema
         )):
             raise ValueError
     except Exception:
@@ -319,7 +305,7 @@ class ZotCandidateConsumer:
         if (headers.get("docker-content-digest") != digest
                 or "sha256:" + hashlib.sha256(body).hexdigest() != digest):
             raise ReleaseConsumerError(ERROR)
-        manifest = _json(body, frozenset({"schemaVersion", "mediaType", "config", "layers"}), schema=False)
+        manifest = _json(body, frozenset({"schemaVersion", "mediaType", "config", "layers"}), schema=None)
         if manifest["schemaVersion"] != 2 or manifest["mediaType"] != OCI_MEDIA_TYPE:
             raise ReleaseConsumerError(ERROR)
         return body
@@ -354,8 +340,8 @@ class ForgejoEvidenceConsumer:
         if failed:
             raise ReleaseConsumerError(ERROR)
         evidence = _archive(body)
-        manifest = _json(evidence["release-manifest.json"], MANIFEST_FIELDS)
-        provenance = _json(evidence["release-provenance.json"], PROVENANCE_FIELDS)
+        manifest = _json(evidence["release-manifest.json"], MANIFEST_FIELDS, schema=2)
+        provenance = _json(evidence["release-provenance.json"], PROVENANCE_FIELDS, schema=2)
         try:
             structure_valid = (
                 type(manifest["oci"]) is dict
@@ -419,7 +405,7 @@ class ForgejoEvidenceConsumer:
             raise ReleaseConsumerError(ERROR) from None
         if (not structure_valid
                 or manifest["oci"]["tag"] != request.release_version
-                or provenance["statement_type"] != "https://omnilyzer.ai/release-provenance/v1"
+                or provenance["statement_type"] != "https://omnilyzer.ai/release-provenance/v2"
                 or provenance["claim"] != "build-once release evidence; no formal SLSA level is asserted"
                 or manifest["evidence"]["identity"] != {
                     "name": "task013-release-evidence", "owner": "omnilyzer",
@@ -514,7 +500,7 @@ def acquire_and_construct_dev_request(
     promotion: PromotionRequest, identity: AuthorizedGitHubIdentity,
     runtime: RuntimeConfigurationReference, ingress: IngressReference,
     zot: ZotCandidateConsumer, forgejo: ForgejoEvidenceConsumer,
-    signatures: ReleaseSignatureVerifier, release_run: ReleaseRunVerifier,
+    signatures: ReleaseSignatureVerifier,
     *, received_at: int,
 ) -> ExecutorRequest:
     """Acquire exact bytes, verify them, then construct one canonical request."""
@@ -533,12 +519,6 @@ def acquire_and_construct_dev_request(
             evidence["release-provenance.sigstore.json"], promotion.exact_image_reference,
         )
         trusted = verify_release_evidence(promotion, manifest, provenance, sigstore, oci)
-        if release_run.verify_release_run(
-            promotion.originating_release_run_id,
-            promotion.release_manifest_sha256, promotion.provenance_sha256,
-            promotion.source_sha, promotion.release_version, promotion.manifest_digest,
-        ) is not True:
-            raise ReleaseConsumerError(ERROR)
         result = _construct_dev_request(
             promotion, trusted, identity, runtime, ingress, received_at=received_at,
         )

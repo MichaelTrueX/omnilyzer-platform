@@ -114,6 +114,25 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertGreaterEqual(self.raw.count("--certificate-identity"), 3)
         self.assertGreaterEqual(self.raw.count("--certificate-oidc-issuer"), 3)
 
+    def test_forgejo_evidence_records_exact_github_context_before_signing(self) -> None:
+        steps = self.jobs["publish-forgejo"]["steps"]
+        generate = next(step for step in steps if step["name"] == "Verify complete handoff before requesting OIDC")
+        sign = next(step for step in steps if step["name"] == "Create keyless signed release evidence")
+        self.assertLess(steps.index(generate), steps.index(sign))
+        for field, context in {
+            "RELEASE_REPOSITORY": "github.repository",
+            "RELEASE_REPOSITORY_ID": "github.repository_id",
+            "RELEASE_WORKFLOW_REF": "github.workflow_ref",
+            "RELEASE_WORKFLOW_SHA": "github.workflow_sha",
+            "RELEASE_RUN_ID": "github.run_id",
+            "RELEASE_RUN_ATTEMPT": "github.run_attempt",
+            "RELEASE_EVENT_NAME": "github.event_name",
+            "SOURCE_SHA": "github.sha",
+        }.items():
+            self.assertEqual(generate["env"][field], "${{ " + context + " }}")
+        self.assertIn("python3 -m release.provenance", generate["run"])
+        self.assertIn("cosign sign-blob", sign["run"])
+
     def test_forgejo_publisher_reads_back_each_prebuilt_output(self) -> None:
         code = (ROOT / "release/publish_forgejo.py").read_text()
         self.assertIn("PyPI round-trip bytes", code)

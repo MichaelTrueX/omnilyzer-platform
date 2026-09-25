@@ -35,6 +35,13 @@ REQUEST_FIELDS = {
     "manifest_digest", "exact_image_reference", "release_manifest_sha256",
     "provenance_sha256", "originating_release_run_id", "target_stage", "requested_by",
 }
+RELEASE_EXECUTION_FIELDS = {
+    "repository", "repository_id", "workflow_ref", "workflow_sha",
+    "run_id", "run_attempt", "event_name", "source_commit",
+}
+RELEASE_REPOSITORY = "MichaelTrueX/omnilyzer-platform"
+RELEASE_REPOSITORY_ID = 1350104356
+MAX_GITHUB_NUMBER = 2**63 - 1
 
 
 @dataclass(frozen=True)
@@ -68,7 +75,7 @@ class PromotionRequest:
         )
         provenance_sha256 = validate_sha256(data["provenance_sha256"], "provenance_sha256")
         run_id = data["originating_release_run_id"]
-        if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id <= 0:
+        if type(run_id) is not int or not 0 < run_id <= MAX_GITHUB_NUMBER:
             raise DeploymentPolicyError("originating_release_run_id must be a positive integer")
         return cls(
             SCHEMA_VERSION, version, source_sha, repository, digest, expected_reference,
@@ -99,9 +106,17 @@ class TrustedRelease:
 
 
 def _json_object(raw: bytes, context: str) -> dict[str, Any]:
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON member")
+            result[key] = value
+        return result
+
     try:
-        value = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        value = json.loads(raw, object_pairs_hook=unique)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise DeploymentPolicyError(f"{context} is not valid JSON") from exc
     if not isinstance(value, dict):
         raise DeploymentPolicyError(f"{context} must be an object")
@@ -121,6 +136,35 @@ def verify_release_evidence(
         raise DeploymentPolicyError("provenance hash differs from the promotion request")
     manifest = _json_object(release_manifest_bytes, "release manifest")
     provenance = _json_object(provenance_bytes, "release provenance")
+    closed_object(provenance, {
+        "schema_version", "statement_type", "claim", "platform_version",
+        "source_commit", "execution", "subjects",
+    }, "release provenance")
+    execution = closed_object(provenance.get("execution"), RELEASE_EXECUTION_FIELDS,
+                              "signed release execution")
+    if (type(manifest.get("schema_version")) is not int or manifest["schema_version"] != 2
+            or type(provenance.get("schema_version")) is not int or provenance["schema_version"] != 2
+            or provenance.get("statement_type") != "https://omnilyzer.ai/release-provenance/v2"
+            or execution["repository"] != RELEASE_REPOSITORY
+            or type(execution["repository"]) is not str
+            or type(execution["repository_id"]) is not int
+            or execution["repository_id"] != RELEASE_REPOSITORY_ID
+            or type(execution["workflow_ref"]) is not str
+            or execution["workflow_ref"] != EXPECTED_RELEASE_WORKFLOW
+            or type(execution["workflow_sha"]) is not str
+            or execution["workflow_sha"] != request.source_sha
+            or type(execution["event_name"]) is not str
+            or execution["event_name"] != "workflow_dispatch"
+            or type(execution["source_commit"]) is not str
+            or execution["source_commit"] != request.source_sha
+            or any(type(execution[name]) is not int or not 0 < execution[name] <= MAX_GITHUB_NUMBER
+                   for name in ("run_id", "run_attempt"))
+            or execution["run_id"] != request.originating_release_run_id
+            or manifest.get("provenance") != {
+                "filename": "release-provenance.json",
+                "sha256": hashlib.sha256(provenance_bytes).hexdigest(),
+            }):
+        raise DeploymentPolicyError("signed release execution or evidence schema differs from promotion")
     try:
         manifest_oci = manifest["oci"]
         subjects = provenance["subjects"]
@@ -142,7 +186,6 @@ def verify_release_evidence(
         and manifest_reference == request.exact_image_reference
         and provenance.get("platform_version") == request.release_version
         and provenance.get("source_commit") == request.source_sha
-        and provenance.get("workflow_ref") == EXPECTED_RELEASE_WORKFLOW
         and subjects.get("oci_manifest_digest") == request.manifest_digest
     )
     if not expected:

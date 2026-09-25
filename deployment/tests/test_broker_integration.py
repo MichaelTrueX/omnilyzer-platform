@@ -18,14 +18,14 @@ from deployment.tests.test_broker import Replay, Transport, Verifier
 from deployment.tests.test_execution import ingress_reference, runtime_reference
 from deployment.tests.test_execution import valid_request
 from deployment.tests.test_identity import NOW, valid_claims
-from deployment.tests.test_release_consumer import ReleaseRun, Signatures, setup
+from deployment.tests.test_release_consumer import Signatures, setup
 
 
 ROOT = Path(__file__).resolve().parents[2]
 TOKEN = "exact.compact.token"
 
 
-def fixture(*, verifier=None, replay=None, transport=None, signatures=None, run=None, runtime=None, ingress=None):
+def fixture(*, verifier=None, replay=None, transport=None, signatures=None, runtime=None, ingress=None):
     promotion, _, zot, forgejo, zot_factory, forgejo_factory = setup()
     selected_verifier = verifier or Verifier()
     selected_replay = replay or Replay()
@@ -33,7 +33,7 @@ def fixture(*, verifier=None, replay=None, transport=None, signatures=None, run=
     handler = InertDevPromotionHandler(
         verifier=selected_verifier, replay_guard=selected_replay,
         transport=selected_transport, zot=zot, forgejo=forgejo,
-        signatures=signatures or Signatures(), release_run=run or ReleaseRun(),
+        signatures=signatures or Signatures(),
         runtime=runtime or RuntimeConfigurationReference.from_dict(runtime_reference()),
         ingress=ingress or IngressReference.from_dict(ingress_reference()),
     )
@@ -117,17 +117,12 @@ class IntegrationTests(unittest.TestCase):
             def verify(self, *args):
                 raise ValueError("secret-credential-text")
 
-        class BadRun:
-            def verify_release_run(self, *args):
-                return False
-
-        for options in ({"signatures": BadSignature()}, {"run": BadRun()}):
-            handler, promotion, _, replay, transport, _, _ = fixture(**options)
-            with self.assertRaises(BrokerUnavailableError) as raised:
-                invoke(handler, promotion)
-            self.assertNotIn("secret-credential-text", str(raised.exception))
-            self.assertEqual(replay.calls, [])
-            self.assertEqual(transport.calls, [])
+        handler, promotion, _, replay, transport, _, _ = fixture(signatures=BadSignature())
+        with self.assertRaises(BrokerUnavailableError) as raised:
+            invoke(handler, promotion)
+        self.assertNotIn("secret-credential-text", str(raised.exception))
+        self.assertEqual(replay.calls, [])
+        self.assertEqual(transport.calls, [])
         handler, promotion, _, replay, transport, _, _ = fixture()
         for name, value in (("target_stage", "prod"), ("oci_repository", "other/repository"),
                             ("manifest_digest", "sha256:" + "0" * 64),

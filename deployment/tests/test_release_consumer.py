@@ -88,12 +88,6 @@ class Signatures:
         return sigstore_result(), oci
 
 
-class ReleaseRun:
-    def verify_release_run(self, run_id, release_manifest_sha256, provenance_sha256,
-                           source_sha, release_version, manifest_digest):
-        return run_id == 34088735049
-
-
 def manifest_bytes() -> bytes:
     return canonical_bytes({
         "schemaVersion": 2, "mediaType": OCI_MEDIA_TYPE,
@@ -115,7 +109,7 @@ def evidence_bytes(digest: str) -> tuple[bytes, bytes]:
         "vulnerability_policy_sha256": "1" * 64,
         "vulnerability_policy_result_sha256": "2" * 64,
     }
-    provenance["statement_type"] = "https://omnilyzer.ai/release-provenance/v1"
+    provenance["statement_type"] = "https://omnilyzer.ai/release-provenance/v2"
     raw_provenance = canonical_bytes(provenance)
     artifact = lambda name, digest: {"filename": name, "sha256": digest, "size": 10}
     manifest.update({
@@ -182,14 +176,36 @@ def setup():
 
 
 class ConsumerTests(unittest.TestCase):
+    def test_signed_input_contains_release_run_without_network_run_authority(self):
+        request, files, zot, forgejo, _, _ = setup()
+        class RecordingSignatures(Signatures):
+            def verify(self, manifest, provenance, manifest_bundle, provenance_bundle, image_reference):
+                self.input = (manifest, provenance, manifest_bundle, provenance_bundle)
+                return super().verify(manifest, provenance, manifest_bundle,
+                                      provenance_bundle, image_reference)
+        signatures = RecordingSignatures()
+        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW)
+        runtime = RuntimeConfigurationReference.from_dict(runtime_reference())
+        ingress = IngressReference.from_dict(ingress_reference())
+        acquire_and_construct_dev_request(request, identity, runtime, ingress,
+                                          zot, forgejo, signatures, received_at=NOW)
+        self.assertEqual(signatures.input[:2],
+                         (files["release-manifest.json"], files["release-provenance.json"]))
+        self.assertEqual(json.loads(signatures.input[1])["execution"]["run_id"],
+                         request.originating_release_run_id)
+        source = (ROOT / "deployment/release_consumer.py").read_text()
+        self.assertNotIn("ReleaseRunVerifier", source)
+        self.assertNotIn("verify_release_run", source)
+        self.assertNotIn("api.github.com", source)
+
     def test_exact_candidate_and_evidence_construct_stable_request(self):
         request, files, zot, forgejo, zf, ff = setup()
         identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW)
         runtime = RuntimeConfigurationReference.from_dict(runtime_reference())
         ingress = IngressReference.from_dict(ingress_reference())
         signature = Signatures()
-        first = acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, signature, ReleaseRun(), received_at=NOW)
-        second = acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, signature, ReleaseRun(), received_at=NOW)
+        first = acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, signature, received_at=NOW)
+        second = acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, signature, received_at=NOW)
         self.assertEqual(first.canonical_bytes(), second.canonical_bytes())
         self.assertEqual(parse_canonical_request(first.canonical_bytes()), first)
         self.assertEqual(first.promotion_request_sha256, request.sha256())
@@ -270,9 +286,9 @@ class ConsumerTests(unittest.TestCase):
         request, files, _, forgejo, _, ff = setup()
         for name, change in (
             ("malformed", b"{"),
-            ("duplicate", files["release-manifest.json"].replace(b'"schema_version":1', b'"schema_version":1,"schema_version":1')),
-            ("unknown", files["release-manifest.json"].replace(b'"schema_version":1', b'"unknown":1,"schema_version":1')),
-            ("missing", files["release-manifest.json"].replace(b'"schema_version":1,', b"")),
+            ("duplicate", files["release-manifest.json"].replace(b'"schema_version":2', b'"schema_version":2,"schema_version":2')),
+            ("unknown", files["release-manifest.json"].replace(b'"schema_version":2', b'"unknown":1,"schema_version":2')),
+            ("missing", files["release-manifest.json"].replace(b'"schema_version":2,', b"")),
             ("unknown nested", files["release-manifest.json"].replace(
                 b'"oci":{"deployment_identity":', b'"oci":{"unknown":1,"deployment_identity":',
             )),
@@ -301,22 +317,17 @@ class ConsumerTests(unittest.TestCase):
         ):
             changed = replace(request, **{field: value})
             with self.subTest(field=field), self.assertRaises(ReleaseConsumerError):
-                acquire_and_construct_dev_request(changed, identity, runtime, ingress, zot, forgejo, Signatures(), ReleaseRun(), received_at=NOW)
+                acquire_and_construct_dev_request(changed, identity, runtime, ingress, zot, forgejo, Signatures(), received_at=NOW)
         class BadSignatures:
             def verify(self, *args):
                 result = sigstore_result()
                 result["provenance_verified"] = False
                 return result, oci_signature_result()
         with self.assertRaises(ReleaseConsumerError):
-            acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, BadSignatures(), ReleaseRun(), received_at=NOW)
+            acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, BadSignatures(), received_at=NOW)
         wrong_identity = replace(identity, repository_id=1)
         with self.assertRaises(ReleaseConsumerError):
-            acquire_and_construct_dev_request(request, wrong_identity, runtime, ingress, zot, forgejo, Signatures(), ReleaseRun(), received_at=NOW)
-        class UnavailableRun:
-            def verify_release_run(self, *args):
-                return None
-        with self.assertRaises(ReleaseConsumerError):
-            acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, Signatures(), UnavailableRun(), received_at=NOW)
+            acquire_and_construct_dev_request(request, wrong_identity, runtime, ingress, zot, forgejo, Signatures(), received_at=NOW)
 
     def test_repository_inertness(self):
         source = (ROOT / "deployment/release_consumer.py").read_text()

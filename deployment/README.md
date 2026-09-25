@@ -68,14 +68,16 @@ credential types and retain neither tokens nor network results in state or audit
 They perform no credential exchange, Docker operation, workflow activation, or
 host mutation.
 
-Task 013's published release manifest and provenance do not include the
-originating GitHub release run ID. C32B therefore requires an injected,
-independent release-run verifier to bind that ID to the exact release hashes,
-source, version, and digest before constructing a request. This PR supplies no
-live implementation of that verifier. The accepted identity policy validates
-`workflow_sha` as an exact SHA, while the current configuration does not pin it to a reviewed
-revision. Activation must add an independently reviewed revision binding and
-resolve the release-run evidence gap before treating either as live authority.
+At C32B, Task 013's published schema 1 evidence omitted the originating release
+run ID, so an independent release-run verifier was required. C32E's Task 013
+schema 2 provenance records the exact GitHub execution before Sigstore signing.
+The Task 014 policy requires its closed execution identity, approved repository
+and workflow, source/workflow SHA, positive run ID and attempt, and exact
+promotion run ID. The manifest hashes the provenance and the promotion request
+hashes both evidence blobs. Schema 1 evidence is ineligible for this path.
+The accepted deployment OIDC identity policy still validates `workflow_sha` as
+an exact SHA without pinning it to a reviewed revision. That separate activation
+blocker remains.
 
 ## C32C inert broker integration
 
@@ -85,8 +87,8 @@ noncanonical promotion fields and bounds both inputs before invoking the
 existing broker. The broker now supports a constructor-bound request builder:
 it cryptographically verifies the token through its verifier, reauthorizes the
 exact returned identity, invokes C32B's fixed-route release acquisition and
-injected signature/release-run checks, constructs the existing
-`ExecutorRequest`, reparses and binds its final canonical bytes, consumes replay
+injected signature check and signed release-execution policy, constructs the
+existing `ExecutorRequest`, reparses and binds its final canonical bytes, consumes replay
 against their SHA-256, and sends those same bytes once through the existing
 transport. The executor independently reparses and validates them. The prior
 canonical-byte broker API remains available to existing inert callers.
@@ -97,12 +99,17 @@ credential exchange, or production composition. Read credentials should remain
 inside the future unprivileged environment-local broker, separately scoped for
 zot and Forgejo; they must not be given to arbitrary GitHub workflow code.
 The real Sigstore/OCI verifier requires a separately reviewed trust-root and
-verification design. The release-run verifier requires independent Task 013
-run-to-artifact evidence, potentially a verified GitHub run/artifact source;
-the promotion's run ID alone is insufficient. Before activation, a reviewed
-authority must also pin `workflow_sha` to the approved workflow revision,
-independently of the token and request agreeing with each other. No current
+verification design. The signed Task 013 schema 2 provenance replaces the
+separate release-run verifier; the promotion's run ID alone remains insufficient.
+Before activation, a reviewed authority must also pin `workflow_sha` to the
+approved workflow revision, independently of the token and request agreeing
+with each other. No current
 main commit is made permanent authority here.
+
+C32E changes repository source and tests only. Any separately reported C32D
+host update remains a distinct operation; these C32E bytes are neither installed
+nor activated by this change. The production Sigstore/OCI verifier and release
+workflow revision authority remain activation blockers.
 
 `broker.py` was selected in the installed C31 tree, but its C32C bytes differ.
 C32D now reviews `broker_integration.py`, `release_consumer.py` and the former's
