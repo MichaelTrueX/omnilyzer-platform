@@ -331,7 +331,7 @@ class PinnedManifestTests(unittest.TestCase):
 
     def test_exact_old_c25_and_only_three_intended_byte_changes(self):
         repository = Path(__file__).resolve().parents[2]
-        paths = tuple(item.repository_path for item in DevApplicationSourceSet().files)
+        paths = c26._predecessor_paths()
         owned = []
         try:
             descriptor, chain = mechanics._open_directory(str(repository), owned)
@@ -346,7 +346,10 @@ class PinnedManifestTests(unittest.TestCase):
                                              mechanics._MAX_BLOB)
                 old_hash = hashlib.sha256(payload).hexdigest()
                 old_entries.append(c26.ApplicationManifestEntry(path, old_hash, "0644"))
-                if hashlib.sha256((repository / path).read_bytes()).hexdigest() != old_hash:
+                installed = mechanics._run_git(descriptor, ("cat-file", "blob",
+                    "3ef02a6d61d20df3a1495b290c20807162b65b06:" + path),
+                    mechanics._MAX_BLOB)
+                if hashlib.sha256(installed).hexdigest() != old_hash:
                     changed.append(path)
             mechanics._revalidate_chain(chain)
         finally:

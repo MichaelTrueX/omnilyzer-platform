@@ -104,12 +104,46 @@ authority must also pin `workflow_sha` to the approved workflow revision,
 independently of the token and request agreeing with each other. No current
 main commit is made permanent authority here.
 
-`broker.py` is selected by C25/C26 and its repository bytes have changed; the
-new integration module is not selected. The completed C31 installed application
-tree therefore must not be treated as this C32C generation. A separately
-designed, integrity-checked post-C31 update and source-set review are required
-before installing or composing C32C on the host. C31 recovery and host state
-are unchanged. Deployment activation remains prohibited.
+`broker.py` was selected in the installed C31 tree, but its C32C bytes differ.
+C32D now reviews `broker_integration.py`, `release_consumer.py` and the former's
+`oidc_verifier.py` import into the target source set. The installed C31 tree is
+still the exact 28-file predecessor. The pinned, inert C32D update code below
+has not run on DEV. Deployment activation remains prohibited.
+
+## C32D pinned post-C31 application update (repository only)
+
+`dev_post_c31_application_update.py` binds the installed predecessor commit
+`3ef02a6d61d20df3a1495b290c20807162b65b06`, C17 SHA-256
+`2da08e1d83ae6baa007ca0f5b8492c7e9df30a6922007095fb129f76fc924762`,
+C26 SHA-256 `7a89fd0e7f67daa17c772ec9e9058863ff25041ed57b7828d7cce2329ccdb419`,
+and Python manifest SHA-256
+`3966c1f4075e2813131f249eb02a473acf0e4d11be61b05f858678b668d2766b`.
+The only target is the exact C32C merge commit
+`c04e66008cff556315603a9de59dacb4679787d4`, with pinned 31-entry C26
+SHA-256 `4e0079a4528f3cba7669062b38e6b8d899be237dab51fb957d97331f09686c03`.
+The exact first-parent edges through C32B are checked. No branch name, caller
+commit, caller path, command, URL or file list is an update input.
+
+The future explicit operation first reads all exact regular Git blobs into
+bounded memory, proves both manifest hashes and the four-file difference, then
+qualifies the old host through C31D, including C17, exact installed files,
+ownership, modes, Python runtime, state, replay and audit. Recovery recognizes
+only the ordered prefix `broker.py`, `broker_integration.py`,
+`oidc_verifier.py`, `release_consumer.py`, with at most one exact next-file
+stage. Every application rename is followed by a parent-directory fsync;
+after an interrupted rename, the observed prefix receives another directory
+fsync before advancing. C32D accepts the 28-file predecessor C26 only with the
+pinned old commit and manifest digest; the target C26 applies after all 31 files are in
+place. C17 stays at the predecessor commit during recognized application
+prefixes and is atomically replaced with a commit-only target configuration
+only after all target application bytes and the directory are durable. An
+interrupted C17 stage or rename is recognized and its parent directory fsync
+retried. Any other mixed tree or configuration fails closed. Persistent
+state, replay and audit are requalified and never reset.
+
+The update module is not in C25, any installed entrypoint, service or workflow.
+No updater was executed against omnilyzerdev in C32D. Installation/execution of
+this update and all live deployment prerequisites require later separate review.
 
 ## Phase 2B2 deployment-authority and runtime contract
 
@@ -969,7 +1003,7 @@ host state. Future work must separately establish:
 `application_source_set.py` selects **what files** belong below the future C21
 application root, `/opt/omnilyzer/deployment/app`. The zero-argument frozen,
 slotted `DevApplicationSourceSet` projects that root and the executor entrypoint
-from C21. Its explicit reviewed allowlist contains exactly **28 files: 25 Python
+from C21. Its current reviewed allowlist contains exactly **31 files: 28 Python
 module/package files and 3 runtime data files**, sorted lexicographically with
 unique paths. Each repository-relative path is also the future path relative to
 the application root. For example, `deployment/executor_service_entrypoint.py`
@@ -977,14 +1011,14 @@ would retain that path below the root. `ApplicationSourceFile` permits only
 canonical POSIX relative paths with identical source/target mappings and the
 closed kinds `python-module` and `runtime-data`.
 
-C25 selects the installed executor application and its current import graph,
+C25 selects the target executor application and its current import graph,
 including `deployment/__init__.py`. It does not prove source bytes. C24 defines
 what evidence a complete application manifest must contain: the
 `canonical-relative-file-set-v1` semantics with sorted unique regular-file
 entries containing `path`, `sha256`, and `mode`, bound to C17 `reviewed_commit`.
-Future C26 is expected to turn this closed reviewed source selection into
-deterministic manifest evidence with those semantics; C26 does not exist in
-this slice. C25 supplies no hashes, modes, manifests, packaging format or build.
+C26 turns this closed reviewed source selection into deterministic manifest
+evidence with those semantics. C25 supplies no hashes, modes, manifests,
+packaging format or build.
 
 The exact runtime-data selection is:
 
@@ -1021,13 +1055,13 @@ environment policy files, provisioning contracts and installation assets:
   selected because the executor runtime imports its identity constants.
 - Tests, schemas, environment files, README/DEPENDENCIES documentation, and
   `release/`, `docs/`, `spikes/`, `.github/` and repository-root files are excluded.
-  `oidc_verifier.py`, `broker_composition.py` and `runtime.py` are not in the
-  current executor import closure.
+  `broker_composition.py` and `runtime.py` are not in the target import closure.
 
 `broker.py` and `jwks.py` deliberately remain selected: executor/Unix transport
-imports broker constants, and broker imports identity and JWKS. C25 records the
-reviewed graph as it exists; dependency cleanup requires a separate future
-reviewed slice.
+imports broker constants, and broker imports identity and JWKS. The C32C
+integration boundary adds `broker_integration.py`, `release_consumer.py`, and
+`oidc_verifier.py` through its direct imports. PyJWT is already part of the
+reviewed Python runtime generation. C25 records this explicit graph.
 
 C25 does not make `/opt/omnilyzer/deployment/app` exist. No host is modified, no
 application is installed, no venv is built, no dependency is installed, and no
@@ -1046,7 +1080,7 @@ an actual commit object, and rechecks HEAD after reading the selected objects.
 Dirty working-tree state is irrelevant: working-tree application files are
 never read as evidence, even when edited, replaced with symlinks or chmodded.
 
-C26 consumes exactly one C25 source-set instance. All 28 selected files are
+C26 generation consumes exactly one current C25 source-set instance. All 31 selected files are
 required, in C25 order; no extra repository file enters the evidence. Strict
 NUL-delimited Git tree records must describe regular blobs with mode `100644`.
 Executable `100755`, symlink `120000`, missing, duplicate, unknown or malformed
@@ -1067,7 +1101,9 @@ checkout filters, newline normalization or text decode/re-encode.
 The immutable manifest has exactly `manifest_kind`, `digest_algorithm`,
 `reviewed_commit` and `entries`. Its kind is
 `canonical-relative-file-set-v1`, its algorithm is `sha256`, and each of its
-28 sorted unique entries contains exactly `path`, `sha256` and `mode`.
+31 sorted unique entries contains exactly `path`, `sha256` and `mode`.
+The model also recognizes the explicit historical 28-path C31 predecessor
+selection for pinned recovery; current generation never emits it.
 C26 consumes C24 application-integrity requirements without changing C24.
 Canonical JSON reuses `deployment.policy.canonical_bytes`: sorted object keys,
 compact separators, ASCII-safe bytes and exactly one final newline, bounded to
