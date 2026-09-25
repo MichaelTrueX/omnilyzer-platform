@@ -25,7 +25,7 @@ from deployment.tests.fixtures import (
     request as base_request, sigstore_result,
 )
 from deployment.tests.test_execution import ingress_reference, runtime_reference
-from deployment.tests.test_identity import NOW, valid_claims
+from deployment.tests.test_identity import NOW, WORKFLOW_SHA, valid_claims
 
 
 TOKEN = "private-consumer-token"
@@ -176,6 +176,30 @@ def setup():
 
 
 class ConsumerTests(unittest.TestCase):
+    def test_release_consumer_requires_independent_deployment_revision(self):
+        request, _, zot, forgejo, zf, ff = setup()
+        identity = authorize_verified_github_oidc(
+            valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA,
+        )
+        runtime = RuntimeConfigurationReference.from_dict(runtime_reference())
+        ingress = IngressReference.from_dict(ingress_reference())
+        with self.assertRaises(TypeError):
+            acquire_and_construct_dev_request(request, identity, runtime, ingress,
+                                              zot, forgejo, Signatures(), received_at=NOW)
+        for authority in (None, True, "", "0" * 40):
+            with self.subTest(authority=authority), self.assertRaises(ReleaseConsumerError):
+                acquire_and_construct_dev_request(
+                    request, identity, runtime, ingress, zot, forgejo, Signatures(),
+                    received_at=NOW, expected_workflow_sha=authority,
+                )
+        self.assertEqual(zf.calls, [])
+        self.assertEqual(ff.calls, [])
+        with self.assertRaises(ReleaseConsumerError):
+            acquire_and_construct_dev_request(
+                request, identity, runtime, ingress, zot, forgejo, Signatures(),
+                received_at=NOW, expected_workflow_sha=request.source_sha,
+            )
+
     def test_signed_input_contains_release_run_without_network_run_authority(self):
         request, files, zot, forgejo, _, _ = setup()
         class RecordingSignatures(Signatures):
@@ -184,11 +208,11 @@ class ConsumerTests(unittest.TestCase):
                 return super().verify(manifest, provenance, manifest_bundle,
                                       provenance_bundle, image_reference)
         signatures = RecordingSignatures()
-        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW)
+        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         runtime = RuntimeConfigurationReference.from_dict(runtime_reference())
         ingress = IngressReference.from_dict(ingress_reference())
         acquire_and_construct_dev_request(request, identity, runtime, ingress,
-                                          zot, forgejo, signatures, received_at=NOW)
+                                          zot, forgejo, signatures, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         self.assertEqual(signatures.input[:2],
                          (files["release-manifest.json"], files["release-provenance.json"]))
         self.assertEqual(json.loads(signatures.input[1])["execution"]["run_id"],
@@ -200,12 +224,12 @@ class ConsumerTests(unittest.TestCase):
 
     def test_exact_candidate_and_evidence_construct_stable_request(self):
         request, files, zot, forgejo, zf, ff = setup()
-        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW)
+        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         runtime = RuntimeConfigurationReference.from_dict(runtime_reference())
         ingress = IngressReference.from_dict(ingress_reference())
         signature = Signatures()
-        first = acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, signature, received_at=NOW)
-        second = acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, signature, received_at=NOW)
+        first = acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, signature, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
+        second = acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, signature, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         self.assertEqual(first.canonical_bytes(), second.canonical_bytes())
         self.assertEqual(parse_canonical_request(first.canonical_bytes()), first)
         self.assertEqual(first.promotion_request_sha256, request.sha256())
@@ -307,7 +331,7 @@ class ConsumerTests(unittest.TestCase):
 
     def test_promotion_mismatch_and_signature_failure(self):
         request, _, zot, forgejo, _, _ = setup()
-        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW)
+        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         runtime = RuntimeConfigurationReference.from_dict(runtime_reference())
         ingress = IngressReference.from_dict(ingress_reference())
         for field, value in (
@@ -317,17 +341,17 @@ class ConsumerTests(unittest.TestCase):
         ):
             changed = replace(request, **{field: value})
             with self.subTest(field=field), self.assertRaises(ReleaseConsumerError):
-                acquire_and_construct_dev_request(changed, identity, runtime, ingress, zot, forgejo, Signatures(), received_at=NOW)
+                acquire_and_construct_dev_request(changed, identity, runtime, ingress, zot, forgejo, Signatures(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         class BadSignatures:
             def verify(self, *args):
                 result = sigstore_result()
                 result["provenance_verified"] = False
                 return result, oci_signature_result()
         with self.assertRaises(ReleaseConsumerError):
-            acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, BadSignatures(), received_at=NOW)
+            acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, BadSignatures(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         wrong_identity = replace(identity, repository_id=1)
         with self.assertRaises(ReleaseConsumerError):
-            acquire_and_construct_dev_request(request, wrong_identity, runtime, ingress, zot, forgejo, Signatures(), received_at=NOW)
+            acquire_and_construct_dev_request(request, wrong_identity, runtime, ingress, zot, forgejo, Signatures(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
 
     def test_repository_inertness(self):
         source = (ROOT / "deployment/release_consumer.py").read_text()

@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from deployment.identity import DEV_AUDIENCE, DEV_ISSUER
 from deployment.jwks import OIDCVerificationError
 from deployment.oidc_verifier import GitHubOIDCVerifier
-from deployment.tests.test_identity import NOW, valid_claims
+from deployment.tests.test_identity import NOW, WORKFLOW_SHA, valid_claims
 
 
 def b64url(raw: bytes) -> str:
@@ -51,7 +51,7 @@ class OIDCVerifierTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.cache = StaticCache(self.key.public_key())
-        self.verifier = GitHubOIDCVerifier(self.cache)  # type: ignore[arg-type]
+        self.verifier = GitHubOIDCVerifier(expected_workflow_sha=WORKFLOW_SHA, jwks_cache=self.cache)  # type: ignore[arg-type]
 
     def token(
         self, claims: dict[str, object] | None = None, *,
@@ -88,6 +88,27 @@ class OIDCVerifierTests(unittest.TestCase):
         self.assertEqual(identity.audience, DEV_AUDIENCE)
         self.assertEqual(identity.repository_id, 1350104356)
         self.assertEqual(self.cache.kids, ["key-1"])
+
+    def test_reviewed_revision_is_captured_and_cannot_be_replaced(self) -> None:
+        with self.assertRaises(TypeError):
+            GitHubOIDCVerifier()
+        class StringSubclass(str):
+            pass
+        for authority in (None, True, "", "0" * 40, WORKFLOW_SHA.upper(),
+                          "a" * 39, "a" * 41, "g" * 40,
+                          StringSubclass(WORKFLOW_SHA)):
+            with self.subTest(authority=authority), self.assertRaises(ValueError):
+                GitHubOIDCVerifier(expected_workflow_sha=authority)
+        with self.assertRaises(AttributeError):
+            self.verifier._expected_workflow_sha = "f" * 40
+        with self.assertRaises(AttributeError):
+            del self.verifier._expected_workflow_sha
+        claims = valid_claims()
+        claims["workflow_sha"] = "f" * 40
+        self.assertEqual(claims["workflow_ref"], valid_claims()["workflow_ref"])
+        self.reject(self.token(claims))
+        self.assertEqual(self.verifier.verify(self.token(), received_at=NOW).workflow_sha,
+                         WORKFLOW_SHA)
 
     def test_altered_payload_signature_and_different_key_fail(self) -> None:
         token = self.token()
@@ -159,7 +180,7 @@ class OIDCVerifierTests(unittest.TestCase):
         with patch("deployment.oidc_verifier.authorize_verified_github_oidc", wraps=__import__("deployment.identity", fromlist=["authorize_verified_github_oidc"]).authorize_verified_github_oidc) as authorize:
             identity = self.verifier.verify(self.token(), received_at=NOW)
         self.assertEqual(identity.actor_id, 130741173)
-        authorize.assert_called_once_with(valid_claims(), received_at=NOW)
+        authorize.assert_called_once_with(valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
 
     def test_verified_mapping_must_equal_bounded_preparsed_mapping(self) -> None:
         changed = valid_claims()

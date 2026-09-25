@@ -16,6 +16,7 @@ from .identity import (
     AuthorizedGitHubIdentity,
     OIDCAuthorizationError,
     authorize_verified_github_oidc,
+    validate_expected_workflow_sha,
 )
 from .jwks import (
     GitHubJWKSCache,
@@ -99,8 +100,20 @@ def _parse_compact_token(compact_token: Any) -> tuple[dict[str, Any], dict[str, 
 class GitHubOIDCVerifier:
     """Verify and authorize one fixed GitHub Actions deployment identity."""
 
-    def __init__(self, jwks_cache: GitHubJWKSCache | None = None) -> None:
-        self._jwks_cache = jwks_cache or GitHubJWKSCache()
+    __slots__ = ("_jwks_cache", "_expected_workflow_sha")
+
+    def __init__(self, *, expected_workflow_sha: str,
+                 jwks_cache: GitHubJWKSCache | None = None) -> None:
+        object.__setattr__(self, "_expected_workflow_sha",
+                           validate_expected_workflow_sha(expected_workflow_sha))
+        object.__setattr__(self, "_jwks_cache",
+                           GitHubJWKSCache() if jwks_cache is None else jwks_cache)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("OIDC verifier authority is immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("OIDC verifier authority is immutable")
 
     def verify(
         self, compact_token: str, *, received_at: int,
@@ -138,6 +151,7 @@ class GitHubOIDCVerifier:
         try:
             return authorize_verified_github_oidc(
                 bounded_claims, received_at=received_at,
+                expected_workflow_sha=object.__getattribute__(self, "_expected_workflow_sha"),
             )
         except OIDCAuthorizationError:
             raise OIDCVerificationError("OIDC identity is not authorized") from None

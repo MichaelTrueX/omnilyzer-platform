@@ -22,7 +22,10 @@ from .execution import (
     IngressReference, NoSecretsReference, RuntimeConfigurationReference,
     bind_request_to_identity,
 )
-from .identity import AuthorizedGitHubIdentity, authorize_verified_github_oidc
+from .identity import (
+    AuthorizedGitHubIdentity, authorize_verified_github_oidc,
+    validate_expected_workflow_sha,
+)
 from .jwks import SYSTEM_CA_BUNDLE, parse_bounded_json
 from .policy import (
     APPROVED_OCI_ORIGIN, DeploymentPolicyError, EXPECTED_CERTIFICATE_IDENTITY,
@@ -438,7 +441,7 @@ def _promotion(value: PromotionRequest) -> PromotionRequest:
 def _construct_dev_request(
     promotion: PromotionRequest, trusted: TrustedRelease,
     identity: AuthorizedGitHubIdentity, runtime: RuntimeConfigurationReference,
-    ingress: IngressReference, *, received_at: int,
+    ingress: IngressReference, *, received_at: int, expected_workflow_sha: str,
 ) -> ExecutorRequest:
     """Project verified evidence and authorized identity into the existing schema."""
 
@@ -455,6 +458,7 @@ def _construct_dev_request(
     try:
         authorized = _normalize_identity(
             identity, received_at=received_at,
+            expected_workflow_sha=expected_workflow_sha,
             authorization=authorize_verified_github_oidc,
             expected_fields=IDENTITY_FIELDS,
         )
@@ -501,10 +505,14 @@ def acquire_and_construct_dev_request(
     runtime: RuntimeConfigurationReference, ingress: IngressReference,
     zot: ZotCandidateConsumer, forgejo: ForgejoEvidenceConsumer,
     signatures: ReleaseSignatureVerifier,
-    *, received_at: int,
+    *, received_at: int, expected_workflow_sha: str,
 ) -> ExecutorRequest:
     """Acquire exact bytes, verify them, then construct one canonical request."""
 
+    try:
+        expected_workflow_sha = validate_expected_workflow_sha(expected_workflow_sha)
+    except Exception:
+        raise ReleaseConsumerError(ERROR) from None
     promotion = _promotion(promotion)
     if type(zot) is not ZotCandidateConsumer or type(forgejo) is not ForgejoEvidenceConsumer:
         raise ReleaseConsumerError(ERROR)
@@ -521,6 +529,7 @@ def acquire_and_construct_dev_request(
         trusted = verify_release_evidence(promotion, manifest, provenance, sigstore, oci)
         result = _construct_dev_request(
             promotion, trusted, identity, runtime, ingress, received_at=received_at,
+            expected_workflow_sha=expected_workflow_sha,
         )
     except Exception:
         failed = True

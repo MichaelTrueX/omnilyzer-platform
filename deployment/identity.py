@@ -142,8 +142,19 @@ def validate_jti(value: Any) -> str:
     return value
 
 
+def validate_expected_workflow_sha(value: Any) -> str:
+    """Validate one independently reviewed deployment workflow revision."""
+
+    if type(value) is not str:
+        raise OIDCAuthorizationError("expected workflow SHA must be an exact string")
+    try:
+        return validate_source_sha(value)
+    except DeploymentPolicyError as exc:
+        raise OIDCAuthorizationError("expected workflow SHA is not an exact revision") from exc
+
+
 def authorize_verified_github_oidc(
-    claims: Mapping[str, Any], *, received_at: int,
+    claims: Mapping[str, Any], *, received_at: int, expected_workflow_sha: str,
 ) -> AuthorizedGitHubIdentity:
     """Authorize cryptographically verified claims at a caller-supplied time.
 
@@ -151,6 +162,7 @@ def authorize_verified_github_oidc(
     Every claim used for authorization is explicitly named and fail-closed.
     """
 
+    expected_workflow_sha = validate_expected_workflow_sha(expected_workflow_sha)
     if not isinstance(claims, Mapping):
         raise OIDCAuthorizationError("verified OIDC claims must be a mapping")
     if isinstance(received_at, bool) or not isinstance(received_at, int) or received_at < 0:
@@ -172,6 +184,8 @@ def authorize_verified_github_oidc(
         workflow_sha = validate_source_sha(workflow_sha_value)
     except DeploymentPolicyError as exc:
         raise OIDCAuthorizationError("OIDC workflow_sha is not an exact revision") from exc
+    if type(workflow_sha_value) is not str or workflow_sha != expected_workflow_sha:
+        raise OIDCAuthorizationError("OIDC workflow_sha is not the reviewed revision")
     ref = _exact_string(claims, "ref", DEV_REF)
     environment = _exact_string(claims, "environment", DEV_ENVIRONMENT)
     event_name = _exact_string(claims, "event_name", DEV_EVENT_NAME)
