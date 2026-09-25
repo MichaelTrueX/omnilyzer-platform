@@ -418,6 +418,63 @@ class FilesystemPrimitiveTests(unittest.TestCase):
             self.assertEqual((stat.S_IMODE(status.st_mode), status.st_uid, status.st_gid),
                              (file.mode, file.owner_uid, file.group_gid))
 
+    def test_s2_c17_rename_sync_failure_retries_on_exact_existing_file(self):
+        # Route the fixed C17 authority to an isolated directory because this
+        # sandbox's / is not root-owned; keep the actual atomic file I/O.
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "executor.json"
+            target.write_bytes(b"old")
+            target.chmod(0o640)
+            requirement = module._FileAuthority(
+                module._c17.PRODUCTION_EXECUTOR_SERVICE_CONFIG_PATH,
+                0o640, os.getuid(), os.getgid(),
+            )
+            identity = (os.stat(temporary).st_dev, os.stat(temporary).st_ino)
+
+            def open_fixed_parent(path, _directories, owned):
+                self.assertEqual(path, requirement.path)
+                descriptor = module._claim(os.open(
+                    temporary, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC), owned)
+                return descriptor, "executor.json", []
+
+            renamed = False
+            real_replace, real_fsync = os.replace, os.fsync
+
+            def replace_then_fail(*args, **kwargs):
+                nonlocal renamed
+                real_replace(*args, **kwargs)
+                renamed = True
+
+            def failed_parent_sync(descriptor):
+                if renamed and (os.fstat(descriptor).st_dev,
+                                os.fstat(descriptor).st_ino) == identity:
+                    raise OSError("parent sync failed after C17 rename")
+                return real_fsync(descriptor)
+
+            with patch.object(module, "_open_parent", side_effect=open_fixed_parent), \
+                 patch.object(module._os, "replace", side_effect=replace_then_fail), \
+                 patch.object(module._os, "fsync", side_effect=failed_parent_sync):
+                with self.assertRaises(OSError):
+                    module._install_atomic(requirement, b"current", ())
+            self.assertTrue(renamed)
+            self.assertEqual(target.read_bytes(), b"current")
+
+            synced_parent = False
+
+            def retry_sync(descriptor):
+                nonlocal synced_parent
+                if (os.fstat(descriptor).st_dev, os.fstat(descriptor).st_ino) == identity:
+                    synced_parent = True
+                return real_fsync(descriptor)
+
+            with patch.object(module, "_open_parent", side_effect=open_fixed_parent), \
+                 patch.object(module._os, "fsync", side_effect=retry_sync), \
+                 patch.object(module, "_existing_file", wraps=module._existing_file) as verify:
+                result = module._install_atomic(requirement, b"current", ())
+            self.assertEqual(result.outcome, "unchanged")
+            self.assertTrue(synced_parent, "exact current C17 skipped parent sync")
+            self.assertGreaterEqual(verify.call_count, 2)
+
     def test_t_file_symlink_wrong_type_and_mode_conflicts_fail(self):
         for kind in ("symlink", "directory", "wrong_mode"):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temporary:

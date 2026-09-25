@@ -478,6 +478,15 @@ def _install_atomic(requirement: _FileAuthority, payload: bytes,
         existing = _existing_file(parent, name, requirement, owned)
         if existing is not None and existing[1] == payload:
             _revalidate_chain(chain)
+            if requirement.path == _c17.PRODUCTION_EXECUTOR_SERVICE_CONFIG_PATH:
+                # A previous C17 rename may have succeeded while its parent
+                # fsync failed.  Retry durability before reporting unchanged.
+                if _os.fsync(parent) is not None:
+                    raise OSError
+                verified = _existing_file(parent, name, requirement, owned)
+                if verified != existing:
+                    raise OSError
+            _revalidate_chain(chain)
             return HostMutationEvidence("regular_file", requirement.path, "unchanged")
         temporary = _claim(_os.open(
             _TEMPORARY_NAME,

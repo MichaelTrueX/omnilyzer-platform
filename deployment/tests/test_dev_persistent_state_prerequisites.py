@@ -109,7 +109,7 @@ class Sandbox:
         object.__setattr__(self.value, "_authority", authority)
         self.authority = authority
         self.state_directory.chmod(0o700)
-        self.replay_directory.chmod(0o770)
+        self.replay_directory.chmod(0o2770)
         self.audit_directory.chmod(0o700)
 
     def close(self):

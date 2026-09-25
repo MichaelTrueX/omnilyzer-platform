@@ -54,15 +54,13 @@ class Text(str):
 
 
 class ModelTests(unittest.TestCase):
-    def test_populated_recovery_preserves_every_c25_source_byte(self):
+    def test_legacy_populated_recovery_predecessor_c26_is_pinned(self):
         entries = []
         for source in DevApplicationSourceSet().files:
             path = source.repository_path
-            current = (ROOT / path).read_bytes()
             predecessor = git(ROOT, "show", f"{POPULATED_RECOVERY_PREDECESSOR}:{path}")
-            self.assertEqual(current, predecessor, path)
             entries.append(module.ApplicationManifestEntry(
-                path, hashlib.sha256(current).hexdigest(), "0644",
+                path, hashlib.sha256(predecessor).hexdigest(), "0644",
             ))
         self.assertEqual(len(entries), 28)
         manifest = module.DevApplicationManifest(

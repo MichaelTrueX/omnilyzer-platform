@@ -31,7 +31,8 @@ class GitHubDevBrokerComposition:
 
     def __init__(
         self, *, expected_replay_directory_uid: int,
-        expected_replay_directory_gid: int, expected_executor_uid: int,
+        expected_replay_directory_gid: int, expected_broker_uid: int,
+        expected_executor_uid: int,
         expected_executor_gid: int, expected_socket_group_gid: int,
     ) -> None:
         """Construct the reviewed broker graph without invoking any operation."""
@@ -41,6 +42,8 @@ class GitHubDevBrokerComposition:
             _PRODUCTION_REPLAY_DATABASE,
             expected_directory_uid=expected_replay_directory_uid,
             expected_directory_gid=expected_replay_directory_gid,
+            expected_broker_uid=expected_broker_uid,
+            expected_executor_uid=expected_executor_uid,
         )
         transport = _UnixExecutorTransport(
             expected_executor_uid=expected_executor_uid,

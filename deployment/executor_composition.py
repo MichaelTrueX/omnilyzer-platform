@@ -59,6 +59,8 @@ class DevExecutorComposition:
             _PRODUCTION_REPLAY_DATABASE,
             expected_directory_uid=expected_replay_directory_uid,
             expected_directory_gid=expected_replay_directory_gid,
+            expected_broker_uid=expected_broker_uid,
+            expected_executor_uid=expected_state_owner_uid,
         )
         audit_sink = _FilesystemAuditSink()
         command_runner = _SubprocessCommandRunner()

@@ -721,6 +721,138 @@ class OrchestrationTests(unittest.TestCase):
                          + ["retained-exact"] * 6)
         self.assertFalse(any(item[0] == "python" for item in self.events))
 
+    def test_c_step20_recovery_migrates_then_completes_without_venv_or_activation(self):
+        authority = object.__getattribute__(self.value, "_authority")
+        preflight = module._Step20RecoveryPreflight(
+            python_environment.DevPythonEnvironmentEvidence(), "predecessor",
+            module._step20.ApplicationState(0, None, None), "old", "absent",
+        )
+        state = c31c.PersistentPrerequisiteEvidence(
+            c31c._STATE_PATH, "deployment_state", "unchanged", 1,
+        )
+        with (patch.object(module, "_qualify_reviewed_recovery", side_effect=OSError),
+              patch.object(module, "_qualify_step20_recovery", return_value=preflight),
+              patch.object(module._step20, "manifests", return_value=(object(), {}, {})),
+              patch.object(module._step20, "migrate_application", return_value="migrated") as app,
+              patch.object(module._step20, "migrate_replay_directory", return_value="migrated") as directory,
+              patch.object(authority.runtime, "install_executor_configuration",
+                           return_value=c30.HostMutationEvidence(
+                               "regular_file", module._CONFIG_PATH, "replaced")) as config_install,
+              patch.object(authority.persistent, "initialize_deployment_state", return_value=state),
+              patch.object(authority.mechanics, "construct_python_environment",
+                           side_effect=AssertionError("venv/pip must not run")) as python):
+            result = self.invoke(c29_value=c29.HostQualificationError("step20"))
+        self.assertEqual(result.operation, "step20-recovery")
+        self.assertEqual(result.completed_steps[6].outcome, "step20-recovery-verified")
+        self.assertEqual(result.completed_steps[9].outcome, "retained-predecessor")
+        self.assertEqual(result.completed_steps[10].outcome, "migrated")
+        self.assertEqual(result.completed_steps[19].outcome, "migrated-directory-initialized")
+        self.assertEqual(result.completed_steps[20].outcome, "pristine")
+        self.assertEqual(result.completed_steps[21].outcome, "verified")
+        app.assert_called_once()
+        directory.assert_called_once()
+        config_install.assert_called_once()
+        python.assert_not_called()
+
+    def test_c_step20_current_c17_retries_sync_before_persistent_state(self):
+        authority = object.__getattribute__(self.value, "_authority")
+        preflight = module._Step20RecoveryPreflight(
+            python_environment.DevPythonEnvironmentEvidence(), "current",
+            module._step20.ApplicationState(3, None, None), "current", "absent",
+        )
+        state = c31c.PersistentPrerequisiteEvidence(
+            c31c._STATE_PATH, "deployment_state", "unchanged", 1,
+        )
+        with patch.object(module, "_qualify_reviewed_recovery", side_effect=OSError), \
+             patch.object(module, "_qualify_step20_recovery", return_value=preflight), \
+             patch.object(module._step20, "migrate_application", return_value="retained-exact"), \
+             patch.object(module._step20, "migrate_replay_directory", return_value="retained-exact"), \
+             patch.object(authority.runtime, "install_executor_configuration",
+                          side_effect=c30.HostRuntimeError("parent sync failed")) as sync, \
+             patch.object(authority.persistent, "initialize_deployment_state",
+                          return_value=state) as persistent:
+            self.assert_failure(11, 12, True, lambda: self.invoke(
+                c29_value=c29.HostQualificationError("step20")))
+            sync.assert_called_once()
+            persistent.assert_not_called()
+
+        self.events.clear()
+
+        def synced_configuration():
+            self.events.append(("synced-c17",))
+            return c30.HostMutationEvidence("regular_file", module._CONFIG_PATH, "unchanged")
+
+        with patch.object(module, "_qualify_reviewed_recovery", side_effect=OSError), \
+             patch.object(module, "_qualify_step20_recovery", return_value=preflight), \
+             patch.object(module._step20, "migrate_application", return_value="retained-exact"), \
+             patch.object(module._step20, "migrate_replay_directory", return_value="retained-exact"), \
+             patch.object(authority.runtime, "install_executor_configuration",
+                          side_effect=synced_configuration), \
+             patch.object(authority.persistent, "initialize_deployment_state",
+                          side_effect=lambda: (self.events.append(("state",)), state)[1]):
+            result = self.invoke(c29_value=c29.HostQualificationError("step20"))
+        self.assertLess(self.events.index(("synced-c17",)), self.events.index(("state",)))
+        self.assertEqual(result.completed_steps[11].outcome, "retained-exact")
+
+    def test_c_step20_rejects_unreachable_c17_application_directory_order(self):
+        python = python_environment.DevPythonEnvironmentEvidence()
+        for c17_state, count, directory, replay in (
+            ("current", 0, "old", "absent"),
+            ("current", 2, "old", "absent"),
+            ("predecessor", 3, "current", "absent"),
+            ("predecessor", 3, "current", "initialized"),
+        ):
+            with self.subTest(c17_state=c17_state, count=count,
+                              directory=directory, replay=replay):
+                with self.assertRaises(ValueError):
+                    module._Step20RecoveryPreflight(
+                        python, c17_state,
+                        module._step20.ApplicationState(count, None, None),
+                        directory, replay,
+                    )
+
+    def test_c_step20_preflight_rejects_changed_current_c17_before_host_reads(self):
+        predecessor = dataclasses.replace(
+            self.configuration, reviewed_commit=module._step20.PREDECESSOR)
+        pin = hashlib.sha256(predecessor.canonical_bytes()).hexdigest()
+        changed = dataclasses.replace(
+            self.configuration, executor_uid=self.configuration.executor_uid + 100)
+        with patch.object(module._step20, "PREDECESSOR_C17", pin), \
+             patch.object(module._step20, "manifests", side_effect=OSError) as manifests, \
+             patch.object(module._c29, "_read_small_regular") as host_read:
+            with self.assertRaises(OSError):
+                module._qualify_step20_recovery(
+                    changed, self.manifest, self.wheels, "/reviewed/repository")
+            manifests.assert_not_called()
+            host_read.assert_not_called()
+
+    def test_c_step20_migration_failures_report_exact_boundaries(self):
+        authority = object.__getattribute__(self.value, "_authority")
+        preflight = module._Step20RecoveryPreflight(
+            python_environment.DevPythonEnvironmentEvidence(), "predecessor",
+            module._step20.ApplicationState(0, None, None), "old", "absent",
+        )
+        state = c31c.PersistentPrerequisiteEvidence(
+            c31c._STATE_PATH, "deployment_state", "unchanged", 1,
+        )
+        for method, last, failed in (
+            ("migrate_application", 10, 11),
+            ("migrate_replay_directory", 19, 20),
+        ):
+            with self.subTest(method=method), \
+                 patch.object(module, "_qualify_reviewed_recovery", side_effect=OSError), \
+                 patch.object(module, "_qualify_step20_recovery", return_value=preflight), \
+                 patch.object(module._step20, "manifests", return_value=(object(), {}, {})), \
+                 patch.object(module._step20, "migrate_application", return_value="migrated"), \
+                 patch.object(module._step20, "migrate_replay_directory", return_value="migrated"), \
+                 patch.object(authority.runtime, "install_executor_configuration",
+                              return_value=c30.HostMutationEvidence(
+                                  "regular_file", module._CONFIG_PATH, "replaced")), \
+                 patch.object(authority.persistent, "initialize_deployment_state", return_value=state), \
+                 patch.object(module._step20, method, side_effect=OSError("interrupted")):
+                self.assert_failure(last, failed, True, lambda: self.invoke(
+                    c29_value=c29.HostQualificationError("step20")))
+
     def test_c_populated_recovery_preflight_has_exact_reachable_matrix(self):
         python = python_environment.DevPythonEnvironmentEvidence()
         allowed = {

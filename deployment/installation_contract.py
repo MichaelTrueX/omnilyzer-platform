@@ -176,6 +176,7 @@ class DevHostInstallationContract:
         return {
             "expected_replay_directory_uid": 0,
             "expected_replay_directory_gid": self.replay_group_gid,
+            "expected_broker_uid": self.broker_uid,
             "expected_executor_uid": self.executor_uid,
             "expected_executor_gid": self.executor_gid,
             "expected_socket_group_gid": self.socket_group_gid,

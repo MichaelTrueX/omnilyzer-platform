@@ -290,6 +290,7 @@ class ConstructionTests(unittest.TestCase):
         self.assertEqual(created["replay_args"], (PRODUCTION_REPLAY_DATABASE,))
         self.assertEqual(set(created["replay_kwargs"]), {  # type: ignore[arg-type]
             "expected_directory_uid", "expected_directory_gid",
+            "expected_broker_uid", "expected_executor_uid",
         })
         self.assertEqual(created["audit_args"], ())
         self.assertEqual(created["audit_kwargs"], {})

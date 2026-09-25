@@ -140,6 +140,122 @@ class ReplayTestCase(unittest.TestCase):
 
 
 class InitializationAndFilesystemTests(ReplayTestCase):
+    def test_initializer_inherits_distinct_reviewed_replay_gid(self) -> None:
+        # The provisioning process has a different effective GID from C13's
+        # replay group.  A matching-GID temporary directory hides this defect.
+        other_groups = [gid for gid in os.getgroups() if gid != os.getegid()]
+        if not other_groups:
+            self.skipTest("process has no second group for a real filesystem test")
+        required_gid = other_groups[0]
+        try:
+            os.chown(self.directory, -1, required_gid)
+        except OSError:
+            self.skipTest("cannot assign an existing supplementary group")
+        self.directory.chmod(DIRECTORY_MODE)
+        self.assertNotEqual(os.getegid(), required_gid)
+        guard = self.make_guard(expected_directory_gid=required_gid)
+        guard.initialize()
+        created = self.path.stat()
+        self.assertEqual((created.st_uid, created.st_gid, stat.S_IMODE(created.st_mode)),
+                         (os.geteuid(), required_gid, DATABASE_MODE))
+
+    def test_production_gid_mismatch_requires_setgid_inheritance(self) -> None:
+        required_gid = os.getegid() + 1
+        self.assertNotEqual(os.getegid(), required_gid)
+        created_gid_without_setgid = os.getegid()
+        guard = self.make_guard(expected_directory_gid=required_gid)
+        created = self.path.stat() if self.path.exists() else os.stat_result(
+            (stat.S_IFREG | DATABASE_MODE, 1, 1, 1, os.geteuid(),
+             created_gid_without_setgid, 0, 0, 0, 0),
+        )
+        with self.assertRaises(ReplayUnavailableError):
+            guard._validate_file_status(created, DATABASE_MODE)
+        # C31's root-created database and all runtime journals need the
+        # replay directory to supply the reviewed GID to new inodes.
+        self.assertEqual(DIRECTORY_MODE, 0o2770)
+
+    def test_setgid_directory_preserves_exact_database_metadata(self) -> None:
+        self.assertEqual(stat.S_IMODE(self.directory.stat().st_mode), 0o2770)
+        self.initialize()
+        status = self.path.stat()
+        self.assertEqual((status.st_uid, status.st_gid, status.st_nlink,
+                          stat.S_IMODE(status.st_mode)),
+                         (os.geteuid(), os.getegid(), 1, 0o660))
+
+    def test_journal_owner_policy_is_bounded_to_initializer_and_two_writers(self) -> None:
+        owner = os.geteuid()
+        broker, executor = owner + 10, owner + 11
+        guard = self.make_guard(expected_broker_uid=broker,
+                                expected_executor_uid=executor)
+        template = list(os.stat_result((stat.S_IFREG | DATABASE_MODE, 1, 1, 1,
+                                        owner, os.getegid(), 0, 0, 0, 0)))
+        for allowed in (owner, broker, executor):
+            with self.subTest(allowed=allowed):
+                fields = template.copy()
+                fields[4] = allowed
+                guard._validate_journal_status(os.stat_result(fields))
+        for index, value in ((4, owner + 12), (5, os.getegid() + 1),
+                             (0, stat.S_IFREG | 0o600), (3, 2),
+                             (0, stat.S_IFLNK | DATABASE_MODE)):
+            with self.subTest(index=index, value=value):
+                fields = template.copy()
+                fields[index] = value
+                with self.assertRaises(ReplayUnavailableError):
+                    guard._validate_journal_status(os.stat_result(fields))
+
+    def test_sqlite_delete_journal_inherits_group_and_database_mode(self) -> None:
+        self.initialize()
+        original = os.umask(0o077)
+        try:
+            connection = sqlite3.connect(self.path, isolation_level=None)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute("UPDATE metadata SET last_seen_epoch = last_seen_epoch + 1")
+                journal = self.directory / "replay.sqlite3-journal"
+                status = journal.stat()
+                self.assertEqual((status.st_uid, status.st_gid,
+                                  stat.S_IMODE(status.st_mode)),
+                                 (os.geteuid(), os.getegid(), DATABASE_MODE))
+            finally:
+                connection.execute("ROLLBACK")
+                connection.close()
+        finally:
+            os.umask(original)
+
+    def test_cross_service_hot_journal_owners_pass_only_exact_filesystem_policy(self) -> None:
+        self.initialize()
+        journal = self.directory / "replay.sqlite3-journal"
+        journal.write_bytes(b"hot-journal-fixture")
+        journal.chmod(DATABASE_MODE)
+        broker_uid, executor_uid = os.geteuid() + 10, os.geteuid() + 11
+        guard = self.make_guard(expected_broker_uid=broker_uid,
+                                expected_executor_uid=executor_uid)
+        real_stat = os.stat
+
+        def observed(path, *args, owner_uid, **kwargs):
+            value = real_stat(path, *args, **kwargs)
+            if path == "replay.sqlite3-journal" and kwargs.get("dir_fd") is not None:
+                fields = list(value)
+                fields[4] = owner_uid
+                return os.stat_result(fields)
+            return value
+
+        descriptor = guard._open_directory()
+        try:
+            for owner_uid in (broker_uid, executor_uid, os.geteuid()):
+                with self.subTest(owner_uid=owner_uid), patch(
+                    "deployment.replay_sqlite.os.stat",
+                    side_effect=lambda path, *args, owner_uid=owner_uid, **kwargs:
+                        observed(path, *args, owner_uid=owner_uid, **kwargs),
+                ):
+                    guard._validate_filesystem(descriptor)
+            with patch("deployment.replay_sqlite.os.stat",
+                       side_effect=lambda path, *args, **kwargs:
+                           observed(path, *args, owner_uid=executor_uid + 1, **kwargs)):
+                self.unavailable(lambda: guard._validate_filesystem(descriptor))
+        finally:
+            os.close(descriptor)
+
     def test_construction_performs_no_filesystem_action_and_production_is_untouched(self) -> None:
         missing = self.directory / "missing" / "replay.sqlite3"
         with (
@@ -194,7 +310,7 @@ class InitializationAndFilesystemTests(ReplayTestCase):
 
     def test_initialization_creates_exact_schema_metadata_modes_and_pragmas(self) -> None:
         self.initialize()
-        self.assertEqual(stat.S_IMODE(self.directory.stat().st_mode), 0o770)
+        self.assertEqual(stat.S_IMODE(self.directory.stat().st_mode), 0o2770)
         file_status = self.path.stat()
         self.assertEqual(stat.S_IMODE(file_status.st_mode), 0o660)
         self.assertEqual((file_status.st_uid, file_status.st_gid, file_status.st_nlink), (os.getuid(), os.getgid(), 1))
@@ -221,8 +337,9 @@ class InitializationAndFilesystemTests(ReplayTestCase):
                 self.path.unlink()
 
     def test_wrong_directory_mode_uid_and_gid_fail(self) -> None:
-        self.directory.chmod(0o750)
-        self.unavailable(self.guard.initialize)
+        for wrong_mode in (0o750, 0o770, 0o3770):
+            self.directory.chmod(wrong_mode)
+            self.unavailable(self.guard.initialize)
         self.directory.chmod(DIRECTORY_MODE)
         self.unavailable(self.make_guard(expected_directory_uid=os.getuid() + 1).initialize)
         self.unavailable(self.make_guard(expected_directory_gid=os.getgid() + 1).initialize)

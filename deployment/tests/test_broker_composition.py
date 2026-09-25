@@ -55,6 +55,7 @@ def configuration(**changes: object) -> dict[str, object]:
     values: dict[str, object] = {
         "expected_replay_directory_uid": 1001,
         "expected_replay_directory_gid": 1002,
+        "expected_broker_uid": 1006,
         "expected_executor_uid": 1003,
         "expected_executor_gid": 1004,
         "expected_socket_group_gid": 1005,
@@ -184,6 +185,7 @@ class ConstructionTests(unittest.TestCase):
         self.assertEqual(created["replay_args"], (PRODUCTION_REPLAY_DATABASE,))
         self.assertEqual(set(created["replay_kwargs"]), {  # type: ignore[arg-type]
             "expected_directory_uid", "expected_directory_gid",
+            "expected_broker_uid", "expected_executor_uid",
         })
         self.assertEqual(created["transport_args"], ())
         self.assertEqual(set(created["transport_kwargs"]), {  # type: ignore[arg-type]
@@ -227,6 +229,7 @@ class ClosedSurfaceTests(unittest.TestCase):
             tuple(inspect.signature(GitHubDevBrokerComposition).parameters),
             (
                 "expected_replay_directory_uid", "expected_replay_directory_gid",
+                "expected_broker_uid",
                 "expected_executor_uid", "expected_executor_gid",
                 "expected_socket_group_gid",
             ),

@@ -26,7 +26,7 @@ PRODUCTION_REPLAY_DATABASE = Path(
     "/var/lib/omnilyzer/deployment/authority/replay.sqlite3"
 )
 REPLAY_FILENAME = "replay.sqlite3"
-DIRECTORY_MODE = 0o770
+DIRECTORY_MODE = 0o2770
 DATABASE_MODE = 0o660
 DATABASE_SIZE_LIMIT = 16 * 1024 * 1024
 JOURNAL_SIZE_LIMIT = 17 * 1024 * 1024
@@ -134,6 +134,8 @@ class SQLiteReplayGuard:
         *,
         expected_directory_uid: int,
         expected_directory_gid: int,
+        expected_broker_uid: int | None = None,
+        expected_executor_uid: int | None = None,
         maximum_entries: int = DEFAULT_MAXIMUM_ENTRIES,
         busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
         current_time: Callable[[], int] = lambda: int(time.time()),
@@ -158,6 +160,22 @@ class SQLiteReplayGuard:
                 or not 0 <= value <= MAX_UID_GID
             ):
                 raise ValueError("replay configuration is invalid")
+        if (expected_broker_uid is None) != (expected_executor_uid is None):
+            raise ValueError("replay configuration is invalid")
+        if expected_broker_uid is not None and (
+            type(expected_broker_uid) is not int
+            or not 1 <= expected_broker_uid <= MAX_UID_GID
+        ):
+            raise ValueError("replay configuration is invalid")
+        if expected_executor_uid is not None and (
+            type(expected_executor_uid) is not int
+            or not 0 <= expected_executor_uid <= MAX_UID_GID
+        ):
+            raise ValueError("replay configuration is invalid")
+        if (expected_broker_uid is not None and
+            (expected_broker_uid == expected_executor_uid
+             or expected_broker_uid == expected_directory_uid)):
+            raise ValueError("replay configuration is invalid")
         if (
             isinstance(maximum_entries, bool) or not isinstance(maximum_entries, int)
             or not 1 <= maximum_entries <= MAXIMUM_ENTRIES
@@ -174,6 +192,9 @@ class SQLiteReplayGuard:
         self._directory = path.parent
         self._uid = expected_directory_uid
         self._gid = expected_directory_gid
+        self._journal_uids = frozenset((
+            expected_directory_uid, expected_broker_uid, expected_executor_uid,
+        )) - {None}
         self._maximum_entries = maximum_entries
         self._busy_timeout_ms = busy_timeout_ms
         self._current_time = current_time
@@ -676,6 +697,16 @@ class SQLiteReplayGuard:
         ):
             raise ReplayUnavailableError(_GENERIC_UNAVAILABLE)
 
+    def _validate_journal_status(self, value: os.stat_result) -> None:
+        """Accept only C13's initializer and two reviewed runtime writer UIDs."""
+        if (
+            not stat.S_ISREG(value.st_mode) or stat.S_ISLNK(value.st_mode)
+            or stat.S_IMODE(value.st_mode) != DATABASE_MODE
+            or value.st_nlink != 1 or value.st_gid != self._gid
+            or value.st_uid not in self._journal_uids
+        ):
+            raise ReplayUnavailableError(_GENERIC_UNAVAILABLE)
+
     def _validate_filesystem(self, directory_descriptor: int) -> None:
         try:
             entries = self._bounded_entries(directory_descriptor)
@@ -697,7 +728,7 @@ class SQLiteReplayGuard:
                     REPLAY_FILENAME + "-journal", dir_fd=directory_descriptor,
                     follow_symlinks=False,
                 )
-                self._validate_file_status(journal, DATABASE_MODE)
+                self._validate_journal_status(journal)
                 if journal.st_size > JOURNAL_SIZE_LIMIT:
                     raise ReplayUnavailableError(_GENERIC_UNAVAILABLE)
         except ReplayUnavailableError:
