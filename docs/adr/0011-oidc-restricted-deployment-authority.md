@@ -17,7 +17,7 @@ On 2026-09-08, the private repository/account capability could not enforce the b
 
 As of 2026-09-24, the repository is public, `main` is protected by the active repository ruleset `Protect main`, and the GitHub deployment environment `task014-dev` exists with `deployment_branch_policy.protected_branches=true` and `deployment_branch_policy.custom_branch_policies=false`. The branch/environment protection capability prerequisite is now satisfied for DEV.
 
-This satisfies only the protection capability prerequisite. A separate live-authority review is still required before C31 host provisioning, any host/runtime mutation, or deployment activation. `deployment/environments/dev.json` remains unchanged with `activation.deployment_enabled=false`, which must remain false pending reviewed activation. This documentation update enables no deployment workflow, OIDC, systemd, Docker execution, host provisioning, registry credentials, listener, or other live deployment authority. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
+This satisfied the protection capability prerequisite. C31 host provisioning and pinned recovery subsequently completed and converged under separate authorization; installed runtime assets remain inactive. A separate live-authority review is still required before deployment activation. `deployment/environments/dev.json` retains `activation.deployment_enabled=false`, which must remain false pending reviewed activation. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
 
 Pending that separate live-authority review, work remains limited to:
 
@@ -25,8 +25,8 @@ Pending that separate live-authority review, work remains limited to:
 - durable replay code;
 - broker, transport, and executor code that cannot be activated;
 - registry-consumer interfaces and deterministic mocked tests;
-- audit schema and identity projection;
-- inert, uninstalled systemd, Nginx, and layout fixtures; and
+- audit schema 2 and complete identity projection (already implemented);
+- inert systemd, Nginx, and layout fixtures, with C31-installed runtime assets inactive; and
 - deterministic repository tests and static validation.
 
 Until the live-authority change is separately reviewed, the following remain prohibited:
@@ -145,7 +145,7 @@ Operational validation must cover concurrent replay attempts, unavailable or cor
 
 ## Migration and rollback implications
 
-Adoption proceeds through inert repository-side implementation, non-live contracts, and deterministic tests before host or GitHub activation. This sequencing does not depend on a PR name. The DEV protection capability prerequisite is satisfied as of 2026-09-24; the protections must remain enforced. C31 host provisioning, host/runtime mutation, and live deployment remain prohibited until the live-authority change is separately reviewed.
+Adoption proceeds through inert repository-side implementation, non-live contracts, and deterministic tests before GitHub activation. This sequencing does not depend on a PR name. The DEV protection capability prerequisite is satisfied as of 2026-09-24; the protections must remain enforced. C31 provisioning completed under separate authorization. Further host/runtime mutation and live deployment remain prohibited until separately reviewed.
 
 The authority can be withdrawn by disabling GitHub environment activation, revoking or disabling the broker's OIDC trust policy, stopping the broker and executor, and removing public broker ingress. Immutable release artifacts and deployment state and audit evidence must be retained.
 

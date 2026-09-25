@@ -12,14 +12,14 @@ Later phases must activate each environment deliberately, supply merge-SHA-bound
 
 The repository is now public. `main` is protected by the active repository ruleset `Protect main`. The GitHub deployment environment `task014-dev` exists with `deployment_branch_policy.protected_branches=true` and `deployment_branch_policy.custom_branch_policies=false`. The branch/environment protection capability prerequisite is satisfied for DEV; these protections must remain enforced. ADR 0011's 2026-09-08 private-repository limitation remains historical context.
 
-Further C31 host provisioning or retry requires separate authorization, and deployment activation remains prohibited. `deployment/environments/dev.json` remains unchanged with `activation.deployment_enabled=false`. This documentation update enables no deployment workflow, OIDC, systemd, Docker execution, host provisioning, registry credentials, listener, or other live deployment authority.
+C31 provisioning and its pinned step-20 recovery have now completed and converged under separate authorization. Installed runtime assets remain inactive. Deployment activation remains prohibited. `deployment/environments/dev.json` retains `activation.deployment_enabled=false`.
 
-## Pinned C31 step-20 recovery (separate authorization required)
+## Pinned C31 step-20 recovery (completed historical procedure)
 
 The failed C31 run from `e386cc07708fcb0b94fae5a7b9422a15c9e2c792`
 completed step 19 and failed closed at replay initialization in step 20. Its
-authorization was consumed. The new recovery accepts only a future reviewed
-commit with that exact commit as a direct parent. It proves the pinned
+authorization was consumed. The reviewed recovery accepted only a commit with
+that exact commit as a direct parent. It proved the pinned
 old C17 and old C26. Every proposed current C17 field except
 `reviewed_commit` must reconstruct the pinned e386 C17 SHA-256 before
 readiness or recovery treats it as authority. Recovery also proves the retained
@@ -39,7 +39,7 @@ root:replay-group `02770`; a rerun accepts the exact new mode. Unknown residue,
 an active deployment state, journal/WAL/SHM leftovers, or unrelated lineage
 blocks recovery without repair.
 
-Operator flow after review: merge the fix, use a trusted root-controlled exact
+The reviewed operator flow was: merge the fix, use a trusted root-controlled exact
 commit execution tree, and run this one read-only command with the already
 qualified C28 and C31P staging locations:
 
@@ -49,12 +49,33 @@ python3 -B -m deployment.dev_c31_recovery_readiness --wheelhouse-path "$C28_WHEE
 
 A successful result reports the reviewed commit, predecessor, C17, application,
 directory, deployment-state, replay and audit states, Python manifest, and
-whether a separate C31 authorization can be considered. The command never
-executes C31 or grants authorization. Only after a separate explicit approval
-may the operator invoke the exact reviewed C31 entry point once from the same
-trusted tree and staging locations. No systemd, Docker, registry/OIDC, or
-deployment activation follows from this recovery; `deployment_enabled` stays
-`false`.
+whether a separate C31 authorization could be considered. The command did not
+execute C31 or grant authorization. The separately authorized C31 operation
+subsequently completed and converged. No systemd, Docker, registry/OIDC, or
+deployment activation followed; `deployment_enabled` stays `false`.
+
+## C32B read-only release consumers
+
+`release_consumer.py` adds inert fixed-route GET consumers for the exact Task 013
+zot OCI manifest digest and Forgejo Generic `release-evidence.tar.gz` package.
+The archive is bounded and restricted to the Task 013 file set. The exact
+release manifest, provenance, and signature bundles pass to an injected
+signature verifier; `promotion.verify_release_evidence()` remains the release
+policy boundary. Only after that verification does C32B project the existing
+promotion request and already-authorized GitHub identity into the existing
+canonical DEV executor request. Consumers accept distinct short-lived read
+credential types and retain neither tokens nor network results in state or audit.
+They perform no credential exchange, Docker operation, workflow activation, or
+host mutation.
+
+Task 013's published release manifest and provenance do not include the
+originating GitHub release run ID. C32B therefore requires an injected,
+independent release-run verifier to bind that ID to the exact release hashes,
+source, version, and digest before constructing a request. This PR supplies no
+live implementation of that verifier. The accepted identity policy validates
+`workflow_sha` as an exact SHA, while the current configuration does not pin it to a reviewed
+revision. Activation must add an independently reviewed revision binding and
+resolve the release-run evidence gap before treating either as live authority.
 
 ## Phase 2B2 deployment-authority and runtime contract
 
