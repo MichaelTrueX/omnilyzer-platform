@@ -35,6 +35,10 @@ __all__ = (
     "PRODUCTION_SIGSTORE_TRUSTED_ROOT_PATH",
     "COSIGN_VERSION",
     "COSIGN_BINARY_SIZE",
+    "COSIGN_TOOLS_DIRECTORY",
+    "COSIGN_TOOLS_DIRECTORY_MODE",
+    "PRODUCTION_COSIGN_PATH",
+    "COSIGN_BINARY_MODE",
 )
 
 BROKER_SERVICE_CONFIG_DIRECTORY = "/etc/omnilyzer/deployment/broker"
@@ -50,6 +54,11 @@ COSIGN_VERSION = "3.1.2"
 # Closed artifact property of the independently reviewed C32I linux/amd64 binary.
 # This is code authority, not an extra schema-1 JSON field or caller input.
 COSIGN_BINARY_SIZE = 141150460
+# C32L final static-resource metadata; never schema-1 JSON inputs.
+COSIGN_TOOLS_DIRECTORY = "/opt/omnilyzer/deployment/tools"
+COSIGN_TOOLS_DIRECTORY_MODE = 0o750
+PRODUCTION_COSIGN_PATH = COSIGN_TOOLS_DIRECTORY + "/cosign-v3.1.2-linux-amd64"
+COSIGN_BINARY_MODE = 0o540
 _ERROR = "DEV broker authority configuration is invalid"
 _SCHEMA_FIELDS = frozenset({
     "schema_version",

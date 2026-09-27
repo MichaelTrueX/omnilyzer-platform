@@ -168,9 +168,10 @@ field or a substitute for later production-composition review.
 Fixed future resources follow the existing `/opt`, `/etc` and `/run` deployment
 layout, independently of executor configuration and executor-only groups:
 
-- `/opt/omnilyzer/deployment/tools/cosign-v3.1.2-linux-amd64`: root-owned,
-  single-link regular executable, non-group/world-writable, exactly 141,150,460
-  bytes as corrected by C32J below, with the independently reviewed SHA-256;
+- `/opt/omnilyzer/deployment/tools/cosign-v3.1.2-linux-amd64`: root:broker_gid
+  mode 0540, single-link regular file, exactly 141,150,460 bytes as corrected by
+  C32J, beneath root:broker_gid mode 0750 `/opt/omnilyzer/deployment/tools`.
+  C32L below closes this metadata contract; SHA-256 remains mandatory;
 - `/etc/omnilyzer/deployment/broker/sigstore-trusted-root.json`: explicitly reviewed
   root:broker_gid mode 0640, single-link regular TrustedRoot, at most 1 MiB,
   beneath the separate root:broker_gid mode 0750 broker authority directory;
@@ -600,6 +601,73 @@ no sudo, host update, provisioning, C32D, systemd, Docker or activation occurs.
 cryptographic and real-tool qualification, dependencies, OCI/read-only registry
 authority, final host/source-set migration and live composition remain separately
 reviewed activation prerequisites.
+
+## C32L exact final Sigstore static-resource authority (repository only)
+
+`sigstore_resource_contract.DevSigstoreResourceContract(configuration=...)`
+describes future final resources without inspecting or creating anything. It
+accepts only an exact existing C32H `DevBrokerServiceConfiguration`, reconstructs
+and revalidates its schema-1 values and cached C13 installation relationship,
+and requires its version/digests to agree with C32I's closed reviewed provenance.
+It captures an independent immutable configuration and returns narrow immutable
+`directory_requirements()` and `file_requirements()` tuples. Directory metadata
+reuses C13's `HostResourceRequirement`; file requirements add exact byte size,
+SHA-256 and single-link authority. Each projection revalidates captured nested
+types/values, rejecting forged paths, metadata, identities and content authority.
+No path, mode, owner or individual GID override is accepted.
+
+| Future resource | Owner | Group | Mode | Type/content |
+| --- | --- | --- | --- | --- |
+| `/opt/omnilyzer/deployment/tools` | UID 0 | C13/C32H broker_gid | 0750 | Directory |
+| `/opt/omnilyzer/deployment/tools/cosign-v3.1.2-linux-amd64` | UID 0 | C13/C32H broker_gid | 0540 | Single-link regular file, exactly 141150460 bytes |
+| `/etc/omnilyzer/deployment/broker` | UID 0 | C13/C32H broker_gid | 0750 | Directory |
+| `/etc/omnilyzer/deployment/broker/sigstore-trusted-root.json` | UID 0 | C13/C32H broker_gid | 0640 | Single-link regular file, exactly 6787 bytes |
+
+Cosign's exact SHA-256 is
+`f7622ed3cf22e55e1ae6377c080979ff77a22da9981c11df222a2e444991e7cf`;
+TrustedRoot's exact SHA-256 is
+`6494e21ea73fa7ee769f85f57d5a3e6a08725eae1e38c755fc3517c9e6bc0b66`.
+Sizes/digests come from C32I provenance, with the executable size cross-checked
+against C32J's code authority. Closed paths/modes live in `broker_service_config`,
+shared by this future contract and the runtime verifier; they are not JSON fields.
+Schema 1 and broker/executor supplementary groups remain unchanged. The broker
+receives read access without write or replacement access; the executor does not
+receive broker_gid. `/etc/omnilyzer/deployment/dev` remains executor-only.
+
+The original executable is deliberately mode **0540**, not 0550: root retains
+read/execute, broker_gid only reads, and other users have no access. C32G opens it
+read-only, validates exact filesystem authority plus size/SHA-256, seals the same
+hashed bytes into a broker-owned executable memfd, and executes only that memfd.
+Group execute on the original pathname is unnecessary. The runtime now requires
+exact root:captured-broker_gid 0750 tools-directory and 0540 executable metadata;
+matching content cannot bypass a wrong GID or mode. TrustedRoot retains exact
+root:captured-broker_gid 0750/0640 metadata and its existing independent 1 MiB
+read ceiling plus mandatory configured SHA-256. Its future installation contract
+requires the reviewed exact 6787-byte target. No ambient group lookup selects
+either resource's group. Existing `/opt`/`/etc` ancestors remain protected
+root-owned directories. Descriptor-relative no-follow traversal, named/opened
+fingerprints, exact executable size before reading, controlled reads, post-read
+file/path revalidation and sealed execution are preserved; final directory
+metadata is also revalidated after reading. External failures retain the fixed
+blob-verification error without filesystem diagnostics.
+
+C32L adds no installer or descriptor handoff. C32K evidence grants no continuing
+path trust: a later C32M installer must independently reopen/requalify the source
+and bind the actual copied bytes, or use a separately reviewed sealed handoff,
+before creating resources under this exact contract. Artifact identity does not
+prove bundle/TUF signatures, real Cosign correctness or acceptable network
+behavior. Those remain separate qualification work.
+
+C23/C30/C31 historical provisioning resources are unchanged; C32D still has its
+exact 28-file predecessor and 31-file target. The current installed application
+source set remains 31 files; the new C32L module and existing verifier stay outside
+it. No broker JSON, Cosign, TrustedRoot, runtime directory, service or workflow is
+installed or activated; no host mutation, C32D execution, systemd, Docker, OCI
+credential or registry work occurs. `deployment_enabled` remains false. Actual
+artifact acquisition and qualification, privileged installation/final migration,
+real-tool and cryptographic qualification, dependency qualification, independent
+OCI/registry authority, live composition and GitHub protections remain activation
+blockers.
 
 ## C32D pinned post-C31 application update (repository only)
 
