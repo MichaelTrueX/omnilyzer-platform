@@ -78,14 +78,18 @@ class ForgejoProvider:
         return ForgejoReadCredential(TOKEN, NOW + 100)
 
 
-class Signatures:
-    def verify(self, manifest, provenance, manifest_bundle, provenance_bundle, image_reference):
-        if (manifest_bundle != b"bundle-manifest" or provenance_bundle != b"bundle-provenance"
-                or not image_reference.endswith("@" + json.loads(manifest)["oci"]["manifest_digest"])):
+class BlobSignatures:
+    def verify(self, manifest, provenance, manifest_bundle, provenance_bundle):
+        if manifest_bundle != b"bundle-manifest" or provenance_bundle != b"bundle-provenance":
             raise ValueError("signature mismatch")
+        return sigstore_result()
+
+
+class OCISignatures:
+    def verify(self, image_reference):
         oci = oci_signature_result()
-        oci["manifest_digest"] = json.loads(manifest)["oci"]["manifest_digest"]
-        return sigstore_result(), oci
+        oci["manifest_digest"] = image_reference.split("@", 1)[1]
+        return oci
 
 
 def manifest_bytes() -> bytes:
@@ -185,34 +189,34 @@ class ConsumerTests(unittest.TestCase):
         ingress = IngressReference.from_dict(ingress_reference())
         with self.assertRaises(TypeError):
             acquire_and_construct_dev_request(request, identity, runtime, ingress,
-                                              zot, forgejo, Signatures(), received_at=NOW)
+                                              zot, forgejo, BlobSignatures(), OCISignatures(), received_at=NOW)
         for authority in (None, True, "", "0" * 40):
             with self.subTest(authority=authority), self.assertRaises(ReleaseConsumerError):
                 acquire_and_construct_dev_request(
-                    request, identity, runtime, ingress, zot, forgejo, Signatures(),
+                    request, identity, runtime, ingress, zot, forgejo, BlobSignatures(), OCISignatures(),
                     received_at=NOW, expected_workflow_sha=authority,
                 )
         self.assertEqual(zf.calls, [])
         self.assertEqual(ff.calls, [])
         with self.assertRaises(ReleaseConsumerError):
             acquire_and_construct_dev_request(
-                request, identity, runtime, ingress, zot, forgejo, Signatures(),
+                request, identity, runtime, ingress, zot, forgejo, BlobSignatures(), OCISignatures(),
                 received_at=NOW, expected_workflow_sha=request.source_sha,
             )
 
     def test_signed_input_contains_release_run_without_network_run_authority(self):
         request, files, zot, forgejo, _, _ = setup()
-        class RecordingSignatures(Signatures):
-            def verify(self, manifest, provenance, manifest_bundle, provenance_bundle, image_reference):
+        class RecordingSignatures(BlobSignatures):
+            def verify(self, manifest, provenance, manifest_bundle, provenance_bundle):
                 self.input = (manifest, provenance, manifest_bundle, provenance_bundle)
                 return super().verify(manifest, provenance, manifest_bundle,
-                                      provenance_bundle, image_reference)
+                                      provenance_bundle)
         signatures = RecordingSignatures()
         identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         runtime = RuntimeConfigurationReference.from_dict(runtime_reference())
         ingress = IngressReference.from_dict(ingress_reference())
         acquire_and_construct_dev_request(request, identity, runtime, ingress,
-                                          zot, forgejo, signatures, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
+                                          zot, forgejo, signatures, OCISignatures(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         self.assertEqual(signatures.input[:2],
                          (files["release-manifest.json"], files["release-provenance.json"]))
         self.assertEqual(json.loads(signatures.input[1])["execution"]["run_id"],
@@ -227,9 +231,9 @@ class ConsumerTests(unittest.TestCase):
         identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         runtime = RuntimeConfigurationReference.from_dict(runtime_reference())
         ingress = IngressReference.from_dict(ingress_reference())
-        signature = Signatures()
-        first = acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, signature, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
-        second = acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, signature, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
+        signature = BlobSignatures()
+        first = acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, signature, OCISignatures(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
+        second = acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, signature, OCISignatures(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         self.assertEqual(first.canonical_bytes(), second.canonical_bytes())
         self.assertEqual(parse_canonical_request(first.canonical_bytes()), first)
         self.assertEqual(first.promotion_request_sha256, request.sha256())
@@ -341,17 +345,81 @@ class ConsumerTests(unittest.TestCase):
         ):
             changed = replace(request, **{field: value})
             with self.subTest(field=field), self.assertRaises(ReleaseConsumerError):
-                acquire_and_construct_dev_request(changed, identity, runtime, ingress, zot, forgejo, Signatures(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
+                acquire_and_construct_dev_request(changed, identity, runtime, ingress, zot, forgejo, BlobSignatures(), OCISignatures(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         class BadSignatures:
             def verify(self, *args):
                 result = sigstore_result()
                 result["provenance_verified"] = False
-                return result, oci_signature_result()
+                return result
         with self.assertRaises(ReleaseConsumerError):
-            acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, BadSignatures(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
+            acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo, BadSignatures(), OCISignatures(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         wrong_identity = replace(identity, repository_id=1)
         with self.assertRaises(ReleaseConsumerError):
-            acquire_and_construct_dev_request(request, wrong_identity, runtime, ingress, zot, forgejo, Signatures(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
+            acquire_and_construct_dev_request(request, wrong_identity, runtime, ingress, zot, forgejo, BlobSignatures(), OCISignatures(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
+
+    def test_blob_and_oci_authorities_are_independent_and_closed(self):
+        request, _, zot, forgejo, _, _ = setup()
+        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
+        runtime = RuntimeConfigurationReference.from_dict(runtime_reference())
+        ingress = IngressReference.from_dict(ingress_reference())
+        class IndependentOCI:
+            def __init__(self, result):
+                self.result, self.calls = result, []
+            def verify(self, reference):
+                self.calls.append(reference)
+                return self.result
+        class FakeBlob:
+            def __init__(self, result):
+                self.result = result
+            def verify(self, *blobs):
+                self.input = blobs
+                return self.result
+        expected = OCISignatures().verify(request.exact_image_reference)
+        for blob_result, oci_result in (
+            ((sigstore_result(), expected), expected),
+            (sigstore_result() | {"oci": expected}, expected),
+            (sigstore_result(), expected | {"manifest_digest": "sha256:" + "a" * 64}),
+            (sigstore_result(), expected | {"repository": "other/repository"}),
+            (sigstore_result(), expected | {"verified": 1}),
+            (sigstore_result(), expected | {"certificate_identity": "wildcard"}),
+            (sigstore_result(), expected | {"issuer": "other"}),
+            (sigstore_result(), None),
+        ):
+            blob, oci = FakeBlob(blob_result), IndependentOCI(oci_result)
+            with self.subTest(blob=blob_result, oci=oci_result), self.assertRaises(ReleaseConsumerError):
+                acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo,
+                                                  blob, oci, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
+            self.assertEqual(oci.calls, [request.exact_image_reference])
+            self.assertEqual(len(blob.input), 4)
+            self.assertTrue(all(type(raw) is bytes for raw in blob.input))
+
+    def test_hash_mismatch_rejected_before_signatures_and_rechecked_after(self):
+        request, _, zot, forgejo, _, _ = setup()
+        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
+        runtime = RuntimeConfigurationReference.from_dict(runtime_reference())
+        ingress = IngressReference.from_dict(ingress_reference())
+        class Never:
+            def verify(self, *args):
+                raise AssertionError("signature verifier must not run")
+        from unittest.mock import patch
+        for name in ("release_manifest_sha256", "provenance_sha256"):
+            with self.subTest(name=name), patch.object(Never, 'verify') as signature:
+                with self.assertRaises(ReleaseConsumerError):
+                    acquire_and_construct_dev_request(replace(request, **{name: "a" * 64}),
+                        identity, runtime, ingress, zot, forgejo, Never(), Never(),
+                        received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
+                signature.assert_not_called()
+        # The policy still independently rehashes, even after successful claims.
+        from deployment.promotion import verify_release_evidence
+        from deployment.policy import DeploymentPolicyError
+        files = forgejo.acquire(request, now=NOW)
+        for manifest, provenance in (
+            (files['release-manifest.json'] + b' ', files['release-provenance.json']),
+            (files['release-manifest.json'], files['release-provenance.json'] + b' '),
+        ):
+            with self.assertRaises(DeploymentPolicyError):
+                verify_release_evidence(request, manifest, provenance, sigstore_result(),
+                                        OCISignatures().verify(request.exact_image_reference))
 
     def test_repository_inertness(self):
         source = (ROOT / "deployment/release_consumer.py").read_text()

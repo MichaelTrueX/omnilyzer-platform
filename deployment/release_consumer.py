@@ -97,17 +97,22 @@ class ForgejoCredentialProvider(Protocol):
     def forgejo_read_credential(self) -> ForgejoReadCredential: ...
 
 
-class ReleaseSignatureVerifier(Protocol):
-    """Cryptographically verify the supplied exact blobs and exact OCI reference.
-
-    The returned closed results are consumed by promotion.verify_release_evidence.
-    A production implementation and its authority are a later reviewed phase.
-    """
+class ReleaseBlobSignatureVerifier(Protocol):
+    """Verify only the two exact Task 013 blobs and corresponding bundles."""
 
     def verify(
         self, manifest: bytes, provenance: bytes, manifest_bundle: bytes,
-        provenance_bundle: bytes, image_reference: str,
-    ) -> tuple[dict[str, Any], dict[str, Any]]: ...
+        provenance_bundle: bytes,
+    ) -> dict[str, Any]: ...
+
+
+class OCISignatureVerifier(Protocol):
+    """Separate unresolved authority for the exact repository@digest signature.
+
+    C32G supplies no registry implementation or credential.
+    """
+
+    def verify(self, image_reference: str) -> dict[str, Any]: ...
 
 
 def _credential(value: object, expected_type: type, now: int) -> str:
@@ -504,7 +509,7 @@ def acquire_and_construct_dev_request(
     promotion: PromotionRequest, identity: AuthorizedGitHubIdentity,
     runtime: RuntimeConfigurationReference, ingress: IngressReference,
     zot: ZotCandidateConsumer, forgejo: ForgejoEvidenceConsumer,
-    signatures: ReleaseSignatureVerifier,
+    blob_signatures: ReleaseBlobSignatureVerifier, oci_signatures: OCISignatureVerifier,
     *, received_at: int, expected_workflow_sha: str,
 ) -> ExecutorRequest:
     """Acquire exact bytes, verify them, then construct one canonical request."""
@@ -516,16 +521,22 @@ def acquire_and_construct_dev_request(
     promotion = _promotion(promotion)
     if type(zot) is not ZotCandidateConsumer or type(forgejo) is not ForgejoEvidenceConsumer:
         raise ReleaseConsumerError(ERROR)
+    if blob_signatures is oci_signatures:
+        raise ReleaseConsumerError(ERROR)
     failed = False
     try:
         zot.acquire(promotion, now=received_at)
         evidence = forgejo.acquire(promotion, now=received_at)
         manifest = evidence["release-manifest.json"]
         provenance = evidence["release-provenance.json"]
-        sigstore, oci = signatures.verify(
+        if (hashlib.sha256(manifest).hexdigest() != promotion.release_manifest_sha256
+                or hashlib.sha256(provenance).hexdigest() != promotion.provenance_sha256):
+            raise ReleaseConsumerError(ERROR)
+        sigstore = blob_signatures.verify(
             manifest, provenance, evidence["release-manifest.sigstore.json"],
-            evidence["release-provenance.sigstore.json"], promotion.exact_image_reference,
+            evidence["release-provenance.sigstore.json"],
         )
+        oci = oci_signatures.verify(promotion.exact_image_reference)
         trusted = verify_release_evidence(promotion, manifest, provenance, sigstore, oci)
         result = _construct_dev_request(
             promotion, trusted, identity, runtime, ingress, received_at=received_at,

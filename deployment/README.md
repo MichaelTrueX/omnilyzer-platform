@@ -60,7 +60,7 @@ deployment activation followed; `deployment_enabled` stays `false`.
 zot OCI manifest digest and Forgejo Generic `release-evidence.tar.gz` package.
 The archive is bounded and restricted to the Task 013 file set. The exact
 release manifest, provenance, and signature bundles pass to an injected
-signature verifier; `promotion.verify_release_evidence()` remains the release
+blob verifier and a separate OCI verifier (C32G); `promotion.verify_release_evidence()` remains the release
 policy boundary. Only after that verification does C32B project the existing
 promotion request and already-authorized GitHub identity into the existing
 canonical DEV executor request. Consumers accept distinct short-lived read
@@ -98,8 +98,8 @@ activated, or live validated. The handler has no listener, service entrypoint,
 credential exchange, or production composition. Read credentials should remain
 inside the future unprivileged environment-local broker, separately scoped for
 zot and Forgejo; they must not be given to arbitrary GitHub workflow code.
-The real Sigstore/OCI verifier requires a separately reviewed trust-root and
-verification design. The signed Task 013 schema 2 provenance replaces the
+C32G provides the concrete blob boundary described below. Its installation and
+real-Cosign qualification, and the separate OCI verifier, remain uncompleted. The signed Task 013 schema 2 provenance replaces the
 separate release-run verifier; the promotion's run ID alone remains insufficient.
 Before activation, a reviewed authority must supply the approved deployment
 workflow revision independently of the token and request. No current main
@@ -136,6 +136,126 @@ C32D now reviews `broker_integration.py`, `release_consumer.py` and the former's
 `oidc_verifier.py` import into the target source set. The installed C31 tree is
 still the exact 28-file predecessor. The pinned, inert C32D update code below
 has not run on DEV. Deployment activation remains prohibited.
+
+## C32G concrete signed release blob boundary (repository only)
+
+`blob_verifier.CosignReleaseBlobVerifier` verifies only Task 013's exact
+`release-manifest.json` / `release-manifest.sigstore.json` and
+`release-provenance.json` / `release-provenance.sigstore.json` pairs. The consumer
+rehashes both blobs against `PromotionRequest` before either signature authority
+runs. It passes their unchanged bytes to the blob verifier, invokes the independent
+`OCISignatureVerifier` with the exact approved repository@digest, and retains
+`promotion.verify_release_evidence()` as the independent closed-result, hash,
+signed-execution and exact-image policy boundary. Blob claims cannot supply OCI
+claims. The inert handler captures both non-property bound operations at
+construction and rejects using the same collaborator for both. This intentionally
+replaces the combined injected signature API;
+all repository callers are updated, with no installed/live composition change.
+
+The concrete verifier requires these independent, reviewed future authority
+inputs at construction, without defaults: exact version `3.1.2`, binary SHA-256,
+Sigstore TrustedRoot SHA-256, and positive numeric broker UID/GID. No production
+binary or root digest is invented here. A later root-controlled authority must
+supply and qualify them independently of release evidence, a request, current
+HEAD, environment variables and the invoking user's caches. Supplying the version
+string is a contract assertion backed by the independently qualified binary
+hash; these tests do not establish that an installed binary is actually 3.1.2.
+No caller can select executable, root, runtime, certificate identity or issuer
+paths/values. Authority and the captured command-runner operation are immutable.
+A constructor-injected runner is an explicit trusted testing seam, not a request
+field or a substitute for later production-composition review.
+
+Fixed future resources follow the existing `/opt`, `/etc` and `/run` deployment
+layout, independently of executor configuration and executor-only groups:
+
+- `/opt/omnilyzer/deployment/tools/cosign-v3.1.2-linux-amd64`: root-owned,
+  single-link regular executable, non-group/world-writable, at most 128 MiB;
+- `/etc/omnilyzer/deployment/dev/sigstore-trusted-root.json`: explicitly reviewed
+  root-owned, single-link regular TrustedRoot, non-group/world-writable, at most
+  1 MiB;
+- `/run/omnilyzer/deployment/dev/blob-verifier`: broker UID/GID owned, mode 0700,
+  with root-owned non-group/world-writable ancestors. It is exclusive to the
+  broker's verifier, with no untrusted local process sharing that UID or directory.
+
+C32G creates none of these resources. Construction/import does no host I/O.
+Verification requires the exact non-root real/effective broker UID/GID. Files and
+ancestors are opened descriptor-relatively with `O_NOFOLLOW`, regular-file type,
+link/owner/mode/size checks, named/opened metadata comparison and revalidation.
+Binary and TrustedRoot bytes are hash-checked and copied into sealed Linux
+anonymous regular files. Cosign executes/reads those immutable snapshots through
+inherited `/proc/self/fd` descriptors, closing both pathname replacement and
+in-place-write TOCTOU. Unsupported sealing, descriptor execution or procfs fails
+closed. The later installation qualification must exercise this exact Linux
+execution contract with real Cosign 3.1.2; deterministic fakes do not prove it.
+
+Each invocation's argv is exactly:
+
+```text
+/opt/omnilyzer/deployment/tools/cosign-v3.1.2-linux-amd64 verify-blob
+  --bundle /proc/self/fd/<sealed-bundle-fd>
+  --trusted-root /proc/self/fd/<sealed-reviewed-root-fd>
+  --certificate-identity https://github.com/MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  -
+```
+
+`Popen(executable=/proc/self/fd/<sealed-binary-fd>)` binds execution to the hashed
+snapshot while argv names the fixed reviewed installation. The exact blob is
+stdin, bounded at the existing 2 MiB evidence ceiling; all four input types and
+sizes are checked before I/O. Both invocations must succeed, manifest first.
+There is no shell, PATH lookup, key/KMS/remote-key option, identity/issuer regex,
+or transparency-log/certificate-transparency bypass. The explicit TrustedRoot
+is required; ambient HOME/TUF/cache authority and automatic latest-root selection
+are not supported. Network behavior and the supplied root must be qualified with
+real signed evidence before activation; no network validation is claimed here.
+
+Bundle bytes are staged using exclusive random filenames in a new mode-0700
+request directory beneath the descriptor-anchored private runtime, never shared
+`/tmp` or a caller directory/name. Files are mode 0600, single-link regular files;
+named/opened metadata and exact contents are checked. The on-disk entry is
+unlinked before executing Cosign. Its exact bytes become a sealed mode-0600
+anonymous regular file, which provides Cosign's required file path through
+`/proc/self/fd`; no writable bundle pathname reaches the child. Staging symlink
+and hardlink substitution fails closed. The request directory is also opened with
+`O_NOFOLLOW`; its exact broker ownership/mode and named/opened identity are checked,
+and a held descriptor anchors bundle staging and child HOME/XDG access. All
+descriptors are closed and the
+request directory removed using symlink-resistant cleanup before any result is
+returned. Cleanup failure rejects the request; filesystem failure may require
+later operator recovery of the private runtime, never trusting a partial result.
+That recovery/monitoring and runtime lifecycle belong to installation review.
+
+The child receives only private request HOME/XDG paths and `LANG=C`, `LC_ALL=C`,
+with no inherited proxy, cloud, Docker, Kubernetes, Cosign/Sigstore or other
+invoking-user environment. Each child has a 30-second deadline, bounded stdin,
+and separately limited stdout/stderr (64 KiB each), drained concurrently without
+retaining their contents. Child groups are terminated and reaped on exit/failure.
+No stdout identity parsing occurs: only after both successes and successful
+cleanup does the verifier return the four exact policy fields required by
+`verify_release_evidence`. Invalid types/results, unavailable processes,
+nonzero exits, timeouts, excess output and cleanup errors produce one fixed
+external `BlobVerificationError`, with no diagnostics/evidence/paths attached.
+Control-flow exceptions retain their existing propagation convention.
+
+OCI verification remains an injected protocol only: C32G adds no registry
+signature implementation, Docker call, credential, token exchange or service
+entrypoint. The concrete blob module remains outside the 31-file C25/C26
+application source set. Historical C32D's exact 28-file predecessor and 31-file
+target are unchanged. A separately reviewed final pre-activation source-set
+migration must add the module and qualify the final application generation;
+C32D is not executed by this work. The installed application may remain behind
+main. No host migration, omnilyzerdev update, live service or activation occurs;
+`deployment_enabled` remains false.
+
+Deterministic tests exercise actual fake subprocesses, sealed executable/root/
+bundle descriptors, exact argv/stdin, environment exclusion, size/time bounds,
+substitution rejection, cleanup failure and independent closed OCI claims.
+They establish boundary behavior only, not real Sigstore cryptographic validity.
+Cosign 3.1.2 and real Task 013 signed blob/bundle evidence are unavailable locally;
+no binary is downloaded to satisfy validation. Real qualification remains an
+activation blocker. The existing development Python dependency qualification
+failure also remains: cffi/pycparser metadata missing, PyJWT 2.7.0 rather than
+2.13.0, and cryptography 41.0.7 rather than 50.0.1. Reviewed policy is unchanged.
 
 ## C32D pinned post-C31 application update (repository only)
 

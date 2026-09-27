@@ -7,7 +7,7 @@ does not call any collaborator or create installation/activation authority.
 
 from __future__ import annotations
 
-from .broker import BrokerRejectedError, REJECTED_MESSAGE, RestrictedDeploymentBroker
+from .broker import BrokerRejectedError, REJECTED_MESSAGE, RestrictedDeploymentBroker, _bound_operation
 from .execution import ExecutorRequest, IngressReference, RuntimeConfigurationReference
 from .identity import AuthorizedGitHubIdentity, validate_expected_workflow_sha
 from .jwks import OIDCVerificationError, parse_bounded_json
@@ -15,7 +15,7 @@ from .oidc_verifier import MAX_COMPACT_TOKEN_BYTES
 from .policy import DeploymentPolicyError
 from .promotion import PromotionRequest
 from .release_consumer import (
-    ForgejoEvidenceConsumer, ReleaseSignatureVerifier,
+    ForgejoEvidenceConsumer, ReleaseBlobSignatureVerifier, OCISignatureVerifier,
     ZotCandidateConsumer, acquire_and_construct_dev_request,
 )
 
@@ -23,18 +23,40 @@ from .release_consumer import (
 MAX_PROMOTION_REQUEST_BYTES = 4096
 
 
+class _CapturedSignature:
+    """Capture a non-property bound operation without invoking it."""
+
+    __slots__ = ("_verify",)
+
+    def __init__(self, collaborator: object) -> None:
+        object.__setattr__(self, "_verify", _bound_operation(collaborator, "verify"))
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("signature authority is immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("signature authority is immutable")
+
+    def verify(self, *args: object) -> object:
+        return object.__getattribute__(self, "_verify")(*args)
+
+
 class _ReleaseRequestBuilder:
-    __slots__ = ("_zot", "_forgejo", "_signatures", "_runtime", "_ingress",
+    __slots__ = ("_zot", "_forgejo", "_blob_signatures", "_oci_signatures", "_runtime", "_ingress",
                  "_expected_workflow_sha")
 
     def __init__(
         self, *, zot: ZotCandidateConsumer, forgejo: ForgejoEvidenceConsumer,
-        signatures: ReleaseSignatureVerifier, expected_workflow_sha: str,
+        blob_signatures: ReleaseBlobSignatureVerifier, oci_signatures: OCISignatureVerifier,
+        expected_workflow_sha: str,
         runtime: RuntimeConfigurationReference, ingress: IngressReference,
     ) -> None:
+        if blob_signatures is oci_signatures:
+            raise TypeError("blob and OCI signature authorities must be independent")
         object.__setattr__(self, "_zot", zot)
         object.__setattr__(self, "_forgejo", forgejo)
-        object.__setattr__(self, "_signatures", signatures)
+        object.__setattr__(self, "_blob_signatures", _CapturedSignature(blob_signatures))
+        object.__setattr__(self, "_oci_signatures", _CapturedSignature(oci_signatures))
         object.__setattr__(self, "_expected_workflow_sha",
                            validate_expected_workflow_sha(expected_workflow_sha))
         object.__setattr__(self, "_runtime", runtime)
@@ -52,7 +74,7 @@ class _ReleaseRequestBuilder:
     ) -> ExecutorRequest:
         return acquire_and_construct_dev_request(
             promotion, identity, self._runtime, self._ingress,
-            self._zot, self._forgejo, self._signatures,
+            self._zot, self._forgejo, self._blob_signatures, self._oci_signatures,
             received_at=received_at,
             expected_workflow_sha=object.__getattribute__(self, "_expected_workflow_sha"),
         )
@@ -66,11 +88,13 @@ class InertDevPromotionHandler:
     def __init__(
         self, *, verifier: object, replay_guard: object, transport: object,
         zot: ZotCandidateConsumer, forgejo: ForgejoEvidenceConsumer,
-        signatures: ReleaseSignatureVerifier, expected_workflow_sha: str,
+        blob_signatures: ReleaseBlobSignatureVerifier, oci_signatures: OCISignatureVerifier,
+        expected_workflow_sha: str,
         runtime: RuntimeConfigurationReference, ingress: IngressReference,
     ) -> None:
         builder = _ReleaseRequestBuilder(
-            zot=zot, forgejo=forgejo, signatures=signatures,
+            zot=zot, forgejo=forgejo, blob_signatures=blob_signatures,
+            oci_signatures=oci_signatures,
             runtime=runtime, ingress=ingress,
             expected_workflow_sha=expected_workflow_sha,
         )

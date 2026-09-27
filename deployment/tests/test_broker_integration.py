@@ -18,14 +18,14 @@ from deployment.tests.test_broker import Replay, Transport, Verifier
 from deployment.tests.test_execution import ingress_reference, runtime_reference
 from deployment.tests.test_execution import valid_request
 from deployment.tests.test_identity import NOW, WORKFLOW_SHA, valid_claims
-from deployment.tests.test_release_consumer import Signatures, setup
+from deployment.tests.test_release_consumer import BlobSignatures, OCISignatures, setup
 
 
 ROOT = Path(__file__).resolve().parents[2]
 TOKEN = "exact.compact.token"
 
 
-def fixture(*, verifier=None, replay=None, transport=None, signatures=None,
+def fixture(*, verifier=None, replay=None, transport=None, blob_signatures=None, oci_signatures=None,
             runtime=None, ingress=None, expected_workflow_sha=WORKFLOW_SHA):
     promotion, _, zot, forgejo, zot_factory, forgejo_factory = setup()
     selected_verifier = verifier or Verifier()
@@ -35,7 +35,8 @@ def fixture(*, verifier=None, replay=None, transport=None, signatures=None,
         expected_workflow_sha=expected_workflow_sha,
         verifier=selected_verifier, replay_guard=selected_replay,
         transport=selected_transport, zot=zot, forgejo=forgejo,
-        signatures=signatures or Signatures(),
+        blob_signatures=blob_signatures or BlobSignatures(),
+        oci_signatures=oci_signatures or OCISignatures(),
         runtime=runtime or RuntimeConfigurationReference.from_dict(runtime_reference()),
         ingress=ingress or IngressReference.from_dict(ingress_reference()),
     )
@@ -138,7 +139,7 @@ class IntegrationTests(unittest.TestCase):
             def verify(self, *args):
                 raise ValueError("secret-credential-text")
 
-        handler, promotion, _, replay, transport, _, _ = fixture(signatures=BadSignature())
+        handler, promotion, _, replay, transport, _, _ = fixture(blob_signatures=BadSignature())
         with self.assertRaises(BrokerUnavailableError) as raised:
             invoke(handler, promotion)
         self.assertNotIn("secret-credential-text", str(raised.exception))
@@ -222,6 +223,23 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(len(transport.calls), 1)
             self.assertFalse(hasattr(replay, "reset"))
 
+    def test_signature_operations_captured_without_property_or_replacement(self):
+        blob, oci = BlobSignatures(), OCISignatures()
+        with self.assertRaises(TypeError):
+            fixture(blob_signatures=blob, oci_signatures=blob)
+        handler, promotion, _, _, transport, _, _ = fixture(blob_signatures=blob, oci_signatures=oci)
+        blob.verify = lambda *args: self.fail("replacement blob operation invoked")
+        oci.verify = lambda *args: self.fail("replacement OCI operation invoked")
+        invoke(handler, promotion)
+        self.assertEqual(len(transport.calls), 1)
+        class PropertySignature:
+            @property
+            def verify(self):
+                raise AssertionError("property must not be evaluated")
+        for options in ({"blob_signatures": PropertySignature()}, {"oci_signatures": PropertySignature()}):
+            with self.subTest(options=options), self.assertRaises(TypeError):
+                fixture(**options)
+
     def test_inert_repository_contract(self):
         source = (ROOT / "deployment/broker_integration.py").read_text()
         broker_source = (ROOT / "deployment/broker.py").read_text()
@@ -237,9 +255,12 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(set(json.loads((ROOT / "deployment/environments/dev.json").read_text())["activation"]),
                          {"deployment_enabled", "verified_at"})
         self.assertIs(json.loads((ROOT / "deployment/environments/dev.json").read_text())["activation"]["deployment_enabled"], False)
-        self.assertIn("deployment/broker_integration.py", [item.repository_path for item in __import__(
+        selection = [item.repository_path for item in __import__(
             "deployment.application_source_set", fromlist=["DevApplicationSourceSet"]
-        ).DevApplicationSourceSet().files])
+        ).DevApplicationSourceSet().files]
+        self.assertIn("deployment/broker_integration.py", selection)
+        self.assertEqual(len(selection), 31)
+        self.assertNotIn("deployment/blob_verifier.py", selection)
 
 
 if __name__ == "__main__":
