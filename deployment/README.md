@@ -527,6 +527,80 @@ signature qualification, real Cosign/root/network qualification, dependency
 qualification, final host/source-set migration and live composition still require
 separate review before activation.
 
+## C32K staged Sigstore toolchain identity qualification (repository only)
+
+`sigstore_toolchain_qualification.qualify_dev_sigstore_toolchain(*,
+staging_directory)` is an explicit read-only pre-installation boundary. The only
+input is one canonical absolute dedicated directory; filenames, version, sizes
+and SHA-256 values come from revalidated C32I provenance. The Cosign version/size
+also must agree with C32J's closed code authority. No individual file path,
+filename, expected hash/size, URL or environment override is accepted.
+
+The complete directory entry set must be exactly:
+
+| Staged filename | Exact size | Exact SHA-256 |
+| --- | --- | --- |
+| `cosign-linux-amd64` | `141150460` | `f7622ed3cf22e55e1ae6377c080979ff77a22da9981c11df222a2e444991e7cf` |
+| `sigstore-public-good-trusted-root.json` | `6787` | `6494e21ea73fa7ee769f85f57d5a3e6a08725eae1e38c755fc3517c9e6bc0b66` |
+
+This is unprivileged staging: real/effective UID and GID must agree and be
+nonzero. The final directory must belong to that UID/GID at mode 0700. Both
+files must belong to that UID/GID, be single-link regular files, and have mode
+0400 or 0600. No executable permission is needed: qualification never executes
+the binary. Ancestors must belong to root or the staging UID and deny group/world
+writes, except root-owned sticky shared directories such as `/tmp`, whose sticky
+semantics protect owned children. Other writable or foreign-owned ancestors are
+rejected. Root and processes sharing the staging UID remain trusted for this
+observation; this is not protection against a malicious same-UID writer.
+
+The boundary reuses C28's strict stat, descriptor ownership, flag, fingerprint,
+revalidation and cleanup helpers and follows C28/C31P's bounded hashing pattern.
+Traversal starts at `/`, retaining read-only `O_DIRECTORY`, `O_NOFOLLOW`,
+`O_CLOEXEC` directory descriptors. Both fixed files are opened descriptor-relative
+read-only with `O_NOFOLLOW`, `O_CLOEXEC` and `O_NONBLOCK`. Complete named/opened
+fingerprints must agree. Exact built-in integer size is checked before hashing;
+SHA-256 then streams from that same descriptor in chunks no larger than 64 KiB,
+without accumulating the executable. Exact byte count and typed EOF are required.
+Each file is rechecked immediately, and both files, the complete bounded entry
+set, all named/opened directory fingerprints and process identity are rechecked
+before evidence is constructed. All owned descriptors close deterministically;
+cleanup failure prevents success. Ordinary failures expose only
+`DEV Sigstore toolchain qualification is unavailable`, without raw diagnostics.
+
+The TrustedRoot candidate is bound to the same exact size/SHA-256 as C32I's
+retained `deployment/provenance/sigstore-public-good-trusted-root.json`; tests
+verify that retained file's bytes against the shared authority. Qualification
+never opens a mutable repository path to decide trust. This establishes pinned
+artifact identity, not TUF signature-chain verification, Cosign bundle signature
+verification, executable correctness, or acceptable real-tool network behavior.
+No refresh, download, upstream lookup, network, subprocess or Cosign execution
+occurs. Synthetic streaming fixtures and mocked production-size metadata do not
+claim that the real Cosign executable was supplied or qualified.
+
+Returned frozen/slotted `DevSigstoreToolchainEvidence` contains the canonical
+staging directory, captured UID/GID and directory fingerprint, Cosign version,
+and two immutable filename/size/SHA-256/file-fingerprint records. It contains no
+raw bytes, secrets or live descriptors. Evidence can be constructed/revalidated
+without I/O and is an observation, not an installation capability.
+
+**Future handoff:** all descriptors are closed before this public API returns;
+no continued path trust is claimed. A separately reviewed privileged installer
+must independently reopen and requalify its source, then copy/hash from the same
+held source descriptor into a private root-controlled or sealed snapshot and
+install only the exact copied bytes whose digest was verified. Reopening a path
+and trusting this old evidence is prohibited; retaining a descriptor alone also
+does not defeat in-place writes. C32K provides no privileged handoff or installer.
+
+The new qualification module remains outside the current 31-file installed source
+set. C32D's historical 28-file predecessor and 31-file target, C32H schema 1,
+C32G/C32J runtime paths and contracts, retained evidence and workflows are
+unchanged. No final `/opt`, `/etc` or runtime resources are created or modified;
+no sudo, host update, provisioning, C32D, systemd, Docker or activation occurs.
+`deployment_enabled` remains false. Real artifact acquisition/identity checking,
+cryptographic and real-tool qualification, dependencies, OCI/read-only registry
+authority, final host/source-set migration and live composition remain separately
+reviewed activation prerequisites.
+
 ## C32D pinned post-C31 application update (repository only)
 
 `dev_post_c31_application_update.py` binds the installed predecessor commit
