@@ -202,11 +202,27 @@ class RetainedEvidenceTests(unittest.TestCase):
                 self.assertEqual((len(raw), hashlib.sha256(raw).hexdigest()), expected[name])
                 self.assertLess(len(raw), 8192)
 
-    def test_exact_trusted_root_and_targets_git_blobs(self):
-        for name, expected in (('trusted_root', ROOT_BLOB), ('targets_metadata', TARGETS_BLOB)):
-            raw = self.raw[name]
-            header = b'blob ' + str(len(raw)).encode() + b'\0'
-            self.assertEqual(hashlib.sha1(header + raw).hexdigest(), expected)
+    def test_git_blob_ids_remain_externally_reviewed_provenance(self):
+        root = review.review_retained_sigstore_authority(**self.raw).trusted_root
+        self.assertEqual(root.target_git_blob_sha, ROOT_BLOB)
+        self.assertEqual(root.metadata_git_blob_sha, TARGETS_BLOB)
+
+    def test_content_integrity_boundary_receives_only_size_and_sha256(self):
+        self.assertEqual(tuple(inspect.signature(review._exact_bytes).parameters),
+                         ('raw', 'size', 'sha256'))
+        c, r = self.authority.cosign, self.authority.trusted_root
+        with patch.object(review, '_exact_bytes', wraps=review._exact_bytes) as validate:
+            self.assertEqual(review.review_retained_sigstore_authority(**self.raw), self.authority)
+        self.assertEqual([item.args for item in validate.call_args_list], [
+            (self.raw['trusted_root'], r.target_size, r.target_sha256),
+            (self.raw['targets_metadata'], r.metadata_size, r.metadata_sha256),
+            (self.raw['checksums'], c.checksums_size, c.checksums_sha256),
+            (self.raw['binary_bundle'], c.bundle_size, c.bundle_sha256),
+            (self.raw['checksums_bundle'], c.checksums_bundle_size, c.checksums_bundle_sha256),
+        ])
+        operations = {node.attr for node in ast.walk(ast.parse(inspect.getsource(review)))
+                      if isinstance(node, ast.Attribute)}
+        self.assertTrue(operations.isdisjoint({'target_git_blob_sha', 'metadata_git_blob_sha'}))
 
     def test_signed_targets_record_matches_retained_target_bytes(self):
         value = json.loads(self.raw['targets_metadata'])
@@ -357,6 +373,27 @@ class RetainedEvidenceTests(unittest.TestCase):
 
 
 class SeparationTests(unittest.TestCase):
+    def test_c32i_python_has_no_sha1_hashing_operation(self):
+        # Scoped to C32I; legacy Git handling elsewhere is outside this contract.
+        for path in (Path(provenance.__file__), Path(review.__file__), Path(__file__)):
+            tree = ast.parse(path.read_text())
+            with self.subTest(path=path.name):
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Attribute):
+                        self.assertNotEqual(node.attr.lower(), 'sha1')
+                    elif isinstance(node, ast.Name):
+                        self.assertNotEqual(node.id.lower(), 'sha1')
+                    elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                        for alias in node.names:
+                            self.assertNotEqual(alias.name.lower().split('.')[-1], 'sha1')
+                    elif (isinstance(node, ast.Call)
+                          and ((isinstance(node.func, ast.Attribute) and node.func.attr == 'new')
+                               or (isinstance(node.func, ast.Name) and node.func.id in {'new', 'getattr'}))):
+                        # Reject algorithm selection through hashlib.new/getattr too.
+                        for argument in (*node.args, *(item.value for item in node.keywords)):
+                            if isinstance(argument, ast.Constant) and type(argument.value) is str:
+                                self.assertNotEqual(argument.value.lower().replace('-', ''), 'sha1')
+
     def test_no_network_ambient_updates_mutation_or_credentials(self):
         for module in (provenance, review):
             source = Path(module.__file__).read_text()

@@ -149,14 +149,9 @@ def _json(raw: bytes) -> dict:
     )
 
 
-def _exact_bytes(raw: object, size: int, sha256: str, git_blob: str | None = None) -> None:
+def _exact_bytes(raw: object, size: int, sha256: str) -> None:
     if type(raw) is not bytes or len(raw) != size or _hashlib.sha256(raw).hexdigest() != sha256:
         raise ValueError
-    if git_blob is not None:
-        # Git object identity only; SHA-256 above binds the trusted exact content.
-        header = b"blob " + str(size).encode("ascii") + b"\0"
-        if _hashlib.sha1(header + raw).hexdigest() != git_blob:
-            raise ValueError
 
 
 def _review_targets(value: object, trusted_root: bytes, authority: object) -> None:
@@ -208,8 +203,8 @@ def review_retained_sigstore_authority(
     try:
         reviewed = _DevSigstoreVerificationProvenance()
         root, cosign = reviewed.trusted_root, reviewed.cosign
-        _exact_bytes(trusted_root, root.target_size, root.target_sha256, root.target_git_blob_sha)
-        _exact_bytes(targets_metadata, root.metadata_size, root.metadata_sha256, root.metadata_git_blob_sha)
+        _exact_bytes(trusted_root, root.target_size, root.target_sha256)
+        _exact_bytes(targets_metadata, root.metadata_size, root.metadata_sha256)
         _exact_bytes(checksums, cosign.checksums_size, cosign.checksums_sha256)
         _exact_bytes(binary_bundle, cosign.bundle_size, cosign.bundle_sha256)
         _exact_bytes(checksums_bundle, cosign.checksums_bundle_size, cosign.checksums_bundle_sha256)

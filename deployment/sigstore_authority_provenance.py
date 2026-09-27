@@ -4,7 +4,10 @@ These values were independently reviewed from the official pinned repositories
 and release APIs. GitHub's tag verification status is retained review evidence,
 not an offline signature verification claim. Import/construction/projection do
 no I/O, fetch/update no trust state, and supply no workflow revision or activation.
-Retained signed targets metadata is not a complete TUF trust-chain verification.
+Git blob IDs are externally reviewed upstream provenance identifiers, not content
+integrity authority. Exact byte length and SHA-256 bind retained evidence; C32I
+does not recompute Git's legacy SHA-1 object identifiers. Retained signed targets
+metadata is not a complete TUF trust-chain verification.
 """
 
 from dataclasses import dataclass as _dataclass, field as _field

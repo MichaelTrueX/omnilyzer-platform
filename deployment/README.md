@@ -411,11 +411,15 @@ TrustedRoot authority comes from the [pinned root-signing repository state](http
 | Targets size / SHA-256 | `4942` / `6a697f7f8908c8ab26c11786ecb490b54acec97fa8c802e399f065f8a0cc1acd` |
 | Targets role version / expiration | `14` / `2036-05-09T09:00:52Z` |
 
-Both files were retrieved using the exact commit. Their Git object identities
-were independently calculated from the exact bytes and checked against the
-upstream tree API. The signed metadata's `trusted_root.json` target record was
-then cross-checked against the retrieved target's exact size and SHA-256. Neither
-file was normalized, reformatted, minified or reserialized.
+Both files were retrieved using the exact commit. Their Git blob identifiers
+were independently obtained and rechecked against the pinned upstream GitHub
+tree API during C32I review. Git repositories historically use SHA-1 object
+identifiers; these values are retained only as externally reviewed upstream
+provenance identifiers. Omnilyzer does not rely on them for integrity or security
+and does not recompute SHA-1 in C32I. Retained evidence integrity is enforced
+using exact byte length and SHA-256. The signed metadata's `trusted_root.json`
+target record was cross-checked against the retrieved target's exact size and
+SHA-256. Neither file was normalized, reformatted, minified or reserialized.
 
 Five exact public evidence files are retained under `deployment/provenance/`:
 
@@ -431,9 +435,10 @@ secret, private key or registry credential.
 
 `sigstore_authority_review.review_retained_sigstore_authority()` is a pure
 review/build-time function accepting only the five exact byte strings. It opens
-no path and performs no I/O. Exact size/SHA-256 and target/metadata Git identities
-are checked before C1's existing duplicate-key/nonfinite/depth/node/string/array
-bounded JSON parser is used. Closed structural checks require the legacy Sigstore
+no path and performs no I/O. Exact byte size and SHA-256 for all five retained
+evidence files are checked before C1's existing bounded JSON parser rejects
+duplicate keys, nonfinite numbers and excessive depth, nodes, strings or arrays.
+Closed structural checks require the legacy Sigstore
 TrustedRoot media type `application/vnd.dev.sigstore.trustedroot+json;version=0.1`,
 the reviewed Rekor v1/v2, Fulcio, certificate-transparency and timestamp service
 records, valid base64/DER-sequence envelopes, declared algorithms and validity
