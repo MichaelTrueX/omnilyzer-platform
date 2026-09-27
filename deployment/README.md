@@ -155,9 +155,9 @@ all repository callers are updated, with no installed/live composition change.
 The concrete verifier requires these independent, reviewed future authority
 inputs at construction, without defaults: exact version `3.1.2`, binary SHA-256,
 Sigstore TrustedRoot SHA-256, and positive numeric broker UID/GID. No production
-binary or root digest is invented here. A later root-controlled authority must
-supply and qualify them independently of release evidence, a request, current
-HEAD, environment variables and the invoking user's caches. Supplying the version
+binary or root digest is invented here. C32H transports these inputs through a
+separate root-controlled broker configuration; later installation work must supply
+and qualify them independently of release evidence, a request, current HEAD, environment variables and the invoking user's caches. Supplying the version
 string is a contract assertion backed by the independently qualified binary
 hash; these tests do not establish that an installed binary is actually 3.1.2.
 No caller can select executable, root, runtime, certificate identity or issuer
@@ -170,9 +170,9 @@ layout, independently of executor configuration and executor-only groups:
 
 - `/opt/omnilyzer/deployment/tools/cosign-v3.1.2-linux-amd64`: root-owned,
   single-link regular executable, non-group/world-writable, at most 128 MiB;
-- `/etc/omnilyzer/deployment/dev/sigstore-trusted-root.json`: explicitly reviewed
-  root-owned, single-link regular TrustedRoot, non-group/world-writable, at most
-  1 MiB;
+- `/etc/omnilyzer/deployment/broker/sigstore-trusted-root.json`: explicitly reviewed
+  root:broker_gid mode 0640, single-link regular TrustedRoot, at most 1 MiB,
+  beneath the separate root:broker_gid mode 0750 broker authority directory;
 - `/run/omnilyzer/deployment/dev/blob-verifier`: broker UID/GID owned, mode 0700,
   with root-owned non-group/world-writable ancestors. It is exclusive to the
   broker's verifier, with no untrusted local process sharing that UID or directory.
@@ -256,6 +256,104 @@ no binary is downloaded to satisfy validation. Real qualification remains an
 activation blocker. The existing development Python dependency qualification
 failure also remains: cffi/pycparser metadata missing, PyJWT 2.7.0 rather than
 2.13.0, and cryptography 41.0.7 rather than 50.0.1. Reviewed policy is unchanged.
+
+## C32H separate DEV broker authority configuration (repository only)
+
+C17/C23 keep `/etc/omnilyzer/deployment/dev` exactly root:executor_gid mode
+0750 and `executor.json` exactly root:executor_gid mode 0640. The broker is
+intentionally outside executor_gid and cannot traverse this executor-only
+configuration directory. Post-merge review found that C32G's original future
+TrustedRoot location under that directory was therefore inaccessible to a future
+broker. C32H corrects the location before installation or activation; C32G was
+inert and uninstalled, so this correction addresses no live exposure.
+
+`broker_service_config.DevBrokerServiceConfiguration` defines only these exact
+schema fields, with no defaults for reviewed identities/revisions/digests:
+
+| Field | Authority |
+| --- | --- |
+| `schema_version` | Exact built-in integer 1 |
+| `stage` | Exact built-in string `dev` |
+| `broker_uid`, `broker_gid` | Exact positive bounded broker identities |
+| `executor_uid`, `executor_gid` | Exact positive bounded executor identities |
+| `replay_group_gid`, `socket_group_gid` | Exact positive bounded shared resource groups |
+| `expected_workflow_sha` | Independently reviewed, nonzero lowercase 40-character SHA |
+| `cosign_version` | Exactly `3.1.2` |
+| `cosign_binary_sha256` | Independently reviewed, nonzero lowercase 64-character SHA-256 |
+| `sigstore_trusted_root_sha256` | Independently reviewed, nonzero lowercase 64-character SHA-256 |
+
+The immutable model constructs the existing `DevHostInstallationContract` and
+requires the distinct non-root group topology already reviewed by C23. Broker
+and executor UIDs differ; all four group IDs differ. Broker supplementary groups
+remain only replay/socket, and executor supplementary groups remain only replay.
+Neither process gains the other's primary group. The executor needs no access to
+broker authority; its privileged implementation remains a separate boundary.
+This contract does not claim protection from a root operator.
+
+The separate future resources are closed repository constants:
+
+| Resource | Type | Mode | Owner:group |
+| --- | --- | --- | --- |
+| `/etc/omnilyzer/deployment/broker` | directory | 0750 | 0:broker_gid |
+| `/etc/omnilyzer/deployment/broker/dev.json` | single-link regular file | 0640 | 0:broker_gid |
+| `/etc/omnilyzer/deployment/broker/sigstore-trusted-root.json` | single-link regular file | 0640 | 0:broker_gid |
+
+The broker can read these resources but cannot modify or replace them. Shared
+ancestors remain root-controlled and non-group/world-writable. `blob_verifier`
+imports the one authoritative TrustedRoot path from the broker configuration
+module and enforces the exact root:broker directory/file metadata in addition to
+its existing hash-bound sealed snapshots. The fixed Cosign executable and private
+runtime paths are unchanged. No path is supplied through JSON, an environment
+variable, a request, or a public loader/verifier pathname argument.
+
+Canonical JSON is ASCII, sorted compact keys, with exactly one trailing newline
+and a 4096-byte ceiling. The parser rejects duplicate/missing/unknown keys,
+noncanonical bytes, unexpected nested data, NaN/Infinity, booleans as integers,
+non-built-in types, malformed/uppercase/zero digests and workflow revisions.
+The configuration, cached installation contract and narrow projection mappings
+are immutable under supported attribute/item replacement and deletion.
+
+`oidc_authorization_kwargs()` returns only `expected_workflow_sha` for C32F.
+This authority is never inferred from current HEAD, a mutable Git ref, GitHub API,
+release source SHA, or the commit containing this configuration implementation.
+There is no self-referential commit scheme and no built-in installation revision.
+`blob_verifier_kwargs()` returns only `expected_cosign_version`,
+`expected_binary_sha256`, `expected_trusted_root_sha256`, `broker_uid` and
+`broker_gid` for C32G. Future composition must obtain its coherent identity
+arguments through `installation_contract().broker_composition_kwargs()`.
+No concrete verifier or live broker graph is composed by C32H.
+
+`broker_service_config_loader.load_dev_broker_service_configuration()` is the
+zero-argument, read-only loader for the fixed `dev.json`. It traverses from `/`
+using descriptor-relative `O_DIRECTORY`, `O_NOFOLLOW` and `O_CLOEXEC`; the file
+additionally uses `O_NONBLOCK`. It validates root ownership, exact final modes,
+single-link regular-file type, size and named/opened descriptor identity. All
+named and opened directory/file metadata, including nanosecond mtime/ctime, is
+revalidated after the bounded finite read. Captured real/effective UID and GID
+must equal the model's broker identity and remain stable. Supplementary groups
+must be exactly the C13 replay/socket requirements (with the primary broker GID
+optionally also reported), without executor_gid or other groups. Both final
+resource groups must equal broker_gid. Every acquired descriptor is closed once
+in reverse order; cleanup failure fails closed under C18's control-exception
+conventions. The loader never reads `executor.json`.
+
+No production Cosign/TrustedRoot SHA-256 is fabricated or supplied in this PR.
+Independent acquisition, provenance review, installation and real Cosign 3.1.2
+qualification of binary/root/evidence remain separately reviewed activation
+blockers. A final pre-activation host migration must create the three broker
+resources, install the reviewed canonical broker authority and TrustedRoot, and
+qualify access with actual process identities. C23/C30/C31 historical provisioning
+sets are not expanded or reinterpreted. The current application source set stays
+at 31 files; both C32H modules and `blob_verifier.py` remain outside it. Historical
+C32D's exact 28-file predecessor and 31-file C32C target remain unchanged.
+
+C32H introduces no secrets, registry credentials or exchange, service unit,
+listener, endpoint, OIDC workflow permission, protected-environment attachment,
+Docker operation, systemd activation, host provisioning execution or host mutation.
+No omnilyzerdev update or C32D execution occurs. Deployment remains disabled;
+`deployment_enabled` is false. Final source-set/host migration, dependency and
+Sigstore qualification, independent OCI and registry consumer authority, and
+separately reviewed live composition/ingress/activation remain future work.
 
 ## C32D pinned post-C31 application update (repository only)
 
