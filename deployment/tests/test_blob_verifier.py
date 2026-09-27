@@ -3,6 +3,7 @@
 from contextlib import ExitStack
 import fcntl
 import hashlib
+import inspect
 import os
 from pathlib import Path
 import stat
@@ -12,6 +13,7 @@ import unittest
 from unittest.mock import patch
 
 from deployment import blob_verifier as bv
+from deployment import broker_service_config as broker_config
 from deployment.policy import EXPECTED_CERTIFICATE_IDENTITY, EXPECTED_CERTIFICATE_ISSUER
 from deployment.tests.test_promotion import sigstore_result
 
@@ -57,10 +59,10 @@ class VerifierTests(unittest.TestCase):
         runtime = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY)
         self.addCleanup(os.close, runtime)
 
-        def snapshot(path, digest, maximum, owned, *, executable):
-            self.assertIn((path, digest, maximum, executable), (
-                (bv.COSIGN_PATH, 'a' * 64, bv.MAX_BINARY_BYTES, True),
-                (bv.TRUSTED_ROOT_PATH, 'b' * 64, bv.MAX_ROOT_BYTES, False)))
+        def snapshot(path, digest, owned, *, executable):
+            self.assertIn((path, digest, executable), (
+                (bv.COSIGN_PATH, 'a' * 64, True),
+                (bv.TRUSTED_ROOT_PATH, 'b' * 64, False)))
             return bv._sealed(b'binary' if executable else b'reviewed-root', owned, executable=executable)
 
         stack.enter_context(patch.object(bv, '_snapshot', side_effect=snapshot))
@@ -105,7 +107,8 @@ class VerifierTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(TypeError):
                 bv.CosignReleaseBlobVerifier(**args)
         for name in ('executable', 'executable_path', 'trusted_root', 'trusted_root_path',
-                     'certificate_identity', 'issuer'):
+                     'certificate_identity', 'issuer', 'binary_size', 'expected_binary_size',
+                     'maximum_binary_bytes'):
             with self.subTest(name=name), self.assertRaises(TypeError):
                 bv.CosignReleaseBlobVerifier(**AUTHORITY, **{name: '/caller/path'})
         cases = {
@@ -207,6 +210,16 @@ class VerifierTests(unittest.TestCase):
                 self.assertEqual(stat.S_IMODE(child.stat().st_mode), 0o700)
                 self.assertEqual(list(child.iterdir()), [])
 
+    def test_snapshot_failures_expose_only_fixed_external_failure(self):
+        runner = Runner()
+        verifier, _ = self.sandbox(runner)
+        with patch.object(bv, '_snapshot', side_effect=OSError('private size/path diagnostic')):
+            with self.assertRaises(bv.BlobVerificationError) as caught:
+                verifier.verify(*INPUT)
+        self.assertEqual(str(caught.exception), bv.ERROR)
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertEqual(runner.calls, [])
+
     def test_policy_identity_is_captured(self):
         verifier, _ = self.sandbox(Runner())
         with patch.object(bv, 'EXPECTED_CERTIFICATE_IDENTITY', 'caller-selected'), \
@@ -268,7 +281,7 @@ expected = {""" + repr(INPUT[0]) + ': ' + repr(INPUT[2]) + ', ' + repr(INPUT[1])
 assert open(sys.argv[3], 'rb').read() == expected[blob]
 assert open(sys.argv[5], 'rb').read() == b'reviewed-root'
 """).encode()
-        def snapshot(path, digest, maximum, owned, *, executable):
+        def snapshot(path, digest, owned, *, executable):
             return bv._sealed(script if executable else b'reviewed-root', owned, executable=executable)
         with patch.object(bv, '_snapshot', side_effect=snapshot):
             self.assertEqual(verifier.verify(*INPUT), sigstore_result())
@@ -308,7 +321,8 @@ class SnapshotTests(unittest.TestCase):
                 return SimpleNamespace(**fields, st_uid=uid)
             directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
             try:
-                with patch.object(bv, '_directory', return_value=directory_fd), \
+                with patch.object(bv, 'COSIGN_BINARY_SIZE', len(b'reviewed authority')), \
+                     patch.object(bv, '_directory', return_value=directory_fd), \
                      patch.object(bv.os, 'stat', side_effect=lambda *a, **kw: root_status(original_stat(*a, **kw))), \
                      patch.object(bv.os, 'fstat', side_effect=lambda *a: root_status(original_fstat(*a))):
                     for kind in ('success', 'digest', 'mode', 'hardlink', 'symlink', 'size'):
@@ -317,6 +331,10 @@ class SnapshotTests(unittest.TestCase):
                             path.unlink()
                             path.write_bytes(b'reviewed authority')
                             path.chmod(0o500)
+                            if kind == 'size':
+                                path.chmod(0o700)
+                                path.write_bytes(b'reviewed authority!')
+                                path.chmod(0o500)
                             if kind == 'mode':
                                 path.chmod(0o522)
                             if kind == 'hardlink':
@@ -326,7 +344,7 @@ class SnapshotTests(unittest.TestCase):
                                 os.symlink(str(path) + '-link', path)
                             with self.subTest(kind=kind):
                                 if kind == 'success':
-                                    fd = bv._snapshot(str(path), digest, 100, owned, executable=True)
+                                    fd = bv._snapshot(str(path), digest, owned, executable=True)
                                     path.chmod(0o700)
                                     path.write_bytes(b'changed after qualification')
                                     self.assertEqual(bv._read(fd, len(b'reviewed authority')), b'reviewed authority')
@@ -335,7 +353,7 @@ class SnapshotTests(unittest.TestCase):
                                 else:
                                     with self.assertRaises(OSError):
                                         bv._snapshot(str(path), 'a' * 64 if kind == 'digest' else digest,
-                                                     1 if kind == 'size' else 100, owned, executable=True)
+                                                     owned, executable=True)
                         finally:
                             for fd in owned:
                                 os.close(fd)
@@ -348,12 +366,131 @@ class SnapshotTests(unittest.TestCase):
                          patch.object(bv.os, 'stat', side_effect=lambda *a, **kw: root_status(original_stat(*a, **kw), uid=1234)), \
                          patch.object(bv.os, 'fstat', side_effect=lambda *a: root_status(original_fstat(*a), uid=1234)), \
                          self.assertRaises(OSError):
-                        bv._snapshot(str(path), digest, 100, owned, executable=True)
+                        bv._snapshot(str(path), digest, owned, executable=True)
                 finally:
                     for fd in owned:
                         os.close(fd)
             finally:
                 os.close(directory_fd)
+
+
+class ExactBinarySizeTests(unittest.TestCase):
+    def metadata(self, **changes):
+        from types import SimpleNamespace
+        return SimpleNamespace(**(dict(
+            st_mode=stat.S_IFREG | 0o500, st_uid=0, st_gid=0, st_nlink=1,
+            st_size=bv.COSIGN_BINARY_SIZE, st_ino=100, st_dev=200,
+            st_mtime_ns=300, st_ctime_ns=400,
+        ) | changes))
+
+    def snapshot_boundary(self, opened=None, named=None, *, stack=None):
+        # Model the metadata/read boundary without allocating a 141 MB fixture.
+        # Existing real-file tests exercise reading, hashing, sealing and mutation.
+        if stack is None:
+            stack = ExitStack()
+            self.addCleanup(stack.close)
+        opened = opened if opened is not None else self.metadata()
+        named = named if named is not None else opened
+        stack.enter_context(patch.object(bv, '_directory', return_value=10))
+        stack.enter_context(patch.object(bv.os, 'open', return_value=11))
+        mocks = {
+            'named': stack.enter_context(patch.object(bv.os, 'stat', return_value=named)),
+            'opened': stack.enter_context(patch.object(bv.os, 'fstat', return_value=opened)),
+            'read': stack.enter_context(patch.object(bv, '_read', return_value=b'synthetic binary')),
+            'sealed': stack.enter_context(patch.object(bv, '_sealed', return_value=12)),
+            'hash': stack.enter_context(patch.object(bv.hashlib, 'sha256', wraps=hashlib.sha256)),
+        }
+        return mocks
+
+    def test_closed_exact_size_and_no_size_parameter(self):
+        self.assertIs(type(broker_config.COSIGN_BINARY_SIZE), int)
+        self.assertEqual(broker_config.COSIGN_BINARY_SIZE, 141150460)
+        self.assertEqual(bv.COSIGN_BINARY_SIZE, broker_config.COSIGN_BINARY_SIZE)
+        self.assertFalse(hasattr(bv, 'MAX_BINARY_BYTES'))
+        self.assertEqual(tuple(inspect.signature(bv._snapshot).parameters),
+                         ('path', 'digest', 'owned', 'executable'))
+        self.assertNotIn('binary_size', inspect.signature(bv.CosignReleaseBlobVerifier).parameters)
+
+    def test_wrong_or_malformed_stat_size_fails_before_read_or_hash(self):
+        class Integer(int):
+            pass
+        for size in (0, -1, 1, 128 * 1024 * 1024, 141150459, 141150461, 2**63 - 1,
+                     True, False, 141150460.0, '141150460', None, Integer(141150460)):
+            with self.subTest(size=size), ExitStack() as stack:
+                mocks = self.snapshot_boundary(self.metadata(st_size=size), stack=stack)
+                with self.assertRaises(OSError):
+                    bv._snapshot(bv.COSIGN_PATH, 'a' * 64, [], executable=True)
+                for name in ('read', 'hash', 'sealed'):
+                    mocks[name].assert_not_called()
+
+    def test_malformed_closed_size_authority_fails_before_read(self):
+        class Integer(int):
+            pass
+        opened = self.metadata()
+        for authority in (True, False, 0, -1, None, '141150460', 141150460.0, Integer(141150460)):
+            with self.subTest(authority=authority), ExitStack() as stack:
+                mocks = self.snapshot_boundary(opened, stack=stack)
+                stack.enter_context(patch.object(bv, 'COSIGN_BINARY_SIZE', authority))
+                with self.assertRaises(OSError):
+                    bv._snapshot(bv.COSIGN_PATH, 'a' * 64, [], executable=True)
+                mocks['read'].assert_not_called()
+                mocks['hash'].assert_not_called()
+
+    def test_exact_size_reaches_digest_and_seals_only_hashed_bytes(self):
+        raw = b'synthetic binary'
+        digest = hashlib.sha256(raw).hexdigest()
+        mocks = self.snapshot_boundary()
+        with patch.dict(os.environ, {'COSIGN_BINARY_SIZE': '1', 'MAX_BINARY_BYTES': '1'}):
+            self.assertEqual(bv._snapshot(bv.COSIGN_PATH, digest, [], executable=True), 12)
+        mocks['read'].assert_called_once_with(11, 141150460)
+        mocks['hash'].assert_called_once_with(raw)
+        mocks['sealed'].assert_called_once_with(raw, [11], executable=True)
+
+    def test_exact_size_cannot_make_wrong_digest_acceptable(self):
+        mocks = self.snapshot_boundary()
+        with self.assertRaises(OSError):
+            bv._snapshot(bv.COSIGN_PATH, 'a' * 64, [], executable=True)
+        mocks['read'].assert_called_once_with(11, 141150460)
+        mocks['hash'].assert_called_once_with(b'synthetic binary')
+        mocks['sealed'].assert_not_called()
+
+    def test_correct_digest_cannot_make_wrong_size_acceptable(self):
+        digest = hashlib.sha256(b'synthetic binary').hexdigest()
+        mocks = self.snapshot_boundary(self.metadata(st_size=141150459))
+        with self.assertRaises(OSError):
+            bv._snapshot(bv.COSIGN_PATH, digest, [], executable=True)
+        for name in ('read', 'hash', 'sealed'):
+            mocks[name].assert_not_called()
+
+    def test_metadata_mutation_during_read_rejected_before_sealing(self):
+        digest = hashlib.sha256(b'synthetic binary').hexdigest()
+        for field, changed in (('st_size', 141150459), ('st_mtime_ns', 301), ('st_ctime_ns', 401)):
+            for source in ('opened', 'named'):
+                with self.subTest(field=field, source=source), ExitStack() as stack:
+                    mocks = self.snapshot_boundary(stack=stack)
+                    mocks[source].side_effect = [self.metadata(), self.metadata(**{field: changed})]
+                    with self.assertRaises(OSError):
+                        bv._snapshot(bv.COSIGN_PATH, digest, [], executable=True)
+                    mocks['read'].assert_called_once()
+                    mocks['sealed'].assert_not_called()
+
+    def test_named_open_substitution_rejected_before_read(self):
+        mocks = self.snapshot_boundary(named=self.metadata(st_ino=101))
+        with self.assertRaises(OSError):
+            bv._snapshot(bv.COSIGN_PATH, 'a' * 64, [], executable=True)
+        mocks['read'].assert_not_called()
+        mocks['sealed'].assert_not_called()
+
+    def test_executable_file_type_owner_mode_and_links_unchanged(self):
+        for changes in ({'st_uid': 1234}, {'st_nlink': 2}, {'st_nlink': 0},
+                        {'st_mode': stat.S_IFREG | 0o522}, {'st_mode': stat.S_IFREG | 0o400},
+                        {'st_mode': stat.S_IFLNK | 0o500}, {'st_mode': stat.S_IFIFO | 0o500}):
+            with self.subTest(changes=changes), ExitStack() as stack:
+                mocks = self.snapshot_boundary(self.metadata(**changes), stack=stack)
+                with self.assertRaises(OSError):
+                    bv._snapshot(bv.COSIGN_PATH, 'a' * 64, [], executable=True)
+                mocks['read'].assert_not_called()
+                mocks['sealed'].assert_not_called()
 
 
 class BrokerTrustedRootTests(unittest.TestCase):
@@ -366,7 +503,12 @@ class BrokerTrustedRootTests(unittest.TestCase):
             self.addCleanup(os.close, directory_fd)
             original_stat, original_fstat = os.stat, os.fstat
             for kind in ('success', 'file_mode', 'file_group', 'file_owner',
-                         'directory_mode', 'directory_group', 'directory_owner'):
+                         'directory_mode', 'directory_group', 'directory_owner',
+                         'empty', 'oversize', 'at_bound', 'digest'):
+                raw = (b'' if kind == 'empty' else b'x' * (bv.MAX_ROOT_BYTES + 1)
+                       if kind == 'oversize' else b'x' * bv.MAX_ROOT_BYTES
+                       if kind == 'at_bound' else b'reviewed root')
+                path.write_bytes(raw)
                 def authority_status(value):
                     is_directory = stat.S_ISDIR(value.st_mode)
                     fields = {name: getattr(value, name) for name in (
@@ -385,13 +527,13 @@ class BrokerTrustedRootTests(unittest.TestCase):
                          patch.object(bv.os, 'getegid', return_value=1235), \
                          patch.object(bv.os, 'stat', side_effect=lambda *a, **kw: authority_status(original_stat(*a, **kw))), \
                          patch.object(bv.os, 'fstat', side_effect=lambda *a: authority_status(original_fstat(*a))):
-                        digest = hashlib.sha256(b'reviewed root').hexdigest()
-                        if kind == 'success':
-                            descriptor = bv._snapshot(str(path), digest, 100, owned, executable=False)
-                            self.assertEqual(bv._read(descriptor, len(b'reviewed root')), b'reviewed root')
+                        digest = 'a' * 64 if kind == 'digest' else hashlib.sha256(raw).hexdigest()
+                        if kind in ('success', 'at_bound'):
+                            descriptor = bv._snapshot(str(path), digest, owned, executable=False)
+                            self.assertEqual(bv._read(descriptor, len(raw)), raw)
                         else:
                             with self.assertRaises(OSError):
-                                bv._snapshot(str(path), digest, 100, owned, executable=False)
+                                bv._snapshot(str(path), digest, owned, executable=False)
                 finally:
                     for descriptor in owned:
                         os.close(descriptor)

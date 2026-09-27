@@ -25,6 +25,7 @@ from .broker_service_config import (
     BROKER_SERVICE_CONFIG_DIRECTORY_MODE,
     BROKER_SERVICE_CONFIG_FILE_MODE,
     COSIGN_VERSION,
+    COSIGN_BINARY_SIZE,
     PRODUCTION_SIGSTORE_TRUSTED_ROOT_PATH as TRUSTED_ROOT_PATH,
 )
 from .policy import EXPECTED_CERTIFICATE_IDENTITY, EXPECTED_CERTIFICATE_ISSUER, validate_sha256
@@ -32,7 +33,6 @@ from .release_consumer import MAX_EVIDENCE_BYTES
 
 COSIGN_PATH = "/opt/omnilyzer/deployment/tools/cosign-v3.1.2-linux-amd64"
 RUNTIME_DIRECTORY = "/run/omnilyzer/deployment/dev/blob-verifier"
-MAX_BINARY_BYTES = 128 * 1024 * 1024
 MAX_ROOT_BYTES = 1024 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024
 EXECUTION_TIMEOUT = 30.0
@@ -184,7 +184,7 @@ def _sealed(raw: bytes, owned: list[int], *, executable: bool = False) -> int:
     return descriptor
 
 
-def _snapshot(path: str, digest: str, maximum: int, owned: list[int], *, executable: bool) -> int:
+def _snapshot(path: str, digest: str, owned: list[int], *, executable: bool) -> int:
     parent, name = path.rsplit("/", 1)
     directory = _directory(parent, owned)
     named = os.stat(name, dir_fd=directory, follow_symlinks=False)
@@ -204,7 +204,11 @@ def _snapshot(path: str, digest: str, maximum: int, owned: list[int], *, executa
             raise OSError
     if (not stat.S_ISREG(opened.st_mode) or opened.st_uid != 0
             or opened.st_nlink != 1 or opened.st_mode & 0o022
-            or not 0 < opened.st_size <= maximum
+            or type(opened.st_size) is not int
+            or (executable and (type(COSIGN_BINARY_SIZE) is not int
+                                or COSIGN_BINARY_SIZE <= 0
+                                or opened.st_size != COSIGN_BINARY_SIZE))
+            or (not executable and not 0 < opened.st_size <= MAX_ROOT_BYTES)
             or (executable and not opened.st_mode & stat.S_IXUSR)
             or _fingerprint(named) != _fingerprint(opened)):
         raise OSError
@@ -323,9 +327,9 @@ class CosignReleaseBlobVerifier:
                 object.__getattribute__(self, "_authority")
             )
             binary = _snapshot(binary_path, object.__getattribute__(self, "_binary_sha256"),
-                               MAX_BINARY_BYTES, owned, executable=True)
+                               owned, executable=True)
             root = _snapshot(root_path, object.__getattribute__(self, "_root_sha256"),
-                             MAX_ROOT_BYTES, owned, executable=False)
+                             owned, executable=False)
             runtime = _directory(runtime_path, owned, broker=broker)
             # Anchor staging/cleanup to the validated directory descriptor.
             workspace = tempfile.mkdtemp(prefix="verify-", dir=f"/proc/self/fd/{runtime}")
