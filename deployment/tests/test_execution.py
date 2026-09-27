@@ -272,7 +272,7 @@ class ExecutorRequestTests(unittest.TestCase):
             parse_canonical_request(duplicate)
 
     def test_request_must_bind_authorized_oidc_identity(self) -> None:
-        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW)
+        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         request = ExecutorRequest.from_dict(valid_request())
         bind_request_to_identity(request, identity)
         changed = valid_request()

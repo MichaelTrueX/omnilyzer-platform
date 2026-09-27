@@ -30,14 +30,14 @@ class GitHubDevBrokerComposition:
     __slots__ = ("_authorize_and_forward",)
 
     def __init__(
-        self, *, expected_replay_directory_uid: int,
+        self, *, expected_workflow_sha: str, expected_replay_directory_uid: int,
         expected_replay_directory_gid: int, expected_broker_uid: int,
         expected_executor_uid: int,
         expected_executor_gid: int, expected_socket_group_gid: int,
     ) -> None:
         """Construct the reviewed broker graph without invoking any operation."""
 
-        verifier = _GitHubOIDCVerifier()
+        verifier = _GitHubOIDCVerifier(expected_workflow_sha=expected_workflow_sha)
         replay_guard = _SQLiteReplayGuard(
             _PRODUCTION_REPLAY_DATABASE,
             expected_directory_uid=expected_replay_directory_uid,
@@ -51,6 +51,7 @@ class GitHubDevBrokerComposition:
             expected_socket_group_gid=expected_socket_group_gid,
         )
         broker = _RestrictedDeploymentBroker(
+            expected_workflow_sha=expected_workflow_sha,
             verifier=verifier, replay_guard=replay_guard, transport=transport,
         )
         object.__setattr__(

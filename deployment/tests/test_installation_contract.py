@@ -200,9 +200,10 @@ class ProjectionTests(unittest.TestCase):
             "expected_executor_gid": 2002,
             "expected_socket_group_gid": 3002,
         })
-        self.assertEqual(set(projected), set(
+        self.assertEqual(set(projected) | {"expected_workflow_sha"}, set(
             inspect.signature(GitHubDevBrokerComposition).parameters,
         ))
+        self.assertNotIn("expected_workflow_sha", projected)
         projected["expected_executor_uid"] = 9999
         self.assertEqual(value.broker_composition_kwargs()["expected_executor_uid"], 2001)
 

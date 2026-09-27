@@ -54,14 +54,42 @@ def valid_claims() -> dict[str, object]:
 
 
 class VerifiedOIDCAuthorizationTests(unittest.TestCase):
+    def test_reviewed_workflow_revision_is_mandatory_and_exact(self) -> None:
+        claims = valid_claims()
+        self.assertEqual(authorize_verified_github_oidc(
+            claims, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA,
+        ).workflow_sha, WORKFLOW_SHA)
+        with self.assertRaises(TypeError):
+            authorize_verified_github_oidc(claims, received_at=NOW)
+        class StringSubclass(str):
+            pass
+        for authority in (None, True, "", "0" * 40, WORKFLOW_SHA.upper(),
+                          "a" * 39, "a" * 41, "g" * 40,
+                          StringSubclass(WORKFLOW_SHA)):
+            with self.subTest(authority=authority), self.assertRaises(OIDCAuthorizationError):
+                authorize_verified_github_oidc(
+                    claims, received_at=NOW, expected_workflow_sha=authority,
+                )
+        with self.assertRaises(OIDCAuthorizationError):
+            authorize_verified_github_oidc(
+                claims, received_at=NOW, expected_workflow_sha="f" * 40,
+            )
+        altered = valid_claims()
+        altered["workflow_sha"] = "f" * 40
+        self.assertEqual(altered["workflow_ref"], claims["workflow_ref"])
+        with self.assertRaises(OIDCAuthorizationError):
+            authorize_verified_github_oidc(
+                altered, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA,
+            )
+
     def reject(self, key: str, value: object) -> None:
         claims = valid_claims()
         claims[key] = value
         with self.assertRaises(OIDCAuthorizationError):
-            authorize_verified_github_oidc(claims, received_at=NOW)
+            authorize_verified_github_oidc(claims, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
 
     def test_exact_valid_dev_claim_set_passes(self) -> None:
-        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW)
+        identity = authorize_verified_github_oidc(valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
         self.assertEqual(identity.repository_id, DEV_REPOSITORY_ID)
         self.assertEqual(identity.workflow_sha, WORKFLOW_SHA)
         self.assertEqual(identity.jti, valid_claims()["jti"])
@@ -112,7 +140,7 @@ class VerifiedOIDCAuthorizationTests(unittest.TestCase):
         claims = valid_claims()
         del claims["jti"]
         with self.assertRaises(OIDCAuthorizationError):
-            authorize_verified_github_oidc(claims, received_at=NOW)
+            authorize_verified_github_oidc(claims, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
 
     def test_control_character_and_path_jti_rejected(self) -> None:
         for value in ("bad\njti", "../jti", "jti/child", "", "a" * 129):
@@ -123,36 +151,36 @@ class VerifiedOIDCAuthorizationTests(unittest.TestCase):
         claims = valid_claims()
         claims.update(iat=NOW - 50, nbf=NOW - 60, exp=NOW - 31)
         with self.assertRaises(OIDCAuthorizationError):
-            authorize_verified_github_oidc(claims, received_at=NOW)
+            authorize_verified_github_oidc(claims, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
 
     def test_excessive_lifetime_rejected(self) -> None:
         claims = valid_claims()
         claims["exp"] = claims["iat"] + 301  # type: ignore[operator]
         with self.assertRaises(OIDCAuthorizationError):
-            authorize_verified_github_oidc(claims, received_at=NOW)
+            authorize_verified_github_oidc(claims, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
 
     def test_iat_too_old_rejected(self) -> None:
         claims = valid_claims()
         claims.update(iat=NOW - 61, nbf=NOW - 70, exp=NOW + 100)
         with self.assertRaises(OIDCAuthorizationError):
-            authorize_verified_github_oidc(claims, received_at=NOW)
+            authorize_verified_github_oidc(claims, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
 
     def test_nbf_too_far_in_future_rejected(self) -> None:
         claims = valid_claims()
         claims["nbf"] = NOW + 31
         with self.assertRaises(OIDCAuthorizationError):
-            authorize_verified_github_oidc(claims, received_at=NOW)
+            authorize_verified_github_oidc(claims, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
 
     def test_thirty_second_clock_skew_boundary_is_permitted(self) -> None:
         claims = valid_claims()
         claims.update(iat=NOW + 30, nbf=NOW + 30, exp=NOW + 300)
         self.assertEqual(
-            authorize_verified_github_oidc(claims, received_at=NOW).issued_at,
+            authorize_verified_github_oidc(claims, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA).issued_at,
             NOW + 30,
         )
         claims.update(iat=NOW + 31, nbf=NOW + 31, exp=NOW + 301)
         with self.assertRaises(OIDCAuthorizationError):
-            authorize_verified_github_oidc(claims, received_at=NOW)
+            authorize_verified_github_oidc(claims, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
 
     def test_boolean_integer_values_rejected(self) -> None:
         for key in ("repository_id", "repository_owner_id", "run_id", "run_attempt", "actor_id"):
@@ -162,7 +190,7 @@ class VerifiedOIDCAuthorizationTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.reject(key, True)
         with self.assertRaises(OIDCAuthorizationError):
-            authorize_verified_github_oidc(valid_claims(), received_at=True)
+            authorize_verified_github_oidc(valid_claims(), received_at=True, expected_workflow_sha=WORKFLOW_SHA)
 
     def test_malformed_timestamp_ordering_rejected(self) -> None:
         for updates in (
@@ -174,25 +202,25 @@ class VerifiedOIDCAuthorizationTests(unittest.TestCase):
             claims = valid_claims()
             claims.update(updates)
             with self.subTest(updates=updates), self.assertRaises(OIDCAuthorizationError):
-                authorize_verified_github_oidc(claims, received_at=NOW)
+                authorize_verified_github_oidc(claims, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
 
     def test_additional_irrelevant_claims_neither_grant_nor_block_authority(self) -> None:
         claims = valid_claims()
         claims.update(actor="renamable-login", arbitrary_unreviewed_claim="ignored")
         self.assertEqual(
-            authorize_verified_github_oidc(claims, received_at=NOW).actor_id,
+            authorize_verified_github_oidc(claims, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA).actor_id,
             130741173,
         )
         claims["repository_id"] = "1"
         with self.assertRaises(OIDCAuthorizationError):
-            authorize_verified_github_oidc(claims, received_at=NOW)
+            authorize_verified_github_oidc(claims, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
 
     def test_missing_each_authorizing_claim_rejected(self) -> None:
         for key in tuple(valid_claims()):
             claims = valid_claims()
             del claims[key]
             with self.subTest(key=key), self.assertRaises(OIDCAuthorizationError):
-                authorize_verified_github_oidc(claims, received_at=NOW)
+                authorize_verified_github_oidc(claims, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
 
 
 class ReplayContractTests(unittest.TestCase):

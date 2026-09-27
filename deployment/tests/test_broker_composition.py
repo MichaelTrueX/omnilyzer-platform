@@ -34,6 +34,7 @@ from deployment.jwks import (
     GitHubOIDCHTTPSFetcher,
 )
 from deployment.oidc_verifier import GitHubOIDCVerifier
+from deployment.tests.test_identity import WORKFLOW_SHA
 from deployment.replay_sqlite import (
     MAX_UID_GID,
     PRODUCTION_REPLAY_DATABASE,
@@ -53,6 +54,7 @@ def configuration(**changes: object) -> dict[str, object]:
     """Return one valid installation-identity configuration with changes."""
 
     values: dict[str, object] = {
+        "expected_workflow_sha": WORKFLOW_SHA,
         "expected_replay_directory_uid": 1001,
         "expected_replay_directory_gid": 1002,
         "expected_broker_uid": 1006,
@@ -90,6 +92,22 @@ class ImportInertnessTests(unittest.TestCase):
 
 class ConstructionTests(unittest.TestCase):
     """Prove construction is inert and uses the exact reviewed object graph."""
+
+    def test_reviewed_workflow_revision_is_required_without_default(self) -> None:
+        values = configuration()
+        del values["expected_workflow_sha"]
+        with self.assertRaises(TypeError):
+            GitHubDevBrokerComposition(**values)
+        class StringSubclass(str):
+            pass
+        for authority in (None, True, "", "0" * 40, WORKFLOW_SHA.upper(),
+                          "a" * 39, "a" * 41, "g" * 40,
+                          StringSubclass(WORKFLOW_SHA)):
+            with self.subTest(authority=authority), self.assertRaises(ValueError):
+                GitHubDevBrokerComposition(**configuration(expected_workflow_sha=authority))
+        composed = GitHubDevBrokerComposition(**configuration())
+        with self.assertRaises(AttributeError):
+            composed._authorize_and_forward = lambda **kwargs: b"unsafe"
 
     def test_construction_calls_no_operational_boundary(self) -> None:
         def verify(verifier: object, compact_token: str, *, received_at: int) -> object:
@@ -181,7 +199,7 @@ class ConstructionTests(unittest.TestCase):
         self.assertIsInstance(created["transport"], UnixExecutorTransport)
         self.assertIsInstance(created["broker"], RestrictedDeploymentBroker)
         self.assertEqual(created["verifier_args"], ())
-        self.assertEqual(created["verifier_kwargs"], {})
+        self.assertEqual(created["verifier_kwargs"], {"expected_workflow_sha": WORKFLOW_SHA})
         self.assertEqual(created["replay_args"], (PRODUCTION_REPLAY_DATABASE,))
         self.assertEqual(set(created["replay_kwargs"]), {  # type: ignore[arg-type]
             "expected_directory_uid", "expected_directory_gid",
@@ -193,6 +211,7 @@ class ConstructionTests(unittest.TestCase):
             "expected_socket_group_gid",
         })
         broker_arguments = created["broker_kwargs"]
+        self.assertEqual(broker_arguments["expected_workflow_sha"], WORKFLOW_SHA)
         self.assertIs(broker_arguments["verifier"], created["verifier"])  # type: ignore[index]
         self.assertIs(broker_arguments["replay_guard"], created["replay"])  # type: ignore[index]
         self.assertIs(broker_arguments["transport"], created["transport"])  # type: ignore[index]
@@ -224,11 +243,11 @@ class ConstructionTests(unittest.TestCase):
 class ClosedSurfaceTests(unittest.TestCase):
     """Prove fixed authority choices and the one-method public profile surface."""
 
-    def test_constructor_exposes_only_installation_identities(self) -> None:
+    def test_constructor_exposes_only_reviewed_revision_and_installation_identities(self) -> None:
         self.assertEqual(
             tuple(inspect.signature(GitHubDevBrokerComposition).parameters),
             (
-                "expected_replay_directory_uid", "expected_replay_directory_gid",
+                "expected_workflow_sha", "expected_replay_directory_uid", "expected_replay_directory_gid",
                 "expected_broker_uid",
                 "expected_executor_uid", "expected_executor_gid",
                 "expected_socket_group_gid",
