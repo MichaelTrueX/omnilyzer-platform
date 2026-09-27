@@ -669,6 +669,113 @@ real-tool and cryptographic qualification, dependency qualification, independent
 OCI/registry authority, live composition and GitHub protections remain activation
 blockers.
 
+## C32M privileged Sigstore static-resource installation mechanics (inert)
+
+`sigstore_static_installation.install_dev_sigstore_static_resources(*,
+staging_directory, configuration)` is an explicit future root-only mutation API.
+There is no CLI, import-time I/O, service entrypoint, workflow invocation or
+automatic provisioning. **C32M development and tests did not invoke it against
+omnilyzerdev or install any production resource.** Tests use temporary sandboxes,
+mocked root identities/ownership and private synthetic artifact authority; no
+141 MB binary was downloaded or executed.
+
+The only inputs are a canonical absolute dedicated staging directory and one
+exact existing `DevBrokerServiceConfiguration`. The API reconstructs/revalidates
+C32H through C32L, including the cached C13 identity relationship and exact C32I
+version/digests. C32L alone supplies final paths, modes, broker_gid, sizes and
+digests. Real/effective UID and GID must all be exact built-in integer zero,
+with identity rechecked before mutation/publication and final success. The same
+C31 nonblocking host-mutation process lock is acquired before filesystem work
+and released deterministically. Cleanup or release failure prevents success.
+There is no sudo, account lookup, network, Cosign execution, Docker or OCI work.
+
+C32K's returned evidence is never an installation capability. Root independently
+opens the staging chain descriptor-relatively from `/`, using read-only directory
+descriptors with `O_DIRECTORY`, `O_NOFOLLOW` and `O_CLOEXEC`. It derives a nonzero
+staging UID/GID from the held final directory and requires exact mode 0700. Both
+fixed staged files must share that owner, be single-link regular files at 0400
+or 0600, and form the complete two-name directory entry set. Protected ancestors
+may be root-owned or belong to the staging UID; only root-owned sticky shared
+ancestors may be group/world writable, following C32K. Staging ownership supplies
+no deployment identity or artifact authority. Source directories retain complete
+fingerprints: concurrent ancestor/entry mutation also fails closed, so future
+operators must use a quiet staging tree separate from the destination mutations.
+
+Both fixed files are opened once with `O_RDONLY | O_NOFOLLOW | O_CLOEXEC |
+O_NONBLOCK`, checked against exact size before streaming SHA-256, and retained
+through all copying and source revalidation. Named/opened fingerprints must
+match; source files, entry set and complete directory chain are revalidated after
+qualification, around copying/publication and before completion. Each copy seeks
+that same qualified descriptor to offset zero, reads/writes at most 64 KiB per
+chunk, requires exact byte count and typed EOF, and hashes the actual copied
+source stream. There is no whole-binary accumulation. A same-UID staging writer
+remains in the threat model; matching the reviewed stream digest and revalidating
+source metadata are mandatory. Replacing a source pathname cannot substitute
+the held bytes and causes named/chain revalidation to fail.
+
+Before mutation, both destination states are preflighted. Existing C23 parents
+including `/opt/omnilyzer/deployment` and `/etc/omnilyzer/deployment` must already
+exist at root:root 0755; other traversed ancestors remain protected root-owned
+directories without following symlinks. C32M never reconstructs these parents.
+Only the two C32L leaf directories may be created. Creation starts at 0700,
+retains the created identity, applies root:broker_gid 0750, synchronizes leaf and
+parent, and verifies named/opened metadata. Existing leaves require exact metadata
+and are never chmod/chown repaired. Existing final files must be absent or fully
+exact, including SHA-256; unexpected files are never replaced or repaired.
+
+For each absent final file, a fixed internal temporary name in its destination
+directory is created using `O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC`,
+with initial permissions no broader than 0600. After the exact streamed copy,
+only that newly created descriptor receives root:broker_gid and final mode 0540
+(Cosign) or 0640 (TrustedRoot). The temporary file is fsynced, then independently
+opened read-only and hashed from **destination bytes**. Its inode/device must
+match the created file; exact size, ownership, mode, single link and stable
+named/opened fingerprints are required. Temporary/source/directory metadata is
+checked again immediately before publication.
+
+Publication uses a no-replace hard link from temporary to final. A target that
+appears concurrently makes the link fail; no replacing rename is used. Final,
+temporary and held-descriptor identities/metadata must agree at the intermediate
+two-link state. Temporary unlink and destination-directory fsync follow. The
+final resource is independently reread/hash-verified with the expected inode and
+nlink 1. Before returning evidence, both final files and directory chains are
+rechecked; final file, leaf and parent fsync barriers also retry durability for
+an exact state left by an earlier synchronization failure. An already-complete
+state receives no content/metadata writes, while still performing these barriers.
+
+Installation order is deterministic: Cosign, then TrustedRoot. Recognized states
+are neither file, exact Cosign with TrustedRoot absent, or both exact files.
+TrustedRoot-only and malformed partial states fail closed. A published exact
+Cosign prefix is preserved if the second installation fails. Normal failure
+attempts cleanup only of this invocation's temporary inode/device, followed by
+directory fsync; replaced temporary entries are never blindly removed. Published
+final names are never rolled back. Unknown pre-existing temporary residue is
+rejected, including in an otherwise complete state. Crash/interrupted-publication
+residue and unexpected final states require separate reviewed recovery; C32M
+does not claim generic crash repair or an atomic two-file transaction.
+
+Success returns frozen, slotted `DevSigstoreStaticInstallationEvidence` with
+`operation` (`installed` or `already-installed`), broker_gid, and two immutable
+file observations containing only fixed final path, exact size/SHA-256 and final
+fingerprint. No raw bytes, live descriptors, staging path or trust capability are
+returned. Ordinary failures expose only
+`DEV Sigstore static resource installation is unavailable`; private filesystem
+diagnostics are suppressed. Control exceptions retain the established cleanup/
+propagation semantics. Evidence is returned only after descriptor cleanup and
+process-lock release succeed.
+
+C32M deliberately does **not** install broker `dev.json`: its workflow SHA must
+later be frozen against the separately reviewed final deployment workflow.
+Existing C23/C30/C31 resource models, C32D's 28/31-file pinned history, all current
+31 installed application files and workflows are unchanged. The new installer
+remains outside that source set. No live host mutation, C32D execution, systemd
+action or activation occurred; `deployment_enabled` remains false. This increment
+does not verify Cosign's Sigstore bundle, the complete TUF chain, real Cosign
+execution or network behavior. Those qualifications, actual artifact acquisition,
+explicit installation approval/execution, broker configuration/final migration,
+dependency qualification, OCI/registry authority, live composition and GitHub
+protections remain separately reviewed activation blockers.
+
 ## C32D pinned post-C31 application update (repository only)
 
 `dev_post_c31_application_update.py` binds the installed predecessor commit
