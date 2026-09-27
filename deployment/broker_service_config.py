@@ -34,6 +34,7 @@ __all__ = (
     "BROKER_SERVICE_CONFIG_DIRECTORY",
     "PRODUCTION_SIGSTORE_TRUSTED_ROOT_PATH",
     "COSIGN_VERSION",
+    "COSIGN_BINARY_SIZE",
 )
 
 BROKER_SERVICE_CONFIG_DIRECTORY = "/etc/omnilyzer/deployment/broker"
@@ -46,6 +47,9 @@ PRODUCTION_SIGSTORE_TRUSTED_ROOT_PATH = (
     BROKER_SERVICE_CONFIG_DIRECTORY + "/sigstore-trusted-root.json"
 )
 COSIGN_VERSION = "3.1.2"
+# Closed artifact property of the independently reviewed C32I linux/amd64 binary.
+# This is code authority, not an extra schema-1 JSON field or caller input.
+COSIGN_BINARY_SIZE = 141150460
 _ERROR = "DEV broker authority configuration is invalid"
 _SCHEMA_FIELDS = frozenset({
     "schema_version",

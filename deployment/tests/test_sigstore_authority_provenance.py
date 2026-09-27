@@ -19,7 +19,7 @@ import urllib.request
 
 from deployment import sigstore_authority_provenance as provenance
 from deployment import sigstore_authority_review as review
-from deployment import blob_verifier
+from deployment import blob_verifier, broker_service_config
 from deployment import application_manifest, dev_post_c31_application_update
 from deployment.application_source_set import DevApplicationSourceSet
 from deployment.broker_service_config import DevBrokerServiceConfiguration
@@ -441,13 +441,15 @@ class SeparationTests(unittest.TestCase):
         self.assertFalse(any(name.startswith('deployment/provenance/') for name in paths))
         self.assertFalse(any(name.endswith('/cosign-linux-amd64') for name in paths))
 
-    def test_runtime_trusted_root_path_and_size_ceiling_are_preserved(self):
+    def test_runtime_trusted_root_bound_and_reviewed_binary_size_authority(self):
         self.assertEqual(blob_verifier.TRUSTED_ROOT_PATH,
                          '/etc/omnilyzer/deployment/broker/sigstore-trusted-root.json')
-        self.assertEqual(blob_verifier.MAX_BINARY_BYTES, 128 * 1024 * 1024)
-        # The newly reviewed upstream artifact exposes a separately scoped blocker.
-        self.assertGreater(provenance.DevSigstoreVerificationProvenance().cosign.asset_size,
-                           blob_verifier.MAX_BINARY_BYTES)
+        self.assertEqual(blob_verifier.MAX_ROOT_BYTES, 1024 * 1024)
+        self.assertIs(type(broker_service_config.COSIGN_BINARY_SIZE), int)
+        self.assertEqual(blob_verifier.COSIGN_BINARY_SIZE, broker_service_config.COSIGN_BINARY_SIZE)
+        self.assertEqual(blob_verifier.COSIGN_BINARY_SIZE,
+                         provenance.DevSigstoreVerificationProvenance().cosign.asset_size)
+        self.assertFalse(hasattr(blob_verifier, 'MAX_BINARY_BYTES'))
 
     def test_no_deployment_activation_or_oidc_permission(self):
         self.assertIs(json.loads((ROOT / 'deployment/environments/dev.json').read_bytes())

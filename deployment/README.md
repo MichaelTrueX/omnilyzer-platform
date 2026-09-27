@@ -169,7 +169,8 @@ Fixed future resources follow the existing `/opt`, `/etc` and `/run` deployment
 layout, independently of executor configuration and executor-only groups:
 
 - `/opt/omnilyzer/deployment/tools/cosign-v3.1.2-linux-amd64`: root-owned,
-  single-link regular executable, non-group/world-writable, at most 128 MiB;
+  single-link regular executable, non-group/world-writable, exactly 141,150,460
+  bytes as corrected by C32J below, with the independently reviewed SHA-256;
 - `/etc/omnilyzer/deployment/broker/sigstore-trusted-root.json`: explicitly reviewed
   root:broker_gid mode 0640, single-link regular TrustedRoot, at most 1 MiB,
   beneath the separate root:broker_gid mode 0750 broker authority directory;
@@ -464,11 +465,11 @@ future verification, never a retained repository file. A separately reviewed
 host migration must install the exact retained target bytes at that fixed path
 and bind the same digest into the canonical broker configuration.
 
-**New pre-activation compatibility blocker:** the official binary is 141,150,460
-bytes, exceeding C32G's existing 128 MiB (`134217728`) ceiling. C32I preserves that
-security boundary and makes no runtime verifier change. A separately reviewed
-increment must reconcile the bound with this exact artifact and test its bounded
-snapshot behavior before actual binary qualification or activation.
+**Historical C32I compatibility finding:** the official binary is 141,150,460
+bytes, exceeding C32G's original 128 MiB (`134217728`) ceiling. C32I preserved that
+boundary and made no runtime verifier change. C32J below corrects the repository
+contract to require the exact reviewed size; actual binary qualification and
+installation remain future work.
 
 Automatic trust-root refresh is prohibited because it would change the reviewed
 verification authority independently of repository review. No provenance code
@@ -479,13 +480,52 @@ retrieval. Trust changes require explicit reviewed repository changes.
 
 Future work must stage and prove the exact binary size/digest, cryptographically
 qualify retained evidence with the selected root and actual Cosign 3.1.2, review
-network behavior, qualify the Python dependencies, resolve the size blocker, and
+network behavior, qualify the Python dependencies, and
 review final host/source-set migration and live composition. C32I's modules and
 all retained evidence remain outside the current 31-file installed source set;
 C32D's exact 28-file predecessor and 31-file C32C target are unchanged. No Cosign
 installation, broker configuration creation, TrustedRoot provisioning, runtime
 directory creation, omnilyzerdev update, C32D execution, systemd/Docker operation,
 or activation occurred. `deployment_enabled` remains false.
+
+## C32J exact reviewed Cosign binary-size authority (repository only)
+
+`broker_service_config.COSIGN_BINARY_SIZE = 141150460` is the single code-owned
+size of the selected Cosign 3.1.2 Linux/amd64 executable, adjacent to the closed
+`COSIGN_VERSION`. Tests cross-check this value against C32I's independently
+reviewed `CosignReleaseProvenance.asset_size`. The verifier imports the closed
+constant, never the provenance/review module or upstream material. There is no
+caller-selected size, environment size override, or enlarged generic ceiling.
+C32H's schema-1 broker JSON and authority projections are unchanged.
+
+Executable snapshot validation requires an exact built-in integer `st_size`
+equal to this value before `_read()` can allocate or read executable content.
+Zero, smaller, larger, malformed and legacy 128 MiB sizes fail closed. Exact
+size is an additional resource-bound check; SHA-256 remains the primary content
+identity. The actual bytes must match the independently reviewed digest supplied
+through root-controlled broker authority. For the C32I selection that digest is
+`f7622ed3cf22e55e1ae6377c080979ff77a22da9981c11df222a2e444991e7cf`.
+Neither size nor digest bypasses the other check.
+
+No-follow descriptor traversal, single-link regular-file/root ownership and
+protected executable permissions, named/opened identity comparison, post-read
+metadata revalidation, and sealed memfd execution are preserved. The same bytes
+that were SHA-256 checked are copied into the sealed executable descriptor;
+Cosign's process still executes that descriptor. Failures expose only the
+existing fixed external blob-verification error. TrustedRoot retains its separate
+1 MiB maximum, exact configured SHA-256, fixed broker authority path and metadata
+contract. The snapshot helper accepts no size argument for either resource.
+
+Deterministic tests model exact production metadata without allocating a 141 MB
+fixture, and exercise real-file reading, hashing, sealing and mutation using a
+small synthetic artifact. They do not download, install or qualify real Cosign.
+The current application source set remains 31 files; verifier and broker authority
+modules remain outside it. C32D's pinned 28-file predecessor and 31-file target
+remain unchanged. No host resources, workflows or services are changed or
+activated; `deployment_enabled` remains false. Actual binary staging/hash and
+signature qualification, real Cosign/root/network qualification, dependency
+qualification, final host/source-set migration and live composition still require
+separate review before activation.
 
 ## C32D pinned post-C31 application update (repository only)
 
