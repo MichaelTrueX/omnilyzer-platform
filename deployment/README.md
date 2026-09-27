@@ -337,11 +337,11 @@ resource groups must equal broker_gid. Every acquired descriptor is closed once
 in reverse order; cleanup failure fails closed under C18's control-exception
 conventions. The loader never reads `executor.json`.
 
-No production Cosign/TrustedRoot SHA-256 is fabricated or supplied in this PR.
-Independent acquisition, provenance review, installation and real Cosign 3.1.2
-qualification of binary/root/evidence remain separately reviewed activation
-blockers. A final pre-activation host migration must create the three broker
-resources, install the reviewed canonical broker authority and TrustedRoot, and
+C32H did not fabricate or supply production Cosign/TrustedRoot SHA-256 values.
+C32I below subsequently establishes their reviewed provenance. Actual binary
+acquisition, installation and real Cosign 3.1.2 qualification of binary/root/
+evidence remain separately reviewed activation blockers. A final pre-activation
+host migration must create the three broker resources, install the reviewed canonical broker authority and TrustedRoot, and
 qualify access with actual process identities. C23/C30/C31 historical provisioning
 sets are not expanded or reinterpreted. The current application source set stays
 at 31 files; both C32H modules and `blob_verifier.py` remain outside it. Historical
@@ -354,6 +354,133 @@ No omnilyzerdev update or C32D execution occurs. Deployment remains disabled;
 `deployment_enabled` is false. Final source-set/host migration, dependency and
 Sigstore qualification, independent OCI and registry consumer authority, and
 separately reviewed live composition/ingress/activation remain future work.
+
+## C32I reviewed Sigstore verification authority provenance (repository only)
+
+`sigstore_authority_provenance.DevSigstoreVerificationProvenance()` follows the
+existing C27/C31P closed provenance pattern: frozen, slotted, zero-input records,
+with exact built-in type/value revalidation for every nested authority. Import,
+construction and projection perform no I/O. All records below were independently
+rechecked against official upstream on 2026-09-27; none is accepted solely from
+the task prompt or prior repository state.
+
+The [official Cosign v3.1.2 release](https://github.com/sigstore/cosign/releases/tag/v3.1.2)
+and [release API](https://api.github.com/repos/sigstore/cosign/releases/tags/v3.1.2)
+identify this exact Linux/amd64 authority:
+
+| Authority | Reviewed value |
+| --- | --- |
+| Repository/version | `sigstore/cosign`, `3.1.2`, tag `v3.1.2` |
+| GitHub release ID | `355751884` |
+| Annotated tag object | `dc80df70da727f4abdd843640594025584a270ae` |
+| Tag target/source commit | `193d2153431f8bb0d945a4c1ee721872f73add67` |
+| Tag signature status | GitHub API reports `verified=true`, `reason=valid` |
+| Binary asset / asset ID | `cosign-linux-amd64` / `480496709` |
+| Binary size / SHA-256 | `141150460` / `f7622ed3cf22e55e1ae6377c080979ff77a22da9981c11df222a2e444991e7cf` |
+| Binary bundle / asset ID | `cosign-linux-amd64.sigstore.json` / `480498776` |
+| Bundle size / SHA-256 | `6433` / `fdaa1c168d67041cd0d8f5782f8136ac5d148827b6911ba8bb577cbc7e13de2c` |
+| Checksums asset / asset ID | `cosign_checksums.txt` / `480498558` |
+| Checksums size / SHA-256 | `3906` / `3ef5d389c3f508b96025fd1b92744a305c46e95951c91242b57467567d5622db` |
+| Checksums bundle / asset ID | `cosign_checksums.txt.sigstore.json` / `480498856` |
+| Checksums bundle size / SHA-256 | `6578` / `be73ee422be126a70190ee24bf88a1b078cde1f954f076ddf9c0901de4136362` |
+
+The official tag ref was resolved to the annotated object, and its
+[tag API record](https://api.github.com/repos/sigstore/cosign/git/tags/dc80df70da727f4abdd843640594025584a270ae)
+was checked for the exact commit and GitHub signature-verification result. All
+four asset names, IDs, byte counts and release-asset SHA-256 values were rechecked.
+The three small checksum/signature assets were retrieved directly from this
+release and independently hashed against its API digests. The checksums text
+contains exactly one selected `cosign-linux-amd64` record with the binary digest;
+both retained bundles' message digests bind their respective subjects. These are
+provenance/content checks, not offline signature, certificate or log validation.
+The 141 MB binary was not downloaded, committed, installed or executed. Its size
+and digest are independently corroborated upstream metadata; the future installer
+must download/stage and hash the actual executable bytes before installation.
+
+TrustedRoot authority comes from the [pinned root-signing repository state](https://github.com/sigstore/root-signing/tree/829e81ca3db59ce8e8393f942795061b5fc0be30):
+
+| Authority | Reviewed value |
+| --- | --- |
+| Repository | `sigstore/root-signing` |
+| Reviewed commit | `829e81ca3db59ce8e8393f942795061b5fc0be30` |
+| Target path / name | `targets/trusted_root.json` / `trusted_root.json` |
+| Target Git blob | `effb0a19e6a0b3f69b3f0a2c72b5c2a02a0ddeea` |
+| Target size / SHA-256 | `6787` / `6494e21ea73fa7ee769f85f57d5a3e6a08725eae1e38c755fc3517c9e6bc0b66` |
+| Signed targets path | `metadata/targets.json` |
+| Targets Git blob | `5ad0d090f7f08da0031a10ef57c0de21a25b3244` |
+| Targets size / SHA-256 | `4942` / `6a697f7f8908c8ab26c11786ecb490b54acec97fa8c802e399f065f8a0cc1acd` |
+| Targets role version / expiration | `14` / `2036-05-09T09:00:52Z` |
+
+Both files were retrieved using the exact commit. Their Git object identities
+were independently calculated from the exact bytes and checked against the
+upstream tree API. The signed metadata's `trusted_root.json` target record was
+then cross-checked against the retrieved target's exact size and SHA-256. Neither
+file was normalized, reformatted, minified or reserialized.
+
+Five exact public evidence files are retained under `deployment/provenance/`:
+
+- `sigstore-public-good-trusted-root.json`: the reviewed installation-source bytes;
+- `sigstore-public-good-targets.json`: the signed metadata containing their digest;
+- `cosign-v3.1.2-checksums.txt`: upstream executable-digest corroboration;
+- `cosign-v3.1.2-checksums.txt.sigstore.json`: future checksums signature qualification;
+- `cosign-v3.1.2-linux-amd64.sigstore.json`: future exact-binary signature qualification.
+
+They total 28,646 bytes and materially support future byte/signature qualification
+without retaining the executable. The material is public trust evidence, with no
+secret, private key or registry credential.
+
+`sigstore_authority_review.review_retained_sigstore_authority()` is a pure
+review/build-time function accepting only the five exact byte strings. It opens
+no path and performs no I/O. Exact size/SHA-256 and target/metadata Git identities
+are checked before C1's existing duplicate-key/nonfinite/depth/node/string/array
+bounded JSON parser is used. Closed structural checks require the legacy Sigstore
+TrustedRoot media type `application/vnd.dev.sigstore.trustedroot+json;version=0.1`,
+the reviewed Rekor v1/v2, Fulcio, certificate-transparency and timestamp service
+records, valid base64/DER-sequence envelopes, declared algorithms and validity
+ranges. Services are identified by URI and validity, without array-order
+assumptions. The original bytes remain the authority; reordered or reserialized
+file bytes still fail their exact content identities.
+
+The review function also checks the target record, role version/expiration,
+checksums record, and bundle subject digests. It does not implement a complete
+TUF client: no trusted root-role chain, signature thresholds, delegation,
+snapshot/timestamp consistency, rollback/freeze protection or refresh is verified.
+Retaining signed targets metadata and reviewing its target digest does not prove
+its signatures cryptographically. Base64/DER structure does not establish X.509,
+log or Sigstore signature validity. Those limitations remain explicit future
+qualification requirements.
+
+`broker_service_configuration_kwargs()` projects only `cosign_version`,
+`cosign_binary_sha256` and `sigstore_trusted_root_sha256` as an immutable mapping
+for C32H. It supplies no workflow SHA. C32F's independently reviewed deployment
+workflow revision remains a separate root-controlled authority. C32G continues
+to read only `/etc/omnilyzer/deployment/broker/sigstore-trusted-root.json` during
+future verification, never a retained repository file. A separately reviewed
+host migration must install the exact retained target bytes at that fixed path
+and bind the same digest into the canonical broker configuration.
+
+**New pre-activation compatibility blocker:** the official binary is 141,150,460
+bytes, exceeding C32G's existing 128 MiB (`134217728`) ceiling. C32I preserves that
+security boundary and makes no runtime verifier change. A separately reviewed
+increment must reconcile the bound with this exact artifact and test its bounded
+snapshot behavior before actual binary qualification or activation.
+
+Automatic trust-root refresh is prohibited because it would change the reviewed
+verification authority independently of repository review. No provenance code
+fetches upstream material at import, startup, promotion, release verification or
+deployment execution. There is no ambient TUF state, initialization, environment
+mirror/root authority, automatic updater, latest lookup, or broker GitHub API
+retrieval. Trust changes require explicit reviewed repository changes.
+
+Future work must stage and prove the exact binary size/digest, cryptographically
+qualify retained evidence with the selected root and actual Cosign 3.1.2, review
+network behavior, qualify the Python dependencies, resolve the size blocker, and
+review final host/source-set migration and live composition. C32I's modules and
+all retained evidence remain outside the current 31-file installed source set;
+C32D's exact 28-file predecessor and 31-file C32C target are unchanged. No Cosign
+installation, broker configuration creation, TrustedRoot provisioning, runtime
+directory creation, omnilyzerdev update, C32D execution, systemd/Docker operation,
+or activation occurred. `deployment_enabled` remains false.
 
 ## C32D pinned post-C31 application update (repository only)
 
