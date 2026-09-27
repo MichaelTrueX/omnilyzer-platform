@@ -356,6 +356,47 @@ class SnapshotTests(unittest.TestCase):
                 os.close(directory_fd)
 
 
+class BrokerTrustedRootTests(unittest.TestCase):
+    def test_root_requires_exact_root_broker_0750_0640_authority(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'root.json'
+            path.write_bytes(b'reviewed root')
+            directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            self.addCleanup(os.close, directory_fd)
+            original_stat, original_fstat = os.stat, os.fstat
+            for kind in ('success', 'file_mode', 'file_group', 'file_owner',
+                         'directory_mode', 'directory_group', 'directory_owner'):
+                def authority_status(value):
+                    is_directory = stat.S_ISDIR(value.st_mode)
+                    fields = {name: getattr(value, name) for name in (
+                        'st_ino', 'st_dev', 'st_nlink', 'st_size', 'st_mtime_ns', 'st_ctime_ns')}
+                    prefix = 'directory' if is_directory else 'file'
+                    mode = 0o750 if is_directory else 0o640
+                    if kind == prefix + '_mode':
+                        mode = 0o755 if is_directory else 0o644
+                    fields.update(st_mode=(stat.S_IFDIR if is_directory else stat.S_IFREG) | mode,
+                                  st_uid=1234 if kind == prefix + '_owner' else 0,
+                                  st_gid=2002 if kind == prefix + '_group' else 1235)
+                    return SimpleNamespace(**fields)
+                owned = []
+                try:
+                    with self.subTest(kind=kind), patch.object(bv, '_directory', return_value=directory_fd), \
+                         patch.object(bv.os, 'getegid', return_value=1235), \
+                         patch.object(bv.os, 'stat', side_effect=lambda *a, **kw: authority_status(original_stat(*a, **kw))), \
+                         patch.object(bv.os, 'fstat', side_effect=lambda *a: authority_status(original_fstat(*a))):
+                        digest = hashlib.sha256(b'reviewed root').hexdigest()
+                        if kind == 'success':
+                            descriptor = bv._snapshot(str(path), digest, 100, owned, executable=False)
+                            self.assertEqual(bv._read(descriptor, len(b'reviewed root')), b'reviewed root')
+                        else:
+                            with self.assertRaises(OSError):
+                                bv._snapshot(str(path), digest, 100, owned, executable=False)
+                finally:
+                    for descriptor in owned:
+                        os.close(descriptor)
+
+
 class ProcessTests(unittest.TestCase):
     def fake(self, body):
         directory = tempfile.TemporaryDirectory()

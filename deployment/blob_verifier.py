@@ -21,13 +21,17 @@ import tempfile
 import time
 
 from .broker import _bound_operation
+from .broker_service_config import (
+    BROKER_SERVICE_CONFIG_DIRECTORY_MODE,
+    BROKER_SERVICE_CONFIG_FILE_MODE,
+    COSIGN_VERSION,
+    PRODUCTION_SIGSTORE_TRUSTED_ROOT_PATH as TRUSTED_ROOT_PATH,
+)
 from .policy import EXPECTED_CERTIFICATE_IDENTITY, EXPECTED_CERTIFICATE_ISSUER, validate_sha256
 from .release_consumer import MAX_EVIDENCE_BYTES
 
 COSIGN_PATH = "/opt/omnilyzer/deployment/tools/cosign-v3.1.2-linux-amd64"
-TRUSTED_ROOT_PATH = "/etc/omnilyzer/deployment/dev/sigstore-trusted-root.json"
 RUNTIME_DIRECTORY = "/run/omnilyzer/deployment/dev/blob-verifier"
-COSIGN_VERSION = "3.1.2"
 MAX_BINARY_BYTES = 128 * 1024 * 1024
 MAX_ROOT_BYTES = 1024 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024
@@ -188,6 +192,16 @@ def _snapshot(path: str, digest: str, maximum: int, owned: list[int], *, executa
                          dir_fd=directory)
     owned.append(descriptor)
     opened = os.fstat(descriptor)
+    if not executable:
+        authority_directory = os.fstat(directory)
+        if (
+            (authority_directory.st_uid, authority_directory.st_gid,
+             stat.S_IMODE(authority_directory.st_mode))
+            != (0, os.getegid(), BROKER_SERVICE_CONFIG_DIRECTORY_MODE)
+            or (opened.st_gid, stat.S_IMODE(opened.st_mode))
+            != (os.getegid(), BROKER_SERVICE_CONFIG_FILE_MODE)
+        ):
+            raise OSError
     if (not stat.S_ISREG(opened.st_mode) or opened.st_uid != 0
             or opened.st_nlink != 1 or opened.st_mode & 0o022
             or not 0 < opened.st_size <= maximum
