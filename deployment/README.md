@@ -99,7 +99,8 @@ credential exchange, or production composition. Read credentials should remain
 inside the future unprivileged environment-local broker, separately scoped for
 zot and Forgejo; they must not be given to arbitrary GitHub workflow code.
 C32G provides the concrete blob boundary described below. Its installation and
-real-Cosign qualification, and the separate OCI verifier, remain uncompleted. The signed Task 013 schema 2 provenance replaces the
+real-Cosign qualification remain uncompleted; C32N now supplies the separate
+repository-only OCI verifier below. The signed Task 013 schema 2 provenance replaces the
 separate release-run verifier; the promotion's run ID alone remains insufficient.
 Before activation, a reviewed authority must supply the approved deployment
 workflow revision independently of the token and request. No current main
@@ -239,7 +240,7 @@ nonzero exits, timeouts, excess output and cleanup errors produce one fixed
 external `BlobVerificationError`, with no diagnostics/evidence/paths attached.
 Control-flow exceptions retain their existing propagation convention.
 
-OCI verification remains an injected protocol only: C32G adds no registry
+At C32G, OCI verification remained an injected protocol only: C32G adds no registry
 signature implementation, Docker call, credential, token exchange or service
 entrypoint. The concrete blob module remains outside the 31-file C25/C26
 application source set. Historical C32D's exact 28-file predecessor and 31-file
@@ -775,6 +776,128 @@ execution or network behavior. Those qualifications, actual artifact acquisition
 explicit installation approval/execution, broker configuration/final migration,
 dependency qualification, OCI/registry authority, live composition and GitHub
 protections remain separately reviewed activation blockers.
+
+## C32N concrete OCI signature verifier with ephemeral zot credentials (inert)
+
+`oci_verifier.CosignOCISignatureVerifier` is a separate immutable collaborator
+from `CosignReleaseBlobVerifier`. Construction captures reviewed version/digests,
+broker UID/GID, and bound credential-provider and process-runner operations. It
+acquires no credential and performs no I/O until explicitly called. There is no
+CLI, listener, service composition, credential exchange or automatic invocation.
+Paths, resource modes and registry selection are not constructor inputs.
+
+`OCISignatureVerifier.verify(image_reference, now)` now requires positional request
+time. `acquire_and_construct_dev_request()` passes its authoritative `received_at`
+unchanged. `_CapturedSignature` still captures positional operations; no keyword
+forwarding or independently selected wall clock was introduced. Exact built-in
+nonnegative integer time and an exact built-in string are required. The only
+accepted reference is
+`oci-dev.omnilyzer.ai/omnilyzer/task013-release-canary@sha256:<64 lowercase hex>`.
+Tags, schemes, alternate hosts/repositories, suffixes and uppercase digests fail.
+
+The provider supplies the existing exact `ZotReadCredential` read-only type.
+Its token must be an exact printable ASCII built-in string of 1–8192 characters;
+expiry must be an exact built-in integer with `now < expires_at <= now + 300`.
+This is the same C32B validation, without minting, refresh or expiry fallback.
+Credentials are acquired only after static snapshots and private directories are
+ready. No token is accepted by construction or `verify()` and none is stored in
+the verifier. Python strings cannot be reliably zeroized; local references are
+cleared after config creation and in cleanup, without a memory-erasure claim.
+
+The future runtime directory is fixed at
+`/run/omnilyzer/deployment/dev/oci-verifier`, exactly broker UID/GID and `0700`.
+Protected root-owned ancestors and named/opened identities are required. Each
+call creates a unique `0700` private workspace and descriptor-relative `.docker`
+directory, also `0700`. Exclusive no-follow `config.json` is broker-owned,
+single-link regular and `0600`. Its deterministic JSON contains exactly:
+
+```json
+{"auths":{"oci-dev.omnilyzer.ai":{"registrytoken":"<short-lived READ token>"}}}
+```
+
+The config is generated, never loaded/merged from an existing host file. It has
+no `credsStore`, `credHelpers`, extra auth entries or other configuration fields.
+The child receives `HOME=/proc/self/fd/<workspace-fd>` and
+`DOCKER_CONFIG=/proc/self/fd/<docker-directory-fd>`, with both descriptors passed.
+Both paths select the same `.docker/config.json`. `XDG_RUNTIME_DIR`,
+`XDG_CACHE_HOME` and `XDG_CONFIG_HOME` point to the private workspace;
+`LANG=C` and `LC_ALL=C` complete the explicit environment. There is no inherited
+PATH, proxy, cloud, Kubernetes, Docker-auth, Cosign or Sigstore environment.
+No Docker login/logout or credential helper is invoked by this implementation.
+
+This design was independently rechecked against pinned upstream source during
+C32N review, not fetched by application code or tests:
+
+- Cosign [reviewed source commit's registry options](https://github.com/sigstore/cosign/blob/193d2153431f8bb0d945a4c1ee721872f73add67/cmd/cosign/cli/options/registry.go)
+  selects `authn.DefaultKeychain` with no explicit registry auth flags.
+- Its [go.mod](https://github.com/sigstore/cosign/blob/193d2153431f8bb0d945a4c1ee721872f73add67/go.mod)
+  selects go-containerregistry `v0.21.7` and Docker CLI `v29.5.3`.
+- The [v0.21.7 keychain](https://github.com/google/go-containerregistry/blob/v0.21.7/pkg/authn/keychain.go)
+  checks HOME/DOCKER_CONFIG and calls Docker `config.Load`, preserving
+  `RegistryToken`. Docker's [v29.5.3 AuthConfig](https://github.com/docker/cli/blob/v29.5.3/cli/config/types/authconfig.go)
+  supports `registrytoken`; [config.Load](https://github.com/docker/cli/blob/v29.5.3/cli/config/config.go)
+  does not run default-store autodetection. Without helper fields,
+  [GetAuthConfig](https://github.com/docker/cli/blob/v29.5.3/cli/config/configfile/file.go)
+  uses the file credential store.
+
+C32N reuses C32G's exact C32L owner/group/mode checks, exact Cosign size and
+configured SHA-256 checks, no-follow traversal, metadata revalidation and sealed
+memfd snapshots. It executes the hashed sealed executable, not PATH or the source
+pathname. The command is closed:
+
+```text
+cosign verify --offline --trusted-root /proc/self/fd/<sealed-root-fd>
+  --certificate-identity <exact Task013 release workflow identity>
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  oci-dev.omnilyzer.ai/omnilyzer/task013-release-canary@sha256:<digest>
+```
+
+Identity and issuer come from existing policy. There are no registry credential,
+key, regexp, insecure-registry, insecure-ignore, caller signature/payload or
+local-image flags. Cosign's [reviewed offline option](https://github.com/sigstore/cosign/blob/193d2153431f8bb0d945a4c1ee721872f73add67/cmd/cosign/cli/options/verify.go)
+is deprecated upstream but deliberately supplied; its general TUF caveat is
+addressed by the explicit sealed TrustedRoot. The [trusted-material branch](https://github.com/sigstore/cosign/blob/193d2153431f8bb0d945a4c1ee721872f73add67/cmd/cosign/cli/verify/common.go)
+loads that file instead of choosing an ambient TUF root. Missing material needed
+for offline verification fails; C32N adds no retry without `--offline` and no
+online Rekor fallback. Registry network is still necessary. Binding the image
+reference and subprocess configuration is not an OS/DNS/firewall egress policy;
+live-host egress enforcement remains separate work.
+
+The shared C32G runner uses no shell, a 30-second deadline, independently bounded
+64 KiB stdout/stderr, nonblocking pipe draining and no retained output. Its
+isolated process group is killed before the leader is reaped even on success.
+Only sealed binary/root and private workspace/Docker directory descriptors are
+passed. OCI adds only the narrow controlled Docker-config environment option;
+blob invocation/environment semantics remain unchanged.
+
+After process cleanup, the token file is unlinked through its held directory,
+then the private directories are removed and every descriptor is closed.
+Cleanup checks created inode/device identities; substitutions are not blindly
+deleted. Metadata/directory changes, unexpected residue or cleanup failures
+prevent success. Filesystem cleanup failure may leave private residue requiring
+review; successful return requires completed cleanup. One fixed external
+`OCIVerificationError` excludes credentials, process output and private paths.
+Control exceptions retain existing propagation semantics.
+
+The five-field result is built from validated input and closed policy, never
+Cosign output: `verified`, `repository`, `manifest_digest`,
+`certificate_identity`, `issuer`. Promotion's independent closed-result checks
+are unchanged. Manifest acquisition and OCI signature verification remain
+separate evidence checks, and blob verification cannot satisfy OCI verification.
+
+Tests use small synthetic snapshots, mocked resources and fake processes only.
+No real Cosign executable or zot request was used; no real cryptographic
+verification or network behavior qualification is claimed. The 31-file source
+selection is unchanged and the new OCI module remains outside it.
+`release_consumer.py` changes repository bytes for the explicit-time protocol;
+the already installed generation and C32D's pinned 28-file predecessor/31-file
+target source hashes remain historical authority, not rewritten current bytes.
+A separately reviewed final application migration remains required.
+C32M was not invoked. No static resources, production runtime directory, broker
+JSON, systemd/Docker state, workflow permissions or host generation were changed.
+Deployment remains disabled. Artifact installation, credential-provider
+composition/exchange, real-tool qualification, dependency qualification and live
+deployment integration remain activation blockers.
 
 ## C32D pinned post-C31 application update (repository only)
 

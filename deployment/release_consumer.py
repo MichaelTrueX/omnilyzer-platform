@@ -107,12 +107,9 @@ class ReleaseBlobSignatureVerifier(Protocol):
 
 
 class OCISignatureVerifier(Protocol):
-    """Separate unresolved authority for the exact repository@digest signature.
+    """Independent exact repository@digest authority with request-owned time."""
 
-    C32G supplies no registry implementation or credential.
-    """
-
-    def verify(self, image_reference: str) -> dict[str, Any]: ...
+    def verify(self, image_reference: str, now: int) -> dict[str, Any]: ...
 
 
 def _credential(value: object, expected_type: type, now: int) -> str:
@@ -536,7 +533,7 @@ def acquire_and_construct_dev_request(
             manifest, provenance, evidence["release-manifest.sigstore.json"],
             evidence["release-provenance.sigstore.json"],
         )
-        oci = oci_signatures.verify(promotion.exact_image_reference)
+        oci = oci_signatures.verify(promotion.exact_image_reference, received_at)
         trusted = verify_release_evidence(promotion, manifest, provenance, sigstore, oci)
         result = _construct_dev_request(
             promotion, trusted, identity, runtime, ingress, received_at=received_at,

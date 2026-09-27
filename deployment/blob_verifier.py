@@ -55,13 +55,17 @@ class _ProcessResult:
 
 class _CosignProcess:
     def run(self, argv: tuple[str, ...], blob: bytes, *, executable: str,
-            descriptors: tuple[int, ...], home: str) -> _ProcessResult:
+            descriptors: tuple[int, ...], home: str,
+            docker_config: str | None = None) -> _ProcessResult:
         """Drain both pipes while sending bounded stdin; retain no child output."""
+        environment = {"HOME": home, "XDG_CACHE_HOME": home, "XDG_CONFIG_HOME": home,
+                       "LANG": "C", "LC_ALL": "C"}
+        if docker_config is not None:
+            environment.update(DOCKER_CONFIG=docker_config, XDG_RUNTIME_DIR=home)
         child = subprocess.Popen(
             argv, executable=executable, stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False,
-            env={"HOME": home, "XDG_CACHE_HOME": home, "XDG_CONFIG_HOME": home,
-                 "LANG": "C", "LC_ALL": "C"},
+            env=environment,
             cwd=home, close_fds=True, pass_fds=descriptors, start_new_session=True,
         )
         try:
