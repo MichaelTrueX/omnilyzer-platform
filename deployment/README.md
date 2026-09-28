@@ -1022,6 +1022,35 @@ workflow permission/environment, host mutation, or deployment activation. The
 new module and reference remain outside the installed 31-file application
 generation; historical C32D source authority remains unchanged.
 
+## C32T broker process bootstrap and persistent listener (repository only)
+
+The explicit `DevBrokerLoopbackListener.serve_until_stopped()` operation holds
+one `127.0.0.1:3031` socket for the full sequential lifecycle. It shares
+C32R's socket, framing, dispatch, response and cleanup path with `serve_once()`;
+an accept timeout only permits another stop check. Each accepted connection is
+closed after one request. A stop request waits for the active promotion and its
+credential cleanup to finish, then prevents another accept. No worker pool,
+rebind loop, public address or alternate HTTP protocol is added.
+
+`run_dev_broker_service(stop_controller=...)` is an explicit future process
+operation with no caller-selected security authority. It loads and revalidates
+the fixed schema-2 root-controlled broker config, constructs one shared GitHub
+JWKS cache for deployment and registry verification, and read-only validates
+the already-provisioned replay database before constructing any network
+listener. The fixed C13 identity projection supplies replay and Unix executor
+transport authority; C32H's blob projection supplies the independent Cosign
+blob verifier. C32P continues to construct the OCI verifier only within a
+verified request. Bootstrap never initializes or repairs replay storage.
+
+`python -m deployment.broker_service_entrypoint` is the closed future process
+form. It accepts no arguments; SIGTERM/SIGINT set only the in-process stop
+controller. Normal stop exits 0, ordinary failure exits 1, and unsupported
+arguments exit 2. Import is inert. C32T does not invoke the entrypoint, bind
+the live port, install a broker service, create runtime directories, install
+configuration/resources, change Nginx or workflow permissions, or activate
+deployment. C32U must separately review the host service sandbox and resource
+provisioning after this process model; final application hashes remain unfrozen.
+
 ## C32P request-scoped registry credential integration (inert)
 
 `InertDevPromotionHandler.handle()` now accepts exactly five separate inputs:
