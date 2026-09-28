@@ -11,6 +11,8 @@ import jwt
 
 from .identity import (
     DEV_AUDIENCE,
+    DEV_ZOT_READ_AUDIENCE,
+    DEV_FORGEJO_READ_AUDIENCE,
     DEV_ISSUER,
     REQUIRED_AUTHORIZATION_CLAIMS,
     AuthorizedGitHubIdentity,
@@ -97,6 +99,62 @@ def _parse_compact_token(compact_token: Any) -> tuple[dict[str, Any], dict[str, 
     return header, claims
 
 
+def _same_json_values(left: Any, right: Any) -> bool:
+    """Compare verified and bounded JSON including exact types (bool != int)."""
+
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        return left.keys() == right.keys() and all(
+            _same_json_values(left[key], right[key]) for key in left
+        )
+    if type(left) is list:
+        return len(left) == len(right) and all(
+            _same_json_values(a, b) for a, b in zip(left, right, strict=True)
+        )
+    return left == right
+
+
+def _verify_bounded_github_oidc_claims(
+    compact_token: str, *, received_at: int, audience: str,
+    jwks_cache: GitHubJWKSCache,
+) -> dict[str, Any]:
+    """Private shared crypto path for three closed audiences; no public override."""
+
+    if (type(audience) is not str or audience not in (
+            DEV_AUDIENCE, DEV_ZOT_READ_AUDIENCE, DEV_FORGEJO_READ_AUDIENCE)):
+        raise OIDCVerificationError("OIDC audience authority is invalid")
+    if isinstance(received_at, bool) or not isinstance(received_at, int) or received_at < 0:
+        raise OIDCVerificationError("OIDC receipt time is invalid")
+    header, bounded_claims = _parse_compact_token(compact_token)
+    key = jwks_cache.get_key(header["kid"])
+    try:
+        verified_claims = jwt.decode(
+            compact_token,
+            key=key,
+            algorithms=["RS256"],
+            issuer=DEV_ISSUER,
+            audience=audience,
+            options={
+                "verify_signature": True,
+                "verify_iss": True,
+                "verify_aud": True,
+                "strict_aud": True,
+                "verify_exp": False,
+                "verify_iat": False,
+                "verify_nbf": False,
+                "require": sorted(REQUIRED_AUTHORIZATION_CLAIMS),
+            },
+        )
+    except jwt.PyJWTError:
+        raise OIDCVerificationError("OIDC token verification failed") from None
+    except Exception:
+        raise OIDCVerificationError("OIDC token verification failed") from None
+    if not _same_json_values(verified_claims, bounded_claims):
+        raise OIDCVerificationError("OIDC verified claims are inconsistent")
+    return bounded_claims
+
+
 class GitHubOIDCVerifier:
     """Verify and authorize one fixed GitHub Actions deployment identity."""
 
@@ -120,34 +178,10 @@ class GitHubOIDCVerifier:
     ) -> AuthorizedGitHubIdentity:
         """Return the authorized identity; C1 deliberately does not consume replay."""
 
-        if isinstance(received_at, bool) or not isinstance(received_at, int) or received_at < 0:
-            raise OIDCVerificationError("OIDC receipt time is invalid")
-        header, bounded_claims = _parse_compact_token(compact_token)
-        key = self._jwks_cache.get_key(header["kid"])
-        try:
-            verified_claims = jwt.decode(
-                compact_token,
-                key=key,
-                algorithms=["RS256"],
-                issuer=DEV_ISSUER,
-                audience=DEV_AUDIENCE,
-                options={
-                    "verify_signature": True,
-                    "verify_iss": True,
-                    "verify_aud": True,
-                    "strict_aud": True,
-                    "verify_exp": False,
-                    "verify_iat": False,
-                    "verify_nbf": False,
-                    "require": sorted(REQUIRED_AUTHORIZATION_CLAIMS),
-                },
-            )
-        except jwt.PyJWTError:
-            raise OIDCVerificationError("OIDC token verification failed") from None
-        except Exception:
-            raise OIDCVerificationError("OIDC token verification failed") from None
-        if not isinstance(verified_claims, Mapping) or dict(verified_claims) != bounded_claims:
-            raise OIDCVerificationError("OIDC verified claims are inconsistent")
+        bounded_claims = _verify_bounded_github_oidc_claims(
+            compact_token, received_at=received_at, audience=DEV_AUDIENCE,
+            jwks_cache=self._jwks_cache,
+        )
         try:
             return authorize_verified_github_oidc(
                 bounded_claims, received_at=received_at,
