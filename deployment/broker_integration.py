@@ -1,13 +1,15 @@
-"""Inert C32C DEV promotion handler; no listener or production composition.
+"""Inert DEV promotion handler; request authority is constructor-bound.
 
-Only a later reviewed environment-local broker may supply the credential,
-signature, replay, and transport implementations. Construction
-does not call any collaborator or create installation/activation authority.
+The installed source selection stays closed. C32P's repository-only concrete
+registry/Cosign composition lives outside that historical application set.
 """
 
 from __future__ import annotations
 
-from .broker import BrokerRejectedError, REJECTED_MESSAGE, RestrictedDeploymentBroker, _bound_operation
+from .broker import (
+    BrokerRejectedError, REJECTED_MESSAGE, RestrictedDeploymentBroker,
+    _bound_operation,
+)
 from .execution import ExecutorRequest, IngressReference, RuntimeConfigurationReference
 from .identity import AuthorizedGitHubIdentity, validate_expected_workflow_sha
 from .jwks import OIDCVerificationError, parse_bounded_json
@@ -15,12 +17,36 @@ from .oidc_verifier import MAX_COMPACT_TOKEN_BYTES
 from .policy import DeploymentPolicyError
 from .promotion import PromotionRequest
 from .release_consumer import (
-    ForgejoEvidenceConsumer, ReleaseBlobSignatureVerifier, OCISignatureVerifier,
-    ZotCandidateConsumer, acquire_and_construct_dev_request,
+    ReleaseBlobSignatureVerifier, acquire_and_construct_dev_request,
 )
 
 
 MAX_PROMOTION_REQUEST_BYTES = 4096
+
+
+class _RegistryOIDCTokens:
+    """Private, noncanonical raw-token envelope for only one active call."""
+
+    __slots__ = ("zot_token", "forgejo_token")
+
+    def __init__(self, zot_token: str, forgejo_token: str) -> None:
+        object.__setattr__(self, "zot_token", zot_token)
+        object.__setattr__(self, "forgejo_token", forgejo_token)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("registry token context is immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("registry token context is immutable")
+
+    def __repr__(self) -> str:
+        return "<_RegistryOIDCTokens redacted>"
+
+    def __reduce__(self) -> object:
+        raise TypeError("registry token context is not serializable")
+
+    def __reduce_ex__(self, protocol: int) -> object:
+        raise TypeError("registry token context is not serializable")
 
 
 class _CapturedSignature:
@@ -42,21 +68,22 @@ class _CapturedSignature:
 
 
 class _ReleaseRequestBuilder:
-    __slots__ = ("_zot", "_forgejo", "_blob_signatures", "_oci_signatures", "_runtime", "_ingress",
-                 "_expected_workflow_sha")
+    """Keep only nonsecret static authority; require a reviewed context type."""
+
+    __slots__ = ("_create", "_verified_context_type", "_blob_signatures",
+                 "_runtime", "_ingress", "_expected_workflow_sha")
 
     def __init__(
-        self, *, zot: ZotCandidateConsumer, forgejo: ForgejoEvidenceConsumer,
-        blob_signatures: ReleaseBlobSignatureVerifier, oci_signatures: OCISignatureVerifier,
+        self, *, factory: object, verified_context_type: type,
+        blob_signatures: ReleaseBlobSignatureVerifier,
         expected_workflow_sha: str,
         runtime: RuntimeConfigurationReference, ingress: IngressReference,
     ) -> None:
-        if blob_signatures is oci_signatures:
-            raise TypeError("blob and OCI signature authorities must be independent")
-        object.__setattr__(self, "_zot", zot)
-        object.__setattr__(self, "_forgejo", forgejo)
+        if type(verified_context_type) is not type:
+            raise TypeError("verified context type authority is invalid")
+        object.__setattr__(self, "_create", _bound_operation(factory, "create"))
+        object.__setattr__(self, "_verified_context_type", verified_context_type)
         object.__setattr__(self, "_blob_signatures", _CapturedSignature(blob_signatures))
-        object.__setattr__(self, "_oci_signatures", _CapturedSignature(oci_signatures))
         object.__setattr__(self, "_expected_workflow_sha",
                            validate_expected_workflow_sha(expected_workflow_sha))
         object.__setattr__(self, "_runtime", runtime)
@@ -70,38 +97,36 @@ class _ReleaseRequestBuilder:
 
     def build(
         self, promotion: PromotionRequest, identity: AuthorizedGitHubIdentity,
-        *, received_at: int,
+        verified_context: object, *, received_at: int,
     ) -> ExecutorRequest:
+        if type(verified_context) is not object.__getattribute__(
+                self, "_verified_context_type"):
+            raise TypeError("verified registry context type is invalid")
+        zot, forgejo, oci = object.__getattribute__(self, "_create")(
+            verified_context)
         return acquire_and_construct_dev_request(
             promotion, identity, self._runtime, self._ingress,
-            self._zot, self._forgejo, self._blob_signatures, self._oci_signatures,
+            zot, forgejo, self._blob_signatures, oci,
             received_at=received_at,
             expected_workflow_sha=object.__getattribute__(self, "_expected_workflow_sha"),
         )
 
 
 class InertDevPromotionHandler:
-    """Handle supplied token and canonical promotion bytes exactly once."""
+    """Handle three separate compact JWTs and canonical token-free promotion bytes."""
 
     __slots__ = ("_forward",)
 
     def __init__(
-        self, *, verifier: object, replay_guard: object, transport: object,
-        zot: ZotCandidateConsumer, forgejo: ForgejoEvidenceConsumer,
-        blob_signatures: ReleaseBlobSignatureVerifier, oci_signatures: OCISignatureVerifier,
-        expected_workflow_sha: str,
-        runtime: RuntimeConfigurationReference, ingress: IngressReference,
+        self, *, expected_workflow_sha: str, verifier: object, replay_guard: object,
+        transport: object, request_builder: object,
+        promotion_context_verifier: object,
     ) -> None:
-        builder = _ReleaseRequestBuilder(
-            zot=zot, forgejo=forgejo, blob_signatures=blob_signatures,
-            oci_signatures=oci_signatures,
-            runtime=runtime, ingress=ingress,
-            expected_workflow_sha=expected_workflow_sha,
-        )
         broker = RestrictedDeploymentBroker(
             expected_workflow_sha=expected_workflow_sha,
             verifier=verifier, replay_guard=replay_guard, transport=transport,
-            request_builder=builder,
+            request_builder=request_builder,
+            promotion_context_verifier=promotion_context_verifier,
         )
         object.__setattr__(self, "_forward", broker.authorize_promotion_and_forward)
 
@@ -112,10 +137,12 @@ class InertDevPromotionHandler:
         raise AttributeError("DEV promotion handler collaborators are immutable")
 
     def handle(
-        self, *, compact_token: str, promotion_request: bytes, received_at: int,
+        self, *, compact_token: str, zot_token: str, forgejo_token: str,
+        promotion_request: bytes, received_at: int,
     ) -> bytes:
-        if (type(compact_token) is not str or not compact_token.isascii()
-                or not 1 <= len(compact_token) <= MAX_COMPACT_TOKEN_BYTES
+        if (any(type(token) is not str or not token.isascii()
+                or not 1 <= len(token) <= MAX_COMPACT_TOKEN_BYTES
+                for token in (compact_token, zot_token, forgejo_token))
                 or type(promotion_request) is not bytes
                 or not 1 <= len(promotion_request) <= MAX_PROMOTION_REQUEST_BYTES
                 or type(received_at) is not int or received_at < 0):
@@ -132,7 +159,9 @@ class InertDevPromotionHandler:
         except (OIDCVerificationError, DeploymentPolicyError, UnicodeError, ValueError):
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         return object.__getattribute__(self, "_forward")(
-            compact_token=compact_token, promotion=promotion, received_at=received_at,
+            compact_token=compact_token, promotion=promotion,
+            promotion_context=_RegistryOIDCTokens(zot_token, forgejo_token),
+            received_at=received_at,
         )
 
 

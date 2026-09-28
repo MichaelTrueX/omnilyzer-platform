@@ -9,16 +9,23 @@ already have been cryptographically authorized by the deployment verifier.
 from . import identity as _identity
 from . import oidc_verifier as _oidc
 from .broker import IDENTITY_FIELDS as _IDENTITY_FIELDS, _normalize_identity
-from .jwks import GitHubJWKSCache as _GitHubJWKSCache
+from .jwks import (
+    GitHubJWKSCache as _GitHubJWKSCache,
+    OIDCVerificationError as _OIDCVerificationError,
+    OIDCVerificationUnavailable as _OIDCVerificationUnavailable,
+)
+from .identity import OIDCAuthorizationError as _OIDCAuthorizationError
 from .release_consumer import (
     ForgejoReadCredential as _ForgejoReadCredential,
+    ReleaseConsumerError as _ReleaseConsumerError,
     ZotReadCredential as _ZotReadCredential,
     _credential,
 )
 
 __all__ = (
     "GitHubRegistryCredentialVerifier", "VerifiedRegistryCredentials",
-    "RegistryCredentialVerificationError",
+    "RegistryCredentialVerificationError", "RegistryCredentialRejectedError",
+    "RegistryCredentialUnavailableError",
 )
 
 _ERROR = "DEV registry credential verification is unavailable or invalid"
@@ -32,6 +39,14 @@ _CROSS_BOUND_FIELDS = (
 
 class RegistryCredentialVerificationError(Exception):
     """One fixed external failure; token, claims and JWKS diagnostics are hidden."""
+
+
+class RegistryCredentialRejectedError(RegistryCredentialVerificationError):
+    """The signed credential or its closed policy definitely failed."""
+
+
+class RegistryCredentialUnavailableError(RegistryCredentialVerificationError):
+    """Cryptographic verification authority is unavailable."""
 
 
 class VerifiedRegistryCredentials:
@@ -92,7 +107,7 @@ class GitHubRegistryCredentialVerifier:
         except _CONTROL:
             raise
         except Exception:
-            raise RegistryCredentialVerificationError(_ERROR) from None
+            raise RegistryCredentialUnavailableError(_ERROR) from None
         object.__setattr__(self, "_expected_workflow_sha", reviewed_sha)
         object.__setattr__(self, "_jwks_cache", selected_cache)
 
@@ -148,5 +163,10 @@ class GitHubRegistryCredentialVerifier:
             return _result(zot, forgejo)
         except _CONTROL:
             raise
+        except _OIDCVerificationUnavailable:
+            raise RegistryCredentialUnavailableError(_ERROR) from None
+        except (_OIDCVerificationError, _OIDCAuthorizationError,
+                _ReleaseConsumerError, ValueError):
+            raise RegistryCredentialRejectedError(_ERROR) from None
         except Exception:
-            raise RegistryCredentialVerificationError(_ERROR) from None
+            raise RegistryCredentialUnavailableError(_ERROR) from None

@@ -303,7 +303,18 @@ class RegistryCredentialTests(unittest.TestCase):
 
     def test_jwks_unavailable_and_strict_pyjwt_options(self):
         with patch.object(self.cache, 'get_key', side_effect=OIDCVerificationUnavailable('secret key')):
-            self.reject()
+            with self.assertRaises(registry.RegistryCredentialUnavailableError) as caught:
+                self.verify()
+            self.assertEqual(str(caught.exception), ERROR)
+        for failure in (RuntimeError('secret infrastructure detail'),
+                        TypeError('secret cache detail')):
+            with patch.object(self.cache, 'get_key', side_effect=failure):
+                with self.assertRaises(registry.RegistryCredentialUnavailableError) as caught:
+                    self.verify()
+                self.assertEqual(str(caught.exception), ERROR)
+        with self.assertRaises(registry.RegistryCredentialRejectedError) as caught:
+            self.verify(zot=self.token(self.claims(FORGEJO_AUDIENCE)))
+        self.assertEqual(str(caught.exception), ERROR)
         with patch('deployment.oidc_verifier.jwt.decode', wraps=jwt.decode) as decode:
             self.verify()
         self.assertEqual([call.kwargs['audience'] for call in decode.call_args_list],
