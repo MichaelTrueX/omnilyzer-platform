@@ -401,8 +401,8 @@ class BrokerLoopbackListenerTests(unittest.TestCase):
         environment = json.loads((ROOT / "deployment/environments/dev.json").read_text())
         self.assertIs(environment["activation"]["deployment_enabled"], False)
         selected = tuple(item.repository_path for item in DevApplicationSourceSet().files)
-        self.assertEqual(len(selected), 31)
-        self.assertNotIn("deployment/broker_loopback_listener.py", selected)
+        self.assertEqual(len(selected), 41)
+        self.assertIn("deployment/broker_loopback_listener.py", selected)
 
 
 if __name__ == "__main__":

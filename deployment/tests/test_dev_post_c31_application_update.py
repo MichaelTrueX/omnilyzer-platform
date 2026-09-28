@@ -22,6 +22,21 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class EvidenceTests(unittest.TestCase):
     def test_exact_pinned_git_generations_and_added_once(self):
+        self.assertEqual((update.PREDECESSOR, update.TARGET,
+                          update.PREDECESSOR_C26, update.TARGET_C26), (
+            "3ef02a6d61d20df3a1495b290c20807162b65b06",
+            "c04e66008cff556315603a9de59dacb4679787d4",
+            "7a89fd0e7f67daa17c772ec9e9058863ff25041ed57b7828d7cce2329ccdb419",
+            "4e0079a4528f3cba7669062b38e6b8d899be237dab51fb957d97331f09686c03",
+        ))
+        self.assertEqual(hashlib.sha256((ROOT / "deployment/dev_post_c31_application_update.py")
+                                        .read_bytes()).hexdigest(),
+                         "27eb9ba7f9c5040b7f0a2a1f630757251165149d27a28ea05395937e002d8298")
+        self.assertEqual(tuple(hashlib.sha256(("\n".join(paths) + "\n").encode()).hexdigest()
+                               for paths in (c26._predecessor_paths(), c26._paths())), (
+            "54ed0e1f062815ff27644579506c95d05ba13d1386b2df41714c9b286df97275",
+            "b7e7eb2c62adf1323e7829cddab2ad3d9e7ece4d0407fcb6bcbb3bab78dea32d",
+        ))
         previous, target, blobs = update._evidence()
         self.assertEqual((previous.reviewed_commit, target.reviewed_commit),
                          (update.PREDECESSOR, update.TARGET))

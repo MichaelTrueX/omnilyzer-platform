@@ -1,7 +1,7 @@
 """C32P repository-only composition of request-scoped registry authority.
 
-This module remains outside the installed 31-file generation. Construction is
-inert; no token request, registry access, Cosign execution or host mutation.
+The C32V current runtime source selection includes this module. Construction
+is inert; no token request, registry access, Cosign execution or host mutation.
 """
 
 from __future__ import annotations

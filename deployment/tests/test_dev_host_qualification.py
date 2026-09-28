@@ -25,7 +25,6 @@ import deployment.host_provisioning_contract as c23
 import deployment.installation_integrity_contract as c24
 import deployment.python_interpreter_provenance as c27
 import deployment.wheelhouse_qualification as c28
-from deployment.application_source_set import DevApplicationSourceSet
 from deployment.tests.test_executor_service_config import configuration_values
 
 
@@ -36,7 +35,7 @@ ERROR = "DEV host qualification is unavailable"
 def fixtures():
     configuration = c17.DevExecutorServiceConfiguration(**configuration_values())
     integrity = c24.DevInstallationIntegrityContract(configuration=configuration)
-    paths = tuple(item.repository_path for item in DevApplicationSourceSet().files)
+    paths = c26._predecessor_paths()
     manifest = c26.DevApplicationManifest(
         "canonical-relative-file-set-v1", "sha256", configuration.reviewed_commit,
         tuple(c26.ApplicationManifestEntry(path, "a" * 64, "0644") for path in paths),

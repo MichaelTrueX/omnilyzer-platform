@@ -432,7 +432,7 @@ class SeparationTests(unittest.TestCase):
 
     def test_source_set_and_c32d_remain_closed(self):
         paths = {item.repository_path for item in DevApplicationSourceSet().files}
-        self.assertEqual(len(paths), 31)
+        self.assertEqual(len(paths), 41)
         self.assertEqual((len(application_manifest._predecessor_paths()), len(application_manifest._paths())), (28, 31))
         self.assertEqual(dev_post_c31_application_update.PREDECESSOR, '3ef02a6d61d20df3a1495b290c20807162b65b06')
         self.assertEqual(dev_post_c31_application_update.TARGET, 'c04e66008cff556315603a9de59dacb4679787d4')

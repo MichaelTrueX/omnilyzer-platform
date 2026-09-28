@@ -698,9 +698,9 @@ class AuthorityTests(unittest.TestCase):
         from deployment.application_source_set import DevApplicationSourceSet
         from deployment import application_manifest, dev_post_c31_application_update as update
         paths = tuple(item.repository_path for item in DevApplicationSourceSet().files)
-        self.assertEqual(len(paths), 31)
-        self.assertNotIn('deployment/oci_verifier.py', paths)
-        self.assertNotIn('deployment/blob_verifier.py', paths)
+        self.assertEqual(len(paths), 41)
+        self.assertIn('deployment/oci_verifier.py', paths)
+        self.assertIn('deployment/blob_verifier.py', paths)
         self.assertEqual((len(application_manifest._predecessor_paths()), len(application_manifest._paths())), (28, 31))
         self.assertEqual(update.PREDECESSOR, '3ef02a6d61d20df3a1495b290c20807162b65b06')
         self.assertEqual(update.TARGET, 'c04e66008cff556315603a9de59dacb4679787d4')

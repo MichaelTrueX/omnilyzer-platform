@@ -295,8 +295,8 @@ class IntegrationTests(unittest.TestCase):
             "deployment.application_source_set", fromlist=["DevApplicationSourceSet"]
         ).DevApplicationSourceSet().files]
         self.assertIn("deployment/broker_integration.py", selection)
-        self.assertEqual(len(selection), 31)
-        self.assertNotIn("deployment/blob_verifier.py", selection)
+        self.assertEqual(len(selection), 41)
+        self.assertIn("deployment/blob_verifier.py", selection)
 
 
 if __name__ == "__main__":
