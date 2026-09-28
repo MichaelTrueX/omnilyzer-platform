@@ -1,7 +1,7 @@
-"""Explicit, inert one-connection DEV broker loopback HTTP/1.0 mechanics.
+"""Explicit, inert sequential DEV broker loopback HTTP/1.0 mechanics.
 
-Import and construction do not create sockets. Only serve_once binds the fixed
-numeric IPv4 loopback address; no real handler or service is composed here.
+Import and construction do not create sockets. Explicit lifecycle operations
+alone bind the fixed numeric IPv4 loopback address.
 """
 
 from __future__ import annotations
@@ -44,6 +44,27 @@ class BrokerLoopbackListenerError(Exception):
 
 class _FramingRejected(Exception):
     """Private malformed transport signal; carries no request data."""
+
+
+class BrokerStopController:
+    """Call-local process stop state; never derived from an HTTP request."""
+
+    __slots__ = ("_event",)
+
+    def __init__(self) -> None:
+        object.__setattr__(self, "_event", threading.Event())
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("broker stop controller is immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("broker stop controller is immutable")
+
+    def request_stop(self) -> None:
+        object.__getattribute__(self, "_event").set()
+
+    def is_stopping(self) -> bool:
+        return object.__getattribute__(self, "_event").is_set()
 
 
 class _Deadline:
@@ -190,7 +211,7 @@ def _write_response(connection: object, response: IngressResponse,
 
 
 class DevBrokerLoopbackListener:
-    """One sequential request; no socket exists until explicit serve_once()."""
+    """Sequential requests; no socket exists until an explicit serve operation."""
 
     __slots__ = ("_handler", "_socket_factory", "_wall_clock", "_monotonic", "_gate")
 
@@ -222,17 +243,25 @@ class DevBrokerLoopbackListener:
         if not gate.acquire(blocking=False):
             raise BrokerLoopbackListenerError(LISTENER_UNAVAILABLE_MESSAGE) from None
         try:
-            return self._serve_locked()
+            return self._serve_once_locked()
         finally:
             gate.release()
 
-    def _serve_locked(self) -> int:
+    def serve_until_stopped(self, stop_controller: BrokerStopController) -> None:
+        """Hold one listener and process complete requests until stop is requested."""
 
+        if type(stop_controller) is not BrokerStopController:
+            raise BrokerLoopbackListenerError(LISTENER_UNAVAILABLE_MESSAGE) from None
+        gate = object.__getattribute__(self, "_gate")
+        if not gate.acquire(blocking=False):
+            raise BrokerLoopbackListenerError(LISTENER_UNAVAILABLE_MESSAGE) from None
+        try:
+            self._serve_persistent_locked(stop_controller)
+        finally:
+            gate.release()
+
+    def _open_server(self) -> object:
         server = None
-        connection = None
-        outcome = None
-        failed = False
-        control: BaseException | None = None
         try:
             server = object.__getattribute__(self, "_socket_factory")(
                 socket.AF_INET, socket.SOCK_STREAM)
@@ -248,7 +277,20 @@ class DevBrokerLoopbackListener:
                 raise OSError("wrong listener binding")
             server.listen(LISTEN_BACKLOG)
             server.settimeout(ACCEPT_TIMEOUT_SECONDS)
-            connection, peer = server.accept()
+            return server
+        except BaseException:
+            if server is not None:
+                try:
+                    server.close()
+                except Exception:
+                    pass
+            raise
+
+    def _handle_connection(self, connection: object, peer: object) -> int:
+        outcome = None
+        failed = False
+        control: BaseException | None = None
+        try:
             if (connection.family != socket.AF_INET
                     or connection.type & 0xf != socket.SOCK_STREAM):
                 raise OSError("wrong accepted socket type")
@@ -285,20 +327,72 @@ class DevBrokerLoopbackListener:
         except Exception:
             failed = True
         finally:
-            for resource in (connection, server):
-                if resource is not None:
-                    try:
-                        resource.close()
-                    except Exception:
-                        failed = True
+            try:
+                connection.close()
+            except Exception:
+                failed = True
         if control is not None:
             raise control
         if failed or outcome is None:
             raise BrokerLoopbackListenerError(LISTENER_UNAVAILABLE_MESSAGE) from None
         return outcome
 
+    def _serve_once_locked(self) -> int:
+        server = None
+        outcome = None
+        failed = False
+        control: BaseException | None = None
+        try:
+            server = self._open_server()
+            connection, peer = server.accept()
+            outcome = self._handle_connection(connection, peer)
+        except (KeyboardInterrupt, SystemExit, GeneratorExit) as error:
+            control = error
+        except Exception:
+            failed = True
+        finally:
+            if server is not None:
+                try:
+                    server.close()
+                except Exception:
+                    failed = True
+        if control is not None:
+            raise control
+        if failed or outcome is None:
+            raise BrokerLoopbackListenerError(LISTENER_UNAVAILABLE_MESSAGE) from None
+        return outcome
 
-__all__ = ("DevBrokerLoopbackListener", "BrokerLoopbackListenerError",
+    def _serve_persistent_locked(self, stop_controller: BrokerStopController) -> None:
+        server = None
+        failed = False
+        control: BaseException | None = None
+        try:
+            if stop_controller.is_stopping():
+                return
+            server = self._open_server()
+            while not stop_controller.is_stopping():
+                try:
+                    connection, peer = server.accept()
+                except TimeoutError:
+                    continue
+                self._handle_connection(connection, peer)
+        except (KeyboardInterrupt, SystemExit, GeneratorExit) as error:
+            control = error
+        except Exception:
+            failed = True
+        finally:
+            if server is not None:
+                try:
+                    server.close()
+                except Exception:
+                    failed = True
+        if control is not None:
+            raise control
+        if failed:
+            raise BrokerLoopbackListenerError(LISTENER_UNAVAILABLE_MESSAGE) from None
+
+
+__all__ = ("DevBrokerLoopbackListener", "BrokerLoopbackListenerError", "BrokerStopController",
            "LISTENER_UNAVAILABLE_MESSAGE", "READ_TIMEOUT_SECONDS",
            "WRITE_TIMEOUT_SECONDS", "ACCEPT_TIMEOUT_SECONDS",
            "LISTEN_BACKLOG", "MAX_HEADER_BYTES")
