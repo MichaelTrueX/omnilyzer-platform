@@ -2,11 +2,11 @@
 
 Task 014 consumes accepted Task 013 release outputs and controls their ordered deployment. The release system builds, scans, signs, and publishes artifacts. This package does not build or publish anything; it accepts only a trusted release already identified as `repository@sha256:...`.
 
-## Phase 1 boundary
+## Phase 1 boundary and final DEV workflow slice
 
-Phase 1 is a repository-side, non-live foundation. All three environment files set `deployment_enabled` to `false`, leave runtime configuration, secret, and ingress references unset, and name the intended GitHub environments without attaching a deployment job. The `Platform promotion request` workflow has one read-only gate job. It validates and hashes a request, confirms the selected environment remains disabled, and then exits. It has no deployment job, environment attachment, OIDC permission, registry credential, or runtime adapter.
+Phase 1 established a repository-side, non-live foundation. All three environment files still set `deployment_enabled` to `false` and leave runtime configuration, secret, and ingress references unset. The `Platform promotion request` workflow retains its independent read-only validation gate. Its final DEV slice adds one job that runs only after that gate succeeds for a manual `dev` request on `main`. The job binds the protected `task014-dev` GitHub environment, grants only `contents: read` and `id-token: write`, creates a fresh private canonical request, obtains three short-lived GitHub OIDC tokens for the exact deployment, Zot read, and Forgejo read audiences, and sends those bytes once to `https://deploy-dev.omnilyzer.ai/task014/dev/promote`. It requires HTTP 202 with the exact accepted response. STAGING and PROD have no deployment job or broker call.
 
-Later phases must activate each environment deliberately, supply merge-SHA-bound references, maintain required branch and environment protections, configure them for later stages, and validate live ingress, migration, health, switching, rollback, ownership, restart/recovery, registry authorization, TLS, and audit rotation. PROD requires explicit approval. The current DEV protection state is recorded below; deployment remains disabled.
+The final merged `main` commit must be supplied independently as the broker's immutable `expected_workflow_sha`; the workflow does not supply or derive that authority. Host provisioning, DNS, TLS, Nginx, and service activation are separate host operations. This repository change alone does not start services or deploy an application, and the host is not yet live-qualified. Later stage activation and live ingress, migration, health, switching, rollback, ownership, restart/recovery, registry authorization, and audit rotation still require their own validation. PROD requires explicit approval. The current DEV protection state is recorded below.
 
 ## GitHub protection state (2026-09-24)
 
@@ -3175,9 +3175,9 @@ and live deployment remain prohibited pending separate review.
 
 PR B adds reviewed, non-installed assets under `runtime/dev/`, a closed `DockerRuntimeAdapter`, durable atomic state modes, and the initial chained filesystem audit sink. Each adapter instance binds one exact validated `CANARY_IMAGE` into its minimal controlled environment for every command and rejects cross-digest reuse. The adapter contains real narrow execution logic but is never invoked automatically. It exposes no arbitrary subprocess, Compose service, Nginx command, upstream, URL, or filesystem-path operation. Runtime tests inject command and HTTP clients; a separate non-mutating test runs only `docker compose config`. See the [DEV runtime qualification, design, and exact hashes](runtime/dev/README.md).
 
-The DEV branch/environment protection capability prerequisite is satisfied as recorded above. Separate live-authority review remains mandatory. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
+The DEV branch/environment protection capability prerequisite is satisfied as recorded above. The C32ZB workflow authority is limited to the DEV job described above; host activation requires separate review. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
 
-Permitted pending separate live-authority review:
+Historical repository-only scope before C32ZB:
 
 - closed verifier and authorization code;
 - durable replay code;
@@ -3187,19 +3187,17 @@ Permitted pending separate live-authority review:
 - inert, uninstalled systemd, Nginx, and layout fixtures; and
 - deterministic repository tests and static validation.
 
-Prohibited until the live-authority change is separately reviewed:
+Host and later-stage operations requiring separate review and authorization:
 
-- `id-token: write` in a deployment workflow;
-- GitHub environment attachment or a deployment job;
 - live public broker ingress or listener;
 - installation or enabling of host services or sockets;
-- live registry credentials or token exchange;
+- host-side registry credential exchange or token persistence;
 - Docker or application execution;
 - host, runtime, or infrastructure mutation;
 - environment activation or populated live runtime references; and
 - any static-key, personal-account, SSH, self-hosted-runner, or weakened-policy workaround.
 
-Therefore **no live deployment workflow or DEV deployment may be enabled** until the live-authority change is separately reviewed. Live JWT/JWKS behavior, replay installation and wiring, broker/executor hardening, Unix-socket permissions, zot and Forgejo read-only consumers, host services, TLS/DNS/network integration, restart/reconciliation, and the first DEV deployment all remain to validate.
+The proposed C32ZB DEV workflow slice is the workflow authority change described above. It does not qualify the host or perform the first DEV deployment. Live JWT/JWKS behavior, replay installation and wiring, broker/executor hardening, Unix-socket permissions, zot and Forgejo read-only consumers, host services, TLS/DNS/network integration, restart/reconciliation, and the first DEV deployment remain to validate.
 
 ## Promotion identity and trust
 

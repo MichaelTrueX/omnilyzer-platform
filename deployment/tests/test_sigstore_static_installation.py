@@ -838,7 +838,7 @@ class PublicAuthorityTests(unittest.TestCase):
             value.__post_init__()
         self.assertEqual({item.name for item in fields(value)}, {'operation', 'broker_gid', 'cosign', 'trusted_root'})
 
-    def test_source_set_history_and_workflow_remain_nonlive(self):
+    def test_source_set_history_and_environment_remain_nonlive(self):
         from deployment.application_source_set import DevApplicationSourceSet
         from deployment import application_manifest, dev_post_c31_application_update
         paths = tuple(item.repository_path for item in DevApplicationSourceSet().files)
@@ -848,9 +848,6 @@ class PublicAuthorityTests(unittest.TestCase):
         self.assertEqual(dev_post_c31_application_update.PREDECESSOR, '3ef02a6d61d20df3a1495b290c20807162b65b06')
         self.assertEqual(dev_post_c31_application_update.TARGET, 'c04e66008cff556315603a9de59dacb4679787d4')
         self.assertIs(json.loads((ROOT / 'deployment/environments/dev.json').read_text())['activation']['deployment_enabled'], False)
-        workflow = (ROOT / '.github/workflows/platform-promote.yml').read_text()
-        self.assertNotIn('id-token: write', workflow)
-        self.assertNotIn('environment: task014-dev', workflow)
 
 
 if __name__ == '__main__':

@@ -46,7 +46,6 @@ PROTECTED_HASHES = {
     "deployment/environments/dev.json": "4b1cf03bdcd1fa7d8fd848862137a4dca7dc834b1cc45fa1d7cffd2756722ae8",
     "deployment/environments/staging.json": "7fde448d38022e4e435218c1fe6049c629ee091031845fce93156dcc787a7358",
     "deployment/environments/prod.json": "a08cd3d718ffa0531071ed7ad0aeafc19b4edeb0a82e74bd87a6044bbabebcce",
-    ".github/workflows/platform-promote.yml": "3846ae1e48c945dacb563da8967e588b3fbb6fffa2580276f816496396b3c134",
 }
 
 
@@ -394,7 +393,7 @@ class ImageAndPipelineTests(unittest.TestCase):
         self.assertIn("version: v0.36.1", raw)
         self.assertIn("moby/buildkit:v0.24.0@sha256:6eceb8971ce4fceb3daca562832642706238b7eea72941fcf9896c93c3c4a53e", raw)
 
-    def test_publishers_and_disabled_deployment_foundation_are_unchanged(self) -> None:
+    def test_publishers_and_environment_foundation_are_unchanged(self) -> None:
         for relative, expected in PROTECTED_HASHES.items():
             with self.subTest(relative=relative):
                 self.assertEqual(hashlib.sha256((ROOT / relative).read_bytes()).hexdigest(), expected)

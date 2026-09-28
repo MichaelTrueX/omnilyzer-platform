@@ -1,4 +1,4 @@
-# Task 014 Phase 1 validates immutable promotion requests only. It cannot deploy.
+# Task 014 validates all requests and submits DEV requests to the reviewed broker.
 name: Platform promotion request
 
 on:
@@ -77,3 +77,122 @@ jobs:
           python3 -m deployment.controller \
             --request "$request" \
             --environment "deployment/environments/$TARGET_STAGE.json"
+
+  deploy_dev:
+    if: ${{ inputs.target_stage == 'dev' }}
+    needs: gate
+    runs-on: ubuntu-24.04
+    environment: task014-dev
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out promotion policy without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Create private canonical DEV promotion request
+        shell: bash
+        env:
+          TARGET_STAGE: ${{ inputs.target_stage }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          MANIFEST_DIGEST: ${{ inputs.manifest_digest }}
+          RELEASE_MANIFEST_SHA256: ${{ inputs.release_manifest_sha256 }}
+          PROVENANCE_SHA256: ${{ inputs.provenance_sha256 }}
+          ORIGINATING_RELEASE_RUN_ID: ${{ inputs.originating_release_run_id }}
+          REQUESTED_BY: github:${{ github.actor }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$GITHUB_REPOSITORY" = "MichaelTrueX/omnilyzer-platform"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$TARGET_STAGE" = dev
+          python3 -m deployment.promotion \
+            --release-version "$RELEASE_VERSION" \
+            --source-sha "$SOURCE_SHA" \
+            --manifest-digest "$MANIFEST_DIGEST" \
+            --release-manifest-sha256 "$RELEASE_MANIFEST_SHA256" \
+            --provenance-sha256 "$PROVENANCE_SHA256" \
+            --originating-release-run-id "$ORIGINATING_RELEASE_RUN_ID" \
+            --target-stage "$TARGET_STAGE" \
+            --requested-by "$REQUESTED_BY" \
+            --output "$RUNNER_TEMP/task014-dev-promotion-request.json"
+      - name: Submit DEV promotion once
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import stat
+          from urllib import parse, request
+
+          AUDIENCES = (
+              "https://deploy-dev.omnilyzer.ai/task014-dev",
+              "https://oci-dev.omnilyzer.ai",
+              "u:2:316bec9a-53e4-4807-9557-7febdc979d0a",
+          )
+          ENDPOINT = "https://deploy-dev.omnilyzer.ai/task014/dev/promote"
+
+          class NoRedirect(request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  raise ValueError("OIDC or broker redirect rejected")
+
+          opener = request.build_opener(request.ProxyHandler({}), NoRedirect)
+          oidc_url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
+          oidc_token = os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
+          if parse.urlsplit(oidc_url).scheme != "https" or not oidc_token:
+              raise ValueError("invalid GitHub OIDC endpoint configuration")
+
+          def github_token(audience):
+              separator = "&" if parse.urlsplit(oidc_url).query else "?"
+              url = oidc_url + separator + parse.urlencode({"audience": audience})
+              req = request.Request(url, headers={"Authorization": "Bearer " + oidc_token})
+              with opener.open(req, timeout=30) as response:
+                  if response.status != 200:
+                      raise ValueError("GitHub OIDC endpoint did not return HTTP 200")
+                  raw = response.read(16385)
+              if len(raw) > 16384:
+                  raise ValueError("GitHub OIDC response too large")
+              def unique_members(pairs):
+                  value = {}
+                  for key, member in pairs:
+                      if key in value:
+                          raise ValueError("duplicate GitHub OIDC response member")
+                      value[key] = member
+                  return value
+
+              value = json.loads(raw, object_pairs_hook=unique_members)
+              if not isinstance(value, dict) or set(value) != {"value"} or not isinstance(value["value"], str):
+                  raise ValueError("invalid GitHub OIDC response")
+              jwt = value["value"]
+              if len(jwt) > 16384 or len(jwt.split(".")) != 3 or any(
+                  not part or not part.isascii() or not all(char.isalnum() or char in "-_" for char in part)
+                  for part in jwt.split(".")
+              ):
+                  raise ValueError("invalid GitHub OIDC JWT structure")
+              return jwt
+
+          path = Path(os.environ["RUNNER_TEMP"]) / "task014-dev-promotion-request.json"
+          if path.is_symlink() or not path.is_file() or stat.S_IMODE(path.stat().st_mode) != 0o600:
+              raise ValueError("private canonical promotion request missing")
+          body = path.read_bytes()
+          if not 1 <= len(body) <= 4096:
+              raise ValueError("invalid canonical promotion request size")
+          deployment_jwt, zot_jwt, forgejo_jwt = map(github_token, AUDIENCES)
+          if len({deployment_jwt, zot_jwt, forgejo_jwt}) != 3:
+              raise ValueError("GitHub OIDC audiences did not yield distinct tokens")
+          req = request.Request(ENDPOINT, data=body, method="POST", headers={
+              "Authorization": "Bearer " + deployment_jwt,
+              "X-Omnilyzer-Zot-OIDC": zot_jwt,
+              "X-Omnilyzer-Forgejo-OIDC": forgejo_jwt,
+              "Content-Type": "application/json",
+          })
+          with opener.open(req, timeout=930) as response:
+              if response.status != 202 or response.read(24) != b'{"status":"accepted"}\n':
+                  raise ValueError("DEV broker did not return the exact accepted response")
+          PY

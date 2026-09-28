@@ -77,13 +77,20 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("push:", self.raw)
         self.assertNotIn("schedule:", self.raw)
 
-    def test_only_gate_job_exists_without_oidc_or_environment(self) -> None:
-        self.assertEqual(set(self.workflow["jobs"]), {"gate"})
+    def test_gate_remains_non_oidc_and_dev_job_is_only_deployment_job(self) -> None:
+        self.assertEqual(set(self.workflow["jobs"]), {"gate", "deploy_dev"})
         gate = self.workflow["jobs"]["gate"]
         self.assertEqual(gate["permissions"], {"contents": "read"})
         self.assertNotIn("id-token", gate["permissions"])
         self.assertNotIn("environment", gate)
         self.assertNotIn("continue-on-error", gate)
+        dev = self.workflow["jobs"]["deploy_dev"]
+        self.assertEqual(dev["if"], "${{ inputs.target_stage == 'dev' }}")
+        self.assertEqual(dev["needs"], "gate")
+        self.assertEqual(dev["runs-on"], "ubuntu-24.04")
+        self.assertEqual(dev["environment"], "task014-dev")
+        self.assertEqual(dev["permissions"], {"contents": "read", "id-token": "write"})
+        self.assertEqual(dev["timeout-minutes"], 25)
 
     def test_checkout_is_pinned_and_drops_credentials(self) -> None:
         uses = re.findall(r"uses:\s*([^\s#]+)", self.raw)
@@ -92,10 +99,10 @@ class WorkflowPolicyTests(unittest.TestCase):
             self.assertRegex(value, r"^[^@]+@[0-9a-f]{40}$")
         self.assertEqual(self.raw.count("persist-credentials: false"), len(uses))
 
-    def test_phase1_workflow_has_no_live_or_oidc_authority(self) -> None:
+    def test_workflow_has_no_other_deployment_authority(self) -> None:
         forbidden = (
-            "id-token: write", "docker login", "docker push", "ssh ", "kubectl ",
-            "environment: task014-", "secrets.", "curl ", "wget ",
+            "docker login", "docker push", "ssh ", "kubectl ",
+            "secrets.", "curl ", "wget ", "upload-artifact", "retry",
         )
         lowered = self.raw.lower()
         for token in forbidden:

@@ -211,13 +211,9 @@ class DevBrokerEdgeContractTests(unittest.TestCase):
             "deployment/dev_final_broker_resources.py",
             "deployment/dev_post_c31_application_update.py",
             "deployment/ingress/dev-broker-https.nginx.review.conf",
-            ".github/workflows/platform-promote.yml",
         ]
         self.assertEqual(subprocess.run(["git", "diff", "--quiet", BASE, "--", *protected],
                                         cwd=ROOT, check=False).returncode, 0)
-        workflow = (ROOT / ".github/workflows/platform-promote.yml").read_text()
-        self.assertNotIn("id-token: write", workflow)
-        self.assertNotIn("environment: task014-dev", workflow)
         environment = json.loads((ROOT / "deployment/environments/dev.json").read_text())
         self.assertIs(environment["activation"]["deployment_enabled"], False)
         source = (ROOT / "deployment/broker_edge_contract.py").read_text()

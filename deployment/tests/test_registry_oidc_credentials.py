@@ -377,8 +377,6 @@ class RegistryCredentialTests(unittest.TestCase):
         for forbidden in ('InertDevPromotionHandler', 'consume(', 'subprocess',
                           'systemctl', 'docker login', 'audit.record', 'time.time('):
             self.assertNotIn(forbidden, text)
-        self.assertNotIn('id-token: write',
-            (ROOT / '.github/workflows/platform-promote.yml').read_text())
         self.assertIs(json.loads((ROOT / 'deployment/environments/dev.json').read_text())
                       ['activation']['deployment_enabled'], False)
         from deployment.application_source_set import DevApplicationSourceSet

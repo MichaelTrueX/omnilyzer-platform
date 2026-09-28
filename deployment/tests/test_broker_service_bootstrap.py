@@ -252,9 +252,6 @@ class EntrypointTests(unittest.TestCase):
             "configuration_reference": None, "secrets_reference": None,
             "ingress_reference": None,
         })
-        workflow = (ROOT / ".github/workflows/platform-promote.yml").read_text()
-        self.assertNotIn("id-token: write", workflow)
-        self.assertNotIn("environment: task014-dev", workflow)
         # C32U adds only an inert repository asset; historical C23 still does not install it.
         self.assertTrue((ROOT / "deployment/systemd/dev/omnilyzer-deployment-broker.service").is_file())
         from deployment.host_provisioning_contract import DevHostProvisioningContract

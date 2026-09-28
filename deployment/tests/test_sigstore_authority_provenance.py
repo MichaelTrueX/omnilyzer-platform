@@ -451,12 +451,9 @@ class SeparationTests(unittest.TestCase):
                          provenance.DevSigstoreVerificationProvenance().cosign.asset_size)
         self.assertFalse(hasattr(blob_verifier, 'MAX_BINARY_BYTES'))
 
-    def test_no_deployment_activation_or_oidc_permission(self):
+    def test_no_environment_activation(self):
         self.assertIs(json.loads((ROOT / 'deployment/environments/dev.json').read_bytes())
                       ['activation']['deployment_enabled'], False)
-        workflow = (ROOT / '.github/workflows/platform-promote.yml').read_text()
-        self.assertNotIn('id-token: write', workflow)
-        self.assertNotIn('environment: task014-dev', workflow)
 
 
 if __name__ == '__main__':

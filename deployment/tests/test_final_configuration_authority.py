@@ -259,14 +259,9 @@ assert integrity.python_environment_requirement().implementation == "CPython"
                      "deployment/application_manifest.py",
                      "deployment/final_application_generation.py",
                      "deployment/dev_final_application_update.py",
-                     "deployment/dev_post_c31_application_update.py",
-                     ".github/workflows/platform-promote.yml"):
+                     "deployment/dev_post_c31_application_update.py"):
             self.assertEqual((ROOT / path).read_bytes(),
                 subprocess.check_output(("git", "show", f"2a99fbe5fe0a376a04b37a2dfa7cc1da7faa3893:{path}")), path)
-        workflow = (ROOT / ".github/workflows/platform-promote.yml").read_text()
-        self.assertIn("permissions: {}", workflow)
-        self.assertNotIn("id-token: write", workflow)
-        self.assertNotIn("environment: task014-dev", workflow)
         policy = json.loads((ROOT / "deployment/environments/dev.json").read_text())
         self.assertIs(policy["activation"]["deployment_enabled"], False)
         source = (ROOT / "deployment/final_configuration_authority.py").read_text()
