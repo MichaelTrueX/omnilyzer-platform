@@ -1,14 +1,15 @@
 """Authorization policy for cryptographically verified GitHub OIDC claims.
 
-This module does not parse JWTs, verify signatures, or fetch JWKS.  Its input
-must come from a cryptographic verifier supplied by a later live-broker PR.  It
-only applies the closed Task 014 DEV authorization and temporal policy to the
-already-verified claim values.
+This module does not parse JWTs, verify signatures, or fetch JWKS. Its input
+must come from a cryptographic verifier. The public authorization wrapper is
+fixed to the deployment audience; internal registry policies differ only in
+their two reviewed audiences. All apply the same DEV workload and time limits
+to already-verified claims.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 import threading
 from typing import Any, Callable, Mapping, Protocol
@@ -18,6 +19,8 @@ from .policy import DeploymentPolicyError, validate_source_sha
 
 DEV_ISSUER = "https://token.actions.githubusercontent.com"
 DEV_AUDIENCE = "https://deploy-dev.omnilyzer.ai/task014-dev"
+DEV_ZOT_READ_AUDIENCE = "https://oci-dev.omnilyzer.ai"
+DEV_FORGEJO_READ_AUDIENCE = "u:2:316bec9a-53e4-4807-9557-7febdc979d0a"
 DEV_REPOSITORY = "MichaelTrueX/omnilyzer-platform"
 DEV_REPOSITORY_ID = 1350104356
 DEV_REPOSITORY_OWNER_ID = 130741173
@@ -105,6 +108,8 @@ DEV_AUTHORIZATION_POLICY = GitHubOIDCAuthorizationPolicy(
     DEV_EVENT_NAME, DEV_RUNNER_ENVIRONMENT, MAX_TOKEN_LIFETIME_SECONDS,
     MAX_RECEIVED_AGE_SECONDS, MAX_CLOCK_SKEW_SECONDS,
 )
+_ZOT_AUTHORIZATION_POLICY = replace(DEV_AUTHORIZATION_POLICY, audience=DEV_ZOT_READ_AUDIENCE)
+_FORGEJO_AUTHORIZATION_POLICY = replace(DEV_AUTHORIZATION_POLICY, audience=DEV_FORGEJO_READ_AUDIENCE)
 
 
 def _exact_string(claims: Mapping[str, Any], name: str, expected: str) -> str:
@@ -162,6 +167,22 @@ def authorize_verified_github_oidc(
     Every claim used for authorization is explicitly named and fail-closed.
     """
 
+    return _authorize_verified_github_oidc(
+        claims, policy=DEV_AUTHORIZATION_POLICY, received_at=received_at,
+        expected_workflow_sha=expected_workflow_sha,
+    )
+
+
+def _authorize_verified_github_oidc(
+    claims: Mapping[str, Any], *, policy: GitHubOIDCAuthorizationPolicy,
+    received_at: int, expected_workflow_sha: str,
+) -> AuthorizedGitHubIdentity:
+    """Shared internal claim policy; public deployment authority stays closed."""
+
+    if not any(policy is reviewed for reviewed in (
+            DEV_AUTHORIZATION_POLICY, _ZOT_AUTHORIZATION_POLICY,
+            _FORGEJO_AUTHORIZATION_POLICY)):
+        raise OIDCAuthorizationError("OIDC authorization policy is not reviewed")
     expected_workflow_sha = validate_expected_workflow_sha(expected_workflow_sha)
     if not isinstance(claims, Mapping):
         raise OIDCAuthorizationError("verified OIDC claims must be a mapping")
@@ -171,14 +192,14 @@ def authorize_verified_github_oidc(
     if missing:
         raise OIDCAuthorizationError(f"verified OIDC claims are missing: {sorted(missing)}")
 
-    issuer = _exact_string(claims, "iss", DEV_ISSUER)
-    audience = _exact_string(claims, "aud", DEV_AUDIENCE)
-    repository = _exact_string(claims, "repository", DEV_REPOSITORY)
+    issuer = _exact_string(claims, "iss", policy.issuer)
+    audience = _exact_string(claims, "aud", policy.audience)
+    repository = _exact_string(claims, "repository", policy.repository)
     repository_id = _decimal_identifier(claims, "repository_id")
     owner_id = _decimal_identifier(claims, "repository_owner_id")
-    if repository_id != DEV_REPOSITORY_ID or owner_id != DEV_REPOSITORY_OWNER_ID:
+    if repository_id != policy.repository_id or owner_id != policy.repository_owner_id:
         raise OIDCAuthorizationError("GitHub repository numeric identity is not authorized")
-    workflow_ref = _exact_string(claims, "workflow_ref", DEV_WORKFLOW_REF)
+    workflow_ref = _exact_string(claims, "workflow_ref", policy.workflow_ref)
     workflow_sha_value = claims.get("workflow_sha")
     try:
         workflow_sha = validate_source_sha(workflow_sha_value)
@@ -186,11 +207,11 @@ def authorize_verified_github_oidc(
         raise OIDCAuthorizationError("OIDC workflow_sha is not an exact revision") from exc
     if type(workflow_sha_value) is not str or workflow_sha != expected_workflow_sha:
         raise OIDCAuthorizationError("OIDC workflow_sha is not the reviewed revision")
-    ref = _exact_string(claims, "ref", DEV_REF)
-    environment = _exact_string(claims, "environment", DEV_ENVIRONMENT)
-    event_name = _exact_string(claims, "event_name", DEV_EVENT_NAME)
+    ref = _exact_string(claims, "ref", policy.ref)
+    environment = _exact_string(claims, "environment", policy.environment)
+    event_name = _exact_string(claims, "event_name", policy.event_name)
     runner = _exact_string(
-        claims, "runner_environment", DEV_RUNNER_ENVIRONMENT,
+        claims, "runner_environment", policy.runner_environment,
     )
     run_id = _decimal_identifier(claims, "run_id")
     run_attempt = _decimal_identifier(claims, "run_attempt")
@@ -201,15 +222,15 @@ def authorize_verified_github_oidc(
 
     if expires_at <= issued_at or not_before > expires_at:
         raise OIDCAuthorizationError("OIDC timestamps have impossible ordering")
-    if expires_at - issued_at > MAX_TOKEN_LIFETIME_SECONDS:
+    if expires_at - issued_at > policy.maximum_token_lifetime_seconds:
         raise OIDCAuthorizationError("OIDC token lifetime exceeds five minutes")
-    if issued_at > received_at + MAX_CLOCK_SKEW_SECONDS:
+    if issued_at > received_at + policy.maximum_clock_skew_seconds:
         raise OIDCAuthorizationError("OIDC token was issued too far in the future")
-    if not_before > received_at + MAX_CLOCK_SKEW_SECONDS:
+    if not_before > received_at + policy.maximum_clock_skew_seconds:
         raise OIDCAuthorizationError("OIDC token is not yet valid")
-    if received_at > expires_at + MAX_CLOCK_SKEW_SECONDS:
+    if received_at > expires_at + policy.maximum_clock_skew_seconds:
         raise OIDCAuthorizationError("OIDC token has expired")
-    if received_at - issued_at > MAX_RECEIVED_AGE_SECONDS:
+    if received_at - issued_at > policy.maximum_received_age_seconds:
         raise OIDCAuthorizationError("OIDC token was not received within sixty seconds")
 
     return AuthorizedGitHubIdentity(

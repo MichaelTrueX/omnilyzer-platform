@@ -899,6 +899,49 @@ Deployment remains disabled. Artifact installation, credential-provider
 composition/exchange, real-tool qualification, dependency qualification and live
 deployment integration remain activation blockers.
 
+## C32O request-scoped registry OIDC credentials (inert)
+
+`registry_oidc_credentials.GitHubRegistryCredentialVerifier` verifies two
+separately signed GitHub JWTs for one already-authorized deployment request.
+The public deployment verifier still accepts only
+`https://deploy-dev.omnilyzer.ai/task014-dev`; it has no caller-selected
+audience. The closed registry audiences are
+`https://oci-dev.omnilyzer.ai` for zot read and
+`u:2:316bec9a-53e4-4807-9557-7febdc979d0a` for Forgejo read. They are
+reviewed deployment constants, cross-checked by tests against
+`release/environments/dev.json`; deployment runtime does not import `release`.
+None of the three tokens can substitute for another, and audience arrays fail.
+
+Both registry JWTs use the deployment verifier's bounded compact-JWT parser,
+GitHub JWKS cache, RS256 signature check, exact issuer and strict audience
+check. Their closed claim policies require the same repository and numeric
+owner identities, exact workflow ref and independently reviewed workflow SHA,
+main ref, `task014-dev` environment, `workflow_dispatch`, and GitHub-hosted
+runner. The same 300-second maximum lifetime, 60-second maximum received age,
+30-second clock skew, and bounded run/JTI fields apply. The verified identities
+must match the re-normalized deployment identity on issuer, repository IDs,
+workflow/ref/environment/event/runner, run ID, run attempt and actor ID. Each
+JWT's `iat`, `nbf`, `exp` and `jti` is independently validated; separate token
+requests need not produce identical timestamps or IDs. Read credentials must
+also satisfy the existing consumer rule `received_at < exp <= received_at + 300`.
+
+The returned `VerifiedRegistryCredentials` is an immutable, redacted provider
+for exact `ZotReadCredential` and `ForgejoReadCredential` values. Its zot method
+may be called by both manifest acquisition and OCI verification in the same
+request. Only signed `exp` supplies credential expiry. The object has no
+serialization, audit or executor-request projection and is intended to live for
+one broker request. Python strings cannot be reliably zeroized. Registry JTIs
+are not inserted into the deployment replay database; deployment JWT JTI and
+the canonical executor request remain the mutation replay authority. These
+short-lived read JWTs are independently checked by their target services when
+used; C32O does not claim global non-replayability.
+
+C32O adds no handler integration, token exchange, live JWKS request, registry
+request, workflow OIDC permission or host mutation. Tests use signed synthetic
+JWTs and a static JWKS fixture. The new module is outside the current 31-file
+installed source set; historical C32D predecessor/target authority is unchanged.
+The workflow, broker endpoint and deployment activation remain disabled.
+
 ## C32D pinned post-C31 application update (repository only)
 
 `dev_post_c31_application_update.py` binds the installed predecessor commit
