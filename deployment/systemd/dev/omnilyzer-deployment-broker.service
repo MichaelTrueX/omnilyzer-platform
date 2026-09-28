@@ -1,0 +1,37 @@
+# Inert C32U future broker service asset. Not installed, enabled or started.
+
+[Unit]
+Description=Omnilyzer DEV deployment broker
+Requires=omnilyzer-deployment-executor.socket
+After=omnilyzer-deployment-executor.socket
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+User=omnilyzer-broker
+Group=omnilyzer-broker
+SupplementaryGroups=omnilyzer-replay omnilyzer-deployment
+WorkingDirectory=/opt/omnilyzer/deployment/app
+ExecStart=/opt/omnilyzer/deployment/venv/bin/python -m deployment.broker_service_entrypoint
+Restart=no
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/omnilyzer/deployment/authority /run/omnilyzer/deployment/dev/blob-verifier /run/omnilyzer/deployment/dev/oci-verifier
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

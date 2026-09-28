@@ -18,6 +18,7 @@ from deployment.unix_transport import PRODUCTION_EXECUTOR_SOCKET_PATH
 
 _DEPLOYMENT = Path(__file__).absolute().parents[1]
 _ASSETS = _DEPLOYMENT / "systemd" / "dev"
+_BROKER_SERVICE_PATH = _ASSETS / "omnilyzer-deployment-broker.service"
 _LAYOUT = DevHostServiceLayout()
 _SOCKET_HEADER = (
     "# deployment/systemd/dev/omnilyzer-deployment-executor.socket\n"
@@ -157,7 +158,8 @@ class SystemdExecutorUnitTests(unittest.TestCase):
                          "systemd/dev/omnilyzer-deployment-executor.socket")
         self.assertEqual(self.service_path.relative_to(_DEPLOYMENT).as_posix(),
                          "systemd/dev/omnilyzer-deployment-executor.service")
-        self.assertEqual(set(_ASSETS.iterdir()), {self.socket_path, self.service_path})
+        self.assertEqual(set(_ASSETS.iterdir()),
+                         {self.socket_path, self.service_path, _BROKER_SERVICE_PATH})
 
     def test_b_text_hygiene_and_nonexecutable_modes(self):
         for path, raw in ((self.socket_path, self.socket_raw),
@@ -307,8 +309,9 @@ class SystemdExecutorUnitTests(unittest.TestCase):
         self.assertNotIn("IPAddressDeny", self.service_text)
 
     def test_u_no_installation_code(self):
-        """Exact asset set and test AST exclude any installer or mutation code."""
-        self.assertEqual(set(_ASSETS.iterdir()), {self.socket_path, self.service_path})
+        """Repository assets and test AST contain no installer or mutation code."""
+        self.assertEqual(set(_ASSETS.iterdir()),
+                         {self.socket_path, self.service_path, _BROKER_SERVICE_PATH})
         tree = ast.parse(Path(__file__).read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
