@@ -1107,6 +1107,26 @@ update returns already-current state. C32W does not install or execute the
 migration, broker configuration, static resources, or services; no workflow or
 host activation occurs.
 
+## C32X aligned final DEV configuration authority (repository only)
+
+`final_configuration_authority.py` accepts one exact C17 executor configuration
+for the frozen C32W application revision. It reconstructs the configuration,
+requires the pinned runtime and ingress hashes, then changes only
+`reviewed_commit` back to C31 and verifies the historical C32D C17 canonical
+SHA-256. That proof binds the existing host identities and canary image without
+introducing new numeric IDs or release-selection inputs.
+
+The authority derives a schema-2 broker configuration with the same six
+identities and release hashes. Its Cosign and TrustedRoot values come from C32I
+Sigstore provenance. The only additional input is an explicitly supplied,
+independently reviewed `expected_workflow_sha`; it is not derived from the C32W
+application commit, the current checkout, or the inert promotion workflow file.
+The pair yields canonical executor/broker bytes and the existing closed release
+references, and remains compatible with the C32U host and executor integrity
+contracts. No final broker-config digest exists until the workflow revision is
+reviewed. This pure module neither reads nor writes live configuration and does
+not activate deployment.
+
 ## C32P request-scoped registry credential integration (inert)
 
 `InertDevPromotionHandler.handle()` now accepts exactly five separate inputs:
