@@ -942,6 +942,51 @@ JWTs and a static JWKS fixture. The new module is outside the current 31-file
 installed source set; historical C32D predecessor/target authority is unchanged.
 The workflow, broker endpoint and deployment activation remain disabled.
 
+## C32Q DEV broker HTTPS ingress contract (inert)
+
+The selected DEV route is GitHub-hosted runner → HTTPS
+`https://deploy-dev.omnilyzer.ai` → root-controlled host Nginx TLS termination
+→ unprivileged broker on exactly `127.0.0.1:3031` → the C32P handler → the
+existing local Unix executor socket → privileged executor. A repository port
+survey found `3020` assigned to canary ingress and `5000` to zot; `3031` is
+reserved for this broker contract. Loopback access itself grants no deployment
+authority; the handler still verifies the exact signed deployment identity and
+both cross-bound registry identities. The broker must never bind publicly.
+
+`broker_https_ingress.py` is a pure, uninstalled parser/dispatcher. It accepts
+only `POST /task014/dev/promote` with no query or fragment; ordered raw header
+pairs are required so duplicate security headers can be rejected. The exact
+headers are `Host: deploy-dev.omnilyzer.ai`, `Authorization: Bearer <deployment
+JWT>`, `X-Omnilyzer-Zot-OIDC: <zot JWT>`,
+`X-Omnilyzer-Forgejo-OIDC: <Forgejo JWT>`, `Content-Type: application/json`,
+and canonical exact `Content-Length`. All other headers, including cookies,
+transfer/content encoding, CORS/browser headers and alternate credential
+headers, are rejected. Tokens are bounded by `MAX_COMPACT_TOKEN_BYTES`; no
+token appears in URL, body, logs, response, replay, audit, state, or executor
+request. The body is at most `MAX_PROMOTION_REQUEST_BYTES` and is passed
+unchanged to C32P for canonical PromotionRequest validation. The response is
+only fixed JSON: HTTP 202 accepted/forwarded, 403 rejected, or 503 unavailable.
+Accepted means the existing broker operation returned, not that a new HTTP
+listener or deployment was activated.
+
+[`ingress/dev-broker-https.nginx.review.conf`](ingress/dev-broker-https.nginx.review.conf)
+is an uninstalled, deliberately incomplete reference for the future TLS vhost.
+It selects only the exact endpoint and loopback upstream, disables access
+logging/caching and request disk buffering, strips unreviewed client headers,
+and forwards only the six required fields. There is no CORS, cookie, browser
+session, CSRF flow, redirect, or generic broker proxy. TLS certificate/key
+provisioning and DNS remain separate work; no certificate path is asserted.
+The future listener/Nginx integration must preserve original duplicate-header
+rejection and prove the reviewed proxy behavior before activation. In
+particular, Nginx `$http_*` variables are not a raw duplicate-header proof;
+the reference is deliberately not activation-ready without a separately
+reviewed edge gate and certificate contract.
+
+C32Q adds no listener, Nginx installation, TLS certificate, DNS, systemd unit,
+workflow permission/environment, host mutation, or deployment activation. The
+new module and reference remain outside the installed 31-file application
+generation; historical C32D source authority remains unchanged.
+
 ## C32P request-scoped registry credential integration (inert)
 
 `InertDevPromotionHandler.handle()` now accepts exactly five separate inputs:

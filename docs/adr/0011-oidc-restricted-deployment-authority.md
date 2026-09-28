@@ -89,6 +89,21 @@ narrow privileged executor
 Docker / Compose + deployment state and audit
 ```
 
+For DEV, C32Q selects the ingress topology more precisely: the GitHub-hosted
+runner sends HTTPS to the exact public origin
+`https://deploy-dev.omnilyzer.ai`; root-controlled host Nginx terminates TLS
+and proxies only `POST /task014/dev/promote` to an unprivileged broker bound
+only to `127.0.0.1:3031`. That broker uses the existing C32P promotion handler
+and the existing local Unix-domain socket to the privileged executor. The
+broker never binds a public address. Local loopback access conveys no
+deployment authority: exact signed deployment and registry workload identities
+are still mandatory.
+
+This selects an architecture and a repository-only request contract, not a
+listener implementation. No broker HTTP listener, TLS certificate, DNS record,
+host Nginx installation, service activation, or GitHub workflow permission is
+created by C32Q. Deployment remains disabled.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.
