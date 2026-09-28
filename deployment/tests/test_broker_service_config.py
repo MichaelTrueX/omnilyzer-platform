@@ -1,4 +1,4 @@
-"""C32H pure authority tests; all hashes here are synthetic test values."""
+"""C32H/C32S pure broker authority tests; all hashes here are synthetic."""
 
 from contextlib import ExitStack
 from dataclasses import FrozenInstanceError, fields
@@ -16,6 +16,9 @@ from deployment import blob_verifier as bv
 from deployment import broker_service_config as config
 from deployment.application_source_set import DevApplicationSourceSet
 from deployment.installation_contract import DevHostInstallationContract
+from deployment.execution import INGRESS_PATHS, RuntimeConfigurationReference, IngressReference
+from deployment.executor_service_config import DevExecutorServiceConfiguration
+from deployment.tests.test_executor_service_config import configuration_values as executor_values
 from deployment.identity import authorize_verified_github_oidc, OIDCAuthorizationError
 from deployment.tests.test_identity import valid_claims, NOW
 
@@ -25,16 +28,19 @@ SCHEMA = {
     'schema_version', 'stage', 'broker_uid', 'broker_gid', 'executor_uid',
     'executor_gid', 'replay_group_gid', 'socket_group_gid', 'expected_workflow_sha',
     'cosign_version', 'cosign_binary_sha256', 'sigstore_trusted_root_sha256',
+    'reviewed_commit', 'runtime_configuration_sha256', 'ingress_file_sha256',
 }
 
 
 def configuration_values(**updates):
     value = dict(
-        schema_version=1, stage='dev', broker_uid=1001, broker_gid=1002,
+        schema_version=2, stage='dev', broker_uid=1001, broker_gid=1002,
         executor_uid=2001, executor_gid=2002, replay_group_gid=2003,
         socket_group_gid=2004, expected_workflow_sha='c' * 40,
         cosign_version='3.1.2', cosign_binary_sha256='a' * 64,
         sigstore_trusted_root_sha256='b' * 64,
+        reviewed_commit='d' * 40, runtime_configuration_sha256='e' * 64,
+        ingress_file_sha256=('1' * 64, '2' * 64, '3' * 64),
     )
     value.update(updates)
     return value
@@ -42,6 +48,9 @@ def configuration_values(**updates):
 
 class ConfigurationTests(unittest.TestCase):
     def reject(self, value):
+        if type(value) is dict and type(value.get('ingress_file_sha256')) is tuple:
+            value = value | {'ingress_file_sha256': dict(zip(
+                INGRESS_PATHS, value['ingress_file_sha256'], strict=False))}
         with self.assertRaises(config.BrokerServiceConfigurationError) as caught:
             config.DevBrokerServiceConfiguration.from_dict(value)
         self.assertEqual(str(caught.exception), 'DEV broker authority configuration is invalid')
@@ -49,16 +58,17 @@ class ConfigurationTests(unittest.TestCase):
     def test_canonical_valid_and_round_trip(self):
         value = configuration_values()
         instance = config.DevBrokerServiceConfiguration(**value)
-        expected = (json.dumps(value, sort_keys=True, separators=(',', ':'),
+        expected = (json.dumps(instance.to_dict(), sort_keys=True, separators=(',', ':'),
                                ensure_ascii=True) + '\n').encode('ascii')
         self.assertEqual(instance.canonical_bytes(), expected)
         self.assertEqual(config.parse_canonical_broker_service_configuration(expected), instance)
-        self.assertEqual(instance.to_dict(), value)
+        self.assertEqual(instance.to_dict()['ingress_file_sha256'], dict(zip(
+            INGRESS_PATHS, value['ingress_file_sha256'], strict=True)))
         self.assertEqual(set(instance.to_dict()), SCHEMA)
         self.assertEqual({item.name for item in fields(instance) if item.init}, SCHEMA)
 
     def test_exact_schema_and_stage(self):
-        for key, values in {'schema_version': [True, 0, 2, 1.0, '1'],
+        for key, values in {'schema_version': [True, 0, 1, 3, 2.0, '2'],
                             'stage': ['DEV', 'staging', '', None, ['dev']]}.items():
             for value in values:
                 with self.subTest(key=key, value=value):
@@ -117,7 +127,8 @@ class ConfigurationTests(unittest.TestCase):
             identity_claims, received_at=NOW, **instance.oidc_authorization_kwargs(),
         ).workflow_sha, instance.expected_workflow_sha)
         self.reject(configuration_values(source_sha=source_sha))
-        self.reject(configuration_values(reviewed_commit=source_sha))
+        self.assertEqual(instance.reviewed_commit, 'd' * 40)
+        self.assertNotEqual(instance.reviewed_commit, instance.expected_workflow_sha)
 
     def test_exact_cosign_version(self):
         for value in ('3.1.1', '3.1.3', 'v3.1.2', 'latest', '', None, True, 3.12):
@@ -130,6 +141,85 @@ class ConfigurationTests(unittest.TestCase):
                           'sha256:' + 'a' * 64, True, [], {}, 'a' * 64 + '\n'):
                 with self.subTest(key=key, value=value):
                     self.reject(configuration_values(**{key: value}))
+
+    def test_reviewed_revision_and_release_hashes_are_exact(self):
+        class String(str):
+            pass
+        class Tuple(tuple):
+            pass
+        for value in (None, True, 'A' * 40, 'a' * 39, 'a' * 41, '0' * 40,
+                      'refs/heads/main', String('a' * 40)):
+            with self.subTest(commit=value):
+                self.reject(configuration_values(reviewed_commit=value))
+        for value in (None, True, 'A' * 64, 'a' * 63, 'a' * 65,
+                      '0' * 64, String('a' * 64)):
+            with self.subTest(runtime_digest=value):
+                self.reject(configuration_values(runtime_configuration_sha256=value))
+        for value in ([], ['1' * 64] * 3, ('1' * 64,), ('1' * 64,) * 4,
+                      ('0' * 64, '2' * 64, '3' * 64),
+                      ('A' * 64, '2' * 64, '3' * 64),
+                      (String('1' * 64), '2' * 64, '3' * 64),
+                      Tuple(('1' * 64, '2' * 64, '3' * 64))):
+            with self.subTest(ingress=value):
+                with self.assertRaises(config.BrokerServiceConfigurationError):
+                    config.DevBrokerServiceConfiguration(**configuration_values(
+                        ingress_file_sha256=value))
+
+    def test_ingress_json_keys_are_closed(self):
+        base = config.DevBrokerServiceConfiguration(**configuration_values()).to_dict()
+        for mapping in ({}, {'arbitrary/path': 'a' * 64},
+                        base['ingress_file_sha256'] | {'fourth/path': 'a' * 64},
+                        dict(list(base['ingress_file_sha256'].items())[:-1])):
+            with self.subTest(mapping=mapping):
+                self.reject(base | {'ingress_file_sha256': mapping})
+        class Dictionary(dict):
+            pass
+        self.reject(base | {'ingress_file_sha256': Dictionary(base['ingress_file_sha256'])})
+
+    def test_closed_release_reference_projection(self):
+        instance = config.DevBrokerServiceConfiguration(**configuration_values())
+        runtime, ingress = instance.release_references()
+        self.assertIs(type(runtime), RuntimeConfigurationReference)
+        self.assertIs(type(ingress), IngressReference)
+        self.assertEqual(runtime, RuntimeConfigurationReference.from_dict(runtime.__dict__))
+        self.assertEqual(runtime.reviewed_commit, instance.reviewed_commit)
+        self.assertEqual(runtime.sha256, instance.runtime_configuration_sha256)
+        self.assertEqual(runtime.path, 'deployment/runtime/dev/canary-runtime.json')
+        self.assertEqual(tuple(item.path for item in ingress.files), INGRESS_PATHS)
+        self.assertEqual(tuple(item.sha256 for item in ingress.files), instance.ingress_file_sha256)
+        self.assertEqual(ingress.reviewed_commit, instance.reviewed_commit)
+        self.assertEqual((ingress.loopback_address, ingress.loopback_port,
+                          ingress.public_origin),
+                         ('127.0.0.1', 3020, 'https://canary-dev.omnilyzer.ai'))
+
+    def test_broker_executor_pair_alignment_is_explicit(self):
+        broker = config.DevBrokerServiceConfiguration(**configuration_values())
+        identities = ('broker_uid', 'broker_gid', 'executor_uid', 'executor_gid',
+                      'replay_group_gid', 'socket_group_gid')
+        authority = (*identities, 'reviewed_commit', 'runtime_configuration_sha256',
+                     'ingress_file_sha256')
+        paired = DevExecutorServiceConfiguration(**executor_values(**{
+            key: getattr(broker, key) for key in authority
+        }))
+        self.assertTrue(all(getattr(broker, key) == getattr(paired, key)
+                            for key in authority))
+        for key in authority:
+            if key == 'ingress_file_sha256':
+                for index in range(3):
+                    changed = list(paired.ingress_file_sha256)
+                    changed[index] = 'f' * 64
+                    other = DevExecutorServiceConfiguration(**executor_values(**{
+                        **{name: getattr(paired, name) for name in authority},
+                        key: tuple(changed),
+                    }))
+                    self.assertNotEqual(getattr(broker, key), getattr(other, key))
+                continue
+            replacement = (9999 if key in identities else
+                           'f' * 40 if key == 'reviewed_commit' else 'f' * 64)
+            other = DevExecutorServiceConfiguration(**executor_values(**{
+                **{name: getattr(paired, name) for name in authority}, key: replacement,
+            }))
+            self.assertNotEqual(getattr(broker, key), getattr(other, key))
 
     def test_missing_and_unknown_fields(self):
         for key in SCHEMA:
@@ -153,7 +243,8 @@ class ConfigurationTests(unittest.TestCase):
             pass
         self.reject(Dictionary(configuration_values()))
         for key, value in configuration_values().items():
-            replacement = String(value) if type(value) is str else Integer(value)
+            replacement = (String(value) if type(value) is str else
+                           Integer(value) if type(value) is int else list(value))
             with self.subTest(key=key):
                 self.reject(configuration_values(**{key: replacement}))
         value = configuration_values()
@@ -204,14 +295,15 @@ class ParserTests(unittest.TestCase):
     def test_duplicate_json_fields_rejected(self):
         raw = config.DevBrokerServiceConfiguration(**configuration_values()).canonical_bytes()
         for key in SCHEMA:
-            extra = json.dumps(key).encode() + b':' + json.dumps(configuration_values()[key]).encode() + b','
+            extra = json.dumps(key).encode() + b':' + json.dumps(config.DevBrokerServiceConfiguration(
+                **configuration_values()).to_dict()[key]).encode() + b','
             with self.subTest(key=key):
                 self.reject_raw(b'{' + extra + raw[1:])
 
     def test_noncanonical_bytes_rejected(self):
         raw = config.DevBrokerServiceConfiguration(**configuration_values()).canonical_bytes()
         for value in (raw[:-1], raw + b'\n', b' ' + raw, raw.replace(b':', b': ', 1),
-                      json.dumps(configuration_values()).encode() + b'\n',
+                      json.dumps(config.DevBrokerServiceConfiguration(**configuration_values()).to_dict()).encode() + b'\n',
                       raw.replace(b'dev', b'\\u0064ev'), b'\xff', bytearray(raw), '', None):
             with self.subTest(value=type(value).__name__):
                 self.reject_raw(value)

@@ -15,7 +15,6 @@ from .broker_integration import (
     _ReleaseRequestBuilder,
 )
 from .broker_service_config import DevBrokerServiceConfiguration
-from .execution import IngressReference, RuntimeConfigurationReference
 from .identity import AuthorizedGitHubIdentity
 from .oci_verifier import CosignOCISignatureVerifier
 from .registry_oidc_credentials import (
@@ -117,17 +116,17 @@ def compose_inert_dev_promotion_handler(
     *, configuration: DevBrokerServiceConfiguration, verifier: object,
     replay_guard: object, transport: object,
     blob_signatures: ReleaseBlobSignatureVerifier,
-    runtime: RuntimeConfigurationReference, ingress: IngressReference,
     jwks_cache: object | None = None,
     zot_connection_factory: object = _connection,
     forgejo_connection_factory: object = _connection,
     oci_runner: object | None = None,
 ) -> InertDevPromotionHandler:
-    """Revalidate closed C32H authority; bind only nonsecret collaborators."""
+    """Revalidate schema-2 broker authority; bind only nonsecret collaborators."""
 
     if type(configuration) is not DevBrokerServiceConfiguration:
         raise TypeError("broker configuration authority is invalid")
     configuration = DevBrokerServiceConfiguration.from_dict(configuration.to_dict())
+    runtime, ingress = configuration.release_references()
     workflow = configuration.oidc_authorization_kwargs()["expected_workflow_sha"]
     registry = GitHubRegistryCredentialVerifier(
         expected_workflow_sha=workflow, jwks_cache=jwks_cache,

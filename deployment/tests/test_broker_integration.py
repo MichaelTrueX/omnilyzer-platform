@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import hashlib
+import inspect
 import json
 from pathlib import Path
 import re
@@ -42,7 +43,7 @@ FORGEJO_TOKEN = jwt.encode(valid_claims() | {
 
 
 def fixture(*, verifier=None, replay=None, transport=None, blob_signatures=None,
-            runtime=None, ingress=None, expected_workflow_sha=WORKFLOW_SHA,
+            expected_workflow_sha=WORKFLOW_SHA,
             jwks_cache=None):
     promotion, _, zot, forgejo, zot_factory, forgejo_factory = setup()
     selected_verifier = verifier or Verifier()
@@ -54,8 +55,6 @@ def fixture(*, verifier=None, replay=None, transport=None, blob_signatures=None,
         verifier=selected_verifier, replay_guard=selected_replay,
         transport=selected_transport,
         blob_signatures=blob_signatures or BlobSignatures(),
-        runtime=runtime or RuntimeConfigurationReference.from_dict(runtime_reference()),
-        ingress=ingress or IngressReference.from_dict(ingress_reference()),
         jwks_cache=jwks_cache or StaticCache(KEY.public_key()),
         zot_connection_factory=zot_factory, forgejo_connection_factory=forgejo_factory,
     )
@@ -105,6 +104,10 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(len(transport.calls), 1)
         raw = transport.calls[0]
         request = parse_canonical_request(raw)
+        configured = DevBrokerServiceConfiguration(**configuration_values(
+            expected_workflow_sha=WORKFLOW_SHA))
+        self.assertEqual((request.runtime_configuration_reference,
+                          request.ingress_reference), configured.release_references())
         self.assertEqual(request.promotion_request_sha256, promotion.sha256())
         self.assertNotEqual(request.source_sha, request.github_workflow_sha)
         self.assertEqual(request.github_workflow_sha, authorize_verified_github_oidc(valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA).workflow_sha)
@@ -190,18 +193,15 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(replay.calls, [])
         self.assertEqual(transport.calls, [])
 
-    def test_altered_runtime_or_ingress_reference_fails_before_replay(self):
+    def test_runtime_and_ingress_cannot_be_supplied_to_composition(self):
+        parameters = inspect.signature(compose_inert_dev_promotion_handler).parameters
+        self.assertNotIn('runtime', parameters)
+        self.assertNotIn('ingress', parameters)
         runtime = RuntimeConfigurationReference.from_dict(runtime_reference())
         ingress = IngressReference.from_dict(ingress_reference())
-        for options in (
-            {"runtime": replace(runtime, reviewed_commit="f" * 40)},
-            {"ingress": replace(ingress, reviewed_commit="f" * 40)},
-        ):
-            handler, promotion, _, replay, transport, _, _ = fixture(**options)
-            with self.assertRaises(BrokerUnavailableError):
-                invoke(handler, promotion)
-            self.assertEqual(replay.calls, [])
-            self.assertEqual(transport.calls, [])
+        for options in ({"runtime": runtime}, {"ingress": ingress}):
+            with self.assertRaises(TypeError):
+                fixture(**options)
 
     def test_builder_cannot_substitute_request_identity_or_bytes(self):
         class SubstitutingBuilder:

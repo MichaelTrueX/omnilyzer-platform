@@ -1,4 +1,4 @@
-"""C32H pure immutable DEV broker authority configuration.
+"""Pure immutable DEV broker authority configuration (C32H, schema 2 in C32S).
 
 C13 supplies identity relationships; C23 supplies the distinct-group topology.
 C32F workflow revision and C32G version/digests are independently reviewed inputs,
@@ -13,6 +13,12 @@ import json
 from types import MappingProxyType
 from typing import Mapping
 
+from .execution import (
+    DEV_LOOPBACK_ADDRESS, DEV_LOOPBACK_PORT, DEV_PUBLIC_ORIGIN,
+    EXECUTION_SCHEMA_VERSION, INGRESS_PATHS, RUNTIME_CONFIGURATION_PATH,
+    IngressReference, RuntimeConfigurationReference,
+)
+from .identity import DEV_REPOSITORY_ID
 from .identity import validate_expected_workflow_sha as _validate_workflow_sha
 from .installation_contract import (
     DevHostInstallationContract as _DevHostInstallationContract,
@@ -20,6 +26,7 @@ from .installation_contract import (
 from .policy import (
     canonical_bytes as _canonical_bytes,
     validate_sha256 as _validate_sha256,
+    validate_source_sha as _validate_source_sha,
 )
 
 
@@ -52,9 +59,9 @@ PRODUCTION_SIGSTORE_TRUSTED_ROOT_PATH = (
 )
 COSIGN_VERSION = "3.1.2"
 # Closed artifact property of the independently reviewed C32I linux/amd64 binary.
-# This is code authority, not an extra schema-1 JSON field or caller input.
+# This is code authority, not a JSON field or caller input.
 COSIGN_BINARY_SIZE = 141150460
-# C32L final static-resource metadata; never schema-1 JSON inputs.
+# C32L final static-resource metadata; never JSON inputs.
 COSIGN_TOOLS_DIRECTORY = "/opt/omnilyzer/deployment/tools"
 COSIGN_TOOLS_DIRECTORY_MODE = 0o750
 PRODUCTION_COSIGN_PATH = COSIGN_TOOLS_DIRECTORY + "/cosign-v3.1.2-linux-amd64"
@@ -73,7 +80,11 @@ _SCHEMA_FIELDS = frozenset({
     "cosign_version",
     "cosign_binary_sha256",
     "sigstore_trusted_root_sha256",
+    "reviewed_commit",
+    "runtime_configuration_sha256",
+    "ingress_file_sha256",
 })
+_INGRESS_FIELDS = frozenset(INGRESS_PATHS)
 
 
 class BrokerServiceConfigurationError(Exception):
@@ -132,6 +143,9 @@ class DevBrokerServiceConfiguration:
     cosign_version: str
     cosign_binary_sha256: str
     sigstore_trusted_root_sha256: str
+    reviewed_commit: str
+    runtime_configuration_sha256: str
+    ingress_file_sha256: tuple[str, str, str]
     _installation: _DevHostInstallationContract = field(
         init=False, repr=False, compare=False,
     )
@@ -140,7 +154,7 @@ class DevBrokerServiceConfiguration:
         """Validate pure values and cache the authoritative C13 identity contract."""
 
         try:
-            if type(self.schema_version) is not int or self.schema_version != 1:
+            if type(self.schema_version) is not int or self.schema_version != 2:
                 raise TypeError
             if type(self.stage) is not str or self.stage != "dev":
                 raise TypeError
@@ -169,6 +183,14 @@ class DevBrokerServiceConfiguration:
                 raise TypeError
             _validated_hash(self.cosign_binary_sha256, "cosign_binary_sha256")
             _validated_hash(self.sigstore_trusted_root_sha256, "sigstore_trusted_root_sha256")
+            if type(self.reviewed_commit) is not str:
+                raise TypeError
+            _validate_source_sha(self.reviewed_commit)
+            _validated_hash(self.runtime_configuration_sha256, "runtime_configuration_sha256")
+            if type(self.ingress_file_sha256) is not tuple or len(self.ingress_file_sha256) != len(INGRESS_PATHS):
+                raise TypeError
+            for path, digest in zip(INGRESS_PATHS, self.ingress_file_sha256, strict=True):
+                _validated_hash(digest, path)
             object.__setattr__(self, "_installation", installation)
             encoded = _canonical_bytes(self.to_dict())
             if not encoded or len(encoded) > MAX_BROKER_SERVICE_CONFIG_BYTES:
@@ -184,6 +206,7 @@ class DevBrokerServiceConfiguration:
 
         try:
             source = _exact_fields(value, _SCHEMA_FIELDS)
+            ingress = _exact_fields(source["ingress_file_sha256"], _INGRESS_FIELDS)
             return cls(
                 schema_version=source["schema_version"],
                 stage=source["stage"],
@@ -197,6 +220,9 @@ class DevBrokerServiceConfiguration:
                 cosign_version=source["cosign_version"],
                 cosign_binary_sha256=source["cosign_binary_sha256"],
                 sigstore_trusted_root_sha256=source["sigstore_trusted_root_sha256"],
+                reviewed_commit=source["reviewed_commit"],
+                runtime_configuration_sha256=source["runtime_configuration_sha256"],
+                ingress_file_sha256=tuple(ingress[path] for path in INGRESS_PATHS),
             )
         except (KeyboardInterrupt, SystemExit, GeneratorExit):
             raise
@@ -219,6 +245,9 @@ class DevBrokerServiceConfiguration:
             "cosign_version": self.cosign_version,
             "cosign_binary_sha256": self.cosign_binary_sha256,
             "sigstore_trusted_root_sha256": self.sigstore_trusted_root_sha256,
+            "reviewed_commit": self.reviewed_commit,
+            "runtime_configuration_sha256": self.runtime_configuration_sha256,
+            "ingress_file_sha256": dict(zip(INGRESS_PATHS, self.ingress_file_sha256, strict=True)),
         }
 
     def canonical_bytes(self) -> bytes:
@@ -254,6 +283,32 @@ class DevBrokerServiceConfiguration:
             "broker_uid": self.broker_uid,
             "broker_gid": self.broker_gid,
         })
+
+    def release_references(self) -> tuple[RuntimeConfigurationReference, IngressReference]:
+        """Project only the closed C32S repository release references."""
+
+        runtime = RuntimeConfigurationReference.from_dict({
+            "schema_version": EXECUTION_SCHEMA_VERSION,
+            "kind": "repository-blob-sha256",
+            "repository_id": DEV_REPOSITORY_ID,
+            "reviewed_commit": self.reviewed_commit,
+            "path": RUNTIME_CONFIGURATION_PATH,
+            "sha256": self.runtime_configuration_sha256,
+        })
+        ingress = IngressReference.from_dict({
+            "schema_version": EXECUTION_SCHEMA_VERSION,
+            "kind": "repository-file-set-sha256",
+            "repository_id": DEV_REPOSITORY_ID,
+            "reviewed_commit": self.reviewed_commit,
+            "files": [
+                {"path": path, "sha256": digest}
+                for path, digest in zip(INGRESS_PATHS, self.ingress_file_sha256, strict=True)
+            ],
+            "loopback_address": DEV_LOOPBACK_ADDRESS,
+            "loopback_port": DEV_LOOPBACK_PORT,
+            "public_origin": DEV_PUBLIC_ORIGIN,
+        })
+        return runtime, ingress
 
 
 def parse_canonical_broker_service_configuration(

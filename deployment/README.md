@@ -607,8 +607,8 @@ reviewed activation prerequisites.
 
 `sigstore_resource_contract.DevSigstoreResourceContract(configuration=...)`
 describes future final resources without inspecting or creating anything. It
-accepts only an exact existing C32H `DevBrokerServiceConfiguration`, reconstructs
-and revalidates its schema-1 values and cached C13 installation relationship,
+accepts only an exact `DevBrokerServiceConfiguration`, reconstructs
+and revalidates its current schema-2 values and cached C13 installation relationship,
 and requires its version/digests to agree with C32I's closed reviewed provenance.
 It captures an independent immutable configuration and returns narrow immutable
 `directory_requirements()` and `file_requirements()` tuples. Directory metadata
@@ -1044,7 +1044,7 @@ credential failed. The separate `authorize_and_forward()` canonical-request
 API has no private-context input.
 
 The repository-only `registry_promotion_composition.py` constructs the inert
-handler. It revalidates the exact schema-1 `DevBrokerServiceConfiguration`
+handler. It revalidates the exact schema-2 `DevBrokerServiceConfiguration`
 and uses its workflow SHA and `blob_verifier_kwargs()` projection. The
 long-lived release builder holds only those nonsecret static values, trusted
 connection/process test seams, runtime/ingress references, and a separately
@@ -1055,6 +1055,23 @@ OCI verification share that call's zot provider; Forgejo uses its distinct
 read credential. Blob and OCI verification remain separate evidence checks.
 Interleaved calls have no mutable current-request state or shared credential
 provider.
+
+C32S evolves the future root-controlled broker `dev.json` contract to exact
+schema 2. It adds only `reviewed_commit`, `runtime_configuration_sha256`, and
+`ingress_file_sha256` (a map of exactly the three closed `INGRESS_PATHS`). The
+broker config projects `RuntimeConfigurationReference` and `IngressReference`
+through their strict constructors using the fixed repository, runtime path,
+ingress paths, canary loopback and public-origin policy in `execution.py`.
+Composition no longer accepts caller-supplied runtime or ingress references.
+The workflow SHA remains independent: it pins the promotion workflow, while
+`reviewed_commit` pins the reviewed application/runtime/ingress generation.
+Schema 1 remains historical C32H evidence and cannot load as future live broker
+authority. The hardened broker loader still reads only its fixed broker path;
+it never reads executor `executor.json`. Future privileged provisioning must
+generate the broker and executor configurations from one frozen reviewed
+authority and check their six identities, reviewed commit and four artifact
+hashes for exact alignment. C32S deliberately selects no final commit or
+runtime/ingress hashes, installs no config, and leaves DEV disabled.
 
 The deployment JWT alone supplies the JTI, expiry, run identity and canonical
 request hash used for mutation replay. No compact JWT, registry JTI, registry
