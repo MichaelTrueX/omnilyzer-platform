@@ -19,12 +19,14 @@ from deployment.broker_edge_contract import (
 from deployment.broker_https_ingress import (
     BROKER_LOOPBACK_HOST, BROKER_LOOPBACK_PORT, PROMOTION_PATH, PUBLIC_ORIGIN,
 )
+from deployment import blob_verifier, jwks, release_consumer, unix_transport
 from deployment.final_application_generation import TARGET_REVIEWED_COMMIT
 
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSET = ROOT / "deployment/ingress/dev-broker-https.nginx.conf"
 BASE = "ca0021482f14d1d8c7ce9535e938276018d19b61"
+C32Z_BASE = "e80cb2dffbdc05d195a74398dbbc702346d4524a"
 
 
 class DevBrokerEdgeContractTests(unittest.TestCase):
@@ -41,6 +43,9 @@ class DevBrokerEdgeContractTests(unittest.TestCase):
         self.assertEqual((edge.method, edge.endpoint), ("POST", PROMOTION_PATH))
         self.assertEqual((edge.upstream_host, edge.upstream_port),
                          (BROKER_LOOPBACK_HOST, BROKER_LOOPBACK_PORT))
+        self.assertEqual((edge.upstream_connect_timeout_seconds,
+                          edge.upstream_send_timeout_seconds,
+                          edge.upstream_response_timeout_seconds), (3, 30, 900))
         self.assertEqual(edge.certificate_path,
                          "/etc/letsencrypt/live/deploy-dev.omnilyzer.ai/fullchain.pem")
         self.assertEqual(edge.private_key_path,
@@ -54,7 +59,10 @@ class DevBrokerEdgeContractTests(unittest.TestCase):
             edge.host = "other.example"
         with self.assertRaises(TypeError):
             DevBrokerEdgeContract(host="other.example")
+        with self.assertRaises(TypeError):
+            DevBrokerEdgeContract(upstream_response_timeout_seconds=30)
         for name, value in (("https_port", True), ("host", "other.example"),
+                            ("upstream_response_timeout_seconds", 30),
                             ("nginx_include_destination", "/etc/nginx/conf.d/broker.conf")):
             forged = object.__new__(DevBrokerEdgeContract)
             for item in fields(edge):
@@ -70,7 +78,7 @@ class DevBrokerEdgeContractTests(unittest.TestCase):
         self.assertEqual(edge.nginx_source_path,
                          "deployment/ingress/dev-broker-https.nginx.conf")
         self.assertEqual(edge.nginx_source_sha256,
-                         "6981832d3efe9979fbbc58188a37f933bb059876228310fd3783acb6117aff86")
+                         "0e0b966454fc4e0b9a00d7817e532ab5efa5d9c39a17c5856c6aea0fead5e9c6")
         self.assertEqual(hashlib.sha256(payload).hexdigest(), edge.nginx_source_sha256)
         for directive in (
             "listen 443 ssl;", "server_name deploy-dev.omnilyzer.ai;",
@@ -111,12 +119,20 @@ class DevBrokerEdgeContractTests(unittest.TestCase):
             "access_log off;", 'add_header Cache-Control "no-store" always;',
             "proxy_hide_header Set-Cookie;", "proxy_hide_header Location;",
             "proxy_hide_header Access-Control-Allow-Origin;",
-            "proxy_connect_timeout 3s;", "proxy_read_timeout 30s;",
+            "proxy_connect_timeout 3s;", "proxy_read_timeout 900s;",
             "proxy_send_timeout 30s;",
         ):
             with self.subTest(directive=directive):
                 self.assertIn(directive, asset)
         forwarded = re.findall(r"^\s*proxy_set_header\s+([^;]+);", asset, re.M)
+        self.assertEqual(re.findall(r"^\s*proxy_read_timeout\s+([^;]+);", asset, re.M),
+                         ["900s"])
+        original = subprocess.check_output(
+            ["git", "show", f"{C32Z_BASE}:deployment/ingress/dev-broker-https.nginx.conf"],
+            cwd=ROOT).decode("ascii")
+        self.assertEqual(original.count("proxy_read_timeout 30s;"), 1)
+        self.assertEqual(asset, original.replace("proxy_read_timeout 30s;",
+                                                 "proxy_read_timeout 900s;"))
         self.assertEqual(forwarded, [
             "Host deploy-dev.omnilyzer.ai",
             "Authorization $http_authorization",
@@ -133,8 +149,9 @@ class DevBrokerEdgeContractTests(unittest.TestCase):
 
     def test_live_qualification_is_pending_and_explicit(self):
         checks = DevBrokerEdgeQualificationPlan().checks
-        self.assertEqual(len(checks), 15)
+        self.assertEqual(len(checks), 16)
         for marker in ("host-nginx-include-layout-proven", "nginx-configuration-test-passed",
+                       "loaded-upstream-timeouts-match-pinned-contract",
                        "dns-resolves-to-intended-dev-ingress-host",
                        "certificate-hostname-current-validity-and-public-trust-proven",
                        "private-key-not-group-or-world-readable",
@@ -147,9 +164,35 @@ class DevBrokerEdgeContractTests(unittest.TestCase):
         docs = " ".join((ROOT / "deployment/README.md").read_text().split())
         for marker in ("nginx -t", "version string alone is insufficient",
                        "intended DEV ingress host",
-                       "include destination unset", "port 80", "No public IP"):
+                       "include destination unset", "port 80", "No public IP",
+                       "timeout values match the pinned contract",
+                       "disable automatic retry", "response deadline greater than 900 seconds",
+                       "workflow job with a still longer timeout"):
             self.assertTrue(marker in docs, marker)
         self.assertTrue("rejected **before** reaching the broker" in docs)
+
+    def test_response_timeout_exceeds_independent_runtime_budget(self):
+        oidc_cold_seconds = 2 * (
+            jwks.CONNECT_TIMEOUT_SECONDS + jwks.READ_TIMEOUT_SECONDS)
+        release_reads_seconds = 2 * (
+            release_consumer.CONNECT_TIMEOUT + release_consumer.READ_TIMEOUT)
+        cosign_seconds = 3 * blob_verifier.EXECUTION_TIMEOUT
+        executor_seconds = (unix_transport.MAX_TIMEOUT_MS
+                            + unix_transport.RESPONSE_TIMEOUT_MS) / 1000
+        known_ceiling = (oidc_cold_seconds + release_reads_seconds
+                         + cosign_seconds + executor_seconds)
+        self.assertEqual(known_ceiling, 717.0)
+        edge = DevBrokerEdgeContract()
+        self.assertGreaterEqual(edge.upstream_response_timeout_seconds,
+                                known_ceiling + 60)
+        self.assertEqual(edge.upstream_response_timeout_seconds - known_ceiling, 183.0)
+        asset = ASSET.read_text(encoding="ascii")
+        for directive in (
+            f"proxy_connect_timeout {edge.upstream_connect_timeout_seconds}s;",
+            f"proxy_send_timeout {edge.upstream_send_timeout_seconds}s;",
+            f"proxy_read_timeout {edge.upstream_response_timeout_seconds}s;",
+        ):
+            self.assertIn(directive, asset)
 
     def test_historical_and_nonlive_boundaries(self):
         selected = tuple(item.repository_path for item in DevApplicationSourceSet().files)

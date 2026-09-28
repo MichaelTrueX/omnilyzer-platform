@@ -1197,6 +1197,22 @@ C32Q semantic fields plus internal `Connection: close`; and adds no port-80
 redirect. These observations remain pending live qualification. The broker,
 workflow, and deployment remain disabled.
 
+C32ZA pins the candidate's loopback connect, request-send, and upstream
+response-inactivity timeouts at 3, 30, and 900 seconds respectively. The
+synchronous broker path can spend approximately 717 seconds in the reviewed
+OIDC, release-registry, Cosign, and executor bounds before small local overhead;
+a 30-second upstream response wait could abandon an active deployment with an
+ambiguous client result. The 900-second value leaves 183 seconds above that
+known ceiling. Future live Nginx qualification must prove the **loaded**
+timeout values match the pinned contract, alongside `nginx -t`, TLS/DNS,
+routing, and duplicate-header probes. Nginx's read timeout is an inactivity
+limit while awaiting the upstream response, not a total request-age limit.
+The future GitHub promotion submission client must disable automatic retry,
+allow a response deadline greater than 900 seconds, and run inside a workflow
+job with a still longer timeout. A client timeout must never resend the same
+promotion automatically: its deployment OIDC JTI is replay-protected. C32ZA
+does not add that client or change the inert workflow.
+
 ## C32P request-scoped registry credential integration (inert)
 
 `InertDevPromotionHandler.handle()` now accepts exactly five separate inputs:
