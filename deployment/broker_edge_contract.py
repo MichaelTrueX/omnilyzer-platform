@@ -17,13 +17,14 @@ __all__ = ("DevBrokerEdgeContract", "DevBrokerEdgeQualificationPlan")
 
 _ERROR = "DEV broker HTTPS edge contract is invalid"
 _SOURCE = "deployment/ingress/dev-broker-https.nginx.conf"
-_SHA256 = "6981832d3efe9979fbbc58188a37f933bb059876228310fd3783acb6117aff86"
+_SHA256 = "0e0b966454fc4e0b9a00d7817e532ab5efa5d9c39a17c5856c6aea0fead5e9c6"
 _CERTIFICATE = "/etc/letsencrypt/live/" + PUBLIC_HOST + "/fullchain.pem"
 _PRIVATE_KEY = "/etc/letsencrypt/live/" + PUBLIC_HOST + "/privkey.pem"
 _CHECKS = (
     "host-nginx-include-layout-proven",
     "reviewed-nginx-version-at-least-1.23.0-and-combined-header-capability-proven",
     "pinned-config-installed-and-loaded",
+    "loaded-upstream-timeouts-match-pinned-contract",
     "nginx-configuration-test-passed",
     "dns-resolves-to-intended-dev-ingress-host",
     "certificate-hostname-current-validity-and-public-trust-proven",
@@ -64,6 +65,9 @@ class DevBrokerEdgeContract:
     method: str = field(init=False, default="POST")
     upstream_host: str = field(init=False, default=BROKER_LOOPBACK_HOST)
     upstream_port: int = field(init=False, default=BROKER_LOOPBACK_PORT)
+    upstream_connect_timeout_seconds: int = field(init=False, default=3)
+    upstream_send_timeout_seconds: int = field(init=False, default=30)
+    upstream_response_timeout_seconds: int = field(init=False, default=900)
     certificate_path: str = field(init=False, default=_CERTIFICATE)
     private_key_path: str = field(init=False, default=_PRIVATE_KEY)
     nginx_source_path: str = field(init=False, default=_SOURCE)
