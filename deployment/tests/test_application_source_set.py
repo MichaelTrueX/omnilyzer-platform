@@ -25,6 +25,11 @@ DATA = {
     RUNTIME + "compose.yaml",
     RUNTIME + "nginx/nginx.conf",
 }
+ENTRYPOINT_ROOTS = {
+    "deployment/executor_service_entrypoint.py",
+    "deployment/broker_service_entrypoint.py",
+    "deployment/__init__.py",
+}
 
 
 def local_imports(tree, current):
@@ -86,8 +91,7 @@ def local_imports(tree, current):
 
 
 def import_closure():
-    pending = {"deployment/executor_service_entrypoint.py", "deployment/broker_integration.py",
-               "deployment/__init__.py"}
+    pending = set(ENTRYPOINT_ROOTS)
     visited = set()
     while pending:
         path = pending.pop()
@@ -114,7 +118,7 @@ class ApplicationSourceSetTests(unittest.TestCase):
         self.assertEqual(tuple(f.name for f in dataclasses.fields(module.ApplicationSourceFile)),
                          ("repository_path", "target_relative_path", "kind"))
         self.assertEqual(tuple(f.name for f in dataclasses.fields(module.DevApplicationSourceSet)),
-                         ("application_root", "entrypoint_module", "files"))
+                         ("application_root", "entrypoint_modules", "files"))
         self.assertEqual(tuple(inspect.signature(module.DevApplicationSourceSet).parameters), ())
         for cls in (module.ApplicationSourceFile, module.DevApplicationSourceSet):
             self.assertTrue(cls.__dataclass_params__.frozen)
@@ -130,17 +134,23 @@ class ApplicationSourceSetTests(unittest.TestCase):
             module.DevApplicationSourceSet(files=())
 
     def test_c21_projection_and_entrypoint(self):
+        from deployment.broker_host_service_contract import DevBrokerHostServiceContract
+        from deployment.tests.test_sigstore_resource_contract import configuration
         self.assertEqual(self.selection.application_root, DevHostServiceLayout().application_root)
         self.assertEqual(self.selection.application_root, "/opt/omnilyzer/deployment/app")
-        self.assertEqual(self.selection.entrypoint_module, "deployment.executor_service_entrypoint")
+        self.assertEqual(self.selection.entrypoint_modules, (
+            "deployment.executor_service_entrypoint", "deployment.broker_service_entrypoint"))
+        self.assertEqual(self.selection.entrypoint_modules[0], DevHostServiceLayout().executor_module)
+        broker = DevBrokerHostServiceContract(configuration=configuration())
+        self.assertEqual(self.selection.entrypoint_modules[1], broker.broker_module())
 
     def test_counts_order_uniqueness_and_mapping(self):
         self.assertIs(type(self.selection.files), tuple)
-        self.assertEqual(len(self.paths), 31)
+        self.assertEqual(len(self.paths), 41)
         self.assertEqual(self.paths, tuple(sorted(self.paths)))
-        self.assertEqual(len(set(self.paths)), 31)
-        self.assertEqual(len({f.target_relative_path for f in self.selection.files}), 31)
-        self.assertEqual(sum(f.kind == "python-module" for f in self.selection.files), 28)
+        self.assertEqual(len(set(self.paths)), 41)
+        self.assertEqual(len({f.target_relative_path for f in self.selection.files}), 41)
+        self.assertEqual(sum(f.kind == "python-module" for f in self.selection.files), 38)
         self.assertEqual(sum(f.kind == "runtime-data" for f in self.selection.files), 3)
         self.assertEqual(self.selection, module.DevApplicationSourceSet())
         for item in self.selection.files:
@@ -178,6 +188,11 @@ class ApplicationSourceSetTests(unittest.TestCase):
             "requirements-linux-x86_64-py312.lock", "DEPENDENCIES.md", "README.md",
             "runtime/dev/README.md", "runtime/dev/host-nginx.conf",
             "broker_composition.py", "runtime.py",
+            "application_manifest.py", "broker_host_service_contract.py",
+            "sigstore_resource_contract.py", "sigstore_authority_provenance.py",
+            "sigstore_authority_review.py", "sigstore_toolchain_qualification.py",
+            "sigstore_static_installation.py", "dev_post_c31_application_update.py",
+            "pip_installer_qualification.py",
         }
         self.assertFalse(set(self.paths) & {"deployment/" + p for p in excluded})
         for path in self.paths:
@@ -187,12 +202,24 @@ class ApplicationSourceSetTests(unittest.TestCase):
                                                 "provenance")))
         self.assertIn("deployment/broker.py", self.paths)
         self.assertIn("deployment/jwks.py", self.paths)
+        for path in (
+            "blob_verifier.py", "broker_https_ingress.py", "broker_loopback_listener.py",
+            "broker_service_bootstrap.py", "broker_service_config.py",
+            "broker_service_config_loader.py", "broker_service_entrypoint.py",
+            "oci_verifier.py", "registry_oidc_credentials.py",
+            "registry_promotion_composition.py",
+        ):
+            self.assertIn("deployment/" + path, self.paths)
 
     def test_exact_ast_import_closure(self):
+        self.assertEqual(ENTRYPOINT_ROOTS, {
+            "deployment/executor_service_entrypoint.py",
+            "deployment/broker_service_entrypoint.py", "deployment/__init__.py",
+        })
         declared = {f.repository_path for f in self.selection.files if f.kind == "python-module"}
         discovered = import_closure()
         self.assertIn("deployment/__init__.py", declared)
-        self.assertEqual(len(discovered), 28)
+        self.assertEqual(len(discovered), 38)
         self.assertEqual(discovered, declared)
 
     def test_import_resolver_forms(self):
@@ -320,7 +347,7 @@ class ApplicationSourceSetTests(unittest.TestCase):
             stack.enter_context(patch.dict(os.environ, {}, clear=True))
             exec(code, isolated.__dict__)
             selection = isolated.DevApplicationSourceSet()
-            self.assertEqual(len(selection.files), 31)
+            self.assertEqual(len(selection.files), 41)
 
 
 if __name__ == "__main__":

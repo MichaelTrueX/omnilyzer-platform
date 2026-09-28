@@ -1,6 +1,6 @@
 """deployment/application_manifest.py — deterministic C26 application evidence.
 
-Generate canonical application manifest evidence for the exact C25 DEV source
+Generate canonical application manifest evidence for the current closed DEV source
 set from raw Git objects belonging to one exact checked-out commit. C17 owns
 future installation reviewed_commit authority; C21 owns the application root;
 C24 owns integrity semantics; C25 owns source selection. Future host
@@ -13,7 +13,7 @@ host/application, creates a venv, installs dependencies, uses a network,
 operates systemd/Docker or activates deployment authority.
 """
 
-from dataclasses import dataclass as _dataclass, fields as _fields
+from dataclasses import dataclass as _dataclass
 import hashlib as _hashlib
 import os as _os
 import re as _re
@@ -64,23 +64,86 @@ def _commit(value: object) -> None:
         raise ValueError(_MODEL_ERROR) from None
 
 
-def _paths() -> tuple[str, ...]:
-    """Read C25 immutable dataclass metadata, never discover repository files."""
-    files = next(field.default for field in _fields(_DevApplicationSourceSet) if field.name == "files")
-    return tuple(item.repository_path for item in files)
-
-
-# C31 installed this exact predecessor selection. It remains parseable for
-# pinned recovery; generation always uses the current C25 selection.
-_C31_ADDITIONS = frozenset({
+# Historical C31/C32D paths are evidence, not projections of the mutable
+# current source selection. In particular C32D still consumes _paths().
+_C31_PATHS = (
+    "deployment/__init__.py",
+    "deployment/audit.py",
+    "deployment/broker.py",
+    "deployment/controller.py",
+    "deployment/deployment_operation.py",
+    "deployment/docker_runtime.py",
+    "deployment/execution.py",
+    "deployment/executor.py",
+    "deployment/executor_composition.py",
+    "deployment/executor_listener.py",
+    "deployment/executor_server.py",
+    "deployment/executor_service_bootstrap.py",
+    "deployment/executor_service_config.py",
+    "deployment/executor_service_config_loader.py",
+    "deployment/executor_service_entrypoint.py",
+    "deployment/identity.py",
+    "deployment/installation_contract.py",
+    "deployment/jwks.py",
+    "deployment/policy.py",
+    "deployment/promotion.py",
+    "deployment/replay_sqlite.py",
+    "deployment/runtime/dev/canary-runtime.json",
+    "deployment/runtime/dev/compose.yaml",
+    "deployment/runtime/dev/nginx/nginx.conf",
+    "deployment/state.py",
+    "deployment/state_store.py",
+    "deployment/systemd_socket_activation.py",
+    "deployment/unix_transport.py",
+)
+_C32D_PATHS = (
+    "deployment/__init__.py",
+    "deployment/audit.py",
+    "deployment/broker.py",
     "deployment/broker_integration.py",
+    "deployment/controller.py",
+    "deployment/deployment_operation.py",
+    "deployment/docker_runtime.py",
+    "deployment/execution.py",
+    "deployment/executor.py",
+    "deployment/executor_composition.py",
+    "deployment/executor_listener.py",
+    "deployment/executor_server.py",
+    "deployment/executor_service_bootstrap.py",
+    "deployment/executor_service_config.py",
+    "deployment/executor_service_config_loader.py",
+    "deployment/executor_service_entrypoint.py",
+    "deployment/identity.py",
+    "deployment/installation_contract.py",
+    "deployment/jwks.py",
     "deployment/oidc_verifier.py",
+    "deployment/policy.py",
+    "deployment/promotion.py",
     "deployment/release_consumer.py",
-})
+    "deployment/replay_sqlite.py",
+    "deployment/runtime/dev/canary-runtime.json",
+    "deployment/runtime/dev/compose.yaml",
+    "deployment/runtime/dev/nginx/nginx.conf",
+    "deployment/state.py",
+    "deployment/state_store.py",
+    "deployment/systemd_socket_activation.py",
+    "deployment/unix_transport.py",
+)
 
 
 def _predecessor_paths() -> tuple[str, ...]:
-    return tuple(path for path in _paths() if path not in _C31_ADDITIONS)
+    """Return the exact historical C31 28-file selection."""
+    return _C31_PATHS
+
+
+def _paths() -> tuple[str, ...]:
+    """Return the exact historical C32D 31-file target selection."""
+    return _C32D_PATHS
+
+
+def _current_paths() -> tuple[str, ...]:
+    """Return current C32V selection; never use this for C32D history."""
+    return tuple(item.repository_path for item in _DevApplicationSourceSet().files)
 
 
 @_dataclass(frozen=True, slots=True)
@@ -116,7 +179,8 @@ class DevApplicationManifest:
                     or self.manifest_kind != "canonical-relative-file-set-v1"
                     or type(self.digest_algorithm) is not str or self.digest_algorithm != "sha256"
                     or type(self.entries) is not tuple
-                    or len(self.entries) not in (28, 31)):
+                    or len(self.entries) not in (len(_C31_PATHS), len(_C32D_PATHS),
+                                                 len(_current_paths()))):
                 raise ValueError(_MODEL_ERROR)
             for entry in self.entries:
                 if type(entry) is not ApplicationManifestEntry:
@@ -124,7 +188,7 @@ class DevApplicationManifest:
                 # Call validation directly: do not manufacture additional evidence entries.
                 ApplicationManifestEntry.__post_init__(entry)
             paths = tuple(entry.path for entry in self.entries)
-            if paths not in (_paths(), _predecessor_paths()):
+            if paths not in (_predecessor_paths(), _paths(), _current_paths()):
                 raise ValueError(_MODEL_ERROR)
         except Exception:
             raise ValueError(_MODEL_ERROR) from None
@@ -256,7 +320,7 @@ def generate_dev_application_manifest(*, repository_root: str, reviewed_commit: 
         if type(selection) is not _DevApplicationSourceSet or type(selection.files) is not tuple:
             raise ValueError(_UNAVAILABLE)
         paths = tuple(item.repository_path for item in selection.files)
-        if len(paths) != 31 or paths != _paths() or paths != tuple(sorted(set(paths))):
+        if paths != _current_paths() or paths != tuple(sorted(set(paths))):
             raise ValueError(_UNAVAILABLE)
         for item in selection.files:
             if type(item) is not _ApplicationSourceFile:

@@ -1,11 +1,13 @@
-"""deployment/application_source_set.py — closed inert C25 source selection.
+"""deployment/application_source_set.py — closed inert current DEV source selection.
 
 Define the exact reviewed repository source set and repository-to-application
 relative-path mapping for the future DEV deployment-control-plane installation.
-C20 executor_service_entrypoint.py owns the executor entrypoint; C21
+C20 executor_service_entrypoint.py and C32T broker_service_entrypoint.py own
+the two service entrypoints; C21
 host_service_layout.py owns the application root; C24
 installation_integrity_contract.py defines complete manifest requirements.
-Future C26 manifest/evidence work may consume this selection.
+C26 manifest generation consumes this current selection; historical C31/C32D
+path sets remain separately pinned in application_manifest.py.
 
 Import and construction perform no hashing, manifest generation, packaging,
 archive generation, copying, filesystem inspection, host installation, venv
@@ -60,8 +62,15 @@ class ApplicationSourceFile:
 _PYTHON_PATHS = (
     "deployment/__init__.py",
     "deployment/audit.py",
+    "deployment/blob_verifier.py",
     "deployment/broker.py",
+    "deployment/broker_https_ingress.py",
     "deployment/broker_integration.py",
+    "deployment/broker_loopback_listener.py",
+    "deployment/broker_service_bootstrap.py",
+    "deployment/broker_service_config.py",
+    "deployment/broker_service_config_loader.py",
+    "deployment/broker_service_entrypoint.py",
     "deployment/controller.py",
     "deployment/deployment_operation.py",
     "deployment/docker_runtime.py",
@@ -77,9 +86,12 @@ _PYTHON_PATHS = (
     "deployment/identity.py",
     "deployment/installation_contract.py",
     "deployment/jwks.py",
+    "deployment/oci_verifier.py",
     "deployment/oidc_verifier.py",
     "deployment/policy.py",
     "deployment/promotion.py",
+    "deployment/registry_oidc_credentials.py",
+    "deployment/registry_promotion_composition.py",
     "deployment/replay_sqlite.py",
     "deployment/release_consumer.py",
     "deployment/state.py",
@@ -106,8 +118,9 @@ def _layout_default(name: str) -> str:
 
 @_dataclass(frozen=True, slots=True)
 class DevApplicationSourceSet:
-    """The fixed C25 selection, with no caller-selected paths or files."""
+    """The fixed current selection, with no caller-selected paths or files."""
 
     application_root: str = _field(init=False, default=_layout_default("application_root"))
-    entrypoint_module: str = _field(init=False, default=_layout_default("executor_module"))
+    entrypoint_modules: tuple[str, str] = _field(init=False, default=(
+        _layout_default("executor_module"), "deployment.broker_service_entrypoint"))
     files: tuple[ApplicationSourceFile, ...] = _field(init=False, default=_FILES)

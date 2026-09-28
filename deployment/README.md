@@ -2043,16 +2043,16 @@ host state. Future work must separately establish:
 
 `application_source_set.py` selects **what files** belong below the future C21
 application root, `/opt/omnilyzer/deployment/app`. The zero-argument frozen,
-slotted `DevApplicationSourceSet` projects that root and the executor entrypoint
-from C21. Its current reviewed allowlist contains exactly **31 files: 28 Python
-module/package files and 3 runtime data files**, sorted lexicographically with
+slotted `DevApplicationSourceSet` projects that root and both executor and broker
+entrypoints. C32V's current reviewed allowlist contains exactly **41 files: 38
+Python module/package files and 3 runtime data files**, sorted lexicographically with
 unique paths. Each repository-relative path is also the future path relative to
 the application root. For example, `deployment/executor_service_entrypoint.py`
 would retain that path below the root. `ApplicationSourceFile` permits only
 canonical POSIX relative paths with identical source/target mappings and the
 closed kinds `python-module` and `runtime-data`.
 
-C25 selects the target executor application and its current import graph,
+C32V selects both service entrypoints and their complete current import graph,
 including `deployment/__init__.py`. It does not prove source bytes. C24 defines
 what evidence a complete application manifest must contain: the
 `canonical-relative-file-set-v1` semantics with sorted unique regular-file
@@ -2077,6 +2077,16 @@ They require exact equality with the declared Python and runtime-data sets,
 reject dead/new local modules and obvious dynamic imports, and inspect selected
 repository files for regular-file and no-symlink status. Production code never
 discovers, reads, inspects or hashes source files.
+
+`application_manifest._predecessor_paths()` remains the explicit historical
+28-file C31 selection, and `_paths()` remains the explicit historical 31-file
+C32D target consumed by the pinned C32D updater. `_current_paths()` alone
+projects C32V's 41-file current selection. Manifest validation accepts only
+those three exact path tuples; new manifest generation uses the current tuple.
+The three runtime-data files above are unchanged. Host Nginx configuration,
+systemd units, broker config, Sigstore static resources, provenance, qualification
+and provisioning modules remain outside the application root. C32V changes no
+host state, workflow permission, or deployment activation.
 
 The selection excludes repository governance, tests, documentation, schemas,
 environment policy files, provisioning contracts and installation assets:

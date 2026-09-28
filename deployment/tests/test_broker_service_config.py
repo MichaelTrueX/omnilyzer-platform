@@ -353,13 +353,13 @@ class SeparationTests(unittest.TestCase):
         from deployment import application_manifest as c26
         from deployment import dev_post_c31_application_update as c32d
         paths = tuple(item.repository_path for item in DevApplicationSourceSet().files)
-        self.assertEqual(len(paths), 31)
+        self.assertEqual(len(paths), 41)
         self.assertEqual((len(c26._predecessor_paths()), len(c26._paths())), (28, 31))
         self.assertEqual(c32d.PREDECESSOR, '3ef02a6d61d20df3a1495b290c20807162b65b06')
         self.assertEqual(c32d.TARGET, 'c04e66008cff556315603a9de59dacb4679787d4')
         for path in ('deployment/blob_verifier.py', 'deployment/broker_service_config.py',
                      'deployment/broker_service_config_loader.py'):
-            self.assertNotIn(path, paths)
+            self.assertIn(path, paths)
         self.assertIs(json.loads((ROOT / 'deployment/environments/dev.json').read_text())
                       ['activation']['deployment_enabled'], False)
         workflow = (ROOT / '.github/workflows/platform-promote.yml').read_text()

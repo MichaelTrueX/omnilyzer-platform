@@ -13,7 +13,6 @@ from unittest.mock import patch
 from deployment import application_manifest as c26
 from deployment import dev_step20_recovery as recovery
 from deployment import dev_host_provisioning_mechanics as mechanics
-from deployment.application_source_set import DevApplicationSourceSet
 from deployment.executor_service_config import DevExecutorServiceConfiguration
 from deployment.tests.test_executor_service_config import configuration_values
 
@@ -29,8 +28,7 @@ class ApplicationPrefixTests(unittest.TestCase):
         self.new = {}
         old_entries = []
         new_entries = []
-        for source in DevApplicationSourceSet().files:
-            path = source.repository_path
+        for path in c26._predecessor_paths():
             old = ("old:" + path).encode()
             new = ("new:" + path).encode() if path in recovery.CHANGED else old
             self.old[path], self.new[path] = old, new
@@ -276,8 +274,8 @@ class PinnedManifestTests(unittest.TestCase):
         pinned = hashlib.sha256(predecessor.canonical_bytes()).hexdigest()
         manifest = c26.DevApplicationManifest(
             "canonical-relative-file-set-v1", "sha256", current.reviewed_commit,
-            tuple(c26.ApplicationManifestEntry(item.repository_path, "b" * 64, "0644")
-                  for item in DevApplicationSourceSet().files),
+            tuple(c26.ApplicationManifestEntry(path, "b" * 64, "0644")
+                  for path in c26._predecessor_paths()),
         )
         changed = replace(current, broker_uid=current.broker_uid + 100)
         with patch.object(recovery, "PREDECESSOR_C17", pinned), \
@@ -307,8 +305,8 @@ class PinnedManifestTests(unittest.TestCase):
         self.addCleanup(pin.stop)
         manifest = c26.DevApplicationManifest(
             "canonical-relative-file-set-v1", "sha256", commit,
-            tuple(c26.ApplicationManifestEntry(item.repository_path, "b" * 64, "0644")
-                  for item in DevApplicationSourceSet().files),
+            tuple(c26.ApplicationManifestEntry(path, "b" * 64, "0644")
+                  for path in c26._predecessor_paths()),
         )
         repository = str(Path(__file__).resolve().parents[2])
         for parent in ("b" * 40, "b" * 40 + "\nparent " + "c" * 40):

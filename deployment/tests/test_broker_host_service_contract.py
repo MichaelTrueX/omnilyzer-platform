@@ -258,7 +258,7 @@ class UnitTests(unittest.TestCase):
     def test_historical_executor_assets_and_nonlive_state(self):
         from deployment import application_manifest, dev_post_c31_application_update as c32d
         paths = tuple(item.repository_path for item in DevApplicationSourceSet().files)
-        self.assertEqual(len(paths), 31)
+        self.assertEqual(len(paths), 41)
         self.assertNotIn("deployment/broker_host_service_contract.py", paths)
         self.assertNotIn("deployment/systemd/dev/omnilyzer-deployment-broker.service", paths)
         c23 = DevHostProvisioningContract(installation=configuration().installation_contract())

@@ -12,7 +12,6 @@ import unittest
 from unittest.mock import patch
 
 import deployment.application_manifest as c26
-from deployment.application_source_set import DevApplicationSourceSet
 import deployment.dev_host_qualification as c29
 import deployment.dev_persistent_state_prerequisites as c31c
 import deployment.dev_post_provision_qualification as module
@@ -31,8 +30,8 @@ def fixtures():
     manifest = c26.DevApplicationManifest(
         "canonical-relative-file-set-v1", "sha256", configuration.reviewed_commit,
         tuple(
-            c26.ApplicationManifestEntry(item.repository_path, "a" * 64, "0644")
-            for item in DevApplicationSourceSet().files
+            c26.ApplicationManifestEntry(path, "a" * 64, "0644")
+            for path in c26._predecessor_paths()
         ),
     )
     provisioning = c23.DevHostProvisioningContract(
