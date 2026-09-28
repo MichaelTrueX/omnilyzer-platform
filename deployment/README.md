@@ -942,6 +942,58 @@ JWTs and a static JWKS fixture. The new module is outside the current 31-file
 installed source set; historical C32D predecessor/target authority is unchanged.
 The workflow, broker endpoint and deployment activation remain disabled.
 
+## C32P request-scoped registry credential integration (inert)
+
+`InertDevPromotionHandler.handle()` now accepts exactly five separate inputs:
+`compact_token`, `zot_token`, `forgejo_token`, canonical `promotion_request`
+bytes, and `received_at`. Each compact token is an exact nonempty ASCII
+built-in string bounded by the deployment JWT limit. The handler places the
+two registry strings only in a private immutable, redacted, nonserializable
+call-local envelope. Neither the handler nor the broker stores that envelope.
+
+The broker's promotion path uses one constructor-bound context verifier. Its
+order is deployment JWT signature verification once, normalization against
+the closed deployment policy, C32O verification of both registry JWTs against
+that normalized identity, request-scoped release acquisition and signature
+checks, exact `ExecutorRequest` canonicalization/reparse and identity binding,
+hashing, deployment-JTI replay consumption, then transport of the same
+canonical bytes. Definite registry rejection maps to the broker's fixed
+rejected error; JWKS or verification authority unavailability maps to its
+fixed unavailable error. Neither error reveals a token or which registry
+credential failed. The separate `authorize_and_forward()` canonical-request
+API has no private-context input.
+
+The repository-only `registry_promotion_composition.py` constructs the inert
+handler. It revalidates the exact schema-1 `DevBrokerServiceConfiguration`
+and uses its workflow SHA and `blob_verifier_kwargs()` projection. The
+long-lived release builder holds only those nonsecret static values, trusted
+connection/process test seams, runtime/ingress references, and a separately
+captured blob signature operation. After C32O returns exact
+`VerifiedRegistryCredentials`, it creates new zot and Forgejo consumers and
+a new `CosignOCISignatureVerifier` for that call. Zot manifest acquisition and
+OCI verification share that call's zot provider; Forgejo uses its distinct
+read credential. Blob and OCI verification remain separate evidence checks.
+Interleaved calls have no mutable current-request state or shared credential
+provider.
+
+The deployment JWT alone supplies the JTI, expiry, run identity and canonical
+request hash used for mutation replay. No compact JWT, registry JTI, registry
+expiry or audience enters `PromotionRequest`, `ExecutorRequest`, replay,
+executor transport, audit, deployment state or broker configuration. Registry
+JWTs remain short-lived read authority; Python strings cannot be securely
+zeroized. C32N's private temporary Docker credential file behavior is
+unchanged when its OCI verifier is eventually run.
+
+Tests use synthetic signed JWTs, static JWKS and fake consumers/OCI results;
+they do not contact GitHub, zot or Forgejo or execute Cosign. The workflow
+still has no `id-token: write`, environment attachment or live broker request.
+No listener, service, host resource or deployment activation is added.
+The concrete composition module remains outside the installed 31-file source
+set; `broker_integration.py` keeps that selection's exact import closure.
+C23/C30/C31 and C32D historical source authority are unchanged. A separately
+reviewed final application migration, credential exchange/composition, real-tool
+qualification and live-host controls remain prerequisites.
+
 ## C32D pinned post-C31 application update (repository only)
 
 `dev_post_c31_application_update.py` binds the installed predecessor commit

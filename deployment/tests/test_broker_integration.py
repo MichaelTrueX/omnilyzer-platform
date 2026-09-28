@@ -8,9 +8,15 @@ import json
 from pathlib import Path
 import re
 import unittest
+from unittest.mock import patch
+
+import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from deployment.broker import BrokerRejectedError, BrokerUnavailableError, RestrictedDeploymentBroker
 from deployment.broker_integration import InertDevPromotionHandler, MAX_PROMOTION_REQUEST_BYTES
+from deployment.registry_promotion_composition import compose_inert_dev_promotion_handler
+from deployment.broker_service_config import DevBrokerServiceConfiguration, BrokerServiceConfigurationError
 from deployment.execution import ExecutorRequest, IngressReference, RuntimeConfigurationReference, parse_canonical_request
 from deployment.identity import ReplayError, ReplayUnavailableError, authorize_verified_github_oidc
 from deployment.jwks import OIDCVerificationError, OIDCVerificationUnavailable
@@ -19,36 +25,52 @@ from deployment.tests.test_execution import ingress_reference, runtime_reference
 from deployment.tests.test_execution import valid_request
 from deployment.tests.test_identity import NOW, WORKFLOW_SHA, valid_claims
 from deployment.tests.test_release_consumer import BlobSignatures, OCISignatures, setup
+from deployment.tests.test_broker_service_config import configuration_values
+from deployment.tests.test_oidc_verifier import private_pem
+from deployment.tests.test_registry_oidc_credentials import StaticCache
 
 
 ROOT = Path(__file__).resolve().parents[2]
 TOKEN = "exact.compact.token"
+KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+ZOT_TOKEN = jwt.encode(valid_claims() | {
+    "aud": "https://oci-dev.omnilyzer.ai", "jti": "zot-request",
+}, private_pem(KEY), algorithm="RS256", headers={"kid": "key-1", "typ": "JWT"})
+FORGEJO_TOKEN = jwt.encode(valid_claims() | {
+    "aud": "u:2:316bec9a-53e4-4807-9557-7febdc979d0a", "jti": "forgejo-request",
+}, private_pem(KEY), algorithm="RS256", headers={"kid": "key-1", "typ": "JWT"})
 
 
-def fixture(*, verifier=None, replay=None, transport=None, blob_signatures=None, oci_signatures=None,
-            runtime=None, ingress=None, expected_workflow_sha=WORKFLOW_SHA):
+def fixture(*, verifier=None, replay=None, transport=None, blob_signatures=None,
+            runtime=None, ingress=None, expected_workflow_sha=WORKFLOW_SHA,
+            jwks_cache=None):
     promotion, _, zot, forgejo, zot_factory, forgejo_factory = setup()
     selected_verifier = verifier or Verifier()
     selected_replay = replay or Replay()
     selected_transport = transport or Transport()
-    handler = InertDevPromotionHandler(
-        expected_workflow_sha=expected_workflow_sha,
+    handler = compose_inert_dev_promotion_handler(
+        configuration=DevBrokerServiceConfiguration(**configuration_values(
+            expected_workflow_sha=expected_workflow_sha)),
         verifier=selected_verifier, replay_guard=selected_replay,
-        transport=selected_transport, zot=zot, forgejo=forgejo,
+        transport=selected_transport,
         blob_signatures=blob_signatures or BlobSignatures(),
-        oci_signatures=oci_signatures or OCISignatures(),
         runtime=runtime or RuntimeConfigurationReference.from_dict(runtime_reference()),
         ingress=ingress or IngressReference.from_dict(ingress_reference()),
+        jwks_cache=jwks_cache or StaticCache(KEY.public_key()),
+        zot_connection_factory=zot_factory, forgejo_connection_factory=forgejo_factory,
     )
     return handler, promotion, selected_verifier, selected_replay, selected_transport, zot_factory, forgejo_factory
 
 
-def invoke(handler, promotion, *, token=TOKEN, raw=None):
-    return handler.handle(
-        compact_token=token,
-        promotion_request=promotion.canonical_bytes() if raw is None else raw,
-        received_at=NOW,
-    )
+def invoke(handler, promotion, *, token=TOKEN, zot_token=ZOT_TOKEN,
+           forgejo_token=FORGEJO_TOKEN, raw=None, oci_signatures=None):
+    with patch("deployment.registry_promotion_composition.CosignOCISignatureVerifier",
+               return_value=oci_signatures or OCISignatures()):
+        return handler.handle(
+            compact_token=token, zot_token=zot_token, forgejo_token=forgejo_token,
+            promotion_request=promotion.canonical_bytes() if raw is None else raw,
+            received_at=NOW,
+        )
 
 
 class IntegrationTests(unittest.TestCase):
@@ -60,9 +82,8 @@ class IntegrationTests(unittest.TestCase):
                 self.calls.append((image_reference, now))
                 return super().verify(image_reference, now)
         oci = OCI()
-        handler, promotion, *_ = fixture(oci_signatures=oci)
-        oci.verify = lambda *args: self.fail("replacement OCI operation")
-        invoke(handler, promotion)
+        handler, promotion, *_ = fixture()
+        invoke(handler, promotion, oci_signatures=oci)
         self.assertEqual(oci.calls, [(promotion.exact_image_reference, NOW)])
 
     def test_construction_is_inert(self):
@@ -109,7 +130,7 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(zot.calls, [])
             self.assertEqual(forgejo.calls, [])
         for authority in (None, True, "", "0" * 40):
-            with self.subTest(authority=authority), self.assertRaises(ValueError):
+            with self.subTest(authority=authority), self.assertRaises(BrokerServiceConfigurationError):
                 fixture(expected_workflow_sha=authority)
 
     def test_malformed_or_oversized_input_never_reaches_verifier(self):
@@ -184,20 +205,25 @@ class IntegrationTests(unittest.TestCase):
 
     def test_builder_cannot_substitute_request_identity_or_bytes(self):
         class SubstitutingBuilder:
-            def build(self, promotion, identity, *, received_at):
+            def build(self, promotion, identity, verified_context, *, received_at):
                 value = valid_request()
                 value["github_run_id"] += 1
                 return ExecutorRequest.from_dict(value)
+        class ContextVerifier:
+            def verify(self, identity, context, *, received_at):
+                return object()
 
         verifier, replay, transport = Verifier(), Replay(), Transport()
         broker = RestrictedDeploymentBroker(
             expected_workflow_sha=WORKFLOW_SHA,
             verifier=verifier, replay_guard=replay, transport=transport,
             request_builder=SubstitutingBuilder(),
+            promotion_context_verifier=ContextVerifier(),
         )
         with self.assertRaises(BrokerRejectedError):
             broker.authorize_promotion_and_forward(
-                compact_token=TOKEN, promotion=object(), received_at=NOW,
+                compact_token=TOKEN, promotion=object(), promotion_context=object(),
+                received_at=NOW,
             )
         self.assertEqual(verifier.calls, [(TOKEN, NOW)])
         self.assertEqual(replay.calls, [])
@@ -238,18 +264,15 @@ class IntegrationTests(unittest.TestCase):
 
     def test_signature_operations_captured_without_property_or_replacement(self):
         blob, oci = BlobSignatures(), OCISignatures()
-        with self.assertRaises(TypeError):
-            fixture(blob_signatures=blob, oci_signatures=blob)
-        handler, promotion, _, _, transport, _, _ = fixture(blob_signatures=blob, oci_signatures=oci)
+        handler, promotion, _, _, transport, _, _ = fixture(blob_signatures=blob)
         blob.verify = lambda *args: self.fail("replacement blob operation invoked")
-        oci.verify = lambda *args: self.fail("replacement OCI operation invoked")
-        invoke(handler, promotion)
+        invoke(handler, promotion, oci_signatures=oci)
         self.assertEqual(len(transport.calls), 1)
         class PropertySignature:
             @property
             def verify(self):
                 raise AssertionError("property must not be evaluated")
-        for options in ({"blob_signatures": PropertySignature()}, {"oci_signatures": PropertySignature()}):
+        for options in ({"blob_signatures": PropertySignature()},):
             with self.subTest(options=options), self.assertRaises(TypeError):
                 fixture(**options)
 

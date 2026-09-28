@@ -138,6 +138,7 @@ class RestrictedDeploymentBroker:
     def __init__(
         self, *, expected_workflow_sha: str, verifier: object, replay_guard: ReplayGuard,
         transport: ExecutorTransport, request_builder: object | None = None,
+        promotion_context_verifier: object | None = None,
     ) -> None:
         object.__setattr__(self, "_expected_workflow_sha",
                            validate_expected_workflow_sha(expected_workflow_sha))
@@ -146,6 +147,8 @@ class RestrictedDeploymentBroker:
             _bound_operation(replay_guard, "consume"),
             _bound_operation(transport, "send"),
             None if request_builder is None else _bound_operation(request_builder, "build"),
+            None if promotion_context_verifier is None else _bound_operation(
+                promotion_context_verifier, "verify"),
         ))
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -162,22 +165,25 @@ class RestrictedDeploymentBroker:
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         return self._authorize(
             compact_token=compact_token, received_at=received_at,
-            canonical_request=canonical_request, promotion=None,
+            canonical_request=canonical_request, promotion=None, promotion_context=None,
         )
 
     def authorize_promotion_and_forward(
-        self, *, compact_token: str, promotion: object, received_at: int,
+        self, *, compact_token: str, promotion: object, promotion_context: object,
+        received_at: int,
     ) -> bytes:
         """Build the final request after verification, before replay and transport."""
 
         return self._authorize(
             compact_token=compact_token, received_at=received_at,
             canonical_request=None, promotion=promotion,
+            promotion_context=promotion_context,
         )
 
     def _authorize(
         self, *, compact_token: str, received_at: int,
         canonical_request: bytes | None, promotion: object | None,
+        promotion_context: object | None,
     ) -> bytes:
         if (type(compact_token) is not str
                 or type(received_at) is not int
@@ -187,9 +193,10 @@ class RestrictedDeploymentBroker:
                     or len(canonical_request) > MAX_CANONICAL_REQUEST_BYTES))):
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
 
-        verify, consume, send, build = object.__getattribute__(self, "_operations")
+        verify, consume, send, build, verify_context = object.__getattribute__(self, "_operations")
         expected_workflow_sha = object.__getattribute__(self, "_expected_workflow_sha")
-        if canonical_request is None and (build is None or promotion is None):
+        if canonical_request is None and (build is None or verify_context is None
+                                          or promotion is None or promotion_context is None):
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         normalize_identity = _normalize_identity
         authorization = authorize_verified_github_oidc
@@ -213,8 +220,27 @@ class RestrictedDeploymentBroker:
                 expected_workflow_sha=expected_workflow_sha,
                 authorization=authorization, expected_fields=expected_identity_fields,
             )
+        except OIDCAuthorizationError:
+            raise BrokerRejectedError(REJECTED_MESSAGE) from None
+        except Exception:
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+
+        if canonical_request is None:
+            try:
+                verified_context = verify_context(
+                    identity, promotion_context, received_at=received_at,
+                )
+            except BrokerRejectedError:
+                raise BrokerRejectedError(REJECTED_MESSAGE) from None
+            except BrokerUnavailableError:
+                raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+            except Exception:
+                raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+
+        try:
             if canonical_request is None:
-                constructed = build(promotion, identity, received_at=received_at)
+                constructed = build(promotion, identity, verified_context,
+                                    received_at=received_at)
                 if type(constructed) is not ExecutorRequest:
                     raise ExecutorRequestError("constructed executor request type is invalid")
                 canonical_request = constructed.canonical_bytes()
