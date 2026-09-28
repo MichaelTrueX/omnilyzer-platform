@@ -104,6 +104,12 @@ listener implementation. No broker HTTP listener, TLS certificate, DNS record,
 host Nginx installation, service activation, or GitHub workflow permission is
 created by C32Q. Deployment remains disabled.
 
+C32R adds repository-only, explicit sequential HTTP/1.0 loopback listener
+mechanics around that contract. It does not invoke them, compose a live broker,
+or change the selected topology. The Nginx review reference requires the
+post-1.23.0 combined duplicate-header behavior and a later real edge probe;
+TLS/DNS/service installation and deployment activation remain separate work.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.
