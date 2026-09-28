@@ -1051,6 +1051,36 @@ configuration/resources, change Nginx or workflow permissions, or activate
 deployment. C32U must separately review the host service sandbox and resource
 provisioning after this process model; final application hashes remain unfrozen.
 
+## C32U broker host-service contract (repository only)
+
+`DevBrokerHostServiceContract(configuration=...)` is a new pure future-resource
+projection, separate from historical C21/C23. It accepts one exact schema-2
+broker configuration, rejects forged cached identity, and reuses C32L's
+`DevSigstoreResourceContract` for the root:broker tools directory, exact Cosign
+binary, broker authority directory, and TrustedRoot. The shared broker
+directory is root:broker_gid 0750; its future single-link `dev.json` is
+root:broker_gid 0640 and must contain `configuration.canonical_bytes()`.
+Neither the config bytes nor final workflow/application hashes are frozen here.
+
+Three `/run/omnilyzer/deployment` ancestors remain root:root 0755. The
+`blob-verifier` and `oci-verifier` leaves beneath `dev` are broker_uid:broker_gid
+0700 activation prerequisites. C13 supplies the existing root:replay_gid
+02770 authority directory, root:replay_gid 0660 replay database, and executor
+socket owned by the executor with socket-group connect access. The broker
+retains only replay/socket supplementary groups, never executor_gid.
+
+The new uninstalled broker service asset runs the C32T entrypoint as
+`omnilyzer-broker`, with no argv or environment authority. Its writable
+allowlist is exactly the replay authority directory and the two private
+verifier leaves under `ProtectSystem=strict`; `/opt` and `/etc` remain
+read-only. Address families are limited to AF_UNIX, AF_INET and AF_INET6 for
+the executor socket, loopback listener and outbound HTTPS. Capabilities are
+empty and `Restart=no`. The contract pins its exact repository bytes by
+SHA-256 for future root:root 0644 installation. It does not add a broker
+socket unit or systemd-created runtime directories. The C32Q Nginx fragment
+remains review-only; DNS, TLS, live edge qualification, service installation,
+host provisioning and deployment activation require separate review.
+
 ## C32P request-scoped registry credential integration (inert)
 
 `InertDevPromotionHandler.handle()` now accepts exactly five separate inputs:

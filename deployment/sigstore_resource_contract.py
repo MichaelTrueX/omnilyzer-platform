@@ -109,9 +109,10 @@ def _requirements(configuration: _config.DevBrokerServiceConfiguration) -> tuple
 class DevSigstoreResourceContract:
     """Closed future requirements from one revalidated existing broker config.
 
-Schema 1 remains unchanged. The future installer must independently re-open,
-re-qualify and bind the bytes it copies; C32K path evidence is not a handoff.
-"""
+    The current broker configuration requires schema 2. The future installer
+    must independently re-open, re-qualify and bind copied bytes; C32K path
+    evidence is not a handoff.
+    """
 
     configuration: _config.DevBrokerServiceConfiguration
     _directories: tuple[HostResourceRequirement, ...] = field(init=False, repr=False)
