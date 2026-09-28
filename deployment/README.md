@@ -1154,6 +1154,49 @@ node remains the existing socket unit's later runtime responsibility.
 C32Y is unexecuted on the host. It installs no Nginx, invokes no systemd
 operation, and leaves the promotion workflow and deployment disabled.
 
+## C32Z final DEV broker HTTPS edge candidate (repository only)
+
+[`ingress/dev-broker-https.nginx.conf`](ingress/dev-broker-https.nginx.conf)
+is the pinned activation candidate, separate from the historical C32Q/C32R
+review fragment. It serves only `https://deploy-dev.omnilyzer.ai` on port 443,
+with `POST /task014/dev/promote` proxied over HTTP/1.0 to exactly
+`127.0.0.1:3031`. It expects the public Let's Encrypt certificate chain at
+`/etc/letsencrypt/live/deploy-dev.omnilyzer.ai/fullchain.pem` and private key
+at `/etc/letsencrypt/live/deploy-dev.omnilyzer.ai/privkey.pem`. These are path
+requirements only: C32Z does not issue certificates, place PEM material in the
+repository, configure DNS, or install the asset.
+
+`DevBrokerEdgeContract` pins the asset SHA-256 and the closed public origin,
+route, upstream, and certificate paths. It deliberately leaves the installed
+Nginx include destination unset: repository evidence does not prove whether
+the DEV host loads `/etc/nginx/conf.d/*.conf`, a `sites-enabled` directory, or
+another include. Before installation, an operator must inspect the actual
+root-controlled host `nginx.conf`, select and qualify its exact include
+destination, and independently verify the installed asset is loaded. There is
+no C32Z Nginx installer or reload operation.
+
+Live qualification must prove DNS resolves `deploy-dev.omnilyzer.ai` to the
+intended DEV ingress host; `nginx -t` passes; the public certificate is current,
+trusted by normal clients, and valid for that hostname; its private key is not
+group/world readable; and the public origin negotiates HTTPS. The deployment
+endpoint must be unavailable over plaintext HTTP without a redirect. If port
+80 is later used for ACME, it must remain isolated from this endpoint. No
+public IP, ACME procedure, or custom CA bypass is selected here.
+
+The installed edge must also be probed with an exact valid-shaped request and
+with alternate path/method, duplicate `Authorization`, duplicate
+`X-Omnilyzer-Zot-OIDC`, duplicate `X-Omnilyzer-Forgejo-OIDC`, oversized,
+chunked, and cookie-bearing requests. Each duplicate credential-header probe
+must be rejected **before** reaching the broker. The reviewed Nginx build must
+have at least the duplicate-header variable-combination behavior introduced in
+1.23.0; a version string alone is insufficient. Probe responses for redirects,
+CORS, `Set-Cookie`, and `Location`, and prove deployment access logging cannot
+record credentials. The asset disables access logging, buffering to proxy temp
+files, and caching; strips arbitrary client headers; forwards only the six
+C32Q semantic fields plus internal `Connection: close`; and adds no port-80
+redirect. These observations remain pending live qualification. The broker,
+workflow, and deployment remain disabled.
+
 ## C32P request-scoped registry credential integration (inert)
 
 `InertDevPromotionHandler.handle()` now accepts exactly five separate inputs:
