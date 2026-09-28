@@ -978,9 +978,44 @@ session, CSRF flow, redirect, or generic broker proxy. TLS certificate/key
 provisioning and DNS remain separate work; no certificate path is asserted.
 The future listener/Nginx integration must preserve original duplicate-header
 rejection and prove the reviewed proxy behavior before activation. In
-particular, Nginx `$http_*` variables are not a raw duplicate-header proof;
-the reference is deliberately not activation-ready without a separately
-reviewed edge gate and certificate contract.
+particular, Nginx `$http_*` variables alone are not a live
+duplicate-header proof; the reference remains activation-incomplete without
+the C32R comma gates, a real edge probe, and a certificate contract.
+
+## C32R strict loopback listener mechanics (inert)
+
+`broker_loopback_listener.py` adds an explicit `serve_once()` operation, but
+import and construction create no socket. A future caller would bind only
+`AF_INET/SOCK_STREAM` at `127.0.0.1:3031`, with backlog 2, accept one exact
+IPv4-loopback peer, process one request sequentially, and close both sockets.
+`SO_REUSEADDR` supports restart; `SO_REUSEPORT`, public/IPv6/hostname binding,
+workers, keepalive and pipelining are absent. The small backlog is appropriate
+for infrequent serialized deployment control, not web traffic. C32R does not
+compose a real handler or invoke `serve_once()` on the host.
+
+The internal protocol is intentionally only HTTP/1.0 with an exact request
+line, up to nine bounded raw headers (only C32Q's six plus `Connection: close`
+are accepted), canonical
+Content-Length, and a body of 1–4096 bytes. The listener rejects malformed
+framing, hop-by-hop extras, duplicate Connection, chunking, obs-fold, bare LF,
+short bodies and extra bytes already received after the body. It preserves the
+six ordered semantic header pairs and exact body bytes for C32Q; duplicates of
+credential headers remain visible to C32Q. The trusted receipt clock is
+sampled after the complete body arrives. A five-second whole-request read
+deadline limits local Slowloris behavior; it is removed for handler work, and
+a separate five-second deadline bounds the fixed HTTP/1.0 response write.
+Only fixed 202/403/503 responses with Content-Type, exact Content-Length,
+no-store and Connection: close are sent. No request/token/body is logged.
+
+The uninstalled Nginx review reference now selects HTTP/1.0 upstream and
+`Connection: close`. Its three comma gates reject combined duplicate JWT
+headers before proxying; the broker independently rejects commas. Upstream
+[Nginx ticket #1316](https://trac.nginx.org/nginx/ticket/1316) records the
+combination behavior as fixed by 1.23.0. Activation requires a reviewed Nginx
+build with at least that behavior **and** a real duplicate-header probe on the
+actual edge; a version string alone is insufficient. TLS certificate and DNS
+contracts, host Nginx installation, listener service composition, systemd,
+workflow permissions, and deployment activation remain future work.
 
 C32Q adds no listener, Nginx installation, TLS certificate, DNS, systemd unit,
 workflow permission/environment, host mutation, or deployment activation. The
