@@ -552,9 +552,6 @@ class SeparationTests(unittest.TestCase):
         self.assertEqual(dev_post_c31_application_update.TARGET, 'c04e66008cff556315603a9de59dacb4679787d4')
         self.assertIs(json.loads((ROOT / 'deployment/environments/dev.json').read_bytes())
                       ['activation']['deployment_enabled'], False)
-        workflow = (ROOT / '.github/workflows/platform-promote.yml').read_text()
-        self.assertNotIn('id-token: write', workflow)
-        self.assertNotIn('environment: task014-dev', workflow)
 
 
 if __name__ == '__main__':

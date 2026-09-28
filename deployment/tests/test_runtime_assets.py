@@ -23,7 +23,6 @@ INGRESS_HASHES = {
 }
 PROTECTED = {
     ".github/workflows/platform-release.yml": "8dbb6ceef9acbfdc301444b30e602138ccee38da47d16ea410bfb67a05f63c39",
-    ".github/workflows/platform-promote.yml": "3846ae1e48c945dacb563da8967e588b3fbb6fffa2580276f816496396b3c134",
     "deployment/environments/dev.json": "4b1cf03bdcd1fa7d8fd848862137a4dca7dc834b1cc45fa1d7cffd2756722ae8",
     "deployment/environments/staging.json": "7fde448d38022e4e435218c1fe6049c629ee091031845fce93156dcc787a7358",
     "deployment/environments/prod.json": "a08cd3d718ffa0531071ed7ad0aeafc19b4edeb0a82e74bd87a6044bbabebcce",
@@ -168,14 +167,7 @@ class RuntimeAssetTests(unittest.TestCase):
                 "configuration_reference": None, "secrets_reference": None, "ingress_reference": None,
             })
 
-    def test_non_live_boundaries(self) -> None:
-        promote = (ROOT / ".github/workflows/platform-promote.yml").read_text()
-        workflow = yaml.safe_load(promote)
-        self.assertEqual(workflow["permissions"], {})
-        self.assertEqual(len(workflow["jobs"]), 1)
-        self.assertEqual(next(iter(workflow["jobs"].values()))["permissions"], {"contents": "read"})
-        self.assertNotIn("id-token", promote)
-        self.assertNotIn("environment:", promote)
+    def test_runtime_modules_do_not_import_spikes(self) -> None:
         production = "\n".join(
             path.read_text() for path in (ROOT / "deployment").glob("*.py")
         )

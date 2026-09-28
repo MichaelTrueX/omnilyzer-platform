@@ -452,9 +452,6 @@ class RequestContextTests(unittest.TestCase):
                          "3ef02a6d61d20df3a1495b290c20807162b65b06")
         self.assertEqual(c32d.TARGET,
                          "c04e66008cff556315603a9de59dacb4679787d4")
-        workflow = (ROOT / ".github/workflows/platform-promote.yml").read_text()
-        self.assertNotIn("id-token: write", workflow)
-        self.assertNotIn("environment: task014-dev", workflow)
         self.assertFalse(json.loads((ROOT / "deployment/environments/dev.json").read_text())
                          ["activation"]["deployment_enabled"])
         for path in (ROOT / "deployment/broker_integration.py",

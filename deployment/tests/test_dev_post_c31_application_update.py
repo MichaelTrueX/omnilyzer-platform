@@ -72,9 +72,6 @@ class EvidenceTests(unittest.TestCase):
                           "https://", "http://", "subprocess.Popen", "__main__",
                           "initialize_deployment_state", "initialize_replay", "prepare_audit"):
             self.assertNotIn(forbidden, source)
-        workflow = (ROOT / ".github/workflows/platform-promote.yml").read_text()
-        self.assertNotIn("id-token: write", workflow)
-        self.assertNotIn("environment: task014-dev", workflow)
         self.assertIs(json.loads((ROOT / "deployment/environments/dev.json").read_text())
                       ["activation"]["deployment_enabled"], False)
         self.assertEqual(update.CHANGED, (

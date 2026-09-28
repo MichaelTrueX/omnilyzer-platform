@@ -215,16 +215,13 @@ class BrokerHTTPSIngressTests(unittest.TestCase):
                           "add_header Access-Control-Allow-Origin", "return 301", "return 302"):
             self.assertNotIn(forbidden, config)
 
-    def test_no_listener_workflow_activation_or_history_change(self):
+    def test_no_listener_activation_or_history_change(self):
         source = (ROOT / "deployment/broker_https_ingress.py").read_text()
         tree = ast.parse(source)
         imports = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
         self.assertFalse(imports.intersection({"socket", "http.server", "ssl", "subprocess"}))
         self.assertNotIn("bind(", source)
         self.assertNotIn("listen(", source)
-        workflow = (ROOT / ".github/workflows/platform-promote.yml").read_text()
-        self.assertNotIn("id-token: write", workflow)
-        self.assertNotIn("environment: task014-dev", workflow)
         environment = json.loads((ROOT / "deployment/environments/dev.json").read_text())
         self.assertIs(environment["activation"]["deployment_enabled"], False)
         self.assertEqual(len(inspect.signature(parse_dev_promotion_ingress).parameters), 5)

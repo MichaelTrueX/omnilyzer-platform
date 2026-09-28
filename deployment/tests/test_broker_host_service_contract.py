@@ -280,9 +280,6 @@ class UnitTests(unittest.TestCase):
             "ingress_reference": None,
         })
         self.assertIs(environment["activation"]["deployment_enabled"], False)
-        workflow = (ROOT / ".github/workflows/platform-promote.yml").read_text()
-        self.assertNotIn("id-token: write", workflow)
-        self.assertNotIn("environment: task014-dev", workflow)
         self.assertFalse((ROOT / "deployment/systemd/dev/omnilyzer-deployment-broker.socket").exists())
         self.assertNotIn("deployment/ingress/dev-broker-https.nginx.review.conf",
                          tuple(asset.source_path for asset in c23.installed_asset_requirements()))

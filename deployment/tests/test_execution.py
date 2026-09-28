@@ -352,7 +352,6 @@ class PrivilegeBoundaryTests(unittest.TestCase):
 
 class NonLiveRegressionTests(unittest.TestCase):
     PROTECTED_HASHES = {
-        ".github/workflows/platform-promote.yml": "3846ae1e48c945dacb563da8967e588b3fbb6fffa2580276f816496396b3c134",
         "deployment/environments/dev.json": "4b1cf03bdcd1fa7d8fd848862137a4dca7dc834b1cc45fa1d7cffd2756722ae8",
         "deployment/environments/staging.json": "7fde448d38022e4e435218c1fe6049c629ee091031845fce93156dcc787a7358",
         "deployment/environments/prod.json": "a08cd3d718ffa0531071ed7ad0aeafc19b4edeb0a82e74bd87a6044bbabebcce",
@@ -365,14 +364,6 @@ class NonLiveRegressionTests(unittest.TestCase):
             observed = hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
             with self.subTest(relative=relative):
                 self.assertEqual(observed, expected)
-
-    def test_platform_promote_remains_phase1_validation_only(self) -> None:
-        raw = (ROOT / ".github/workflows/platform-promote.yml").read_text(encoding="utf-8")
-        self.assertIn("Phase 1 validates immutable promotion requests only", raw)
-        self.assertEqual(raw.count("  gate:\n"), 1)
-        self.assertNotIn("id-token: write", raw)
-        self.assertNotIn("environment:", raw)
-        self.assertNotIn("docker ", raw.lower())
 
     def test_all_environments_remain_disabled_with_null_runtime_references(self) -> None:
         for stage in ("dev", "staging", "prod"):

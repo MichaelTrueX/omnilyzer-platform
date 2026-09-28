@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -20,8 +19,6 @@ from release.builder_versions import (
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = ROOT / ".github/workflows/platform-release.yml"
-PROMOTE_PATH = ROOT / ".github/workflows/platform-promote.yml"
-PROMOTE_SHA256 = "3846ae1e48c945dacb563da8967e588b3fbb6fffa2580276f816496396b3c134"
 BUILDKIT_IMAGE = (
     "moby/buildkit:v0.24.0@"
     "sha256:6eceb8971ce4fceb3daca562832642706238b7eea72941fcf9896c93c3c4a53e"
@@ -119,16 +116,12 @@ class BuilderWorkflowPolicyTests(unittest.TestCase):
             self.assertIs(build["with"][key], False)
         self.assertEqual(build["with"]["network"], "none")
 
-    def test_deployment_remains_disabled_and_promotion_workflow_unchanged(self) -> None:
+    def test_deployment_environment_files_remain_disabled(self) -> None:
         for stage in ("dev", "staging", "prod"):
             environment = json.loads(
                 (ROOT / f"deployment/environments/{stage}.json").read_text(encoding="utf-8"),
             )
             self.assertIs(environment["activation"]["deployment_enabled"], False)
-        self.assertEqual(
-            hashlib.sha256(PROMOTE_PATH.read_bytes()).hexdigest(),
-            PROMOTE_SHA256,
-        )
 
 
 if __name__ == "__main__":

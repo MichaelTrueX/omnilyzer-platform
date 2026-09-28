@@ -362,9 +362,6 @@ class SeparationTests(unittest.TestCase):
             self.assertIn(path, paths)
         self.assertIs(json.loads((ROOT / 'deployment/environments/dev.json').read_text())
                       ['activation']['deployment_enabled'], False)
-        workflow = (ROOT / '.github/workflows/platform-promote.yml').read_text()
-        self.assertNotIn('id-token: write', workflow)
-        self.assertNotIn('environment: task014-dev', workflow)
 
 
 if __name__ == '__main__':

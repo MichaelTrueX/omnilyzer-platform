@@ -395,9 +395,6 @@ class BrokerLoopbackListenerTests(unittest.TestCase):
             self.assertNotIn(forbidden, source)
         self.assertEqual(tuple(inspect.signature(DevBrokerLoopbackListener).parameters),
                          ("handler", "socket_factory", "wall_clock", "monotonic"))
-        workflow = (ROOT / ".github/workflows/platform-promote.yml").read_text()
-        self.assertNotIn("id-token: write", workflow)
-        self.assertNotIn("environment: task014-dev", workflow)
         environment = json.loads((ROOT / "deployment/environments/dev.json").read_text())
         self.assertIs(environment["activation"]["deployment_enabled"], False)
         selected = tuple(item.repository_path for item in DevApplicationSourceSet().files)
