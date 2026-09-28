@@ -1081,6 +1081,32 @@ socket unit or systemd-created runtime directories. The C32Q Nginx fragment
 remains review-only; DNS, TLS, live edge qualification, service installation,
 host provisioning and deployment activation require separate review.
 
+## C32W frozen final application generation (repository only)
+
+`final_application_generation.py` pins Git-object evidence for the exact C32V
+merge `e4f0030c7a028beb834618254781c2fbff5d6b0d`: 41 application files,
+manifest SHA-256 `774391d16235855222aa4dedb617112cccc9a862d1599d2546c08b5f8b17c8f9`,
+runtime configuration SHA-256 `8978b0608a6ef434ad6818a4d654c804ecdba8cabf5dc5916658a8194e7d839f`,
+and ingress SHA-256 values in closed path order:
+`ac12c1958d5e65ab64a69ea58ca053d11cd664732edb20fb7dce39aabde6b3bc`,
+`bfed4b9e0be612723ed545362bb80262d18dbf9f1895d974b5c295d35d4e08bb`,
+`cbb696e51219bea9d6b337db0346cf93a807c5477143dad7f9baf23764fd476b`.
+The middle ingress file is host Nginx configuration outside the application.
+The original 41 source bytes and the historical C32D updater remain unchanged.
+
+`dev_final_application_update.py` is an explicit future root-only operation. It
+selects only an exact complete C31 (28-file) or C32D (31-file) predecessor from
+the installed canonical executor config, then recognizes exact prefixes of the
+16-file update plan. The config retains the predecessor commit until the entire
+41-file application is exact. Added files use atomic no-replace publication;
+replacements and the last-step config switch use the reviewed C32D staging and
+fsync pattern. Only `reviewed_commit` changes in the executor config. A partial
+C32D migration is **not** a C32W predecessor: finish and qualify C32D first.
+Repeated qualification of an exact final generation is read-only and repeat
+update returns already-current state. C32W does not install or execute the
+migration, broker configuration, static resources, or services; no workflow or
+host activation occurs.
+
 ## C32P request-scoped registry credential integration (inert)
 
 `InertDevPromotionHandler.handle()` now accepts exactly five separate inputs:
