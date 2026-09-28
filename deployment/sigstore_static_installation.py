@@ -388,6 +388,96 @@ def _install(path: str, contract: _resources.DevSigstoreResourceContract,
     return DevSigstoreStaticInstallationEvidence(operation, contract.configuration.broker_gid, *evidence)
 
 
+def _install_under_held_process_lock(*, staging_directory: str,
+                                     configuration: _Configuration,
+                                     held_lock: _orchestration._ProcessLock
+                                     ) -> DevSigstoreStaticInstallationEvidence:
+    """C32Y-only delegation to the same held-source installer under its lock.
+
+    The caller already holds C31's deployment mutation lock. Reacquiring it
+    through the public boundary would conflict with that nonblocking lock.
+    """
+    owned: list[int] = []
+    failure = False
+    control = None
+    result = None
+    try:
+        _root()
+        if (type(held_lock) is not _orchestration._ProcessLock
+                or not held_lock.directory_chain
+                or held_lock.directory_chain[-1][0] != held_lock.descriptor):
+            raise OSError
+        _staging._path(staging_directory, _ERROR)
+        contract = _resources.DevSigstoreResourceContract(configuration=configuration)
+        result = _install(staging_directory, contract, owned)
+    except _CONTROL as error:
+        control = error
+    except Exception:
+        failure = True
+    finally:
+        try:
+            failed, cleanup_control = _mechanics._close(owned)
+            failure = failure or failed
+            control = control or cleanup_control
+        except _CONTROL as error:
+            control = control or error
+        except Exception:
+            failure = True
+    if control is not None:
+        raise control
+    if failure or result is None:
+        raise SigstoreStaticInstallationError(_ERROR) from None
+    return result
+
+
+def _qualify_installed(configuration: _Configuration) -> DevSigstoreStaticInstallationEvidence:
+    """Read-only exact installed-state proof for C32Y's final qualification."""
+    owned: list[int] = []
+    failure = False
+    control = None
+    result = None
+    try:
+        contract = _resources.DevSigstoreResourceContract(configuration=configuration)
+        historical = _historical.DevHostProvisioningContract(
+            installation=contract.configuration.installation_contract())
+        parents = {item.path: item for item in historical.path_requirements()
+                   if item.kind == "directory"}
+        destinations = tuple(_destination(directory, file, parents, owned)
+                             for directory, file in zip(contract.directory_requirements(),
+                                                        contract.file_requirements(), strict=True))
+        if any(item.directory is None or item.existing is None for item in destinations):
+            raise OSError
+        evidence = []
+        for item in destinations:
+            _revalidate_destination(item)
+            name = item.file.resource.path.rsplit("/", 1)[1]
+            current = _verify_file(item.directory, name, item.file, owned)
+            if current != item.existing:
+                raise OSError
+            evidence.append(SigstoreStaticFileInstallationEvidence(
+                item.file.resource.path, item.file.size, item.file.sha256, current))
+        result = DevSigstoreStaticInstallationEvidence(
+            "already-installed", contract.configuration.broker_gid, *evidence)
+    except _CONTROL as error:
+        control = error
+    except Exception:
+        failure = True
+    finally:
+        try:
+            failed, cleanup_control = _mechanics._close(owned)
+            failure = failure or failed
+            control = control or cleanup_control
+        except _CONTROL as error:
+            control = control or error
+        except Exception:
+            failure = True
+    if control is not None:
+        raise control
+    if failure or result is None:
+        raise SigstoreStaticInstallationError(_ERROR) from None
+    return result
+
+
 def install_dev_sigstore_static_resources(*, staging_directory: str,
                                          configuration: _Configuration) -> DevSigstoreStaticInstallationEvidence:
     """Explicit future mutation only; return complete evidence after cleanup/unlock."""

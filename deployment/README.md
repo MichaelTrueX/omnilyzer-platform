@@ -1127,6 +1127,33 @@ contracts. No final broker-config digest exists until the workflow revision is
 reviewed. This pure module neither reads nor writes live configuration and does
 not activate deployment.
 
+## C32Y final broker prerequisites (repository only)
+
+`root_executor_configuration_reader.py` reuses the frozen C17 loader's fixed
+descriptor traversal, canonical parser and revalidation under an exact root
+process identity. It replaces only the live executor process-identity binding;
+the protected directory and file remain root:executor-gid at 0750 and 0640.
+The reader cannot establish host authority alone. C32Y requires a complete
+C32W application/configuration generation and then applies C32X's historical
+C17 digest proof before deriving broker bytes. C32W migration, when needed,
+must finish separately first; C32Y never uses a pre-migration config as final
+authority.
+
+`provision_final_dev_broker_resources` is an explicit future root-only operation
+using the shared host mutation lock. It requires a separately reviewed,
+root-controlled source tree for the broker unit. Executing privileged Python
+from an omnidev-writable checkout is not authorized by this module. It checks
+the existing replay store without initializing it and does not create the
+executor socket. It installs exact broker runtime directories, delegates exact
+Cosign/TrustedRoot installation to C32M under the same lock, then publishes
+the canonical broker config and broker unit without overwriting unknown files.
+Only exact durable prefixes may be resumed. The separate qualification API
+reads fixed installed paths and needs no source or staging input. The socket
+node remains the existing socket unit's later runtime responsibility.
+
+C32Y is unexecuted on the host. It installs no Nginx, invokes no systemd
+operation, and leaves the promotion workflow and deployment disabled.
+
 ## C32P request-scoped registry credential integration (inert)
 
 `InertDevPromotionHandler.handle()` now accepts exactly five separate inputs:
