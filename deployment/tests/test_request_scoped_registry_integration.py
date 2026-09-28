@@ -424,8 +424,6 @@ class RequestContextTests(unittest.TestCase):
         kwargs = {
             "verifier": Verifier(), "replay_guard": Replay(), "transport": Transport(),
             "blob_signatures": BlobSignatures(),
-            "runtime": RuntimeConfigurationReference.from_dict(runtime_reference()),
-            "ingress": IngressReference.from_dict(ingress_reference()),
             "jwks_cache": StaticCache(KEY.public_key()),
         }
         handler = composition.compose_inert_dev_promotion_handler(
@@ -433,7 +431,7 @@ class RequestContextTests(unittest.TestCase):
         self.assertIs(type(handler), integration.InertDevPromotionHandler)
         self.assertNotIn("zot_token", cfg.to_dict())
         self.assertNotIn("forgejo_token", cfg.to_dict())
-        self.assertEqual(cfg.schema_version, 1)
+        self.assertEqual(cfg.schema_version, 2)
         bad = DevBrokerServiceConfiguration(**configuration_values(
             expected_workflow_sha=WORKFLOW_SHA))
         object.__setattr__(bad, "broker_gid", True)

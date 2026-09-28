@@ -106,13 +106,14 @@ class ResourceContractTests(unittest.TestCase):
         self.assertEqual({item.group_gid for item in model.directory_requirements()}, {identity.broker_gid})
         self.assertEqual({item.resource.group_gid for item in model.file_requirements()}, {identity.broker_gid})
         self.assertEqual(set(model.configuration.to_dict()), SCHEMA)
-        self.assertEqual(model.configuration.schema_version, 1)
+        self.assertEqual(model.configuration.schema_version, 2)
 
     def test_rejects_wrong_configuration_or_subclass(self):
         class Configuration(config.DevBrokerServiceConfiguration):
             pass
         for value in (None, {}, configuration().installation_contract(),
-                      Configuration(**configuration().to_dict())):
+                      Configuration(**configuration_values(
+                          **DevSigstoreVerificationProvenance().broker_service_configuration_kwargs()))):
             with self.subTest(value=type(value)), self.assertRaisesRegex(ValueError, '^DEV Sigstore static resource contract is invalid$'):
                 contract.DevSigstoreResourceContract(configuration=value)
 

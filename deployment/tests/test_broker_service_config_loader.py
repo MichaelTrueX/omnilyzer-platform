@@ -6,6 +6,7 @@ import ast
 from contextlib import ExitStack
 import importlib
 import inspect
+import json
 import os
 from pathlib import Path
 import socket
@@ -28,11 +29,13 @@ from deployment.replay_sqlite import MAX_UID_GID
 def configuration() -> DevBrokerServiceConfiguration:
     # Synthetic test authorities, never independently qualified installation values.
     return DevBrokerServiceConfiguration(
-        schema_version=1, stage="dev", broker_uid=1001, broker_gid=1002,
+        schema_version=2, stage="dev", broker_uid=1001, broker_gid=1002,
         executor_uid=2001, executor_gid=2002, replay_group_gid=2003,
         socket_group_gid=2004, expected_workflow_sha="c" * 40,
         cosign_version="3.1.2", cosign_binary_sha256="a" * 64,
         sigstore_trusted_root_sha256="b" * 64,
+        reviewed_commit="d" * 40, runtime_configuration_sha256="e" * 64,
+        ingress_file_sha256=("1" * 64, "2" * 64, "3" * 64),
     )
 
 
@@ -355,6 +358,21 @@ class FilesystemPolicyTests(LoaderTestCase):
 
 
 class ReadAndParserTests(LoaderTestCase):
+    def test_historical_schema_one_file_is_not_live_authority(self) -> None:
+        host = FakeHost()
+        historical = host.config.to_dict()
+        historical['schema_version'] = 1
+        for name in ('reviewed_commit', 'runtime_configuration_sha256',
+                     'ingress_file_sha256'):
+            del historical[name]
+        host.raw = (json.dumps(historical, sort_keys=True, separators=(',', ':')) + '\n').encode()
+        status = status_result(stat.S_IFREG | 0o640, 105, gid=1002,
+                               links=1, size=len(host.raw))
+        host.fd_status[15] = status
+        host.named_status[('dev.json', 14)] = status
+        with host.patches():
+            self.assert_unavailable(loader.load_dev_broker_service_configuration)
+
     def test_multiple_short_reads_are_bounded(self) -> None:
         host = FakeHost()
         chunks = [host.raw[:20], host.raw[20:100], host.raw[100:], b""]
