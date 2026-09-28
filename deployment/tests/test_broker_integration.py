@@ -52,6 +52,19 @@ def invoke(handler, promotion, *, token=TOKEN, raw=None):
 
 
 class IntegrationTests(unittest.TestCase):
+    def test_oci_receives_authoritative_time_positionally_through_capture(self):
+        class OCI(OCISignatures):
+            def __init__(self):
+                self.calls = []
+            def verify(self, image_reference, now):
+                self.calls.append((image_reference, now))
+                return super().verify(image_reference, now)
+        oci = OCI()
+        handler, promotion, *_ = fixture(oci_signatures=oci)
+        oci.verify = lambda *args: self.fail("replacement OCI operation")
+        invoke(handler, promotion)
+        self.assertEqual(oci.calls, [(promotion.exact_image_reference, NOW)])
+
     def test_construction_is_inert(self):
         _, _, verifier, replay, transport, zot, forgejo = fixture()
         self.assertEqual(verifier.calls, [])

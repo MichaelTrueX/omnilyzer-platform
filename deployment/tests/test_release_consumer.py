@@ -86,7 +86,8 @@ class BlobSignatures:
 
 
 class OCISignatures:
-    def verify(self, image_reference):
+    def verify(self, image_reference, now):
+        assert type(now) is int and now == NOW
         oci = oci_signature_result()
         oci["manifest_digest"] = image_reference.split("@", 1)[1]
         return oci
@@ -365,8 +366,8 @@ class ConsumerTests(unittest.TestCase):
         class IndependentOCI:
             def __init__(self, result):
                 self.result, self.calls = result, []
-            def verify(self, reference):
-                self.calls.append(reference)
+            def verify(self, reference, now):
+                self.calls.append((reference, now))
                 return self.result
         class FakeBlob:
             def __init__(self, result):
@@ -374,7 +375,7 @@ class ConsumerTests(unittest.TestCase):
             def verify(self, *blobs):
                 self.input = blobs
                 return self.result
-        expected = OCISignatures().verify(request.exact_image_reference)
+        expected = OCISignatures().verify(request.exact_image_reference, NOW)
         for blob_result, oci_result in (
             ((sigstore_result(), expected), expected),
             (sigstore_result() | {"oci": expected}, expected),
@@ -389,7 +390,7 @@ class ConsumerTests(unittest.TestCase):
             with self.subTest(blob=blob_result, oci=oci_result), self.assertRaises(ReleaseConsumerError):
                 acquire_and_construct_dev_request(request, identity, runtime, ingress, zot, forgejo,
                                                   blob, oci, received_at=NOW, expected_workflow_sha=WORKFLOW_SHA)
-            self.assertEqual(oci.calls, [request.exact_image_reference])
+            self.assertEqual(oci.calls, [(request.exact_image_reference, NOW)])
             self.assertEqual(len(blob.input), 4)
             self.assertTrue(all(type(raw) is bytes for raw in blob.input))
 
@@ -419,7 +420,7 @@ class ConsumerTests(unittest.TestCase):
         ):
             with self.assertRaises(DeploymentPolicyError):
                 verify_release_evidence(request, manifest, provenance, sigstore_result(),
-                                        OCISignatures().verify(request.exact_image_reference))
+                                        OCISignatures().verify(request.exact_image_reference, NOW))
 
     def test_repository_inertness(self):
         source = (ROOT / "deployment/release_consumer.py").read_text()
