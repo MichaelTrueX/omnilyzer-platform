@@ -110,6 +110,16 @@ or change the selected topology. The Nginx review reference requires the
 post-1.23.0 combined duplicate-header behavior and a later real edge probe;
 TLS/DNS/service installation and deployment activation remain separate work.
 
+C32Z adds a separately pinned, uninstalled HTTPS Nginx activation candidate
+for this same origin, endpoint, and loopback upstream. Its only certificate
+authority is the expected Let's Encrypt full-chain and private-key paths under
+`/etc/letsencrypt/live/deploy-dev.omnilyzer.ai/`. The actual host Nginx include
+layout is not established by repository evidence, so no destination or
+installer is selected. DNS, certificate issuance, installed-config and TLS
+qualification, `nginx -t`, and real duplicate-header rejection probes remain
+operational prerequisites. C32Z neither opens a listener nor activates the
+workflow or deployment.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.
