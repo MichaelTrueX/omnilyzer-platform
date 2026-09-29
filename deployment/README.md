@@ -1220,7 +1220,7 @@ WIF, tailnet policy, Serve, HTTPS or services on the host.
 Future live WIF qualification must inspect the installed Tailscale federated
 identity. Its issuer must be exactly `https://token.actions.githubusercontent.com`,
 its subject exactly
-`repo:MichaelTrueX/omnilyzer-platform:environment:task014-dev`, its only scope
+`repo:MichaelTrueX@130741173/omnilyzer-platform@1350104356:environment:task014-dev`, its only scope
 `auth_keys`, and its only permitted tag `tag:omnilyzer-task014-ci`. Where
 Tailscale custom claim rules support them, require exact `repository` =
 `MichaelTrueX/omnilyzer-platform`, `repository_id` = `1350104356`,
@@ -1235,9 +1235,12 @@ subnet-route authority required. Funnel remains prohibited. None of this
 configuration is claimed installed.
 
 The installed broker currently pins `expected_workflow_sha` to
-`41095ac83c53b05cc3a1e7a350a4a5c848041c26`. This PR changes the workflow,
-so its final merged main commit will be a different workflow SHA. Once that
-merge SHA is independently known, main must freeze. The operator must stage
+`521c21856bdce9a673caf3e6ad0a8021c87f6e5e`. C32ZD does not change
+`.github/workflows/platform-promote.yml`, but merging C32ZD will advance main
+to a new final merge commit. Once that exact merge SHA is known, main must
+freeze. Before activation, `expected_workflow_sha` must be rotated from
+`521c21856bdce9a673caf3e6ad0a8021c87f6e5e` to that exact final C32ZD
+merge SHA. The operator must stage
 and verify the exact merged Python source under root control, never execute
 privileged code from the omnidev-writable checkout, and invoke the explicit
 root-only `rotate_final_dev_broker_workflow_authority` operation with the

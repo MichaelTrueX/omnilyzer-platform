@@ -61,7 +61,7 @@ class DevBrokerEdgeContractTests(unittest.TestCase):
         self.assertEqual(edge.ci_tag, "tag:omnilyzer-task014-ci")
         self.assertEqual(edge.wif_issuer, "https://token.actions.githubusercontent.com")
         self.assertEqual(edge.wif_subject,
-                         "repo:MichaelTrueX/omnilyzer-platform:environment:task014-dev")
+                         "repo:MichaelTrueX@130741173/omnilyzer-platform@1350104356:environment:task014-dev")
         self.assertEqual(edge.wif_scopes, ("auth_keys",))
         self.assertEqual(edge.wif_permitted_tags, ("tag:omnilyzer-task014-ci",))
         self.assertEqual(edge.wif_custom_claims, (

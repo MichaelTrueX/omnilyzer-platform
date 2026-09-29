@@ -139,7 +139,8 @@ direct-TLS candidate remains historical.
 The pinned action verifies the official `1.102.4` Linux amd64 tarball digest,
 disables its tool cache and subnet-route acceptance, retains MagicDNS, enables
 shields-up, and makes one bounded connection attempt. Live WIF qualification
-must prove the exact GitHub issuer, protected `task014-dev` environment subject,
+must prove the exact GitHub issuer and immutable subject
+`repo:MichaelTrueX@130741173/omnilyzer-platform@1350104356:environment:task014-dev`,
 `auth_keys`-only scope, CI-only tag, and supported exact GitHub workload claims
 for repository, repository ID, main workflow ref, branch ref, environment,
 manual event, and GitHub-hosted runner. WIF must not bind `workflow_sha`.
