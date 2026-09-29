@@ -18,7 +18,11 @@ from . import dev_final_application_update as c32w_update
 from . import privileged_host_runtime as host_runtime
 from . import sigstore_static_installation as sigstore_installer
 from .broker_host_service_contract import DevBrokerHostServiceContract
-from .broker_service_config import parse_canonical_broker_service_configuration
+from .broker_service_config import (
+    MAX_BROKER_SERVICE_CONFIG_BYTES,
+    PRODUCTION_BROKER_SERVICE_CONFIG_PATH,
+    parse_canonical_broker_service_configuration,
+)
 from .final_application_generation import TARGET_REVIEWED_COMMIT
 from .final_configuration_authority import DevFinalConfigurationAuthority, DevFinalConfigurationPair
 from .replay_sqlite import PRODUCTION_REPLAY_DATABASE, SQLiteReplayGuard
@@ -27,11 +31,15 @@ from .unix_transport import PRODUCTION_EXECUTOR_SOCKET_PATH
 from .wheelhouse_qualification import _path as _canonical_path
 
 __all__ = ("FinalBrokerResourcesError", "FinalBrokerResourcesEvidence",
-           "provision_final_dev_broker_resources", "qualify_final_dev_broker_resources")
+           "FinalBrokerWorkflowRotationEvidence",
+           "provision_final_dev_broker_resources", "qualify_final_dev_broker_resources",
+           "rotate_final_dev_broker_workflow_authority",
+           "qualify_final_dev_broker_workflow_authority")
 
 _ERROR = "final DEV broker resources are unavailable"
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _TEMPORARY = ".omnilyzer-c32y-install.tmp"
+_ROTATION_TEMPORARY = ".omnilyzer-c32zc-workflow-rotation.tmp"
 _UNIT_LIMIT = host_runtime._MAX_FILE_BYTES
 
 
@@ -71,6 +79,35 @@ class FinalBrokerResourcesEvidence:
                        for value in self.resource_outcomes)):
             raise ValueError(_ERROR)
         self.sigstore.__post_init__()
+
+
+@dataclass(frozen=True, slots=True)
+class FinalBrokerWorkflowRotationEvidence:
+    """Digest-only proof of one exact broker workflow-authority replacement."""
+
+    old_workflow_sha: str
+    new_workflow_sha: str
+    old_broker_config_sha256: str
+    new_broker_config_sha256: str
+    operation: str
+
+    def __post_init__(self) -> None:
+        if (not _workflow_sha(self.old_workflow_sha)
+                or not _workflow_sha(self.new_workflow_sha)
+                or self.old_workflow_sha == self.new_workflow_sha
+                or any(type(value) is not str or len(value) != 64
+                       or any(c not in "0123456789abcdef" for c in value)
+                       for value in (self.old_broker_config_sha256,
+                                     self.new_broker_config_sha256))
+                or self.old_broker_config_sha256 == self.new_broker_config_sha256
+                or type(self.operation) is not str or self.operation != "rotated"):
+            raise ValueError(_ERROR)
+
+
+def _workflow_sha(value: object) -> bool:
+    return (type(value) is str and len(value) == 40
+            and value != "0" * 40
+            and all(c in "0123456789abcdef" for c in value))
 
 
 def _root() -> tuple[int, int, int, int]:
@@ -455,3 +492,163 @@ def _directory_exists(requirement, directories) -> bool:
         return True
     finally:
         host_runtime._close(owned)
+
+
+def _replace_workflow_configuration(old_host: DevBrokerHostServiceContract,
+                                    new_host: DevBrokerHostServiceContract,
+                                    directories: tuple[host_runtime._DirectoryAuthority, ...]
+                                    ) -> None:
+    """Replace only an exact old broker file with canonical new bytes atomically."""
+    old = old_host.broker_configuration_file()
+    new = new_host.broker_configuration_file()
+    if (old != new or old.path != PRODUCTION_BROKER_SERVICE_CONFIG_PATH
+            or old_host.broker_configuration_directory()
+            != new_host.broker_configuration_directory()):
+        raise OSError
+    before = old_host.canonical_configuration_bytes()
+    after = new_host.canonical_configuration_bytes()
+    if (type(before) is not bytes or type(after) is not bytes
+            or before == after or not 0 < len(before) <= MAX_BROKER_SERVICE_CONFIG_BYTES
+            or not 0 < len(after) <= MAX_BROKER_SERVICE_CONFIG_BYTES):
+        raise OSError
+    owned: list[int] = []
+    temporary_identity = None
+    replaced = False
+    try:
+        requirement = host_runtime._FileAuthority(old.path, old.mode,
+                                                   old.owner_uid, old.group_gid)
+        parent, name, chain = host_runtime._open_parent(old.path, directories, owned)
+        existing = host_runtime._existing_file(parent, name, requirement, owned)
+        if existing is None or existing[1] != before:
+            raise OSError
+        temporary = host_runtime._claim(os.open(
+            _ROTATION_TEMPORARY,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600, dir_fd=parent), owned)
+        created = os.fstat(temporary)
+        if not stat.S_ISREG(created.st_mode) or created.st_nlink != 1:
+            raise OSError
+        temporary_identity = (created.st_dev, created.st_ino)
+        named_temporary = os.stat(_ROTATION_TEMPORARY, dir_fd=parent,
+                                  follow_symlinks=False)
+        if (named_temporary.st_dev, named_temporary.st_ino) != temporary_identity:
+            raise OSError
+        if (created.st_uid, created.st_gid) != (old.owner_uid, old.group_gid):
+            _none(os.fchown(temporary, old.owner_uid, old.group_gid))
+        _none(os.fchmod(temporary, old.mode))
+        host_runtime._write_all(temporary, after)
+        _none(os.fsync(temporary))
+        staged = host_runtime._existing_file(parent, _ROTATION_TEMPORARY,
+                                             requirement, owned)
+        if (staged is None or staged[1] != after
+                or staged[0][2:4] != (temporary_identity[0], 1)
+                or staged[0][1] != temporary_identity[1]):
+            raise OSError
+        current = host_runtime._existing_file(parent, name, requirement, owned)
+        if current != existing:
+            raise OSError
+        host_runtime._revalidate_chain(chain)
+        _none(os.replace(_ROTATION_TEMPORARY, name,
+                         src_dir_fd=parent, dst_dir_fd=parent))
+        replaced = True
+        _none(os.fsync(parent))
+        confirmed = host_runtime._existing_file(parent, name, requirement, owned)
+        if (confirmed is None or confirmed[1] != after
+                or confirmed[0][1:4] != staged[0][1:4]):
+            raise OSError
+        host_runtime._revalidate_chain(chain)
+    finally:
+        active = sys.exception()
+        try:
+            if not replaced and temporary_identity is not None and "parent" in locals():
+                try:
+                    current = os.stat(_ROTATION_TEMPORARY, dir_fd=parent,
+                                      follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    if (not stat.S_ISREG(current.st_mode)
+                            or (current.st_dev, current.st_ino) != temporary_identity):
+                        raise OSError
+                    _none(os.unlink(_ROTATION_TEMPORARY, dir_fd=parent))
+                    _none(os.fsync(parent))
+        except _CONTROL:
+            if not isinstance(active, _CONTROL):
+                raise
+        except Exception:
+            if not isinstance(active, _CONTROL):
+                raise
+        finally:
+            host_runtime._close(owned)
+
+
+def qualify_final_dev_broker_workflow_authority(*, expected_workflow_sha: str
+                                                ) -> FinalBrokerResourcesEvidence:
+    """Read-only proof that the complete installed C32Y authority uses this SHA."""
+    if not _workflow_sha(expected_workflow_sha):
+        raise FinalBrokerResourcesError(_ERROR)
+    return qualify_final_dev_broker_resources(expected_workflow_sha=expected_workflow_sha)
+
+
+def rotate_final_dev_broker_workflow_authority(
+    *, current_expected_workflow_sha: str, new_expected_workflow_sha: str,
+) -> FinalBrokerWorkflowRotationEvidence:
+    """Root-only pre-activation transition between two canonical C32Y configs."""
+    lock = None
+    failure = False
+    control = None
+    result = None
+    try:
+        first_identity = _root()
+        if (not _workflow_sha(current_expected_workflow_sha)
+                or not _workflow_sha(new_expected_workflow_sha)
+                or current_expected_workflow_sha == new_expected_workflow_sha):
+            raise OSError
+        lock = lock_runtime._acquire_process_lock()
+        if type(lock) is not lock_runtime._ProcessLock:
+            raise OSError
+        old_pair, old_host = _pair(current_expected_workflow_sha)
+        new_pair, new_host = _pair(new_expected_workflow_sha)
+        old_values = old_pair.broker.to_dict()
+        new_values = new_pair.broker.to_dict()
+        if (old_pair.executor.canonical_bytes() != new_pair.executor.canonical_bytes()
+                or old_values.keys() != new_values.keys()
+                or {key for key in old_values if old_values[key] != new_values[key]}
+                != {"expected_workflow_sha"}
+                or old_host.runtime_directory_requirements()
+                != new_host.runtime_directory_requirements()
+                or old_host.installed_asset_requirement()
+                != new_host.installed_asset_requirement()):
+            raise OSError
+        _qualify(old_pair, old_host, ("unchanged",) * 8)
+        directories = _authorities(old_host)
+        config = old_host.broker_configuration_file()
+        _temporary_absent(config.path, directories)
+        _root()
+        _replace_workflow_configuration(old_host, new_host, directories)
+        if _root() != first_identity:
+            raise OSError
+        _qualify(new_pair, new_host, ("unchanged",) * 8)
+        result = FinalBrokerWorkflowRotationEvidence(
+            current_expected_workflow_sha, new_expected_workflow_sha,
+            hashlib.sha256(old_host.canonical_configuration_bytes()).hexdigest(),
+            hashlib.sha256(new_host.canonical_configuration_bytes()).hexdigest(),
+            "rotated",
+        )
+    except _CONTROL as error:
+        control = error
+    except Exception:
+        failure = True
+    finally:
+        if lock is not None:
+            try:
+                _none(lock_runtime._release_process_lock(lock))
+            except _CONTROL as error:
+                control = control or error
+            except Exception:
+                failure = True
+    if control is not None:
+        raise control
+    if failure or result is None:
+        raise FinalBrokerResourcesError(_ERROR) from None
+    return result

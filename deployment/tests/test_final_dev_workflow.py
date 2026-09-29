@@ -26,7 +26,7 @@ AUDIENCES = (
     "https://oci-dev.omnilyzer.ai",
     "u:2:316bec9a-53e4-4807-9557-7febdc979d0a",
 )
-ENDPOINT = "https://deploy-dev.omnilyzer.ai/task014/dev/promote"
+ENDPOINT = "https://omnilyzerdev.tail52e570.ts.net/task014/dev/promote"
 
 
 class Response:
@@ -71,6 +71,24 @@ class FinalDevWorkflowTests(unittest.TestCase):
         self.assertEqual(self.dev["environment"], "task014-dev")
         self.assertEqual(self.dev["permissions"], {"contents": "read", "id-token": "write"})
         self.assertEqual(self.dev["timeout-minutes"], "25")
+        self.assertEqual([step.get("uses") for step in self.gate["steps"] if "tailscale" in str(step).lower()], [])
+        self.assertEqual([step.get("uses") for step in self.dev["steps"] if "tailscale" in str(step).lower()],
+                         ["tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd"])
+        tailscale = self.dev["steps"][2]
+        self.assertEqual(tailscale["with"], {
+            "oauth-client-id": "${{ secrets.TS_OAUTH_CLIENT_ID }}",
+            "audience": "${{ secrets.TS_AUDIENCE }}",
+            "tags": "tag:omnilyzer-task014-ci",
+            "version": "1.102.4",
+            "sha256sum": "50748df1045e60b5b695f19f4c56b0da36c019948b440fb456b6584a50f0d8b9",
+            "retry": "1",
+            "timeout": "2m",
+            "use-cache": "false",
+            "args": "--accept-routes=false --accept-dns=true --shields-up=true",
+        })
+        self.assertNotIn("authkey", str(tailscale).lower())
+        self.assertNotIn("oauth-secret", str(tailscale).lower())
+        self.assertNotIn("funnel", str(tailscale).lower())
 
     def test_request_generation_and_checkout_are_exact(self):
         for job in (self.gate, self.dev):
@@ -96,12 +114,13 @@ class FinalDevWorkflowTests(unittest.TestCase):
         self.assertNotIn("deployment.controller", create["run"])
         self.assertNotIn("deployment.promotion", self.dev["steps"][-1]["run"])
         self.assertNotIn("upload-artifact", self.raw)
-        self.assertNotIn("secrets.", self.raw)
+        self.assertEqual(self.raw.count("secrets."), 2)
         self.assertNotIn("set -x", self.raw)
         self.assertNotIn("docker ", self.raw.lower())
         self.assertNotIn("http://", self.raw)
-        self.assertNotIn("retry", self.raw.lower())
-        self.assertIn('ENDPOINT = "https://deploy-dev.omnilyzer.ai/task014/dev/promote"', self.script)
+        self.assertNotIn("retry", self.script.lower())
+        self.assertIn('ENDPOINT = "https://omnilyzerdev.tail52e570.ts.net/task014/dev/promote"', self.script)
+        self.assertEqual(self.dev["steps"][3]["name"], "Submit DEV promotion once")
 
     def run_client(self, *, broker_status=202, broker_body=b'{"status":"accepted"}\n',
                    oidc_body=None, request_body=None):

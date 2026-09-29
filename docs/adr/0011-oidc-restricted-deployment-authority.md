@@ -120,6 +120,39 @@ qualification, `nginx -t`, and real duplicate-header rejection probes remain
 operational prerequisites. C32Z neither opens a listener nor activates the
 workflow or deployment.
 
+C32ZC supersedes the direct-public-IP C32Q/C32R/C32Z/C32ZA DEV edge
+transport because the DEV host is behind CGNAT. The uncommitted Cloudflare
+Tunnel candidate was not selected because its normal proxied HTTP response
+timeout does not meet the reviewed synchronous Task 014 execution budget. The
+repository-only final path is a GitHub-hosted runner joining the private tailnet
+with pinned Tailscale Action and workload identity federation, an ephemeral
+`tag:omnilyzer-task014-ci` node, private HTTPS at
+`omnilyzerdev.tail52e570.ts.net`, Tailscale Serve to `127.0.0.1:3032`,
+loopback-only Nginx, and the unchanged broker at `127.0.0.1:3031`. Funnel and
+public inbound ingress are prohibited. Tailscale terminates tailnet HTTPS;
+no host TLS is required on the loopback hop. Nginx enforces the exact incoming
+Tailscale Host, strips Serve-added and arbitrary headers, and rewrites only the
+logical broker Host to `deploy-dev.omnilyzer.ai`. The deployment, Zot and
+Forgejo OIDC audiences and frozen broker parser remain unchanged. The old
+direct-TLS candidate remains historical.
+
+The pinned action verifies the official `1.102.4` Linux amd64 tarball digest,
+disables its tool cache and subnet-route acceptance, retains MagicDNS, enables
+shields-up, and makes one bounded connection attempt. Live WIF qualification
+must prove the exact GitHub issuer, protected `task014-dev` environment subject,
+`auth_keys`-only scope, CI-only tag, and supported exact GitHub workload claims
+for repository, repository ID, main workflow ref, branch ref, environment,
+manual event, and GitHub-hosted runner. WIF must not bind `workflow_sha`.
+Tailnet policy must restrict that CI tag to omnilyzerdev TCP 443 without SSH,
+unrelated ports or subnet-route authority.
+
+The final workflow merge commit is independently supplied to a separate
+root-only, locked, atomic broker-config rotation. It changes only
+`expected_workflow_sha` after exact C32W/C32Y requalification. The merged source
+must be staged under root control, the new broker authority qualified, and
+all Tailscale/Serve/Nginx live checks completed before activation. C32ZC neither
+configures the tailnet nor activates any service or deployment.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.
