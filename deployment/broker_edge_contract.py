@@ -111,7 +111,7 @@ class DevBrokerEdgeContract:
     ci_tag: str = field(init=False, default="tag:omnilyzer-task014-ci")
     wif_issuer: str = field(init=False, default="https://token.actions.githubusercontent.com")
     wif_subject: str = field(
-        init=False, default="repo:MichaelTrueX/omnilyzer-platform:environment:task014-dev")
+        init=False, default="repo:MichaelTrueX@130741173/omnilyzer-platform@1350104356:environment:task014-dev")
     wif_scopes: tuple[str, ...] = field(init=False, default=("auth_keys",))
     wif_permitted_tags: tuple[str, ...] = field(
         init=False, default=("tag:omnilyzer-task014-ci",))
