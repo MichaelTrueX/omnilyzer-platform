@@ -192,7 +192,7 @@ def render_human(handoff: dict[str, object]) -> str:
         "  Groups: " + json.dumps(host["groups"], ensure_ascii=True)
         + (" (truncated)" if host["groups_truncated"] else ""),
         "", "Security boundary",
-        f"  Passwordless sudo: {boundary['passwordless_sudo_available']}",
+        f"  Non-interactive sudo: {boundary['sudo_noninteractive_available']}",
         f"  Docker socket: exists={boundary['docker_socket_exists']}, "
         f"unix={boundary['docker_socket_is_unix_socket']}",
         "", "Environment",

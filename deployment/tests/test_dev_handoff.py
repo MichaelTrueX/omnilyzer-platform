@@ -31,7 +31,7 @@ class DevHandoffTests(unittest.TestCase):
                 "changed_paths": paths or [], "changed_paths_truncated": False,
             },
             "host": {"hostname": "test-host", "username": "tester", "groups": ["dev"]},
-            "security_boundary": {"passwordless_sudo_available": False,
+            "security_boundary": {"sudo_noninteractive_available": False,
                                   "docker_socket_exists": True,
                                   "docker_socket_is_unix_socket": True},
             "environment": {"python_version": "3.test", "git_version": "git version test"},

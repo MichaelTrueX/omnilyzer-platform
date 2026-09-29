@@ -141,9 +141,9 @@ def collect_status() -> dict[str, object]:
         docker_is_socket = False
     try:
         sudo_output, sudo_truncated = _command(["sudo", "-n", "true"], limit=128)
-        passwordless_sudo = not sudo_truncated and not sudo_output
+        sudo_noninteractive = not sudo_truncated and not sudo_output
     except StatusError:
-        passwordless_sudo = False
+        sudo_noninteractive = False
     try:
         git_version = _git(["--version"], limit=256).decode("utf-8", "replace").strip()
     except StatusError:
@@ -157,7 +157,7 @@ def collect_status() -> dict[str, object]:
         },
         "host": {"hostname": socket.gethostname(), "username": username, "groups": groups},
         "security_boundary": {
-            "passwordless_sudo_available": passwordless_sudo,
+            "sudo_noninteractive_available": sudo_noninteractive,
             "docker_socket_exists": docker_exists,
             "docker_socket_is_unix_socket": docker_is_socket,
         },
@@ -184,7 +184,7 @@ def render_human(status: dict[str, object]) -> str:
         f"Hostname: {host['hostname']}",
         f"Username: {host['username']}",
         "Groups: " + json.dumps(host["groups"], ensure_ascii=True),
-        f"Passwordless sudo: {boundary['passwordless_sudo_available']}",
+        f"Non-interactive sudo: {boundary['sudo_noninteractive_available']}",
         f"Docker socket exists: {boundary['docker_socket_exists']}",
         f"Docker Unix socket: {boundary['docker_socket_is_unix_socket']}",
         f"Python: {environment['python_version']}",

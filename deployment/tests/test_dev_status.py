@@ -83,7 +83,7 @@ class DevStatusTests(unittest.TestCase):
             "groups": ["alpha", "beta", "gamma"],
         })
         self.assertEqual(result["security_boundary"], {
-            "passwordless_sudo_available": False,
+            "sudo_noninteractive_available": False,
             "docker_socket_exists": False,
             "docker_socket_is_unix_socket": False,
         })
@@ -94,7 +94,7 @@ class DevStatusTests(unittest.TestCase):
                               docker_mode=stat.S_IFSOCK)
         self.assertEqual(result["repository"]["worktree"], "dirty")
         self.assertEqual(result["repository"]["changed_paths"], ["changed.py", "new.py"])
-        self.assertTrue(result["security_boundary"]["passwordless_sudo_available"])
+        self.assertTrue(result["security_boundary"]["sudo_noninteractive_available"])
         self.assertTrue(result["security_boundary"]["docker_socket_exists"])
         self.assertTrue(result["security_boundary"]["docker_socket_is_unix_socket"])
 
@@ -125,7 +125,7 @@ class DevStatusTests(unittest.TestCase):
             self.assertEqual(dev_status.main([]), 0)
         for field in ("Repository:", "Branch:", "HEAD:", "Worktree: dirty",
                       "Changed paths:", "Hostname:", "Username:", "Groups:",
-                      "Passwordless sudo:", "Docker socket exists:", "Python:", "Git:"):
+                      "Non-interactive sudo:", "Docker socket exists:", "Python:", "Git:"):
             self.assertIn(field, output.getvalue())
 
     def test_subprocess_uses_argument_array_without_shell(self):
