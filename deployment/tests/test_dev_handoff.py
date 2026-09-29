@@ -1,4 +1,14 @@
-"""Focused tests for the local, bounded developer handoff."""
+"""Focused tests for the local, bounded developer handoff.
+
+File: deployment/tests/test_dev_handoff.py
+
+Purpose:
+    Verifies handoff summaries, output formats, bounds, and local Git use.
+
+Related files:
+    - deployment/dev_handoff.py: module under test.
+    - deployment/dev_status.py: shared observations used by the handoff.
+"""
 
 from contextlib import redirect_stderr, redirect_stdout
 import io
@@ -10,7 +20,10 @@ from deployment import dev_handoff, dev_status
 
 
 class DevHandoffTests(unittest.TestCase):
+    """Exercise the handoff with controlled status and Git observations."""
+
     def status(self, *, dirty=False, paths=None):
+        """Build a fixed shared-status result for handoff tests."""
         return {
             "repository": {
                 "root": "/repo", "branch": "feature/handoff", "head": "a" * 40,
@@ -26,9 +39,11 @@ class DevHandoffTests(unittest.TestCase):
 
     def collect(self, *, status=None, upstream=None, ahead=b"0\t0\n",
                 staged=b"", unstaged=b"", untracked=b""):
+        """Collect a handoff with mocked local Git responses."""
         calls = []
 
         def git(arguments, **kwargs):
+            """Record Git arguments and return the requested fixture."""
             calls.append((arguments, kwargs))
             if arguments[0] == "rev-parse":
                 if upstream is None:
@@ -49,6 +64,7 @@ class DevHandoffTests(unittest.TestCase):
         return result, calls
 
     def test_clean_repository_without_upstream(self):
+        """Show zero changes and a missing upstream for a clean tree."""
         result, _ = self.collect()
         self.assertEqual(result["repository"]["worktree"], "clean")
         self.assertEqual(result["repository"]["upstream"], "(none)")
@@ -58,6 +74,7 @@ class DevHandoffTests(unittest.TestCase):
         self.assertEqual(result["changes"]["changed_files"], 0)
 
     def test_dirty_staged_unstaged_untracked_and_local_upstream(self):
+        """Summarize staged, unstaged, untracked, and local upstream state."""
         result, calls = self.collect(
             status=self.status(dirty=True, paths=["staged.py", "working.py", "new.py"]),
             upstream="origin/feature/handoff", ahead=b"2\t3\n",
@@ -78,14 +95,17 @@ class DevHandoffTests(unittest.TestCase):
                       [arguments for arguments, _ in calls])
 
     def test_changed_file_count_deduplicates_staged_and_unstaged_path(self):
+        """Count a path changed in both stages only once overall."""
         result, _ = self.collect(staged=b"1\t0\tshared.py\0",
                                  unstaged=b"0\t1\tshared.py\0")
         self.assertEqual(result["changes"]["changed_files"], 1)
 
     def test_bounded_paths_and_optional_count_failures(self):
+        """Bound displayed paths and tolerate optional Git summary failures."""
         status = self.status(dirty=True, paths=[f"path-{number}" for number in range(25)])
 
         def git(arguments, **_kwargs):
+            """Simulate unavailable optional local Git observations."""
             raise dev_status.StatusError("private diagnostics")
 
         with (patch.object(dev_handoff.dev_status, "collect_status", return_value=status),
@@ -98,6 +118,7 @@ class DevHandoffTests(unittest.TestCase):
         self.assertIsNone(result["changes"]["changed_files"])
 
     def test_binary_and_oversize_summary_is_unavailable(self):
+        """Mark binary line counts and oversized summaries unavailable."""
         result, _ = self.collect(staged=b"-\t-\timage.png\0",
                                  unstaged=b"1000000001\t0\tlarge.py\0")
         self.assertEqual(result["changes"]["staged_files"], 1)
@@ -106,6 +127,7 @@ class DevHandoffTests(unittest.TestCase):
         self.assertIsNone(result["changes"]["insertions"])
 
     def test_json_structure_and_compact_human_output(self):
+        """Keep JSON sections stable and human output concise."""
         result, _ = self.collect(status=self.status(dirty=True, paths=["one.py"]),
                                  upstream="origin/feature/handoff",
                                  unstaged=b"1\t0\tone.py\0")
@@ -133,6 +155,7 @@ class DevHandoffTests(unittest.TestCase):
         self.assertNotIn("diff --git", human)
 
     def test_fundamental_failure_is_generic_and_nonzero(self):
+        """Return a generic error without leaking raw Git diagnostics."""
         output, error = io.StringIO(), io.StringIO()
         with (patch.object(dev_handoff.dev_status, "collect_status",
                            side_effect=dev_status.StatusError("secret/path: raw stderr")),
@@ -144,6 +167,7 @@ class DevHandoffTests(unittest.TestCase):
         self.assertNotIn("raw stderr", error.getvalue())
 
     def test_git_calls_are_local_argument_arrays_with_bounded_output(self):
+        """Use local Git subcommands through the argument-array helper."""
         _, calls = self.collect(upstream="origin/feature/handoff")
         forbidden = {"fetch", "pull", "push", "ls-remote"}
         self.assertTrue(calls)

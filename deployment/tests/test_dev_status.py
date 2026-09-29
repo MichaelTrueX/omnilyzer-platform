@@ -1,4 +1,14 @@
-"""Focused tests for the bounded, read-only developer status command."""
+"""Focused tests for the bounded, read-only developer status command.
+
+File: deployment/tests/test_dev_status.py
+
+Purpose:
+    Verifies local status collection, output bounds, rendering, and failures.
+
+Related files:
+    - deployment/dev_status.py: module under test.
+    - deployment/tests/test_dev_handoff.py: tests the dependent handoff command.
+"""
 
 from contextlib import redirect_stderr, redirect_stdout
 import io
@@ -16,10 +26,13 @@ from deployment import dev_status
 
 
 class DevStatusTests(unittest.TestCase):
+    """Exercise status collection and CLI behavior with controlled observations."""
+
     def collect(self, status_output=b"", *, sudo_available=False, docker_mode=None,
                 status_truncated=False):
         """Collect with all Git and host observations fixed by the test."""
         def command(arguments, **_kwargs):
+            """Return fixed status and sudo results for bounded command calls."""
             if arguments[:2] == ["git", "status"]:
                 return status_output, status_truncated
             if arguments == ["sudo", "-n", "true"]:
@@ -29,6 +42,7 @@ class DevStatusTests(unittest.TestCase):
             raise AssertionError(arguments)
 
         def git(arguments, **_kwargs):
+            """Return fixed repository identity and Git version responses."""
             outputs = {
                 "rev-parse": b"/repo\n" if "--show-toplevel" in arguments else b"a" * 40 + b"\n",
                 "branch": b"feature/status\n",
@@ -37,6 +51,7 @@ class DevStatusTests(unittest.TestCase):
             return outputs[arguments[0]]
 
         def docker_stat(path):
+            """Supply the requested Docker socket mode or absence."""
             self.assertEqual(path, "/var/run/docker.sock")
             if docker_mode is None:
                 raise FileNotFoundError(path)
@@ -59,6 +74,7 @@ class DevStatusTests(unittest.TestCase):
             return dev_status.collect_status()
 
     def test_clean_repository_and_unavailable_optional_capabilities(self):
+        """Report a clean tree and unavailable optional host capabilities."""
         result = self.collect()
         self.assertEqual(result["repository"]["worktree"], "clean")
         self.assertEqual(result["repository"]["changed_paths"], [])
@@ -73,6 +89,7 @@ class DevStatusTests(unittest.TestCase):
         })
 
     def test_dirty_repository_and_docker_socket(self):
+        """Report changed paths and available local security capabilities."""
         result = self.collect(b" M changed.py\0?? new.py\0", sudo_available=True,
                               docker_mode=stat.S_IFSOCK)
         self.assertEqual(result["repository"]["worktree"], "dirty")
@@ -82,6 +99,7 @@ class DevStatusTests(unittest.TestCase):
         self.assertTrue(result["security_boundary"]["docker_socket_is_unix_socket"])
 
     def test_changed_paths_are_bounded_and_non_socket_is_reported(self):
+        """Bound changed paths and distinguish a regular file from a socket."""
         raw = b"".join(f"?? path-{index}\0".encode() for index in range(25))
         result = self.collect(raw, docker_mode=stat.S_IFREG)
         self.assertEqual(len(result["repository"]["changed_paths"]), dev_status.MAX_CHANGED_PATHS)
@@ -94,6 +112,7 @@ class DevStatusTests(unittest.TestCase):
                              dev_status.MAX_PATH_CHARS + 1)
 
     def test_json_and_human_rendering(self):
+        """Expose expected facts through both CLI output formats."""
         status = self.collect(b"?? new.py\0")
         output = io.StringIO()
         with patch.object(dev_status, "collect_status", return_value=status), redirect_stdout(output):
@@ -110,10 +129,12 @@ class DevStatusTests(unittest.TestCase):
             self.assertIn(field, output.getvalue())
 
     def test_subprocess_uses_argument_array_without_shell(self):
+        """Run commands with argument arrays and suppressed stderr."""
         original = subprocess.Popen
         calls = []
 
         def recording_popen(*args, **kwargs):
+            """Record process invocation while delegating to Popen."""
             calls.append((args, kwargs))
             return original(*args, **kwargs)
 
@@ -126,6 +147,7 @@ class DevStatusTests(unittest.TestCase):
         self.assertEqual(calls[0][1]["stderr"], subprocess.DEVNULL)
 
     def test_subprocess_output_is_bounded(self):
+        """Stop reading command output at the configured byte limit."""
         output, truncated = dev_status._command(
             [sys.executable, "-c", "import sys; sys.stdout.write('x' * 100)"], limit=16,
         )
@@ -133,6 +155,7 @@ class DevStatusTests(unittest.TestCase):
         self.assertTrue(truncated)
 
     def test_subprocess_timeout_is_enforced(self):
+        """Terminate a command that exceeds its deadline."""
         started = time.monotonic()
         with patch.object(dev_status, "COMMAND_TIMEOUT_SECONDS", 0.1):
             with self.assertRaises(dev_status.StatusError):
@@ -140,6 +163,7 @@ class DevStatusTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 1)
 
     def test_fundamental_git_failure_is_generic(self):
+        """Fail without exposing raw repository diagnostics."""
         output, error = io.StringIO(), io.StringIO()
         with (patch.object(dev_status, "collect_status",
                            side_effect=dev_status.StatusError("secret/path: raw stderr")),

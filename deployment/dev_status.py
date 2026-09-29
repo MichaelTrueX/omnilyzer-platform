@@ -1,4 +1,14 @@
-"""Read-only, bounded development-environment status for local handoffs."""
+"""Read-only, bounded development-environment status for local handoffs.
+
+File: deployment/dev_status.py
+
+Purpose:
+    Collects bounded repository, host, security-boundary, and environment facts.
+
+Related files:
+    - deployment/dev_handoff.py: uses the collected facts for ChatGPT handoffs.
+    - deployment/tests/test_dev_status.py: focused tests for this module.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +27,7 @@ import sys
 import time
 
 
+# Bounds for command output, displayed paths, and command duration.
 MAX_COMMAND_BYTES = 65536
 MAX_CHANGED_PATHS = 20
 MAX_PATH_CHARS = 240
@@ -27,6 +38,7 @@ class StatusError(Exception):
     """A required repository fact could not be collected."""
 
 
+# Bounded subprocess and Git helpers keep diagnostics out of the handoff.
 def _command(arguments: list[str], *, cwd: str | None = None,
              limit: int = MAX_COMMAND_BYTES) -> tuple[bytes, bool]:
     """Read at most limit bytes of stdout without exposing command diagnostics."""
@@ -96,6 +108,7 @@ def _changed_paths(raw: bytes, *, truncated: bool) -> tuple[list[str], bool]:
     return paths, truncated or position < len(entries) - 1
 
 
+# Collect local observations for both developer workflow commands.
 def collect_status() -> dict[str, object]:
     """Collect repository and host facts without changing persistent state."""
     root = _git(["rev-parse", "--show-toplevel"], limit=4096).decode("utf-8", "replace").strip()
@@ -152,6 +165,7 @@ def collect_status() -> dict[str, object]:
     }
 
 
+# Render collected facts and expose the command-line entrypoint.
 def render_human(status: dict[str, object]) -> str:
     """Render collected facts as a compact, deterministic text summary."""
     repository = status["repository"]
@@ -181,7 +195,7 @@ def render_human(status: dict[str, object]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     """Print human or JSON status; return nonzero for required Git failures."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="emit compact JSON")
     arguments = parser.parse_args(argv)
     try:

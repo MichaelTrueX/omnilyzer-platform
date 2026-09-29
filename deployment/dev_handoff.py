@@ -1,4 +1,14 @@
-"""Compact, read-only local facts for a ChatGPT development handoff."""
+"""Compact, read-only local facts for a ChatGPT development handoff.
+
+File: deployment/dev_handoff.py
+
+Purpose:
+    Produces a bounded local development handoff in human or JSON form.
+
+Related files:
+    - deployment/dev_status.py: provides repository and host observations.
+    - deployment/tests/test_dev_handoff.py: focused tests for this module.
+"""
 
 from __future__ import annotations
 
@@ -9,11 +19,13 @@ import sys
 from deployment import dev_status
 
 
+# Bounds for displayed labels, groups, and numeric summaries.
 MAX_TEXT_CHARS = 240
 MAX_GROUPS = 20
 MAX_COUNT = 1_000_000_000
 
 
+# Summarize local Git state without exposing patches or file contents.
 def _text(value: object) -> str:
     """Keep externally supplied labels short and safe for a one-line handoff."""
     rendered = "".join(character if character.isprintable() else f"\\u{ord(character):04x}"
@@ -58,6 +70,7 @@ def _numstat(root: str, *, staged: bool) -> tuple[int | None, int | None, int | 
 
 
 def _untracked_count(root: str) -> tuple[int | None, set[bytes] | None]:
+    """Count untracked paths from bounded, NUL-delimited local Git output."""
     try:
         raw = dev_status._git(["ls-files", "--others", "--exclude-standard", "-z"], cwd=root)
     except dev_status.StatusError:
@@ -69,6 +82,7 @@ def _untracked_count(root: str) -> tuple[int | None, set[bytes] | None]:
 
 
 def _upstream(root: str) -> tuple[str, int | None, int | None]:
+    """Report the configured upstream and local ahead/behind counts."""
     try:
         name = dev_status._git(
             ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
@@ -92,6 +106,7 @@ def _upstream(root: str) -> tuple[str, int | None, int | None]:
     return _text(name), ahead, behind
 
 
+# Combine shared status observations with local Git summaries.
 def collect_handoff() -> dict[str, object]:
     """Extend dev_status facts with bounded, local-only Git summaries."""
     status = dev_status.collect_status()
@@ -143,7 +158,9 @@ def collect_handoff() -> dict[str, object]:
     }
 
 
+# Render the paste-ready handoff and expose the command-line entrypoint.
 def render_human(handoff: dict[str, object]) -> str:
+    """Format the collected handoff as compact, labeled text."""
     repository = handoff["repository"]
     changes = handoff["changes"]
     host = handoff["host"]
@@ -151,6 +168,7 @@ def render_human(handoff: dict[str, object]) -> str:
     environment = handoff["environment"]
 
     def count(value: int | None) -> str:
+        """Show unavailable counts without implying a zero value."""
         return str(value) if value is not None else "unavailable"
 
     return "\n".join([
@@ -183,7 +201,8 @@ def render_human(handoff: dict[str, object]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    """Print the human or JSON handoff; fail on required status errors."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="emit compact JSON")
     arguments = parser.parse_args(argv)
     try:
