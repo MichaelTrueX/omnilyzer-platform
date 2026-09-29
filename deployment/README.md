@@ -3315,6 +3315,159 @@ The filesystem audit sink, `FilesystemAuditSink`, independently reconstructs and
 
 This remains inert repository code. No broker currently creates the events, no executor or transport is wired to the sink, no production audit path was accessed or initialized, and no live end-to-end audit evidence is claimed. Maintained branch and GitHub environment protections and a separate live-authority activation review remain mandatory before any deployment authority can be enabled.
 
+## C32ZF dedicated rootless Docker host authority (repository only)
+
+The installed DEV host has no Docker CLI, root Docker socket or active Docker
+daemon. The executor is UID/GID 991 with only the replay supplementary group.
+Granting it the `docker` group, sudo, root, a root Docker socket, or a TCP API
+would cross the host-root boundary. C32ZF specifies one future dedicated
+**rootless** daemon owned by `omnilyzer-executor`; the broker gains no Docker
+access. This rootless host authority is reviewed but not installed. This
+repository change starts nothing.
+
+**C32W remains the complete, currently installed 41-file application
+generation.** C32ZF changes none of its selected paths, including
+`deployment/docker_runtime.py`, and retains the edge check
+`frozen-c32w-application-authority-unchanged`. The frozen Docker adapter still
+uses its historical Docker command binding and **cannot operate this future
+rootless endpoint**. A separately reviewed successor application generation
+must change the adapter, bind its absolute CLI and private endpoint, and be
+installed and qualified before activation. C32ZF alone does not make live
+Docker deployment functional. The existing Compose project remains
+`omnilyzer-task014-dev`; Compose/runtime/ingress bytes and STAGING/PROD gates
+are unchanged.
+
+### Exact package and vendor-bootstrap authority
+
+C32ZF pins the following Ubuntu 24.04 amd64 package identities, versions and
+package-file SHA-256s. The Docker packages come from the signed [Docker Noble
+stable repository](https://download.docker.com/linux/ubuntu/dists/noble/stable/binary-amd64/);
+`uidmap` and `slirp4netns` remain within their signed Ubuntu archive boundary.
+No Buildx package is required: Task 014 does not build images. Live review must
+prove each installed apt version, signed origin, package digest, package owner
+of every listed executable, and absence of replacement binaries or a
+higher-priority Compose plugin. Changing a pinned version requires review.
+
+| Package | Exact apt version | Package SHA-256 | Required executable(s) |
+|---|---|---|---|
+| `docker-ce` | `5:29.8.1-1~ubuntu.24.04~noble` | `607bcf63bf85c5a245b73229c2797fda5c5a430343c02ebf80f32f6db7513eb9` | `/usr/bin/dockerd` |
+| `docker-ce-cli` | `5:29.8.1-1~ubuntu.24.04~noble` | `e26e6770fab41256cf16c09c24a0b75e70bf72465ef2688f85d1f7d3fdb9b99c` | `/usr/bin/docker` |
+| `docker-ce-rootless-extras` | `5:29.8.1-1~ubuntu.24.04~noble` | `02897501837b7ff4fec8248decdd5828b7d40d7f591021a91f29673e02d0f982` | `/usr/bin/dockerd-rootless.sh`, `/usr/bin/rootlesskit` |
+| `docker-compose-plugin` | `5.5.1-1~ubuntu.24.04~noble` | `82ff966149ca2c62e1a4e1fdebdf65fda8c3a8bea80b32deda6903b40afc2347` | `/usr/libexec/docker/cli-plugins/docker-compose` |
+| `containerd.io` | `2.3.6-1~ubuntu.24.04~noble` | `2eb8c6e244fe6886f2fa2eee9ec418c4b9bb44eb44fca748504f57c23341aed2` | `/usr/bin/containerd` |
+| Ubuntu `uidmap` (noble-updates/main) | `1:4.13+dfsg1-4ubuntu3.2` | `a80cb7f72dd18c73cbb0b07b7fbe855504f26bfafae072a9b3d125c89d499b9e` | `/usr/bin/newuidmap`, `/usr/bin/newgidmap` |
+| Ubuntu `slirp4netns` (noble/universe) | `1.2.1-1build2` | `3fc72a72a376a3ad3b439434bc87d89d245f9d54a1d540e8a06b74d4e2385e0a` | `/usr/bin/slirp4netns` |
+
+The reviewed `docker-ce-rootless-extras` package contains
+`/usr/bin/dockerd-rootless.sh` with SHA-256
+`200203633806081a401e60aefdf68a8fa73fc7dc80aa854c52a69d47710a3488`.
+The root-owned [launcher](systemd/rootless/rootless-docker-launcher.py) checks
+its exact identity and bytes, creates a closed environment, accepts no caller
+arguments, and directly execs that fixed vendor script with fixed daemon
+arguments. It does not reconstruct RootlessKit bootstrap or invoke `sh -c`.
+The user unit and launcher both fix `PATH=/usr/bin:/usr/sbin:/bin`, so
+RootlessKit's `newuidmap`/`newgidmap` and Docker's `containerd` basename
+lookups select the reviewed package-owned `/usr/bin` executables first. Live
+qualification must verify those executable owners and reject replacements;
+caller PATH and `/usr/local` are not inherited.
+The vendor script owns containerd-rootless conflict detection, RootlessKit
+`/etc` and `/run` copy-up, namespace-local removal of `/run/docker`,
+`/run/containerd` and `/run/xtables.lock`, and IPv4 plus non-fatal IPv6
+forwarding. Its network driver, MTU, builtin port driver, sandbox, seccomp,
+host-loopback ban, state directories, `DOCKERD` binary, exact
+`--subid-source=static --slirp4netns-binary=/usr/bin/slirp4netns` flags and
+**enabled** detached-netns choice are all explicit in the launcher's closed
+environment. The vendor script's shell is a fixed package dependency, not a
+caller-selected command interface. See the exact [Moby vendor
+script](https://github.com/moby/moby/blob/docker-v29.8.1/contrib/dockerd-rootless.sh).
+
+### User manager and paths
+
+The inert [rootless user service](systemd/rootless/omnilyzer-task014-rootless-docker.service)
+runs only in UID 991's systemd **user** manager with `Restart=always`; an
+explicit `systemctl --user stop` remains effective. It uses exact HOME,
+`XDG_RUNTIME_DIR`, PATH and LANG and has no capabilities. The instance-specific
+[delegation drop-in](systemd/rootless/omnilyzer-task014-cgroup-delegation.conf)
+is only for `/etc/systemd/system/user@991.service.d/`, delegating CPU, memory
+and PID controllers. It does not alter other users. Linger and the UID 991
+user manager require separate root-controlled bootstrap and live proof.
+
+`/run/user/991` is **logind/systemd-owned ephemeral runtime authority**. The
+Omnilyzer installer must never mkdir, chown or treat it as durable application
+storage. Before daemon startup it must already be the exact
+`XDG_RUNTIME_DIR`, UID/GID 991, mode 0700; the launcher verifies this. The
+daemon's only Docker API listener is `/run/user/991/docker.sock`. The
+launcher permits an absent RootlessKit state directory or an existing real
+UID/GID 991, mode 0700 directory. RootlessKit itself locks that directory,
+rejects a concurrent daemon and cleans stale state after a crash; the launcher
+never recursively removes it. An existing Docker socket must be a real Unix
+socket with UID/GID 991, mode 0660 and one link. The launcher probes it: a
+live listener or ambiguous connection failure blocks startup.
+`ECONNREFUSED` only permits the vendor bootstrap to continue; the launcher
+never unlinks the socket. RootlessKit first decides concurrency with its
+exclusive state-directory lock, then Docker owns any stale Unix-socket
+replacement immediately before binding its listener.
+
+The [executor socket drop-in](systemd/rootless/rootless-docker-executor-socket.conf)
+projects only that socket read-only into its existing hardened service at
+`/run/omnilyzer/deployment/rootless-docker/docker.sock`. Its `ProtectHome=yes`
+stays intact, so the rest of `/run/user` remains hidden. The future successor
+application must use only that projected endpoint. No root or TCP socket is
+allowed. The system executor cannot directly depend on a user-manager unit;
+future runtime operations must fail closed if the daemon/socket is absent or
+wrong.
+
+The Omnilyzer-provisioned fixed paths are HOME
+`/var/lib/omnilyzer/deployment/rootless-home`, data root
+`/var/lib/omnilyzer/deployment/rootless-docker-data`, and the private
+projection directory `/run/omnilyzer/deployment/rootless-docker`, all UID/GID
+991 and mode 0700. Daemon exec root and RootlessKit state stay ephemeral under
+`/run/user/991`. Root-owned canonical daemon/client JSON remains fixed under
+`/etc/omnilyzer/deployment`; client config is exactly `{}` plus newline, with
+no mutable context or persistent registry credential. Future image pull must
+prove exact Zot digest behavior without persistent Docker credentials; if
+anonymous pull is unavailable, a separate request-scoped credential design
+must be reviewed before activation.
+
+The proposed exclusive `/etc/subuid` and `/etc/subgid` range is
+`omnilyzer-executor:427680:65536`. RootlessKit is fixed to the static source;
+live qualification must prove this exact entry in both files with no extra
+executor range or overlap before activation. Container
+UID/GID 0 maps to host 991:991; `10001` maps to `437680`; `65532` maps to
+`493211`. The canary bind source eventually requires UID 991, GID 437680,
+mode 0770 for migration write access; the Nginx runtime remains 991:991 mode
+0755 with 0644 generated files. Existing replay, audit, executor state and
+other resource ownership must not be repaired or changed. Rootless bind
+behavior, Compose internal networking, Nginx reload, and exact loopback
+`127.0.0.1:3020` publication remain pending live proof. CPU, memory and PID
+limits are mandatory enforcement gates because rootless Docker can otherwise
+ignore cgroup limits; see [Docker's rootless cgroup
+limitations](https://docs.docker.com/engine/security/rootless/tips/).
+
+### Installation gate and rollback
+
+**Before apt installs any Docker package**, the future root-controlled host
+procedure must mask `docker.service`, `docker.socket` and
+`containerd.service`, prevent maintainer-script starts, and verify that those
+attempts cannot succeed. A start-then-stop window is prohibited. After package
+installation the three units must remain masked and inactive,
+`/var/run/docker.sock` absent, and no rootful dockerd or system containerd
+process may serve Task 014. No Docker packages or units are installed by this
+repository change. Live qualification must also prove exact package owners,
+script bytes, user-manager lifecycle, private socket, no Buildx/plugin shadow,
+subordinate ranges, mapped bind mounts, exact digest pull, Compose behavior,
+resource limits and reboot recovery. Broker, executor and deployment activation
+remain prohibited until the successor application and all gates pass. The
+already-qualified private tailnet-only Tailscale Serve ingress at
+`https://omnilyzerdev.tail52e570.ts.net` to `http://127.0.0.1:3032` remains
+active. Funnel remains off and prohibited. C32ZF does not modify this ingress.
+
+Rollback stops and disables the executor and dedicated rootless user unit,
+removes linger only after checking for other UID-991 user-service dependents,
+and removes only the newly reviewed Docker assets/data after preserving audit
+and migration evidence. It never resets replay/audit or substitutes rootful
+Docker. This repository work makes no host, service or network change.
+
 ## Local validation
 
 ```bash

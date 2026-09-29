@@ -154,6 +154,33 @@ must be staged under root control, the new broker authority qualified, and
 all Tailscale/Serve/Nginx live checks completed before activation. C32ZC neither
 configures the tailnet nor activates any service or deployment.
 
+C32ZF records inert host authority for one future dedicated rootless Docker
+daemon owned by `omnilyzer-executor`. The executor will use only a private bind
+of the daemon's `/run/user/991/docker.sock` at
+`/run/omnilyzer/deployment/rootless-docker/docker.sock`, preserving its
+`ProtectHome=yes` isolation; the broker has no Docker access. Rootful Docker,
+Docker-group membership, sudo, a TCP API,
+and a root executor remain prohibited. This extends the runtime transport
+under the same restricted broker, executor socket, closed DEV Compose project,
+and audit/replay controls. Rootless Docker requires a separately qualified
+systemd **user** manager, subordinate UID/GID mappings, and delegated cgroup v2
+CPU, memory and PID controllers. The repository adds inert authority only;
+installation, migration of bind-mount ownership, service activation, and live
+container behavior require separate host review.
+RootlessKit must use the exact static `/etc/subuid` and `/etc/subgid` mapping
+and the package-owned `/usr/bin/slirp4netns`, with vendor-managed crash-state
+locking. Both user unit and launcher put `/usr/bin` first in their fixed PATH
+for package-owned helper lookups. The launcher never unlinks an existing
+Docker socket before the RootlessKit lock. The already-qualified private
+tailnet-only Serve ingress remains
+active and unchanged; Funnel remains prohibited. Broker, executor and
+deployment activation are still prohibited. The exact package-owned
+`dockerd-rootless.sh` performs RootlessKit and namespace bootstrap behind a
+fixed no-input launcher. C32W remains the complete installed application
+generation, including its unchanged Docker adapter; that adapter cannot use
+the future rootless endpoint. A separately reviewed successor application
+generation and host migration are mandatory before activation.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.

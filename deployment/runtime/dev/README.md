@@ -31,6 +31,19 @@ Compose project `omnilyzer-task014-dev` has exactly `canary-blue`, `canary-green
 
 Application slots run as `10001:10001`, read-only, cap-drop ALL, no-new-privileges, hardened 16 MiB `/tmp`, 128 PID, 0.5 CPU and 128 MiB limits, bounded json-file logs, and no host port. The only network is internal `task014_frontend`; there is no backend network, Docker socket, registry credential, or application port publication. Deployment Nginx is likewise non-root/read-only/hardened and alone publishes `127.0.0.1:3020` to 8080.
 
+C32ZF adds inert host authority for a future dedicated rootless daemon while
+retaining these exact Compose bytes and hashes. The installed C32W adapter is
+unchanged and cannot use that daemon; a separately reviewed successor
+application generation is required before activation. With the proposed
+427680 subordinate UID/GID
+start, container 10001 maps to host 437680 and Nginx 65532 maps to host 493211.
+The canary runtime bind source must be 991:437680 mode 0770 so the daemon can
+resolve it and mapped GID 10001 can write during the explicit migration;
+migration files created by UID 10001 map to host UID 437680. The Nginx runtime
+source stays executor-owned 0755 with 0644 generated fragments. This mapping and enforcement of all three
+cgroup limits require live proof before deployment activation. See the C32ZF
+section of [deployment/README.md](../../README.md).
+
 `/var/lib/omnilyzer/deployment/dev/canary-runtime` is mounted read-only at `/run/omnilyzer-canary` in application slots. The explicit migration operation alone mounts it read-write and runs `/app/migration.py`; migration is never startup behavior. Identity is `task014-executable-canary-v1`, definition checksum is `b25e7d2d55bce3e233f58f9607e715daebc2a1a69c37603adbb569604ef76421`, and durable files are `migration.lock` and `migration.json`.
 
 The Nginx base is valid with an empty directory-mounted `/var/lib/omnilyzer/deployment/dev/nginx-runtime` and returns JSON 503 maintenance. A generated `active.conf` can name only blue or green. The adapter atomically fsync/replaces it, validates deployment Nginx syntax, then reloads only `deployment-nginx`. Candidate routing follows separate `/livez`, `/readyz`, and exact `/metadata` gates. Validation/reload failure restores, validates, and reloads the previous fragment; running routing remains unchanged on failed reload. The adapter never modifies host Nginx. `host-nginx.conf` is review-only and uninstalled; PR C selects TLS.

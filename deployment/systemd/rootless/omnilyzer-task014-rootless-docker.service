@@ -1,0 +1,29 @@
+# Inert C32ZF user-manager unit. Install only for omnilyzer-executor; never
+# enable globally or start from the system manager.
+[Unit]
+Description=Task 014 DEV executor-owned rootless Docker
+Requires=dbus.socket
+After=dbus.socket
+ConditionUser=omnilyzer-executor
+StartLimitBurst=3
+StartLimitIntervalSec=60s
+
+[Service]
+Type=notify
+NotifyAccess=all
+ExecStart=/usr/bin/python3 -I -B /opt/omnilyzer/deployment/rootless-docker/launch.py
+Restart=always
+RestartSec=2s
+TimeoutStartSec=60s
+TimeoutStopSec=30s
+KillMode=mixed
+Delegate=yes
+UMask=0077
+Environment=HOME=/var/lib/omnilyzer/deployment/rootless-home
+Environment=XDG_RUNTIME_DIR=/run/user/991
+Environment=PATH=/usr/bin:/usr/sbin:/bin
+Environment=LANG=C.UTF-8
+AmbientCapabilities=
+
+[Install]
+WantedBy=default.target
