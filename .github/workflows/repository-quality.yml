@@ -18,8 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: Check out repository without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Validate required files and sensitive-file hygiene
         shell: bash
@@ -27,6 +29,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
           import subprocess
           import sys
 
@@ -49,6 +52,8 @@ jobs:
               ".github/CODEOWNERS",
               ".github/pull_request_template.md",
               ".github/workflows/repository-quality.yml",
+              ".github/workflows/dependency-review.yml",
+              ".github/dependabot.yml",
           }
           missing = sorted(path for path in required if not Path(path).is_file())
 
@@ -92,6 +97,7 @@ jobs:
           )
 
           def contains_name(source, name):
+              """Return whether a binary stream contains a name across chunk boundaries."""
               overlap = b""
               while chunk := source.read(64 * 1024):
                   window = overlap + chunk
@@ -122,12 +128,42 @@ jobs:
                   print(f"Unable to inspect {path}: {error}", file=sys.stderr)
                   sys.exit(1)
 
+          # Enforce immutable references for every external GitHub Action.
+          unpinned_actions = []
+          workflow_paths = sorted(
+              path
+              for path in repository_files
+              if path.startswith(".github/workflows/")
+              and Path(path).suffix in {".yml", ".yaml"}
+          )
+          for path in workflow_paths:
+              try:
+                  workflow = Path(path).read_text(encoding="utf-8")
+              except OSError as error:
+                  print(f"Unable to inspect {path}: {error}", file=sys.stderr)
+                  sys.exit(1)
+              for reference in re.findall(
+                  r"(?m)^\s*uses:\s*([^\s#]+)",
+                  workflow,
+              ):
+                  if reference.startswith("./"):
+                      continue
+                  if re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", reference):
+                      continue
+                  if re.fullmatch(
+                      r"docker://[^\s]+@sha256:[0-9a-f]{64}",
+                      reference,
+                  ):
+                      continue
+                  unpinned_actions.append(f"{path}: {reference}")
+
           failures = {
               "Missing required files": missing,
               "Tracked disallowed environment files": tracked_env,
               "Tracked private-key file extensions": private_files,
               "Tracked private-key content markers": marked_files,
               "Disallowed organization name": disallowed_name_files,
+              "Unpinned external GitHub Action refs": unpinned_actions,
           }
           failed = False
           for label, values in failures.items():
