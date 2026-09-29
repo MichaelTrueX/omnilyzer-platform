@@ -1,0 +1,32 @@
+# File: .github/dependabot.yml
+# Purpose: Creates reviewed update PRs for GitHub Actions and the npm design-system spike.
+# Related: .github/workflows/dependency-review.yml, docs/architecture/security-model.md
+#
+# Python dependency automation is intentionally excluded. The deployment control plane uses
+# a separately reviewed, hash-pinned offline wheel boundary that must not be rewritten by
+# general dependency automation.
+
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: npm
+    directory: "/spikes/design-system"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:30"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps

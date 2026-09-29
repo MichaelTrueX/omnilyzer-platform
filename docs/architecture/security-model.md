@@ -37,6 +37,7 @@ Runtime database roles must not own application schemas, use superuser privilege
 - Never log passwords, tokens, session secrets, private keys, provider credentials, or unnecessary personal data. Define structured redaction and retention rules.
 - Store secrets outside Git in an approved secret-management mechanism, scope them narrowly, rotate them, and audit access. No production credentials may be used in spikes.
 - Pin and inventory dependencies, review licenses and provenance, scan artifacts, evaluate vulnerabilities by exploitability and severity, and apply timely updates through reviewed immutable builds.
+- Run repository static analysis and pull-request dependency review as independent pre-release controls. External GitHub Actions must use immutable commit references. Automated dependency-update PRs are appropriate only for dependency boundaries designed for that lifecycle; manually reviewed offline wheel boundaries must not be rewritten by general update automation.
 - Prohibit production source editing, interactive development on PROD, and uncommitted production source. Production changes arrive only as promoted immutable artifacts.
 
 Security controls require threat modeling, automated tests, review, monitoring, incident response, and periodic recovery exercises. Compliance requirements must be translated into explicit controls rather than treated as labels.
