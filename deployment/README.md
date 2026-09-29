@@ -1151,67 +1151,144 @@ Only exact durable prefixes may be resumed. The separate qualification API
 reads fixed installed paths and needs no source or staging input. The socket
 node remains the existing socket unit's later runtime responsibility.
 
-C32Y is unexecuted on the host. It installs no Nginx, invokes no systemd
+The C32Y provisioning operation installs no Nginx, invokes no systemd
 operation, and leaves the promotion workflow and deployment disabled.
 
-## C32Z final DEV broker HTTPS edge candidate (repository only)
+## C32ZC DEV private Tailscale Serve ingress (repository only)
 
-[`ingress/dev-broker-https.nginx.conf`](ingress/dev-broker-https.nginx.conf)
-is the pinned activation candidate, separate from the historical C32Q/C32R
-review fragment. It serves only `https://deploy-dev.omnilyzer.ai` on port 443,
-with `POST /task014/dev/promote` proxied over HTTP/1.0 to exactly
-`127.0.0.1:3031`. It expects the public Let's Encrypt certificate chain at
-`/etc/letsencrypt/live/deploy-dev.omnilyzer.ai/fullchain.pem` and private key
-at `/etc/letsencrypt/live/deploy-dev.omnilyzer.ai/privkey.pem`. These are path
-requirements only: C32Z does not issue certificates, place PEM material in the
-repository, configure DNS, or install the asset.
+C32Z/C32ZA reviewed a direct-public-IP HTTPS candidate. The DEV host is behind
+CGNAT, so that candidate is historical and its exact bytes are retained in
+[`ingress/dev-broker-https.nginx.historical.conf`](ingress/dev-broker-https.nginx.historical.conf).
+The uncommitted Cloudflare Tunnel candidate was considered but not selected:
+its normal proxied HTTP response timeout is shorter than Task 014's reviewed
+synchronous execution budget. No Cloudflare authority remains in C32ZC.
 
-`DevBrokerEdgeContract` pins the asset SHA-256 and the closed public origin,
-route, upstream, and certificate paths. It deliberately leaves the installed
-Nginx include destination unset: repository evidence does not prove whether
-the DEV host loads `/etc/nginx/conf.d/*.conf`, a `sites-enabled` directory, or
-another include. Before installation, an operator must inspect the actual
-root-controlled host `nginx.conf`, select and qualify its exact include
-destination, and independently verify the installed asset is loaded. There is
-no C32Z Nginx installer or reload operation.
+The reviewed private path is GitHub-hosted runner -> official pinned Tailscale
+GitHub Action using workload identity federation -> ephemeral CI node tagged
+`tag:omnilyzer-task014-ci` -> private HTTPS at
+`https://omnilyzerdev.tail52e570.ts.net` -> Tailscale Serve ->
+`http://127.0.0.1:3032` -> strict loopback Nginx -> broker
+`127.0.0.1:3031` -> existing executor. Tailscale terminates private tailnet
+HTTPS and forwards only to local Nginx. Funnel is prohibited. No public inbound
+port, public origin IP, router forwarding, host TLS key, or Let's Encrypt
+certificate is needed. CGNAT does not affect this outbound tailnet path.
 
-Live qualification must prove DNS resolves `deploy-dev.omnilyzer.ai` to the
-intended DEV ingress host; `nginx -t` passes; the public certificate is current,
-trusted by normal clients, and valid for that hostname; its private key is not
-group/world readable; and the public origin negotiates HTTPS. The deployment
-endpoint must be unavailable over plaintext HTTP without a redirect. If port
-80 is later used for ACME, it must remain isolated from this endpoint. No
-public IP, ACME procedure, or custom CA bypass is selected here.
+The private **transport** endpoint is exactly
+`https://omnilyzerdev.tail52e570.ts.net/task014/dev/promote`. The logical
+**broker authorization Host** remains `deploy-dev.omnilyzer.ai`, and the
+Task 014 deployment OIDC audience remains
+`https://deploy-dev.omnilyzer.ai/task014-dev`. The Zot and Forgejo audiences
+remain `https://oci-dev.omnilyzer.ai` and
+`u:2:316bec9a-53e4-4807-9557-7febdc979d0a`. DNS transport names do not
+change these authorization identities or the frozen broker parser.
 
-The installed edge must also be probed with an exact valid-shaped request and
-with alternate path/method, duplicate `Authorization`, duplicate
-`X-Omnilyzer-Zot-OIDC`, duplicate `X-Omnilyzer-Forgejo-OIDC`, oversized,
-chunked, and cookie-bearing requests. Each duplicate credential-header probe
-must be rejected **before** reaching the broker. The reviewed Nginx build must
-have at least the duplicate-header variable-combination behavior introduced in
-1.23.0; a version string alone is insufficient. Probe responses for redirects,
-CORS, `Set-Cookie`, and `Location`, and prove deployment access logging cannot
-record credentials. The asset disables access logging, buffering to proxy temp
-files, and caching; strips arbitrary client headers; forwards only the six
-C32Q semantic fields plus internal `Connection: close`; and adds no port-80
-redirect. These observations remain pending live qualification. The broker,
-workflow, and deployment remain disabled.
+[`ingress/dev-broker-tailscale-origin.nginx.conf`](ingress/dev-broker-tailscale-origin.nginx.conf)
+is the sole C32ZC local Nginx candidate, SHA-256 pinned by
+`DevBrokerEdgeContract`. It listens exactly on `127.0.0.1:3032`, accepts only
+the exact incoming Tailscale Host, POST and path without a query, and retains
+the 4096-byte body bound, explicit JSON Content-Type and Content-Length, no
+Transfer-Encoding, Content-Encoding or Cookie, and comma rejection for each
+credential header. It disables access logging, buffering and caching, hides
+Set-Cookie, Location and Access-Control-Allow-Origin, and retains 3/30/900
+connect/send/read timeouts. `proxy_pass_request_headers off` strips
+Tailscale-added identity and forwarding headers plus arbitrary request headers.
+Nginx forwards only the reviewed Host (`deploy-dev.omnilyzer.ai`), three
+credential headers, Content-Type, Content-Length and Connection to the strict
+HTTP/1.0 broker. Other paths return 404. The include destination remains unset
+until the actual root-controlled host Nginx layout is reviewed.
 
-C32ZA pins the candidate's loopback connect, request-send, and upstream
-response-inactivity timeouts at 3, 30, and 900 seconds respectively. The
-synchronous broker path can spend approximately 717 seconds in the reviewed
-OIDC, release-registry, Cosign, and executor bounds before small local overhead;
-a 30-second upstream response wait could abandon an active deployment with an
-ambiguous client result. The 900-second value leaves 183 seconds above that
-known ceiling. Future live Nginx qualification must prove the **loaded**
-timeout values match the pinned contract, alongside `nginx -t`, TLS/DNS,
-routing, and duplicate-header probes. Nginx's read timeout is an inactivity
-limit while awaiting the upstream response, not a total request-age limit.
-The future GitHub promotion submission client must disable automatic retry,
-allow a response deadline greater than 900 seconds, and run inside a workflow
-job with a still longer timeout. A client timeout must never resend the same
-promotion automatically: its deployment OIDC JTI is replay-protected. C32ZA
-does not add that client or change the inert workflow.
+The DEV workflow retains its protected `task014-dev` environment, 25-minute
+job, three separate OIDC audiences, one canonical request of at most 4096
+bytes, one submission with no automatic retry, disabled proxy environment,
+930-second response timeout, and exact HTTP 202 / accepted-response check.
+The pinned Tailscale Action uses only protected environment references for the
+WIF client ID and audience. It pins Tailscale `1.102.4` and the independently
+verified official Linux amd64 static tarball SHA-256
+`50748df1045e60b5b695f19f4c56b0da36c019948b440fb456b6584a50f0d8b9`.
+It makes one connection attempt (`retry: '1'`) with a two-minute connection
+timeout. `use-cache: 'false'` prevents deployment authority from depending on
+reused runner tool-cache bytes. `--accept-routes=false` prevents the CI node
+from accepting unrelated subnet routes; `--accept-dns=true` retains MagicDNS,
+and `--shields-up=true` rejects incoming connections to the ephemeral CI node.
+No long-lived auth key or OAuth client secret is repository authority. The
+Phase-1 gate and STAGING/PROD do not join the tailnet or deploy. The
+[Tailscale Action input contract](https://github.com/tailscale/github-action/blob/d1b6cd204f8dceda5b3eaad7f1f767be390056cd/action.yml)
+and [Serve documentation](https://tailscale.com/docs/reference/tailscale-cli/serve)
+are the external behavioral references. This repository does not configure
+WIF, tailnet policy, Serve, HTTPS or services on the host.
+
+Future live WIF qualification must inspect the installed Tailscale federated
+identity. Its issuer must be exactly `https://token.actions.githubusercontent.com`,
+its subject exactly
+`repo:MichaelTrueX/omnilyzer-platform:environment:task014-dev`, its only scope
+`auth_keys`, and its only permitted tag `tag:omnilyzer-task014-ci`. Where
+Tailscale custom claim rules support them, require exact `repository` =
+`MichaelTrueX/omnilyzer-platform`, `repository_id` = `1350104356`,
+`workflow_ref` =
+`MichaelTrueX/omnilyzer-platform/.github/workflows/platform-promote.yml@refs/heads/main`,
+`ref` = `refs/heads/main`, `environment` = `task014-dev`, `event_name` =
+`workflow_dispatch`, and `runner_environment` = `github-hosted`. Do not bind
+WIF to `workflow_sha`; the broker has a separate exact workflow-SHA rotation.
+Tailnet policy must permit source `tag:omnilyzer-task014-ci` to reach only
+omnilyzerdev TCP 443 for this ingress, with no SSH, unrelated host-port, or
+subnet-route authority required. Funnel remains prohibited. None of this
+configuration is claimed installed.
+
+The installed broker currently pins `expected_workflow_sha` to
+`41095ac83c53b05cc3a1e7a350a4a5c848041c26`. This PR changes the workflow,
+so its final merged main commit will be a different workflow SHA. Once that
+merge SHA is independently known, main must freeze. The operator must stage
+and verify the exact merged Python source under root control, never execute
+privileged code from the omnidev-writable checkout, and invoke the explicit
+root-only `rotate_final_dev_broker_workflow_authority` operation with the
+installed old SHA and reviewed new SHA. It requalifies C32W/C32Y, proves the
+broker configurations differ only in `expected_workflow_sha`, atomically
+replaces only broker `dev.json`, and verifies the new authority. The separate
+read-only qualifier must then confirm the final SHA. Only after that and all
+other live checks may services and Serve be activated. A failed or uncertain
+rotation requires read-only qualification and review, never blind retry.
+
+All live checks remain pending. `DevBrokerEdgeQualificationPlan` pins these
+observations in order:
+
+1. `tailscale-package-version-1.102.4-proven`.
+2. `tailscaled-enabled-and-active`.
+3. `host-online-in-intended-tailnet`.
+4. `host-magicdns-fqdn-exact`.
+5. `no-funnel-configuration`.
+6. `serve-configuration-exact-hostname-https-and-loopback-target`.
+7. `serve-private-tailnet-only`.
+8. `tailscale-https-certificate-valid-for-exact-hostname`.
+9. `github-workload-identity-federation-configured`.
+10. `wif-issuer-exact-github-actions`.
+11. `wif-subject-exact-task014-dev-environment`.
+12. `wif-scope-auth-keys-only`.
+13. `wif-permitted-tag-task014-ci-only`.
+14. `wif-supported-custom-claims-exact-github-workload-no-workflow-sha-binding`.
+15. `ephemeral-ci-node-tag-exact`.
+16. `tailnet-policy-ci-tag-only-omnilyzerdev-tcp-443`.
+17. `tailnet-policy-no-ssh-unrelated-ports-or-subnet-route-authority`.
+18. `no-public-inbound-or-router-forwarding-for-80-443-3031-3032`.
+19. `no-non-loopback-host-listener-on-3031-or-3032`.
+20. `host-nginx-include-layout-proven`.
+21. `pinned-local-nginx-config-installed-and-loaded-exactly`.
+22. `nginx-configuration-test-passed`.
+23. `local-nginx-exact-tailscale-host-only`.
+24. `exact-valid-shaped-private-request-reaches-broker`.
+25. `alternate-path-method-and-query-rejected`.
+26. `local-nginx-rewrites-logical-broker-host-exactly`.
+27. `serve-added-and-arbitrary-headers-cannot-reach-broker`.
+28. `nginx-duplicate-header-combination-proven-by-live-probes`.
+29. `duplicate-authorization-zot-forgejo-rejected-locally`.
+30. `oversized-chunked-content-encoded-and-cookie-requests-rejected`.
+31. `no-redirect-cors-cookie-or-location-leakage`.
+32. `deployment-access-logging-secret-free`.
+33. `loaded-upstream-connect-send-read-timeouts-3-30-900`.
+34. `workflow-exact-tailscale-https-endpoint`.
+35. `workflow-no-automatic-promotion-retry`.
+36. `broker-workflow-sha-rotated-to-final-merge-before-activation`.
+37. `frozen-c32w-application-authority-unchanged`.
+38. `c32y-static-resource-authority-otherwise-unchanged`.
 
 ## C32P request-scoped registry credential integration (inert)
 

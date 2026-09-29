@@ -94,20 +94,29 @@ class WorkflowPolicyTests(unittest.TestCase):
 
     def test_checkout_is_pinned_and_drops_credentials(self) -> None:
         uses = re.findall(r"uses:\s*([^\s#]+)", self.raw)
-        self.assertTrue(uses)
+        self.assertEqual(uses, [
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd",
+        ])
         for value in uses:
             self.assertRegex(value, r"^[^@]+@[0-9a-f]{40}$")
-        self.assertEqual(self.raw.count("persist-credentials: false"), len(uses))
+        self.assertEqual(self.raw.count("persist-credentials: false"), 2)
 
     def test_workflow_has_no_other_deployment_authority(self) -> None:
         forbidden = (
             "docker login", "docker push", "ssh ", "kubectl ",
-            "secrets.", "curl ", "wget ", "upload-artifact", "retry",
+            "curl ", "wget ", "upload-artifact", "auth-key", "oauth-secret",
+            "funnel",
         )
         lowered = self.raw.lower()
         for token in forbidden:
             with self.subTest(token=token):
                 self.assertNotIn(token, lowered)
+        self.assertEqual(self.raw.count("secrets."), 2)
+        self.assertEqual(self.raw.count("retry:"), 1)
+        self.assertIn("retry: '1'", self.raw)
+        self.assertNotIn("retry", self.workflow["jobs"]["deploy_dev"]["steps"][-1]["run"].lower())
 
 
 class SourceBoundaryTests(unittest.TestCase):

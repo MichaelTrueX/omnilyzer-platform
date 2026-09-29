@@ -120,6 +120,18 @@ jobs:
             --target-stage "$TARGET_STAGE" \
             --requested-by "$REQUESTED_BY" \
             --output "$RUNNER_TEMP/task014-dev-promotion-request.json"
+      - name: Join private Task 014 tailnet with federated identity
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:omnilyzer-task014-ci
+          version: '1.102.4'
+          sha256sum: '50748df1045e60b5b695f19f4c56b0da36c019948b440fb456b6584a50f0d8b9'
+          retry: '1'
+          timeout: '2m'
+          use-cache: 'false'
+          args: '--accept-routes=false --accept-dns=true --shields-up=true'
       - name: Submit DEV promotion once
         shell: bash
         run: |
@@ -136,7 +148,7 @@ jobs:
               "https://oci-dev.omnilyzer.ai",
               "u:2:316bec9a-53e4-4807-9557-7febdc979d0a",
           )
-          ENDPOINT = "https://deploy-dev.omnilyzer.ai/task014/dev/promote"
+          ENDPOINT = "https://omnilyzerdev.tail52e570.ts.net/task014/dev/promote"
 
           class NoRedirect(request.HTTPRedirectHandler):
               def redirect_request(self, req, fp, code, msg, headers, newurl):
