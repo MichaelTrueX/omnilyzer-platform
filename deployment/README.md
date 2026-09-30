@@ -3429,14 +3429,15 @@ prove exact Zot digest behavior without persistent Docker credentials; if
 anonymous pull is unavailable, a separate request-scoped credential design
 must be reviewed before activation.
 
-The proposed exclusive `/etc/subuid` and `/etc/subgid` range is
-`omnilyzer-executor:427680:65536`. RootlessKit is fixed to the static source;
-live qualification must prove this exact entry in both files with no extra
-executor range or overlap before activation. Container
-UID/GID 0 maps to host 991:991; `10001` maps to `437680`; `65532` maps to
-`493211`. The canary bind source eventually requires UID 991, GID 437680,
-mode 0770 for migration write access; the Nginx runtime remains 991:991 mode
-0755 with 0644 generated files. Existing replay, audit, executor state and
+The reviewed exclusive `/etc/subuid` and `/etc/subgid` range is
+`omnilyzer-executor:493216:65536`. The earlier `427680:65536` range is already
+assigned to the isolated `omnigpt` DEV account and is therefore prohibited for
+the executor. RootlessKit is fixed to the static source; live qualification
+must prove the exact 493216 entry in both files with no extra
+executor range or overlap before activation. Container UID/GID 0 maps to host 991:991; `10001`
+maps to `503216`; `65532` maps to `558747`. The canary bind source eventually
+requires UID 991, GID 503216, mode 0770 for migration write access; the Nginx
+runtime remains 991:991 mode 0755 with 0644 generated files. Existing replay, audit, executor state and
 other resource ownership must not be repaired or changed. Rootless bind
 behavior, Compose internal networking, Nginx reload, and exact loopback
 `127.0.0.1:3020` publication remain pending live proof. CPU, memory and PID

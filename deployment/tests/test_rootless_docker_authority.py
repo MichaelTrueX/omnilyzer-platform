@@ -117,12 +117,12 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
     def test_identity_paths_and_mapping_are_exact(self) -> None:
         self.assertEqual((AUTHORITY.executor_uid, AUTHORITY.executor_gid), (991, 991))
         self.assertEqual((AUTHORITY.subuid_start, AUTHORITY.subgid_start,
-                          AUTHORITY.subordinate_count), (427680, 427680, 65536))
+                          AUTHORITY.subordinate_count), (493216, 493216, 65536))
         self.assertEqual(AUTHORITY.executor_uid, 991)  # Container ID zero.
         self.assertEqual((AUTHORITY.canary_host_uid, AUTHORITY.canary_host_gid),
-                         (427680 + 10001 - 1, 427680 + 10001 - 1))
+                         (493216 + 10001 - 1, 493216 + 10001 - 1))
         self.assertEqual((AUTHORITY.nginx_host_uid, AUTHORITY.nginx_host_gid),
-                         (427680 + 65532 - 1, 427680 + 65532 - 1))
+                         (493216 + 65532 - 1, 493216 + 65532 - 1))
         self.assertEqual(AUTHORITY.daemon_socket, "/run/user/991/docker.sock")
         self.assertEqual(AUTHORITY.socket,
                          "/run/omnilyzer/deployment/rootless-docker/docker.sock")
@@ -141,7 +141,7 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
         self.assertNotIn("/run/user/991", provisioned)
         self.assertEqual(external["/run/user/991"], (991, 991, 0o700))
         self.assertEqual(provisioned[AUTHORITY.socket_directory], (991, 991, 0o700))
-        self.assertEqual(provisioned[AUTHORITY.canary_runtime], (991, 437680, 0o770))
+        self.assertEqual(provisioned[AUTHORITY.canary_runtime], (991, 503216, 0o770))
         self.assertEqual(provisioned[AUTHORITY.nginx_runtime], (991, 991, 0o755))
 
     def test_inert_assets_are_byte_pinned_and_keep_executor_hardening(self) -> None:
@@ -403,7 +403,10 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
         ):
             self.assertIn(required, checks)
         readme = (ROOT / "deployment/README.md").read_text()
-        self.assertIn("`omnilyzer-executor:427680:65536`", readme)
+        self.assertIn("`omnilyzer-executor:493216:65536`", readme)
+        self.assertIn("earlier `427680:65536` range is already", readme)
+        self.assertNotEqual(AUTHORITY.subuid_start, 427680)
+        self.assertNotEqual(AUTHORITY.subgid_start, 427680)
         self.assertIn("no extra\nexecutor range or overlap", readme)
         self.assertIn("already-qualified private tailnet-only Tailscale Serve ingress", readme)
         self.assertIn("Funnel remains off and prohibited", readme)

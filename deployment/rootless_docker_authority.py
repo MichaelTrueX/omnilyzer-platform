@@ -26,13 +26,13 @@ class RootlessDockerAuthority:
     executor_uid: int = field(init=False, default=991)
     executor_gid: int = field(init=False, default=991)
     executor_user: str = field(init=False, default="omnilyzer-executor")
-    subuid_start: int = field(init=False, default=427680)
-    subgid_start: int = field(init=False, default=427680)
+    subuid_start: int = field(init=False, default=493216)
+    subgid_start: int = field(init=False, default=493216)
     subordinate_count: int = field(init=False, default=65536)
-    canary_host_uid: int = field(init=False, default=437680)
-    canary_host_gid: int = field(init=False, default=437680)
-    nginx_host_uid: int = field(init=False, default=493211)
-    nginx_host_gid: int = field(init=False, default=493211)
+    canary_host_uid: int = field(init=False, default=503216)
+    canary_host_gid: int = field(init=False, default=503216)
+    nginx_host_uid: int = field(init=False, default=558747)
+    nginx_host_gid: int = field(init=False, default=558747)
     engine_version: str = field(init=False, default="29.8.1")
     compose_version: str = field(init=False, default="5.5.1")
     packages: tuple[PackageAuthority, ...] = field(init=False, default=(
@@ -109,7 +109,7 @@ class RootlessDockerAuthority:
         ("/var/lib/omnilyzer/deployment/rootless-home", 991, 991, 0o700),
         ("/var/lib/omnilyzer/deployment/rootless-docker-data", 991, 991, 0o700),
         ("/run/omnilyzer/deployment/rootless-docker", 991, 991, 0o700),
-        ("/var/lib/omnilyzer/deployment/dev/canary-runtime", 991, 437680, 0o770),
+        ("/var/lib/omnilyzer/deployment/dev/canary-runtime", 991, 503216, 0o770),
         ("/var/lib/omnilyzer/deployment/dev/nginx-runtime", 991, 991, 0o755),
         ("/etc/omnilyzer/deployment/rootless-docker", 0, 0, 0o755),
         ("/etc/omnilyzer/deployment/docker-client", 0, 0, 0o755),
