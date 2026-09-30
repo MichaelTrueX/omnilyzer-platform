@@ -18,7 +18,8 @@ preserve and report them unless precedence is explicit and unambiguous.
 For Omnilyzer development, ChatGPT is the primary orchestrator. Treat the current
 repository, this file, applicable ADRs/contracts, SECURITY.md, and
 CONTRIBUTING.md as authoritative; inspect current state rather than relying on
-conversation memory. Omnilyzer and Aeven are unrelated and must never be mixed.
+conversation memory. Keep Omnilyzer isolated from unrelated organizations,
+systems, customers, policies, prompts, documentation, tests, and code.
 
 Use Remote Desktop Commander through the isolated omnigpt@omnilyzerdev account
 for DEV-server inspection, edits, debugging, tests, browser validation, and
