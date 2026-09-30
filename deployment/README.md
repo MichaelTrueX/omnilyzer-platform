@@ -3794,6 +3794,35 @@ rootless configuration/assets, enable linger, start a user manager or Docker,
 create a Docker API socket, alter ingress, or activate broker/executor/deployment.
 A separate post-install qualification remains required before host bootstrap.
 
+## C32ZX rootless Docker package post-install qualification
+
+`rootless_docker_postinstall_qualification.py` is the independent read-only
+proof for the C32ZW package-only state. It requires the successor application
+generation and workflow authority to remain unchanged, all nine C32ZR packages
+to be exact `ii` amd64 versions, all non-target conflicting packages to remain
+absent, the ten C32ZT host dependencies and kernel/AppArmor/cgroup prerequisites
+to remain valid, and the executor identity to remain exactly UID/GID 991 with
+only replay GID 992. The corrected `493216:65536` subordinate range must still
+be free because C32ZX precedes the later rootless-host bootstrap.
+
+The three rootful Docker/containerd unit paths must be root-owned `/dev/null`
+symlinks and systemd must report each unit `LoadState=masked`,
+`UnitFileState=masked`, and `ActiveState=inactive`. No rootful dockerd/containerd
+process, Docker socket, UID-991 runtime directory, C32ZU incoming directory,
+C32ZP temporary source/key, or `policy-rc.d` blocker may remain. The exact C32ZS
+staged bundle is independently requalified.
+
+Every C32ZF critical executable is bound back to its exact owning package with
+a closed `dpkg-query -S` call, must be a root-owned regular single-link file
+with the reviewed mode, and is SHA-256 hashed into the repeated evidence. The
+`dockerd-rootless.sh` digest must additionally equal the pinned C32ZF vendor
+digest. C32ZX rejects alternate `docker-rootlesskit`/RootlessKit selections,
+Buildx plugins, and higher-priority Compose plugins unless a Compose candidate
+resolves to the exact reviewed plugin object. The entire observation is repeated
+and must be identical. C32ZX performs no writes, package mutation, service
+action, subordinate-ID allocation, Docker execution, network access, or
+deployment activation.
+
 ## Local validation
 
 ```bash

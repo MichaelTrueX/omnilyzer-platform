@@ -338,6 +338,20 @@ not allocate subordinate IDs, provision rootless assets, enable/start services,
 start Docker, expose a Docker socket, alter ingress, or activate deployment.
 Those steps require later independently reviewed qualification and bootstrap.
 
+C32ZX supplies the independent read-only post-install gate before any rootless
+host bootstrap. It requires all nine exact target packages fully installed, the
+three persistent rootful masks exact/effective/inactive, the temporary blocker
+and installer-only paths absent, no rootful Docker/containerd process or socket,
+and the C32ZS bundle unchanged. It reuses the unchanged successor, dependency,
+executor, subordinate-ID, AppArmor/userns and cgroup authority, while keeping the
+executor subordinate range free for the later bootstrap. Every critical C32ZF
+executable is rebound to its exact package owner and reviewed mode and hashed
+into the repeated evidence; the vendor rootless script must additionally match
+its pinned SHA-256. RootlessKit/Compose shadow paths and all Buildx plugin paths
+are rejected unless an alternate Compose lookup resolves to the identical
+reviewed plugin object. Two complete observations must match. C32ZX has no
+mutation, network, service-start, Docker, subordinate-ID, or activation surface.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.
