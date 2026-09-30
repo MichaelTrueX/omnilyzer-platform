@@ -39,7 +39,12 @@ projected socket before each Docker/Compose operation and does not inherit
 `DOCKER_HOST` or `DOCKER_CONTEXT`. The installed C32W application remains
 unchanged and cannot use that daemon; a separately reviewed successor
 application generation must pin the merged C32ZG source and migrate the host
-before activation. With the proposed 427680 subordinate UID/GID
+before activation. C32ZH now pins merge
+`47a602d3f2b97fafd6fb8a18240fd5bbb3857ba9` as that successor generation and
+proves that only `deployment/docker_runtime.py` changes among the 41 selected
+application files; runtime configuration and ingress bytes remain unchanged.
+C32ZH is evidence only and does not perform the host migration. With the
+proposed 427680 subordinate UID/GID
 start, container 10001 maps to host 437680 and Nginx 65532 maps to host 493211.
 The canary runtime bind source must be 991:437680 mode 0770 so the daemon can
 resolve it and mapped GID 10001 can write during the explicit migration;

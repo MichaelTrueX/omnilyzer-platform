@@ -190,6 +190,14 @@ socket before command execution. This is still inert repository source: a
 subsequent generation review must pin the merged Git object and explicitly
 migrate the installed application before any runtime activation.
 
+C32ZH pins that successor application generation to merge
+`47a602d3f2b97fafd6fb8a18240fd5bbb3857ba9`. Git-object evidence proves the
+selected 41-file application differs from C32W only in
+`deployment/docker_runtime.py`; the canonical runtime configuration and all
+ingress bytes remain unchanged. This evidence creates no host authority and
+performs no migration. Root-only installation of the successor generation and
+live rootless qualification remain separately reviewed gates.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.
