@@ -3650,6 +3650,25 @@ IDs, start Docker, or activate deployment. A later read-only bundle qualifier
 must hash an exact nine-file staging directory before any privileged bootstrap
 may consume it.
 
+## C32ZS exact rootless Docker package-bundle qualification
+
+`rootless_docker_package_bundle_qualification.py` is the root-only, read-only
+qualifier for a future staged C32ZR bundle. The staging directory is fixed at
+`/var/lib/omnilyzer/deployment/.rootless-docker-install`, root:root mode 0700,
+and every package file is root:root mode 0600. The qualifier accepts no caller
+path or package selection, requires exactly the nine canonical filenames and no
+other entry, verifies each exact byte size and SHA-256 in bounded chunks, and
+retains all file descriptors until every file and the directory have been
+revalidated. Symlinks, hard links, owner/mode drift, size drift, extra files,
+missing files, replacement during hashing, and digest mismatches fail closed.
+
+The public operation performs the complete observation twice and requires
+identical evidence while real/effective root identity remains unchanged. It has
+no network, subprocess, package-manager, write, service, subordinate-ID, Docker,
+or deployment-activation surface. C32ZS evidence is a pre-install proof only; a
+future privileged installer must still rehash the held package bytes immediately
+before consumption to close the final TOCTOU boundary.
+
 ## Local validation
 
 ```bash

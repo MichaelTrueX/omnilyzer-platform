@@ -48,6 +48,8 @@ _DOCKER_SOURCE_BYTES = (
 _POLICY_RC_D_PATH = "/usr/sbin/policy-rc.d"
 _POLICY_RC_D_BYTES = b"#!/usr/bin/python3\nraise SystemExit(101)\n"
 _STAGING_DIRECTORY = "/var/lib/omnilyzer/deployment/.rootless-docker-install"
+_STAGING_DIRECTORY_MODE = 0o700
+_STAGED_PACKAGE_MODE = 0o600
 _ROOTFUL_UNITS = ("docker.service", "docker.socket", "containerd.service")
 _SUPPLEMENTAL_PACKAGES = (
     PackageAuthority(
@@ -216,6 +218,10 @@ class RootlessDockerInstallationAuthority:
     policy_rc_d_path: str = field(init=False, default=_POLICY_RC_D_PATH)
     policy_rc_d_bytes: bytes = field(init=False, default=_POLICY_RC_D_BYTES)
     staging_directory: str = field(init=False, default=_STAGING_DIRECTORY)
+    staging_directory_mode: int = field(
+        init=False, default=_STAGING_DIRECTORY_MODE
+    )
+    staged_package_mode: int = field(init=False, default=_STAGED_PACKAGE_MODE)
     rootful_units: tuple[str, ...] = field(init=False, default=_ROOTFUL_UNITS)
     conflicting_packages: tuple[str, ...] = field(
         init=False, default=_CONFLICTING_PACKAGES
@@ -282,6 +288,8 @@ class RootlessDockerInstallationAuthority:
             or self.policy_rc_d_path != _POLICY_RC_D_PATH
             or self.policy_rc_d_bytes != _POLICY_RC_D_BYTES
             or self.staging_directory != _STAGING_DIRECTORY
+            or self.staging_directory_mode != _STAGING_DIRECTORY_MODE
+            or self.staged_package_mode != _STAGED_PACKAGE_MODE
             or AUTHORITY.subuid_start != 493216
             or AUTHORITY.subgid_start != 493216
             or AUTHORITY.subordinate_count != 65536
@@ -312,6 +320,11 @@ class RootlessDockerInstallationAuthority:
         """Return the exact nine package filenames in safe install order."""
 
         return tuple(item.filename for item in self.payloads)
+
+    def bundle_size(self) -> int:
+        """Return the exact total byte size of the nine staged packages."""
+
+        return sum(item.size for item in self.payloads)
 
 
 INSTALLATION_AUTHORITY = RootlessDockerInstallationAuthority()
