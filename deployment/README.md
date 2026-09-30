@@ -3537,6 +3537,18 @@ closed. A later root-only implementation must consume this state machine; C32ZJ
 itself cannot replace files, install Docker, start services or activate
 deployment.
 
+## C32ZK privileged broker configuration reader (repository only)
+
+`root_broker_configuration_reader.py` is the privileged read-only counterpart
+to the broker service loader. It reuses the hardened descriptor-relative path
+walk, canonical parser, file/directory metadata validation and post-read
+revalidation, but replaces broker-process identity binding with exact root
+process identity plus the existing broker GID binding on the protected
+directory and `dev.json`. It exposes no mutation, CLI, network, service or
+Docker surface. C32ZK exists so the later root-only host migration can preserve
+the independently reviewed workflow SHA from the installed broker authority
+without granting root a bypass around the file-integrity checks.
+
 ## Local validation
 
 ```bash
