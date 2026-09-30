@@ -84,6 +84,29 @@ class RootlessDockerInstallationAuthorityTests(unittest.TestCase):
                 self.assertEqual(item.deb_sha256, item.deb_sha256.lower())
                 self.assertEqual(item.origin, expected_origins[item.name])
 
+    def test_two_new_ubuntu_dependencies_are_exact(self) -> None:
+        authority = INSTALLATION_AUTHORITY
+        self.assertEqual(
+            authority.supplemental_package_specs(),
+            (
+                "libsubid4=1:4.13+dfsg1-4ubuntu3.2",
+                "libslirp0=4.7.0-1ubuntu3.1",
+            ),
+        )
+        self.assertEqual(
+            tuple(item.deb_sha256 for item in authority.supplemental_packages),
+            (
+                "ba97fd28c53560a8d2a2261e8f75a7ab4112535b12f9fe1d50970c30051da0da",
+                "4efa2d1c509de4d10fe965e86a3d864bf542996caf476d9111fd882c73857164",
+            ),
+        )
+        self.assertTrue(all(
+            item.origin == "Ubuntu signed noble-updates/main amd64"
+            and item.required_executables == ()
+            for item in authority.supplemental_packages
+        ))
+        self.assertEqual(len(authority.all_package_specs()), 9)
+
     def test_start_suppression_and_staging_are_fixed(self) -> None:
         authority = INSTALLATION_AUTHORITY
         self.assertEqual(
