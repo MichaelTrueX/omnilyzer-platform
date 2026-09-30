@@ -64,8 +64,11 @@ The canary runtime bind source must be 991:503216 mode 0770 so the daemon can
 resolve it and mapped GID 10001 can write during the explicit migration;
 migration files created by UID 10001 map to host UID 503216. The Nginx runtime
 source stays executor-owned 0755 with 0644 generated fragments. This mapping and enforcement of all three
-cgroup limits require live proof before deployment activation. See the C32ZF
-section of [deployment/README.md](../../README.md).
+cgroup limits require live proof before deployment activation. C32ZP now pins
+the temporary signed-APT installation authority, including the exact Docker
+release key bytes/fingerprints and seven package selections, but remains pure
+repository data with no package or service mutation. See the C32ZF/C32ZP
+sections of [deployment/README.md](../../README.md).
 
 `/var/lib/omnilyzer/deployment/dev/canary-runtime` is mounted read-only at `/run/omnilyzer-canary` in application slots. The explicit migration operation alone mounts it read-write and runs `/app/migration.py`; migration is never startup behavior. Identity is `task014-executable-canary-v1`, definition checksum is `b25e7d2d55bce3e233f58f9607e715daebc2a1a69c37603adbb569604ef76421`, and durable files are `migration.lock` and `migration.json`.
 

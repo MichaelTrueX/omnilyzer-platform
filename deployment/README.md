@@ -3582,6 +3582,26 @@ C32ZM does not install Docker, change packages, start/enable services, alter
 Tailscale/ingress, or activate deployment. Actual host execution remains a
 separate privileged step from reviewed root-controlled source.
 
+## C32ZP rootless Docker installation authority (repository only)
+
+`rootless_docker_installation_authority.py` binds the corrected C32ZF host
+authority to one closed installation plan before any package mutation exists.
+The plan keeps exactly seven reviewed packages, prohibits Buildx, fixes the
+three rootful units that must be masked, fixes the temporary `policy-rc.d`
+start blocker, and uses a private root-owned staging directory. Docker package
+metadata is obtained only through a temporary signed Noble stable APT source.
+The Docker release key is fetched only from the fixed HTTPS URL and is pinned
+by SHA-256 `1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570`,
+primary fingerprint `9DC858229FC7DD38854AE2D88D81803C0EBFCD88`, and signing fingerprint
+`D3306A018370199E527AE7997EA0A9C3F273FCD8`. The temporary source and key
+paths are Omnilyzer-specific and must not become ambient host package authority.
+Ubuntu `uidmap` and `slirp4netns` remain selected from the host's signed Ubuntu
+archive indexes and all seven downloaded `.deb` payloads remain subject to the
+existing exact package SHA-256 authority. C32ZP performs no I/O, download,
+package installation, mask, subordinate-ID change, service action or Docker
+operation. A separate privileged runtime and live qualification are still
+required.
+
 ## Local validation
 
 ```bash
