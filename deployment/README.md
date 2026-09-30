@@ -3549,6 +3549,21 @@ Docker surface. C32ZK exists so the later root-only host migration can preserve
 the independently reviewed workflow SHA from the installed broker authority
 without granting root a bypass around the file-integrity checks.
 
+## C32ZL successor host-migration qualification (repository only)
+
+`successor_host_migration_qualification.py` adds the read-only privileged
+preflight for the future host migration. It requires exact real/effective root
+identity, exact inactive systemd state for broker service, executor service and
+executor socket, hardened root reads of both installed configurations, and a
+complete installed application matching either the frozen C32W or pinned C32ZH
+manifest. It normalizes the installed pair back through C32W, classifies the
+current prefix through C32ZJ, rereads all authority and unit state, and fails if
+anything changes between observations. The independently reviewed workflow SHA
+is taken only from the installed root-owned broker configuration and is carried
+forward unchanged; it is not a caller input. C32ZL runs only read-only
+`systemctl show` queries and performs no file, package, Docker, service or
+deployment mutation.
+
 ## Local validation
 
 ```bash
