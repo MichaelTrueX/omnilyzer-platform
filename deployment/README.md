@@ -3507,6 +3507,20 @@ C32W. C32ZH performs Git-object review only: it does not change the installed
 application, executor configuration, host packages, services, Docker state, or
 deployment activation. The root-only host migration remains a separate review.
 
+## C32ZI successor configuration authority (repository only)
+
+`successor_configuration_authority.py` derives the aligned executor and broker
+configuration pair for the C32ZH generation without reading or mutating host
+state. The exact frozen C32W executor configuration is the sole predecessor.
+The successor executor changes only `reviewed_commit` to
+`47a602d3f2b97fafd6fb8a18240fd5bbb3857ba9`; runtime configuration, ingress
+hashes, identities, canary image, installation authority and all other fields
+remain unchanged. The broker is rebuilt from that successor executor plus one
+explicit reviewed workflow SHA and the existing pinned Sigstore provenance.
+Executor and broker must agree on every shared authority field and on their
+installation contract. C32ZI performs no file I/O, Docker operation, service
+action, host migration or deployment activation.
+
 ## Local validation
 
 ```bash
