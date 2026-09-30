@@ -77,10 +77,12 @@ class RootlessDockerInstallationAuthorityTests(unittest.TestCase):
         names = {item.name for item in authority.packages}
         self.assertNotIn("docker-buildx-plugin", names)
         self.assertIn("docker-buildx-plugin", authority.conflicting_packages)
+        expected_origins = {item.name: item.origin for item in AUTHORITY.packages}
         for item in authority.packages:
             with self.subTest(item=item.name):
                 self.assertEqual(len(item.deb_sha256), 64)
                 self.assertEqual(item.deb_sha256, item.deb_sha256.lower())
+                self.assertEqual(item.origin, expected_origins[item.name])
 
     def test_start_suppression_and_staging_are_fixed(self) -> None:
         authority = INSTALLATION_AUTHORITY
