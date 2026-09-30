@@ -418,3 +418,14 @@ Adoption proceeds through inert repository-side implementation, non-live contrac
 The authority can be withdrawn by disabling GitHub environment activation, revoking or disabling the broker's OIDC trust policy, stopping the broker and executor, and removing public broker ingress. Immutable release artifacts and deployment state and audit evidence must be retained.
 
 A future pull agent or orchestrator may replace the transport and service implementation through a superseding decision. ADR 0006 immutable artifact, promotion, state, migration, and rollback semantics remain unchanged.
+
+
+C32ZZ is the static privileged bootstrap following the independent C32ZX
+package proof. It assigns only the reviewed executor subordinate-ID range,
+installs the byte-pinned persistent rootless directories/assets, and reloads the
+system manager while every deployment/rootless runtime remains inactive. The
+executor's private Docker projection directory is explicitly systemd runtime
+state, created by `RuntimeDirectory=omnilyzer/deployment/rootless-docker` with
+mode `0700` when the executor later starts; C32ZZ does not persist that `/run`
+path. Linger, the UID-991 user manager and the rootless Docker daemon remain
+separate reviewed transitions.

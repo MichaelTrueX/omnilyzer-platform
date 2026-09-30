@@ -108,7 +108,6 @@ class RootlessDockerAuthority:
     provisioned_directories: tuple[tuple[str, int, int, int], ...] = field(init=False, default=(
         ("/var/lib/omnilyzer/deployment/rootless-home", 991, 991, 0o700),
         ("/var/lib/omnilyzer/deployment/rootless-docker-data", 991, 991, 0o700),
-        ("/run/omnilyzer/deployment/rootless-docker", 991, 991, 0o700),
         ("/var/lib/omnilyzer/deployment/dev/canary-runtime", 991, 503216, 0o770),
         ("/var/lib/omnilyzer/deployment/dev/nginx-runtime", 991, 991, 0o755),
         ("/etc/omnilyzer/deployment/rootless-docker", 0, 0, 0o755),
@@ -138,7 +137,7 @@ class RootlessDockerAuthority:
         (
             "deployment/systemd/rootless/rootless-docker-executor-socket.conf",
             "/etc/systemd/system/omnilyzer-deployment-executor.service.d/rootless-docker-socket.conf",
-            "889ce705145e2d4ef398702eea8f870c1c6fd84f126a8e44aed6f98085b72ffa",
+            "afef78b7ed57beedc2a8496b602c3f7d6dad7981dd88258f6b7e8c35a7fbed2d",
             0, 0, 0o644,
         ),
         (

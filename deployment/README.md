@@ -3417,12 +3417,17 @@ allowed. The system executor cannot directly depend on a user-manager unit;
 future runtime operations must fail closed if the daemon/socket is absent or
 wrong.
 
-The Omnilyzer-provisioned fixed paths are HOME
-`/var/lib/omnilyzer/deployment/rootless-home`, data root
-`/var/lib/omnilyzer/deployment/rootless-docker-data`, and the private
-projection directory `/run/omnilyzer/deployment/rootless-docker`, all UID/GID
-991 and mode 0700. Daemon exec root and RootlessKit state stay ephemeral under
-`/run/user/991`. Root-owned canonical daemon/client JSON remains fixed under
+The Omnilyzer-provisioned persistent fixed paths are HOME
+`/var/lib/omnilyzer/deployment/rootless-home` and data root
+`/var/lib/omnilyzer/deployment/rootless-docker-data`, both UID/GID 991 and mode
+0700. The private projection directory
+`/run/omnilyzer/deployment/rootless-docker` is not durable bootstrap state: the
+executor drop-in owns it with
+`RuntimeDirectory=omnilyzer/deployment/rootless-docker` and
+`RuntimeDirectoryMode=0700`, so systemd recreates it with executor ownership on
+every executor start and removes the innermost directory on stop. Daemon exec
+root and RootlessKit state stay ephemeral under `/run/user/991`. Root-owned
+canonical daemon/client JSON remains fixed under
 `/etc/omnilyzer/deployment`; client config is exactly `{}` plus newline, with
 no mutable context or persistent registry credential. Future image pull must
 prove exact Zot digest behavior without persistent Docker credentials; if
@@ -3827,6 +3832,25 @@ resolves to the exact reviewed plugin object. The entire observation is repeated
 and must be identical. C32ZX performs no writes, package mutation, service
 action, subordinate-ID allocation, Docker execution, network access, or
 deployment activation.
+
+## C32ZZ static rootless Docker host bootstrap
+
+`rootless_docker_static_bootstrap.py` is the first privileged bootstrap after
+C32ZX. It consumes the exact package-only post-install state, assigns only the
+reviewed `omnilyzer-executor:493216:65536` sub-UID/sub-GID ranges, publishes the
+reviewed persistent directories and six byte-pinned rootless assets through
+exclusive staged paths, and performs only a system-manager `daemon-reload`.
+It is resumable across exact absent/exact prefixes and rejects substituted
+sub-ID ranges, directories, files, package/runtime drift, or active deployment
+control-plane units.
+
+C32ZZ deliberately does **not** enable linger, start `user@991.service`, start
+the rootless Docker user unit, create `/run/user/991`, enable/start the broker
+or executor, or activate deployment. The executor-visible projection directory
+is also not created by C32ZZ; its reboot-safe lifecycle belongs to the executor
+service through the reviewed `RuntimeDirectory=` drop-in. A separate read-only
+post-bootstrap qualification is required before any user-manager or daemon
+startup.
 
 ## Local validation
 
