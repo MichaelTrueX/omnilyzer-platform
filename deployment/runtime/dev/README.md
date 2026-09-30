@@ -212,3 +212,16 @@ private socket, Docker 29.8.1 rootless identity, overlay2/systemd-cgroup-v2
 configuration, empty pre-workload inventory and exact dockerd argv while the
 projected executor socket and all deployment units remain inactive. Reboot
 enablement and workload activation are later review boundaries.
+
+### C33F daemon qualification
+
+C33F independently rechecks the running rootless Docker daemon twice without
+importing C33E. It binds the active-but-disabled user unit to the UID-991
+RootlessKit MainPID, exact RootlessKit authority, exact dockerd argv, private
+mode-0660 Unix socket, Docker 29.8.1 rootless/overlay2/systemd-cgroup-v2 server
+identity and empty pre-workload inventory. Rootful Docker and all deployment
+services remain inactive, and the executor projection directory remains absent.
+
+### C33F running daemon qualification
+
+C33F independently proves the live C33E daemon without importing the mutator. It binds systemd MainPID to the UID-991 RootlessKit process, verifies the reviewed RootlessKit bootstrap tokens and exact dockerd argv, then validates the private Unix socket and Docker 29.8.1 rootless engine configuration. The engine must still have zero containers/images and the user unit must remain disabled while deployment services remain inactive.
