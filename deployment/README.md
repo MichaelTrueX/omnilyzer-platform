@@ -3564,6 +3564,23 @@ forward unchanged; it is not a caller input. C32ZL runs only read-only
 `systemctl show` queries and performs no file, package, Docker, service or
 deployment mutation.
 
+## C32ZM successor host-migration runtime (repository only)
+
+`successor_host_migration_runtime.py` implements the reviewed root-only,
+prefix-resumable C32ZJ transition while deployment remains inactive. It
+acquires the existing privileged process lock, rechecks exact root identity and
+C32ZL systemd inactivity before and after each mutation, and can publish only
+three fixed objects in this order: the pinned C32ZG `docker_runtime.py`, the
+C32ZI executor configuration, then the matching C32ZI broker configuration.
+Each publication reuses the previously reviewed prefix stage, fsync and atomic
+replace primitive. Exact temporary names are accepted only beside their fixed
+destinations and only for the next C32ZJ operation, so interruption is
+resumable without accepting reordered or mixed authority. The installed broker
+workflow SHA is carried forward unchanged from the root-owned broker config.
+C32ZM does not install Docker, change packages, start/enable services, alter
+Tailscale/ingress, or activate deployment. Actual host execution remains a
+separate privileged step from reviewed root-controlled source.
+
 ## Local validation
 
 ```bash
