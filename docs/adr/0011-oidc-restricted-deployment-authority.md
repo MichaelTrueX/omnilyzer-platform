@@ -224,6 +224,16 @@ mutation or activation surface. This allows a later privileged migration to
 carry forward the installed `expected_workflow_sha` without trusting a caller
 input.
 
+C32ZL adds the privileged read-only migration preflight. It requires exact
+root identity and exact inactive systemd state for the broker service, executor
+service, and executor socket; reads both protected configuration files through
+the hardened root adapters; verifies the entire installed application as C32W
+or C32ZH; and classifies the result through C32ZJ. The complete observation is
+repeated and must remain byte-for-byte stable. The broker workflow SHA is
+preserved from the installed broker authority rather than supplied by the
+caller. C32ZL issues only closed `systemctl show` reads and cannot mutate or
+activate host state.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.

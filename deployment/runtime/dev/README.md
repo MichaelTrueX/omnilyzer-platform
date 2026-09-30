@@ -51,6 +51,10 @@ configuration change. C32ZJ adds the pure four-phase migration state machine:
 C32W, successor application, successor executor configuration, then successor
 broker configuration. It preserves the broker workflow SHA and rejects every
 other partial or reordered state. No root mutation is implemented in C32ZJ.
+C32ZL is the read-only root preflight for that state machine. It requires the
+broker/executor services and executor socket to remain inactive, rereads both
+root-owned configurations, verifies the complete installed application against
+C32W or C32ZH, and rejects concurrent change. It performs no migration.
 With the proposed 427680 subordinate UID/GID
 start, container 10001 maps to host 437680 and Nginx 65532 maps to host 493211.
 The canary runtime bind source must be 991:437680 mode 0770 so the daemon can
