@@ -1,3 +1,9 @@
+/*
+ * File: spikes/design-system/src/styles.css
+ * Purpose: Bridges governed semantic tokens and reviewed structural utilities into Tailwind.
+ * Related: ../tokens/, ../generated/web/tokens.css, ../tests/governance.test.ts
+ */
+
 @import "tailwindcss";
 @import "../generated/web/tokens.css";
 
@@ -6,6 +12,8 @@
 }
 
 @theme inline {
+  /* One reviewed structural breakpoint restores the demo's responsive composition. */
+  --breakpoint-lg: 64rem;
   --color-canvas: var(--omni-color-canvas);
   --color-surface: var(--omni-color-surface);
   --color-surface-raised: var(--omni-color-surface-raised);

@@ -1,3 +1,12 @@
+<!--
+File: spikes/design-system/README.md
+Purpose: Documents the design-system spike, its validation commands, evidence, and remaining limits.
+Related:
+- playwright.config.ts
+- tests/browser/demo.spec.ts
+- results/design-system-validation.md
+-->
+
 # Omnilyzer design-system foundation spike
 
 This spike validates one canonical DTCG token vocabulary flowing through Style Dictionary to semantic web and native outputs, then through a constrained Tailwind v4 bridge to three Omnilyzer components. Radix Dialog is an internal behavior primitive, not part of the public API.
@@ -11,13 +20,13 @@ This spike validates one canonical DTCG token vocabulary flowing through Style D
 - `src/styles.css` resets Tailwind's theme namespaces and deliberately bridges only semantic design values. Structural utilities remain available. Repository linting detects common arbitrary/raw styling because Tailwind itself cannot prohibit arbitrary values.
 - Button, TextField, and Dialog provide the representative public boundary. Radix is wrapped only by Dialog and is not re-exported.
 
-Accessibility is an architecture requirement: tests calculate WCAG 2.2 AA contrast for both themes, assert semantic relationships and the 44px target contract, and run axe A/AA-applicable rules. axe color contrast is disabled only in jsdom because layout/style evaluation is not reliable there; deterministic token contrast tests provide that evidence. Static CSS avoids CSS-in-JS, component runtime style injection, inline style objects, remote fonts, and remote assets. This does not prove a final application's complete CSP configuration or characterize Radix internals as Omnilyzer policy.
+Accessibility is an architecture requirement: deterministic tests calculate WCAG 2.2 AA contrast for both themes, assert semantic relationships and the 44px target contract, and run axe A/AA-applicable rules. axe color contrast remains disabled only in jsdom because layout/style evaluation is not reliable there. A separate Playwright 1.63.0 Chromium suite now runs axe against real computed styles, verifies rendered 44px controls, Dialog Escape/focus restoration, and the reviewed mobile-to-desktop responsive composition. Static CSS avoids CSS-in-JS, component runtime style injection, inline style objects, remote fonts, and remote assets. This does not prove a final application's complete CSP configuration or characterize Radix internals as Omnilyzer policy.
 
 ## Versions and commands
 
 Node.js 24 LTS is the validated frontend/design-system JavaScript tooling runtime. This spike uses Node.js 24.20.0, pinned for development by `.node-version`; `package.json` and `.npmrc` reject unsupported engines. Node 20 is not supported by this tooling baseline. Validation used an isolated Node distribution and did not replace or modify the server's global Node installation. This frontend tooling decision does not change Django or its Python runtime.
 
-Pinned spike dependencies: Style Dictionary 5.5.2, Tailwind CSS and `@tailwindcss/vite` 4.3.3, React/React DOM 19.2.8, TypeScript 7.0.2, Vite 8.2.2, React Vite plugin 6.1.0, Radix Dialog 1.1.23, Vitest 4.1.10, Testing Library React 16.3.2, user-event 14.6.6, axe-core 4.13.0, jsdom 30.0.1, and React types 19.2.18/19.2.5.
+Pinned spike dependencies: Style Dictionary 5.5.2, Tailwind CSS and `@tailwindcss/vite` 4.3.3, React/React DOM 19.2.8, TypeScript 7.0.2, Vite 8.2.2, React Vite plugin 6.1.0, Radix Dialog 1.1.23, Vitest 4.1.10, Playwright Test 1.63.0, Testing Library React 16.3.2, user-event 14.6.6, axe-core 4.13.0, jsdom 30.0.1, and React types 19.2.18/19.2.5.
 
 ```bash
 npm run tokens:validate
@@ -27,10 +36,13 @@ npm run typecheck
 npm test
 npm run build:web
 npm run validate
+npm run test:browser
 ```
+
+`.github/workflows/design-system-browser.yml` repeats both the deterministic suite and the Chromium suite on GitHub-hosted Ubuntu whenever this spike or its browser workflow changes. The browser binary is CI tooling only and is not part of any Omnilyzer release artifact.
 
 ## Boundaries and limitations
 
 Style Dictionary 5.5.2 does not constitute proof of complete DTCG 2025.10 feature support. The adapter supports only the declared spike profile; it is not a general token framework. Native output proves cross-platform transformation only—not React Native rendering, Dynamic Type, Android/iOS font mapping, or device-density behavior. Packaging/version distribution and equivalent governance distribution to product repositories remain later work.
 
-The synthetic palette, system typography, and spacing are validation evidence only. Task 005 decides token/component architecture, not Omnilyzer's final brand identity. Final brand primitives can replace these values without changing semantic component APIs.
+The synthetic palette, system typography, spacing, and single reviewed `lg` structural breakpoint are validation evidence only. Task 005 decides token/component architecture, not Omnilyzer's final brand identity. Final brand primitives can replace these values without changing semantic component APIs. Automated Chromium evidence does not replace manual assistive-technology testing, cross-browser validation, visual regression, or final product-level accessibility validation.

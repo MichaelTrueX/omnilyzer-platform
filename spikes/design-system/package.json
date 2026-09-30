@@ -12,6 +12,8 @@
     "lint:semantic": "node scripts/lint-semantic-usage.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "dev:web": "vite --host 127.0.0.1 --port 4173 --strictPort",
+    "test:browser": "playwright test",
     "build:web": "vite build && node scripts/validate-web-build.mjs",
     "validate": "npm run tokens:validate && npm run tokens:build && npm run lint:semantic && npm run typecheck && npm test && npm run build:web"
   },
@@ -21,6 +23,7 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/react": "16.3.2",
     "@testing-library/user-event": "14.6.6",
