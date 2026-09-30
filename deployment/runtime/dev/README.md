@@ -84,6 +84,12 @@ preinstalled package dependency boundary with exact package names, architectures
 minimum Debian versions, `ii` status, closed `dpkg --compare-versions` checks,
 and explicit absence of `docker-cli` and `rootlesskit`. The dependency versions
 join the repeated pre-install evidence; no package or service mutation is added.
+C32ZU adds the root-only exact package stager: fixed Python HTTPS with no proxy
+or redirect path, a deterministic private incoming directory, safe resume only
+for exact root-owned partial files, two C32ZQ observations around download,
+Linux no-replace atomic publication, and final independent C32ZS qualification.
+It stages bytes
+only and still performs no package installation or service activation.
 
 `/var/lib/omnilyzer/deployment/dev/canary-runtime` is mounted read-only at `/run/omnilyzer-canary` in application slots. The explicit migration operation alone mounts it read-write and runs `/app/migration.py`; migration is never startup behavior. Identity is `task014-executable-canary-v1`, definition checksum is `b25e7d2d55bce3e233f58f9607e715daebc2a1a69c37603adbb569604ef76421`, and durable files are `migration.lock` and `migration.json`.
 

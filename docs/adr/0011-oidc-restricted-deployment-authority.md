@@ -293,6 +293,21 @@ comparison shape. Observed dependency versions are part of the repeated evidence
 Docker CE packages conflict with them. C32ZT cannot configure, install, remove,
 upgrade, repair or otherwise mutate packages or services.
 
+C32ZU is the only reviewed package-byte staging runtime. It has no caller
+arguments and runs under the existing privileged process lock. The fixed C32ZR
+URLs are fetched directly with Python HTTPS using the system CA bundle and TLS
+1.2 minimum; proxies, redirects, alternate hosts, shell execution and package
+manager network resolution are absent. Response status, length and encoding are
+checked before the exact C32ZR byte count and SHA-256 are accepted; transfer
+encoding, ranges and redirects are rejected. The runtime uses one deterministic
+root-only incoming directory and may rewrite only a
+proved-safe root-owned 0600 partial reviewed file; ambiguous objects are never
+removed or repaired. C32ZQ must match before and after network activity. Only a
+fully rehashed incoming directory is atomically published with Linux
+`RENAME_NOREPLACE`, after which C32ZS must independently qualify the exact
+bundle. C32ZU has no package-install,
+service, subordinate-ID, Docker-daemon or deployment-activation capability.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.
