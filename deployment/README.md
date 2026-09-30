@@ -3908,3 +3908,20 @@ group and CPU/memory/PID delegation, and a functioning user-manager query path.
 The reviewed rootless Docker user unit must remain loaded, disabled and inactive;
 rootful Docker stays masked; no Docker process/socket, executor, broker or
 deployment activation is allowed.
+
+## C33E rootless Docker daemon start
+
+`rootless_docker_daemon_start.py` is the privileged daemon-start transition
+after C33D. It consumes the independent UID-991 user-manager proof and permits
+only `systemctl --user --machine=omnilyzer-executor@.host start
+omnilyzer-task014-rootless-docker.service`. The user unit must remain disabled;
+reboot persistence is deliberately deferred to a later review.
+
+C33E requires the unit to become loaded/active/running, proves the exact
+UID/GID-991 mode-0660 private Unix socket at `/run/user/991/docker.sock`,
+connects only to that socket with the root-owned empty Docker client config, and
+requires Docker 29.8.1 using overlay2, systemd cgroups v2, the reviewed data
+root, rootless+cgroupns security options and an empty container/image inventory.
+The sole dockerd process must be UID 991 and use the exact reviewed daemon argv.
+Rootful Docker remains masked, the executor projection directory remains absent,
+and broker/executor/deployment remain inactive. C33E never enables a unit.
