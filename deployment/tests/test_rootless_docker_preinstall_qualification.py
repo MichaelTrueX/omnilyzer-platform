@@ -4,7 +4,8 @@ Purpose:
 - exercise the C32ZQ privileged read-only qualification boundary without host
   mutation;
 - prove package absence, rootful-runtime absence, subordinate-ID isolation,
-  executor identity, kernel prerequisites, and repeated stable observation.
+  executor identity, exact preinstalled dependency closure, kernel prerequisites,
+  and repeated stable observation.
 
 Linked file:
 - deployment/rootless_docker_preinstall_qualification.py
@@ -53,6 +54,10 @@ def evidence(**changes):
         "supplemental_packages": tuple(
             item.name for item in INSTALLATION_AUTHORITY.supplemental_packages
         ),
+        "host_dependencies": tuple(
+            (item.package, "9.9-test", item.architecture)
+            for item in INSTALLATION_AUTHORITY.host_dependencies
+        ),
         "cgroup_controllers": ("cpu", "io", "memory", "pids"),
     }
     values.update(changes)
@@ -74,6 +79,13 @@ class RootlessDockerPreinstallQualificationTests(unittest.TestCase):
             ("supplementary_gids", (992, 999)),
             ("subuid_start", 427680),
             ("direct_packages", ()),
+            ("host_dependencies", ()),
+            (
+                "host_dependencies",
+                value.host_dependencies[:1]
+                + (("wrong", "1.0", "amd64"),)
+                + value.host_dependencies[2:],
+            ),
             ("cgroup_controllers", ("cpu", "memory")),
         ):
             with self.subTest(field=field), self.assertRaises(ValueError):
@@ -105,9 +117,86 @@ class RootlessDockerPreinstallQualificationTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(OSError):
                 module._require_package_absent(name)
 
+    def test_host_dependency_query_and_version_floor_are_closed(self) -> None:
+        requirement = INSTALLATION_AUTHORITY.host_dependencies[0]
+        self.assertEqual(requirement.package, "libc6")
+        self.assertEqual(requirement.minimum_version, "2.38")
+        with patch.object(
+            module,
+            "_run",
+            side_effect=(
+                completed(0, b"ii \t2.39-0ubuntu8.9\tamd64\n"),
+                completed(0),
+            ),
+        ) as run:
+            self.assertEqual(
+                module._require_host_dependency(requirement),
+                ("libc6", "2.39-0ubuntu8.9", "amd64"),
+            )
+        self.assertEqual(
+            run.call_args_list,
+            [
+                call(("/usr/bin/dpkg-query", "-W", module._DPKG_FORMAT, "libc6")),
+                call(("/usr/bin/dpkg", "--compare-versions", "2.39-0ubuntu8.9", "ge", "2.38")),
+            ],
+        )
+
+        unversioned = next(
+            item
+            for item in INSTALLATION_AUTHORITY.host_dependencies
+            if item.minimum_version is None
+        )
+        with patch.object(
+            module,
+            "_run",
+            return_value=completed(
+                0,
+                f"ii \t1.0\t{unversioned.architecture}\n".encode("ascii"),
+            ),
+        ) as run:
+            self.assertEqual(
+                module._require_host_dependency(unversioned),
+                (unversioned.package, "1.0", unversioned.architecture),
+            )
+        self.assertEqual(run.call_count, 1)
+
+    def test_host_dependency_rejects_forged_requirement_type(self) -> None:
+        requirement = INSTALLATION_AUTHORITY.host_dependencies[0]
+        forged = SimpleNamespace(
+            package=requirement.package,
+            minimum_version=requirement.minimum_version,
+            architecture=requirement.architecture,
+        )
+        with self.assertRaises(OSError):
+            module._require_host_dependency(forged)
+
+    def test_host_dependency_rejects_bad_status_architecture_and_floor(self) -> None:
+        requirement = INSTALLATION_AUTHORITY.host_dependencies[0]
+        for result in (
+            completed(1),
+            completed(0, b"rc \t2.39\tamd64\n"),
+            completed(0, b"ii \t2.39\tall\n"),
+            completed(0, b"ii \tbad version\tamd64\n"),
+        ):
+            with self.subTest(result=result), patch.object(
+                module, "_run", return_value=result,
+            ), self.assertRaises(OSError):
+                module._require_host_dependency(requirement)
+        with patch.object(
+            module,
+            "_run",
+            side_effect=(
+                completed(0, b"ii \t2.39\tamd64\n"),
+                completed(1),
+            ),
+        ), self.assertRaises(OSError):
+            module._require_host_dependency(requirement)
+
     def test_command_runner_rejects_unreviewed_shapes(self) -> None:
         for argv in (
             ("/usr/bin/dpkg-query", "--help"),
+            ("/usr/bin/dpkg", "--configure", "-a"),
+            ("/usr/bin/dpkg", "--compare-versions", "2.39", "lt", "2.38"),
             ("/usr/bin/systemctl", "start", "docker.service"),
             ("/usr/bin/pgrep", "-f", "dockerd"),
             ("/bin/sh", "-c", "true"),
@@ -267,12 +356,23 @@ class RootlessDockerPreinstallQualificationTests(unittest.TestCase):
             expected_workflow_sha=WORKFLOW,
         )
         checked = []
+        checked_dependencies = []
+        dependency_evidence = tuple(
+            (item.package, "9.9-test", item.architecture)
+            for item in INSTALLATION_AUTHORITY.host_dependencies
+        )
         with patch.object(module, "_root_identity", return_value=(0, 0, 0, 0)), \
                 patch.object(
                     module, "qualify_successor_host_migration",
                     return_value=migrated,
                 ), patch.object(
                     module, "_require_executor_identity", return_value=(992,),
+                ), patch.object(
+                    module, "_require_host_dependency",
+                    side_effect=lambda item: (
+                        checked_dependencies.append(item.package)
+                        or (item.package, "9.9-test", item.architecture)
+                    ),
                 ), patch.object(
                     module, "_require_package_absent",
                     side_effect=lambda name: checked.append(name),
@@ -285,7 +385,11 @@ class RootlessDockerPreinstallQualificationTests(unittest.TestCase):
                     return_value=("cpu", "io", "memory", "pids"),
                 ):
             result = module._qualify_once()
-        self.assertEqual(result, evidence())
+        self.assertEqual(result, evidence(host_dependencies=dependency_evidence))
+        self.assertEqual(
+            checked_dependencies,
+            [item.package for item in INSTALLATION_AUTHORITY.host_dependencies],
+        )
         self.assertEqual(len(checked), len(set(checked)))
         self.assertTrue(
             {item.name for item in INSTALLATION_AUTHORITY.packages}

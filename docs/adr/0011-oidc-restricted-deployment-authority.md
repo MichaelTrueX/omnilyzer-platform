@@ -283,6 +283,16 @@ under unchanged root identity. C32ZS has no caller-selected path, network,
 subprocess, package-manager, write, service, Docker, or activation capability.
 The later installer must rehash the held bytes again before dpkg consumption.
 
+C32ZT closes the preinstalled package dependency boundary. The ten host
+dependencies required by the exact bundle are bound to package name, architecture
+and the strongest minimum Debian-version floor present in the reviewed package
+metadata. The pre-install qualifier requires installed `ii` state and uses only
+a fixed `dpkg --compare-versions INSTALLED_VERSION ge MINIMUM_VERSION` read-only
+comparison shape. Observed dependency versions are part of the repeated evidence.
+`docker-cli` and `rootlesskit` are additionally prohibited because the selected
+Docker CE packages conflict with them. C32ZT cannot configure, install, remove,
+upgrade, repair or otherwise mutate packages or services.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.

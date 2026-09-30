@@ -14,6 +14,7 @@ import unittest
 
 from deployment.rootless_docker_authority import AUTHORITY
 from deployment.rootless_docker_installation_authority import (
+    HostDependencyRequirement,
     INSTALLATION_AUTHORITY,
     PackagePayloadAuthority,
     RootlessDockerInstallationAuthority,
@@ -217,6 +218,35 @@ class RootlessDockerInstallationAuthorityTests(unittest.TestCase):
                 good.package, good.filename, good.size, good.sha256,
                 "https://user@archive.ubuntu.com/ubuntu/unsafe.deb",
             )
+
+    def test_exact_preinstalled_dependency_closure_is_reviewed(self) -> None:
+        authority = INSTALLATION_AUTHORITY
+        self.assertEqual(
+            tuple(
+                (item.package, item.minimum_version, item.architecture)
+                for item in authority.host_dependencies
+            ),
+            (
+                ("libc6", "2.38", "amd64"),
+                ("libseccomp2", "2.5.0", "amd64"),
+                ("dbus-user-session", None, "amd64"),
+                ("init-system-helpers", "1.54~", "all"),
+                ("iptables", None, "amd64"),
+                ("nftables", None, "amd64"),
+                ("libsystemd0", None, "amd64"),
+                ("libaudit1", "1:2.2.1", "amd64"),
+                ("libselinux1", "3.1~", "amd64"),
+                ("libglib2.0-0t64", "2.75.3", "amd64"),
+            ),
+        )
+        self.assertIn("docker-cli", authority.conflicting_packages)
+        self.assertIn("rootlesskit", authority.conflicting_packages)
+        with self.assertRaises(ValueError):
+            HostDependencyRequirement("libc6", "bad version", "amd64")
+        with self.assertRaises(ValueError):
+            HostDependencyRequirement("libc6", "2.38", "arm64")
+        with self.assertRaises(ValueError):
+            HostDependencyRequirement("../libc6", "2.38", "amd64")
 
     def test_start_suppression_and_staging_are_fixed(self) -> None:
         authority = INSTALLATION_AUTHORITY
