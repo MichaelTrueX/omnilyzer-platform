@@ -3697,6 +3697,39 @@ currently satisfied, while `docker-cli` and `rootlesskit` are absent. This is
 qualification evidence only; the future privileged bootstrap must recheck the
 same closure immediately before consuming staged package bytes.
 
+## C32ZU exact rootless Docker package staging runtime
+
+`rootless_docker_package_staging.py` is the root-only network staging runtime
+for the C32ZR payload authority. It accepts no caller inputs, acquires the
+existing privileged process lock, requires the C32ZQ pre-install qualification
+before and after download, and writes only beneath the fixed root-owned
+`/var/lib/omnilyzer/deployment` parent. Downloads use Python HTTPS directly -
+not a shell, package manager, proxy, redirect-capable helper, or caller URL -
+with the fixed system CA bundle, TLS 1.2 minimum, exact reviewed hostnames and
+paths, HTTP 200, exact `Content-Length`, identity encoding, no transfer or
+range encoding, and the C32ZR SHA-256/size authority.
+
+The resumable incoming directory is fixed as
+`/var/lib/omnilyzer/deployment/.rootless-docker-install.incoming`, mode 0700,
+root:root. Only the nine reviewed filenames are accepted. An already-complete
+file is rehashed and reused; an incomplete or digest-mismatching file may be
+truncated and rewritten only after proving it is a root-owned regular 0600 file
+with one link and no symlink substitution. Unexpected entries, unsafe file
+metadata, redirects, response-size drift, dependency drift, root identity drift,
+parent replacement, and lock/release failures all fail closed. C32ZU never
+unlinks or recursively cleans ambiguous state.
+
+After every package is rehashed again and the pre-install evidence remains
+unchanged, the incoming directory is fsynced and atomically published to the
+fixed C32ZS staging path with Linux `RENAME_NOREPLACE`, so a concurrently
+appearing final path can never be overwritten. C32ZS then performs its
+independent two-pass exact bundle qualification. A pre-existing final bundle is
+idempotently accepted only when C32ZS requalification succeeds and no incoming
+directory also exists.
+C32ZU downloads package bytes only; it does not install packages, modify APT
+sources, mask/start services, change subordinate IDs, start Docker, or activate
+deployment.
+
 ## Local validation
 
 ```bash
