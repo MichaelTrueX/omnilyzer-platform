@@ -47,6 +47,23 @@ _POLICY_RC_D_PATH = "/usr/sbin/policy-rc.d"
 _POLICY_RC_D_BYTES = b"#!/usr/bin/python3\nraise SystemExit(101)\n"
 _STAGING_DIRECTORY = "/var/lib/omnilyzer/deployment/.rootless-docker-install"
 _ROOTFUL_UNITS = ("docker.service", "docker.socket", "containerd.service")
+_SUPPLEMENTAL_PACKAGES = (
+    PackageAuthority(
+        "libsubid4",
+        "1:4.13+dfsg1-4ubuntu3.2",
+        "Ubuntu signed noble-updates/main amd64",
+        "ba97fd28c53560a8d2a2261e8f75a7ab4112535b12f9fe1d50970c30051da0da",
+        (),
+    ),
+    PackageAuthority(
+        "libslirp0",
+        "4.7.0-1ubuntu3.1",
+        "Ubuntu signed noble-updates/main amd64",
+        "4efa2d1c509de4d10fe965e86a3d864bf542996caf476d9111fd882c73857164",
+        (),
+    ),
+)
+
 _CONFLICTING_PACKAGES = (
     "docker.io",
     "docker-compose",
@@ -66,6 +83,9 @@ class RootlessDockerInstallationAuthority:
 
     packages: tuple[PackageAuthority, ...] = field(
         init=False, default=AUTHORITY.packages
+    )
+    supplemental_packages: tuple[PackageAuthority, ...] = field(
+        init=False, default=_SUPPLEMENTAL_PACKAGES
     )
     docker_key_url: str = field(init=False, default=_DOCKER_KEY_URL)
     docker_key_sha256: str = field(init=False, default=_DOCKER_KEY_SHA256)
@@ -101,6 +121,7 @@ class RootlessDockerInstallationAuthority:
         names = tuple(item.name for item in self.packages)
         if (
             len(self.packages) != 7
+            or len(self.supplemental_packages) != 2
             or len(set(names)) != 7
             or set(names) != set(expected_origins)
             or any(type(item) is not PackageAuthority for item in self.packages)
@@ -109,6 +130,13 @@ class RootlessDockerInstallationAuthority:
                 for item in self.packages
             )
             or "docker-buildx-plugin" in names
+            or self.supplemental_packages != _SUPPLEMENTAL_PACKAGES
+            or any(
+                type(item) is not PackageAuthority
+                or item.required_executables != ()
+                or item.origin != "Ubuntu signed noble-updates/main amd64"
+                for item in self.supplemental_packages
+            )
             or self.rootful_units != _ROOTFUL_UNITS
             or len(set(self.conflicting_packages)) != len(self.conflicting_packages)
             or "docker-buildx-plugin" not in self.conflicting_packages
@@ -134,6 +162,19 @@ class RootlessDockerInstallationAuthority:
         return tuple(
             f"{item.name}={item.apt_version}" for item in self.packages
         )
+
+    def supplemental_package_specs(self) -> tuple[str, ...]:
+        """Return exact new Ubuntu dependency package selections."""
+
+        return tuple(
+            f"{item.name}={item.apt_version}"
+            for item in self.supplemental_packages
+        )
+
+    def all_package_specs(self) -> tuple[str, ...]:
+        """Return all nine packages that the bootstrap may newly install."""
+
+        return self.package_specs() + self.supplemental_package_specs()
 
 
 INSTALLATION_AUTHORITY = RootlessDockerInstallationAuthority()

@@ -3596,11 +3596,40 @@ primary fingerprint `9DC858229FC7DD38854AE2D88D81803C0EBFCD88`, and signing fing
 `D3306A018370199E527AE7997EA0A9C3F273FCD8`. The temporary source and key
 paths are Omnilyzer-specific and must not become ambient host package authority.
 Ubuntu `uidmap` and `slirp4netns` remain selected from the host's signed Ubuntu
-archive indexes and all seven downloaded `.deb` payloads remain subject to the
-existing exact package SHA-256 authority. C32ZP performs no I/O, download,
-package installation, mask, subordinate-ID change, service action or Docker
-operation. A separate privileged runtime and live qualification are still
-required.
+archive indexes. Their only currently absent dependency packages on the fixed
+DEV host are also pinned before installation: `libsubid4`
+`1:4.13+dfsg1-4ubuntu3.2` with SHA-256
+`ba97fd28c53560a8d2a2261e8f75a7ab4112535b12f9fe1d50970c30051da0da` and
+`libslirp0` `4.7.0-1ubuntu3.1` with SHA-256
+`4efa2d1c509de4d10fe965e86a3d864bf542996caf476d9111fd882c73857164`.
+Both remain under the signed Ubuntu Noble updates/main archive boundary. The
+installation plan therefore permits exactly nine newly installed package
+payloads: the seven direct C32ZF packages plus these two dependencies. C32ZP
+performs no I/O, download, package installation, mask, subordinate-ID change,
+service action or Docker operation. A separate privileged runtime and live
+qualification are still required.
+
+## C32ZQ rootless Docker pre-install qualification (repository only)
+
+`rootless_docker_preinstall_qualification.py` defines the root-only, read-only
+preflight that must pass immediately before any package/bootstrap mutation. It
+requires the C32ZM successor host migration to be complete, exact root process
+identity, the unchanged executor UID/GID 991 with only replay GID 992, absence
+of all nine packages and known conflicting Docker packages, absence of rootful
+Docker/containerd units, processes, sockets and mask residue, and absence of
+all temporary C32ZP APT/start-blocker/staging paths. It parses both root-owned
+`/etc/subuid` and `/etc/subgid`, rejects overlapping ranges, requires the live
+`omnigpt:427680:65536` allocation to remain exact, requires no existing
+`omnilyzer-executor` range, and proves the corrected `493216:65536` range is
+free. It also requires the Ubuntu rootlesskit AppArmor user-namespace profile,
+unprivileged user namespaces, and cgroup v2 CPU/memory/PID controllers.
+
+The public preflight performs the complete observation twice and accepts only
+identical evidence. It executes only fixed read-only `dpkg-query`, `systemctl
+show`, and `pgrep` commands with a closed environment and performs no write,
+package, service, Docker, network, subordinate-ID or deployment action. C32ZQ
+therefore remains a qualification boundary only; a separate reviewed privileged
+bootstrap runtime is still required before installation.
 
 ## Local validation
 

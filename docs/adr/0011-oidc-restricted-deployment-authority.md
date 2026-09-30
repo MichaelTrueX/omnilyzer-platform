@@ -252,7 +252,20 @@ temporary maintainer-script start blocker. Docker package retrieval is limited
 to a temporary signed Noble stable APT source using the pinned Docker release
 key; the source and key are not permanent ambient package authority. Ubuntu
 `uidmap` and `slirp4netns` remain under the signed Ubuntu archive boundary.
-C32ZP performs no host I/O or package/service mutation.
+The currently absent Ubuntu dependency packages `libsubid4` and `libslirp0`
+are separately pinned by exact version and package SHA-256, so the eventual
+bootstrap cannot silently expand from seven reviewed direct packages to
+unreviewed dependency payloads. C32ZP performs no host I/O or package/service
+mutation.
+
+C32ZQ adds the privileged read-only pre-install qualification. It requires the
+successor host migration to be complete, exact root and executor identities,
+all reviewed/new/conflicting Docker packages absent, rootful Docker/containerd
+units/processes/sockets absent, temporary installation paths absent, the live
+`omnigpt` subordinate range unchanged, the corrected executor range free, and
+the required AppArmor/userns and cgroup controls. The complete observation must
+match twice. It can run only fixed read-only host commands and cannot install,
+mask, start, download or mutate anything.
 
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
