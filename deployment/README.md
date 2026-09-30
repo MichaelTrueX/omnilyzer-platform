@@ -3730,6 +3730,28 @@ C32ZU downloads package bytes only; it does not install packages, modify APT
 sources, mask/start services, change subordinate IDs, start Docker, or activate
 deployment.
 
+## C32ZV staged rootless Docker pre-install qualification
+
+`rootless_docker_staged_preinstall_qualification.py` closes the trust boundary
+between C32ZU publication and a future privileged package installer. Public
+C32ZQ intentionally remains the pre-staging qualifier and still requires the
+final package-bundle path to be absent. Its shared host-only observation was
+extracted without weakening that public contract so C32ZV can reuse the same
+root identity, successor-generation, package-absence, dependency, rootful-runtime,
+subordinate-ID, executor-identity, AppArmor/userns and cgroup checks after the
+reviewed final bundle exists.
+
+C32ZV permits only the exact final C32ZS bundle. The C32ZU `.incoming` path must
+remain absent in every observation. One qualification brackets an independent
+C32ZS two-pass bundle qualification between two identical shared host
+observations while repeatedly checking root identity and incoming-path absence.
+The entire combined host-plus-bundle evidence is then observed a second time and
+must be identical. This rejects dependency, package, runtime, subordinate-ID,
+identity, bundle-byte, bundle-metadata or staging-state drift between publication
+and installation. C32ZV performs no network, command execution, write, package,
+service, Docker, subordinate-ID or deployment mutation. A separate reviewed
+privileged installer must consume C32ZV immediately before changing host state.
+
 ## Local validation
 
 ```bash

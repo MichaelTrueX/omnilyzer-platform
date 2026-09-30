@@ -308,6 +308,15 @@ fully rehashed incoming directory is atomically published with Linux
 bundle. C32ZU has no package-install,
 service, subordinate-ID, Docker-daemon or deployment-activation capability.
 
+C32ZV is the read-only post-staging installation gate. Public C32ZQ keeps its
+original pre-staging contract and requires the final bundle to be absent. C32ZV
+reuses only the shared host observation, requires the interrupted C32ZU incoming
+path to be absent, independently qualifies the exact C32ZS final bundle between
+two identical host observations, and then repeats the complete combined
+observation. No package installer may treat staging alone as installation
+authority. C32ZV has no network, subprocess, filesystem-write, package, service,
+Docker, subordinate-ID or activation capability.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.
