@@ -3631,6 +3631,25 @@ package, service, Docker, network, subordinate-ID or deployment action. C32ZQ
 therefore remains a qualification boundary only; a separate reviewed privileged
 bootstrap runtime is still required before installation.
 
+## C32ZR exact rootless Docker package-bundle authority (repository only)
+
+C32ZR extends `rootless_docker_installation_authority.py` with the exact nine
+package payloads that may enter the future offline install bundle. Each payload
+is bound to package name, canonical local filename, exact byte size, the already
+reviewed SHA-256, and one exact HTTPS source URL. The four Ubuntu payloads use
+`archive.ubuntu.com`; the five Docker payloads use `download.docker.com`. URL
+metadata is structurally validated as HTTPS with exact allowed hostnames, no
+userinfo, port, query or fragment. Payload digests must exactly match the C32ZF/
+C32ZP package authority, filenames are unique, Buildx is absent, and the safe
+future install order places the two Ubuntu libraries before their consumers and
+`docker-ce` last. The complete bundle size is 83,353,528 bytes.
+
+This is authority only. C32ZR does not download packages, create a staging
+directory, invoke APT/dpkg, modify package sources, mask units, change subordinate
+IDs, start Docker, or activate deployment. A later read-only bundle qualifier
+must hash an exact nine-file staging directory before any privileged bootstrap
+may consume it.
+
 ## Local validation
 
 ```bash
