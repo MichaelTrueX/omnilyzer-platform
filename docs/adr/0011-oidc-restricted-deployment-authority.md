@@ -234,6 +234,17 @@ preserved from the installed broker authority rather than supplied by the
 caller. C32ZL issues only closed `systemctl show` reads and cannot mutate or
 activate host state.
 
+C32ZM is the reviewed root-only migration runtime. Under the existing
+privileged process lock it permits exactly three ordered publications: the
+C32ZG runtime adapter, the C32ZI executor configuration, and finally the C32ZI
+broker configuration carrying forward the installed workflow SHA. Each write
+uses an exact destination-specific resumable stage, fsync, and atomic replace;
+only a stage for the current C32ZJ operation is accepted. Root identity and the
+inactive broker/executor systemd boundary are rechecked around mutation. C32ZM
+does not install or start Docker, enable/start deployment services, alter
+ingress, or activate deployment. Host execution must occur later from the
+reviewed root-controlled source tree.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.

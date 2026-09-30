@@ -54,7 +54,10 @@ other partial or reordered state. No root mutation is implemented in C32ZJ.
 C32ZL is the read-only root preflight for that state machine. It requires the
 broker/executor services and executor socket to remain inactive, rereads both
 root-owned configurations, verifies the complete installed application against
-C32W or C32ZH, and rejects concurrent change. It performs no migration.
+C32W or C32ZH, and rejects concurrent change. C32ZM implements only the fixed
+root migration order - adapter, executor config, broker config - using exact
+resumable stages and atomic replacement while rechecking the inactive service
+boundary. It still performs no Docker installation or deployment activation.
 With the proposed 427680 subordinate UID/GID
 start, container 10001 maps to host 437680 and Nginx 65532 maps to host 493211.
 The canary runtime bind source must be 991:437680 mode 0770 so the daemon can
