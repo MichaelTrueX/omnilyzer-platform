@@ -187,3 +187,11 @@ cgroup drop-in plus the three exact Ubuntu package-owned template drop-ins
 (`10-login-barrier.conf`, `10-oomd-user-service-defaults.conf`, and
 `timeout.conf`). Their hashes, package versions and ownership are pinned; any
 additional or changed drop-in fails closed.
+
+### C33C user-manager bootstrap
+
+C33C enables linger only for `omnilyzer-executor` and starts only
+`user@991.service`. It proves the resulting logind/systemd-owned
+`/run/user/991` runtime and CPU/memory/PID delegation while keeping the reviewed
+rootless Docker user unit disabled/inactive and every deployment service
+inactive. No Docker daemon or socket is created in this phase.

@@ -446,3 +446,13 @@ The authority therefore pins the exact composed four-path baseline and the
 three inherited files by package, exact version/architecture, dpkg ownership,
 root metadata and SHA-256. This is a compatibility correction, not a relaxation:
 unknown or modified drop-ins remain prohibited.
+
+
+C33C separates UID-991 user-manager lifecycle from Docker-daemon lifecycle.
+After the independently qualified static host state, the only privileged
+mutations are enabling linger for `omnilyzer-executor` and starting
+`user@991.service`. The resulting `/run/user/991` is accepted only as
+logind/systemd-owned ephemeral runtime authority with UID/GID 991 mode 0700 and
+reviewed cgroup delegation. The rootless Docker user service remains disabled
+and inactive; Docker startup and deployment activation remain separate reviewed
+transitions.
