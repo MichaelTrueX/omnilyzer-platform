@@ -140,7 +140,7 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
                     in AUTHORITY.external_runtime_prerequisites}
         self.assertNotIn("/run/user/991", provisioned)
         self.assertEqual(external["/run/user/991"], (991, 991, 0o700))
-        self.assertEqual(provisioned[AUTHORITY.socket_directory], (991, 991, 0o700))
+        self.assertNotIn(AUTHORITY.socket_directory, provisioned)
         self.assertEqual(provisioned[AUTHORITY.canary_runtime], (991, 503216, 0o770))
         self.assertEqual(provisioned[AUTHORITY.nginx_runtime], (991, 991, 0o755))
 
@@ -163,6 +163,9 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
         self.assertIn("Delegate=cpu memory pids",
                       (ASSETS / "omnilyzer-task014-cgroup-delegation.conf").read_text())
         socket_dropin = (ASSETS / "rootless-docker-executor-socket.conf").read_text()
+        self.assertIn("RuntimeDirectory=omnilyzer/deployment/rootless-docker",
+                      socket_dropin)
+        self.assertIn("RuntimeDirectoryMode=0700", socket_dropin)
         self.assertIn("BindReadOnlyPaths=" + AUTHORITY.daemon_socket + ":" + AUTHORITY.socket,
                       socket_dropin)
         executor = (ROOT / "deployment/systemd/dev/omnilyzer-deployment-executor.service").read_text()

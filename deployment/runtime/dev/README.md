@@ -158,3 +158,14 @@ The future references require the real reviewed merge SHA; no placeholder `revie
 | `deployment/runtime/dev/nginx/nginx.conf` | `cbb696e51219bea9d6b337db0346cf93a807c5477143dad7f9baf23764fd476b` |
 
 The ingress file set is exactly the final three paths.
+
+### C32ZZ static rootless host bootstrap
+
+After C32ZX has proved the package-only state, C32ZZ may assign the exact
+executor subordinate-ID range and publish the reviewed persistent rootless
+directories/assets. Its only systemd mutation is `daemon-reload`; linger, the
+UID-991 user manager, rootless Docker, executor, broker and deployment remain
+inactive. The executor socket drop-in now owns
+`RuntimeDirectory=omnilyzer/deployment/rootless-docker` with mode `0700`, so the
+private projection directory is recreated by systemd after reboot instead of
+being treated as durable `/run` bootstrap state.
