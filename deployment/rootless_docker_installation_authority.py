@@ -4,8 +4,8 @@ Purpose:
 - bind the reviewed C32ZF rootless Docker package authority to one closed,
   temporary signed-APT installation plan;
 - keep package retrieval, rootful-service suppression, subordinate-ID
-  allocation, and asset installation deterministic before any privileged
-  runtime is implemented.
+  allocation, host dependency closure, and asset installation deterministic
+  before any privileged runtime is implemented.
 
 Linked files:
 - deployment/rootless_docker_authority.py
@@ -22,6 +22,7 @@ from .rootless_docker_authority import AUTHORITY, PackageAuthority
 
 
 __all__ = (
+    "HostDependencyRequirement",
     "PackagePayloadAuthority",
     "RootlessDockerInstallationAuthority",
     "INSTALLATION_AUTHORITY",
@@ -67,6 +68,34 @@ _SUPPLEMENTAL_PACKAGES = (
         (),
     ),
 )
+
+@dataclass(frozen=True, slots=True)
+class HostDependencyRequirement:
+    """One preinstalled host package required by the exact C32ZR bundle."""
+
+    package: str
+    minimum_version: str | None
+    architecture: str
+
+    def __post_init__(self) -> None:
+        """Reject malformed dependency metadata before host qualification."""
+
+        allowed = "abcdefghijklmnopqrstuvwxyz0123456789+.-"
+        version_allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.+:~-"
+        if (
+            type(self.package) is not str
+            or not self.package
+            or any(char not in allowed for char in self.package)
+            or self.minimum_version is not None
+            and (
+                type(self.minimum_version) is not str
+                or not self.minimum_version
+                or any(char not in version_allowed for char in self.minimum_version)
+            )
+            or self.architecture not in {"amd64", "all"}
+        ):
+            raise ValueError("rootless Docker host dependency authority is invalid")
+
 
 @dataclass(frozen=True, slots=True)
 class PackagePayloadAuthority:
@@ -181,6 +210,19 @@ _PAYLOADS = (
     ),
 )
 
+_HOST_DEPENDENCIES = (
+    HostDependencyRequirement("libc6", "2.38", "amd64"),
+    HostDependencyRequirement("libseccomp2", "2.5.0", "amd64"),
+    HostDependencyRequirement("dbus-user-session", None, "amd64"),
+    HostDependencyRequirement("init-system-helpers", "1.54~", "all"),
+    HostDependencyRequirement("iptables", None, "amd64"),
+    HostDependencyRequirement("nftables", None, "amd64"),
+    HostDependencyRequirement("libsystemd0", None, "amd64"),
+    HostDependencyRequirement("libaudit1", "1:2.2.1", "amd64"),
+    HostDependencyRequirement("libselinux1", "3.1~", "amd64"),
+    HostDependencyRequirement("libglib2.0-0t64", "2.75.3", "amd64"),
+)
+
 _CONFLICTING_PACKAGES = (
     "docker.io",
     "docker-compose",
@@ -191,6 +233,8 @@ _CONFLICTING_PACKAGES = (
     "containerd",
     "runc",
     "docker-buildx-plugin",
+    "docker-cli",
+    "rootlesskit",
 )
 
 
@@ -203,6 +247,9 @@ class RootlessDockerInstallationAuthority:
     )
     supplemental_packages: tuple[PackageAuthority, ...] = field(
         init=False, default=_SUPPLEMENTAL_PACKAGES
+    )
+    host_dependencies: tuple[HostDependencyRequirement, ...] = field(
+        init=False, default=_HOST_DEPENDENCIES
     )
     docker_key_url: str = field(init=False, default=_DOCKER_KEY_URL)
     docker_key_sha256: str = field(init=False, default=_DOCKER_KEY_SHA256)
@@ -266,6 +313,17 @@ class RootlessDockerInstallationAuthority:
                 or item.origin != "Ubuntu signed noble-updates/main amd64"
                 for item in self.supplemental_packages
             )
+            or self.host_dependencies != _HOST_DEPENDENCIES
+            or len(self.host_dependencies) != 10
+            or len({item.package for item in self.host_dependencies}) != 10
+            or any(
+                type(item) is not HostDependencyRequirement
+                for item in self.host_dependencies
+            )
+            or set(item.package for item in self.host_dependencies)
+            & set(names)
+            or set(item.package for item in self.host_dependencies)
+            & {item.name for item in self.supplemental_packages}
             or self.payloads != _PAYLOADS
             or len(self.payloads) != 9
             or len(set(payload_names)) != 9
@@ -276,6 +334,7 @@ class RootlessDockerInstallationAuthority:
                 for item in self.payloads
             )
             or self.rootful_units != _ROOTFUL_UNITS
+            or self.conflicting_packages != _CONFLICTING_PACKAGES
             or len(set(self.conflicting_packages)) != len(self.conflicting_packages)
             or "docker-buildx-plugin" not in self.conflicting_packages
             or self.docker_key_url != _DOCKER_KEY_URL

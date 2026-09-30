@@ -1,11 +1,11 @@
-"""deployment/rootless_docker_preinstall_qualification.py - C32ZQ preflight.
+"""deployment/rootless_docker_preinstall_qualification.py - C32ZQ/C32ZT preflight.
 
 Purpose:
 - perform the privileged read-only host checks required immediately before
   any rootless Docker package/bootstrap mutation;
 - prove the C32ZM successor migration is complete, the corrected subordinate
-  ID range is free, Docker/rootful runtime is absent, and executor identity
-  remains isolated.
+  ID range is free, Docker/rootful runtime is absent, executor identity remains
+  isolated, and the exact preinstalled package dependency closure is satisfied.
 
 Linked files:
 - deployment/rootless_docker_installation_authority.py
@@ -23,7 +23,10 @@ import stat
 import subprocess
 
 from .rootless_docker_authority import AUTHORITY
-from .rootless_docker_installation_authority import INSTALLATION_AUTHORITY
+from .rootless_docker_installation_authority import (
+    HostDependencyRequirement,
+    INSTALLATION_AUTHORITY,
+)
 from .successor_application_generation import TARGET_REVIEWED_COMMIT
 from .successor_host_migration_qualification import qualify_successor_host_migration
 
@@ -36,6 +39,7 @@ __all__ = (
 _ERROR = "rootless Docker preinstall qualification is unavailable"
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _DPKG_QUERY = "/usr/bin/dpkg-query"
+_DPKG = "/usr/bin/dpkg"
 _SYSTEMCTL = "/usr/bin/systemctl"
 _PGREP = "/usr/bin/pgrep"
 _TIMEOUT = 5.0
@@ -58,11 +62,18 @@ _ROOTFUL_MASK_PATHS = tuple(
 )
 _REQUIRED_CONTROLLERS = frozenset({"cpu", "memory", "pids"})
 _MAX_SUBID_BYTES = 1024 * 1024
-_PACKAGE_NAMES = frozenset(
+_ABSENT_PACKAGE_NAMES = frozenset(
     item.name for item in INSTALLATION_AUTHORITY.packages
 ) | frozenset(
     item.name for item in INSTALLATION_AUTHORITY.supplemental_packages
 ) | frozenset(INSTALLATION_AUTHORITY.conflicting_packages)
+_DEPENDENCY_NAMES = frozenset(
+    item.package for item in INSTALLATION_AUTHORITY.host_dependencies
+)
+_QUERY_PACKAGE_NAMES = _ABSENT_PACKAGE_NAMES | _DEPENDENCY_NAMES
+_VERSION_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.+:~-"
+)
 _DPKG_FORMAT = (
     "-f=" + "$" + "{db:Status-Abbrev}\t" + "$" + "{Version}\t"
     + "$" + "{Architecture}\n"
@@ -87,6 +98,7 @@ class RootlessDockerPreinstallEvidence:
     subordinate_count: int
     direct_packages: tuple[str, ...]
     supplemental_packages: tuple[str, ...]
+    host_dependencies: tuple[tuple[str, str, str], ...]
     cgroup_controllers: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -108,6 +120,22 @@ class RootlessDockerPreinstallEvidence:
             != tuple(item.name for item in INSTALLATION_AUTHORITY.packages)
             or self.supplemental_packages
             != tuple(item.name for item in INSTALLATION_AUTHORITY.supplemental_packages)
+            or type(self.host_dependencies) is not tuple
+            or len(self.host_dependencies) != len(INSTALLATION_AUTHORITY.host_dependencies)
+            or any(
+                type(observed) is not tuple
+                or len(observed) != 3
+                or observed[0] != requirement.package
+                or type(observed[1]) is not str
+                or not observed[1]
+                or any(char not in _VERSION_CHARS for char in observed[1])
+                or observed[2] != requirement.architecture
+                for observed, requirement in zip(
+                    self.host_dependencies,
+                    INSTALLATION_AUTHORITY.host_dependencies,
+                    strict=True,
+                )
+            )
             or not _REQUIRED_CONTROLLERS.issubset(frozenset(self.cgroup_controllers))
         ):
             raise ValueError(_ERROR)
@@ -135,7 +163,22 @@ def _run(argv: tuple[str, ...]) -> subprocess.CompletedProcess[bytes]:
         if (
             len(argv) != 4
             or argv[1:3] != ("-W", _DPKG_FORMAT)
-            or argv[3] not in _PACKAGE_NAMES
+            or argv[3] not in _QUERY_PACKAGE_NAMES
+        ):
+            raise OSError
+    elif argv[0] == _DPKG:
+        allowed_minimums = frozenset(
+            item.minimum_version
+            for item in INSTALLATION_AUTHORITY.host_dependencies
+            if item.minimum_version is not None
+        )
+        if (
+            len(argv) != 5
+            or argv[1] != "--compare-versions"
+            or not argv[2]
+            or any(char not in _VERSION_CHARS for char in argv[2])
+            or argv[3] != "ge"
+            or argv[4] not in allowed_minimums
         ):
             raise OSError
     elif argv[0] == _SYSTEMCTL:
@@ -178,11 +221,56 @@ def _run(argv: tuple[str, ...]) -> subprocess.CompletedProcess[bytes]:
 def _require_package_absent(name: str) -> None:
     """Require one package to have no dpkg record at all."""
 
-    if type(name) is not str or name not in _PACKAGE_NAMES:
+    if type(name) is not str or name not in _ABSENT_PACKAGE_NAMES:
         raise OSError
     result = _run((_DPKG_QUERY, "-W", _DPKG_FORMAT, name))
     if result.returncode != 1 or result.stdout != b"":
         raise OSError
+
+
+def _require_host_dependency(requirement) -> tuple[str, str, str]:
+    """Require one exact-architecture installed dependency satisfying its floor."""
+
+    if (
+        type(requirement) is not HostDependencyRequirement
+        or requirement not in INSTALLATION_AUTHORITY.host_dependencies
+    ):
+        raise OSError
+    result = _run((_DPKG_QUERY, "-W", _DPKG_FORMAT, requirement.package))
+    if (
+        result.returncode != 0
+        or not result.stdout.endswith(b"\n")
+        or result.stdout.count(b"\n") != 1
+        or b"\r" in result.stdout
+    ):
+        raise OSError
+    fields = result.stdout[:-1].split(b"\t")
+    if len(fields) != 3 or fields[0] != b"ii ":
+        raise OSError
+    try:
+        version = fields[1].decode("ascii")
+        architecture = fields[2].decode("ascii")
+    except UnicodeDecodeError:
+        raise OSError from None
+    if (
+        not version
+        or any(char not in _VERSION_CHARS for char in version)
+        or architecture != requirement.architecture
+    ):
+        raise OSError
+    if requirement.minimum_version is not None:
+        compared = _run(
+            (
+                _DPKG,
+                "--compare-versions",
+                version,
+                "ge",
+                requirement.minimum_version,
+            )
+        )
+        if compared.returncode != 0 or compared.stdout != b"":
+            raise OSError
+    return requirement.package, version, architecture
 
 
 def _systemctl_value(unit: str, property_name: str) -> str:
@@ -426,6 +514,10 @@ def _qualify_once() -> RootlessDockerPreinstallEvidence:
     ):
         raise OSError
     supplementary = _require_executor_identity()
+    dependencies = tuple(
+        _require_host_dependency(item)
+        for item in INSTALLATION_AUTHORITY.host_dependencies
+    )
     direct = tuple(item.name for item in INSTALLATION_AUTHORITY.packages)
     supplemental = tuple(
         item.name for item in INSTALLATION_AUTHORITY.supplemental_packages
@@ -456,6 +548,7 @@ def _qualify_once() -> RootlessDockerPreinstallEvidence:
         subordinate_count=AUTHORITY.subordinate_count,
         direct_packages=direct,
         supplemental_packages=supplemental,
+        host_dependencies=dependencies,
         cgroup_controllers=controllers,
     )
 

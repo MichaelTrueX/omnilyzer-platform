@@ -3669,6 +3669,34 @@ or deployment-activation surface. C32ZS evidence is a pre-install proof only; a
 future privileged installer must still rehash the held package bytes immediately
 before consumption to close the final TOCTOU boundary.
 
+## C32ZT rootless Docker host dependency closure
+
+C32ZT closes the package-manager dependency boundary before package staging or
+installation. `rootless_docker_installation_authority.py` now records the ten
+preinstalled host packages required by the exact C32ZR bundle and the minimum
+Debian versions carried by the reviewed package metadata: `libc6 >= 2.38`,
+`libseccomp2 >= 2.5.0`, `dbus-user-session`, `init-system-helpers >= 1.54~`,
+`iptables`, `nftables`, `libsystemd0`, `libaudit1 >= 1:2.2.1`,
+`libselinux1 >= 3.1~`, and `libglib2.0-0t64 >= 2.75.3`. Architectures are fixed
+to amd64 except `init-system-helpers`, which is fixed to `all`. The conflicting
+package set also includes `docker-cli` and `rootlesskit`, matching the exact
+Docker CE package metadata.
+
+`rootless_docker_preinstall_qualification.py` requires every dependency to be
+installed with dpkg status `ii`, exact reviewed architecture, and its minimum
+version floor where one exists. Debian version comparison is delegated only to
+the fixed read-only command shape `/usr/bin/dpkg --compare-versions INSTALLED_VERSION
+ge MINIMUM_VERSION`; the command runner rejects every other dpkg operation.
+Dependency versions are included in the repeated preflight evidence, so a package
+change between observations fails closed. C32ZT performs no install, repair,
+upgrade, package-source, filesystem, service, Docker, network, or deployment
+mutation.
+
+A live read-only DEV inspection confirmed all ten dependency requirements are
+currently satisfied, while `docker-cli` and `rootlesskit` are absent. This is
+qualification evidence only; the future privileged bootstrap must recheck the
+same closure immediately before consuming staged package bytes.
+
 ## Local validation
 
 ```bash
