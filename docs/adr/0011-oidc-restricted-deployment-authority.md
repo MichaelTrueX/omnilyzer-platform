@@ -215,6 +215,15 @@ or mixed authority fails closed. C32ZJ performs no filesystem or service
 operation; a separate root-only implementation is required to execute these
 transitions.
 
+C32ZK adds a root-only, read-only adapter for the installed broker
+configuration. It reuses the hardened broker loader's descriptor traversal,
+canonical parser and metadata revalidation while requiring exact real/effective
+root identity and preserving the broker GID binding on the configuration
+directory and file. It never invokes the live broker identity binder and has no
+mutation or activation surface. This allows a later privileged migration to
+carry forward the installed `expected_workflow_sha` without trusting a caller
+input.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.
