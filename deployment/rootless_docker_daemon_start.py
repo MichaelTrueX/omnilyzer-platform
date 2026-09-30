@@ -18,6 +18,7 @@ import os
 import socket
 import stat
 import subprocess
+import uuid
 
 from . import dev_host_provisioning_orchestration as orchestration
 from . import rootless_docker_user_manager_qualification as userq
@@ -486,10 +487,123 @@ def _package_host_allow_daemon():
     )
 
 
+def _require_post_daemon_data_root() -> tuple[str, int, int, int]:
+    path = AUTHORITY.data_root
+    expected_uid = AUTHORITY.executor_uid
+    expected_gid = AUTHORITY.executor_gid
+    expected_mode = next(
+        mode for item_path, _uid, _gid, mode
+        in AUTHORITY.post_daemon_provisioned_directories
+        if item_path == path
+    )
+    expected_entries = {
+        name: (kind, mode)
+        for name, kind, mode in AUTHORITY.post_daemon_data_root_entries
+    }
+
+    named = os.lstat(path)
+    if (
+        not stat.S_ISDIR(named.st_mode)
+        or (named.st_uid, named.st_gid) != (expected_uid, expected_gid)
+        or stat.S_IMODE(named.st_mode) != expected_mode
+    ):
+        raise OSError
+
+    descriptor = os.open(
+        path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    )
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+            or (opened.st_uid, opened.st_gid) != (expected_uid, expected_gid)
+            or stat.S_IMODE(opened.st_mode) != expected_mode
+        ):
+            raise OSError
+        if frozenset(os.listdir(descriptor)) != frozenset(expected_entries):
+            raise OSError
+
+        for name, (kind, mode) in expected_entries.items():
+            child = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            if (child.st_uid, child.st_gid) != (expected_uid, expected_gid):
+                raise OSError
+            if kind == "directory":
+                if not stat.S_ISDIR(child.st_mode):
+                    raise OSError
+            elif kind == "file":
+                if not stat.S_ISREG(child.st_mode) or child.st_nlink != 1:
+                    raise OSError
+            else:
+                raise OSError
+            if stat.S_IMODE(child.st_mode) != mode:
+                raise OSError
+
+            if name == "engine-id":
+                if child.st_size != AUTHORITY.post_daemon_engine_id_size:
+                    raise OSError
+                file_descriptor = os.open(
+                    name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=descriptor,
+                )
+                try:
+                    data = os.read(file_descriptor, AUTHORITY.post_daemon_engine_id_size + 1)
+                    if len(data) != AUTHORITY.post_daemon_engine_id_size:
+                        raise OSError
+                    try:
+                        text = data.decode("ascii")
+                        parsed = uuid.UUID(text)
+                    except (UnicodeDecodeError, ValueError):
+                        raise OSError from None
+                    if str(parsed) != text:
+                        raise OSError
+                finally:
+                    os.close(file_descriptor)
+
+        if frozenset(os.listdir(descriptor)) != frozenset(expected_entries):
+            raise OSError
+        final = os.fstat(descriptor)
+        if (
+            (final.st_dev, final.st_ino) != (opened.st_dev, opened.st_ino)
+            or (final.st_uid, final.st_gid) != (expected_uid, expected_gid)
+            or stat.S_IMODE(final.st_mode) != expected_mode
+        ):
+            raise OSError
+    finally:
+        os.close(descriptor)
+    return path, expected_uid, expected_gid, expected_mode
+
+
+def _require_post_daemon_static_assets() -> tuple[
+    tuple[tuple[str, int, int, int], ...],
+    tuple[tuple[str, str, int, int, int], ...],
+]:
+    directories = []
+    for path, uid, gid, mode in AUTHORITY.post_daemon_provisioned_directories:
+        if path == AUTHORITY.data_root:
+            directories.append(_require_post_daemon_data_root())
+        else:
+            directories.append(
+                userq.staticq._require_directory(
+                    path,
+                    uid,
+                    gid,
+                    mode,
+                    userq.staticq._EXPECTED_DIRECTORY_CHILDREN[path],
+                )
+            )
+    assets = tuple(
+        userq.staticq._require_file(destination, digest, uid, gid, mode)
+        for _source, destination, digest, uid, gid, mode
+        in AUTHORITY.installed_assets
+    )
+    return tuple(directories), assets
+
+
 def _static_evidence_after_start():
     package_host = _package_host_allow_daemon()
     subuid, subgid = userq.staticq._require_subids()
-    directories, assets = userq.staticq._require_static_assets()
+    directories, assets = _require_post_daemon_static_assets()
     userq.staticq._require_user_manager_template_dropins()
     executor_dropins = tuple(
         userq.staticq._read_systemctl(
@@ -608,7 +722,8 @@ def _start_under_lock() -> RootlessDockerDaemonStartEvidence:
             before.expected_workflow_sha != package_host[0]
             or before.subuid_records != after_static[1]
             or before.subgid_records != after_static[2]
-            or before.directories != after_static[3]
+            or before.directories != AUTHORITY.provisioned_directories
+            or after_static[3] != AUTHORITY.post_daemon_provisioned_directories
             or before.assets != after_static[4]
             or before.linger_mode != after_static[5]
             or (

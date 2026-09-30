@@ -494,3 +494,13 @@ part of the reviewed host contract. The active user manager reports the unit via
 the `/etc/xdg/systemd/user` alias, which is accepted only when the root-owned
 symlink target is exactly `../../systemd/user` and both alias and reviewed unit
 resolve to the same root-owned mode-0644 inode.
+
+
+C33H records the daemon-owned data-root phase transition. The C32ZZ/C33A
+pre-daemon contract remains mode `0700` and empty. After C33E starts Docker, the
+data root is expected to be mode `0710` with the exact reviewed empty-engine
+top-level Docker state. C33E/C33F validate that phase explicitly while retaining
+closed pre-daemon checks for every other static directory. Docker-managed DB
+contents, timestamps and inodes are intentionally not frozen; authority is
+carried by the exact top-level structure, ownership/modes and independent Docker
+API proof of zero images and containers.

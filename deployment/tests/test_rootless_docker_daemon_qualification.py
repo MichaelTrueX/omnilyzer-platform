@@ -160,7 +160,7 @@ def evidence(workflow=WORKFLOW):
         delegate_controllers=("cpu", "memory", "pids"),
         subuid_records=subids(),
         subgid_records=subids(),
-        directories=AUTHORITY.provisioned_directories,
+        directories=AUTHORITY.post_daemon_provisioned_directories,
         assets=tuple(
             (destination, digest, uid, gid, mode)
             for _source, destination, digest, uid, gid, mode
@@ -223,6 +223,68 @@ class RootlessDockerDaemonQualificationTests(unittest.TestCase):
         ):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 module.RootlessDockerDaemonEvidence(**(values | {field: bad}))
+
+    def test_post_daemon_data_root_accepts_exact_empty_engine_and_rejects_drift(self):
+        root_mode = next(
+            mode for path, _uid, _gid, mode
+            in AUTHORITY.post_daemon_provisioned_directories
+            if path == AUTHORITY.data_root
+        )
+        root = type("S", (), {
+            "st_mode": stat.S_IFDIR | root_mode,
+            "st_uid": 991, "st_gid": 991,
+            "st_dev": 17, "st_ino": 41,
+        })()
+        entries = {
+            name: (kind, mode)
+            for name, kind, mode in AUTHORITY.post_daemon_data_root_entries
+        }
+
+        def child_stat(name, *, dir_fd, follow_symlinks):
+            self.assertEqual(dir_fd, 50)
+            self.assertFalse(follow_symlinks)
+            kind, mode = entries[name]
+            return type("S", (), {
+                "st_mode": (stat.S_IFDIR if kind == "directory" else stat.S_IFREG) | mode,
+                "st_uid": 991, "st_gid": 991,
+                "st_nlink": 2 if kind == "directory" else 1,
+                "st_size": AUTHORITY.post_daemon_engine_id_size if name == "engine-id" else 4096,
+            })()
+
+        def open_path(path, flags, *, dir_fd=None):
+            if path == AUTHORITY.data_root and dir_fd is None:
+                return 50
+            if path == "engine-id" and dir_fd == 50:
+                return 51
+            raise AssertionError((path, flags, dir_fd))
+
+        exact_names = list(entries)
+        with patch.object(module.os, "lstat", return_value=root), \
+             patch.object(module.os, "open", side_effect=open_path), \
+             patch.object(module.os, "fstat", return_value=root), \
+             patch.object(module.os, "listdir", return_value=exact_names), \
+             patch.object(module.os, "stat", side_effect=child_stat), \
+             patch.object(module.os, "read", return_value=b"c03e22b6-225e-4318-8d26-bd7e6eaa104d"), \
+             patch.object(module.os, "close"):
+            self.assertEqual(
+                module._require_post_daemon_data_root(),
+                (AUTHORITY.data_root, 991, 991, root_mode),
+            )
+
+        with patch.object(module.os, "lstat", return_value=root), \
+             patch.object(module.os, "open", return_value=50), \
+             patch.object(module.os, "fstat", return_value=root), \
+             patch.object(module.os, "listdir", return_value=exact_names + ["unexpected"]), \
+             patch.object(module.os, "close"), self.assertRaises(OSError):
+            module._require_post_daemon_data_root()
+
+        wrong_mode = type("S", (), {
+            "st_mode": stat.S_IFDIR | 0o700,
+            "st_uid": 991, "st_gid": 991,
+            "st_dev": 17, "st_ino": 41,
+        })()
+        with patch.object(module.os, "lstat", return_value=wrong_mode), self.assertRaises(OSError):
+            module._require_post_daemon_data_root()
 
     def test_user_unit_gate_requires_active_running_disabled_exact_fragment(self):
         values = {

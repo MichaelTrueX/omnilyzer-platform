@@ -155,6 +155,27 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
         self.assertNotIn("/run/user/991", provisioned)
         self.assertEqual(external["/run/user/991"], (991, 991, 0o700))
         self.assertNotIn(AUTHORITY.socket_directory, provisioned)
+        post_daemon = {
+            path: (uid, gid, mode)
+            for path, uid, gid, mode in AUTHORITY.post_daemon_provisioned_directories
+        }
+        self.assertEqual(
+            post_daemon[AUTHORITY.data_root],
+            (AUTHORITY.executor_uid, AUTHORITY.executor_gid, 0o710),
+        )
+        self.assertEqual(
+            tuple(path for path, _uid, _gid, _mode in AUTHORITY.provisioned_directories),
+            tuple(path for path, _uid, _gid, _mode in AUTHORITY.post_daemon_provisioned_directories),
+        )
+        self.assertEqual(
+            tuple(name for name, _kind, _mode in AUTHORITY.post_daemon_data_root_entries),
+            (
+                "buildkit", "containerd", "containers", "engine-id",
+                "image", "network", "overlay2", "plugins", "runtimes",
+                "swarm", "tmp", "volumes",
+            ),
+        )
+        self.assertEqual(AUTHORITY.post_daemon_engine_id_size, 36)
         self.assertEqual(provisioned[AUTHORITY.canary_runtime], (991, 503216, 0o770))
         self.assertEqual(provisioned[AUTHORITY.nginx_runtime], (991, 991, 0o755))
 

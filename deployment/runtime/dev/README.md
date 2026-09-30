@@ -235,3 +235,12 @@ The first live C33E start established the reviewed rootless runtime semantics:
 `/etc/xdg/systemd/user` FragmentPath only as an exact symlink alias of the
 reviewed `/etc/systemd/user` unit, requiring the same inode and root-owned
 mode-0644 bytes.
+
+### C33H post-daemon data-root authority
+
+C33H makes the data-root phase transition explicit. Before daemon start,
+`rootless-docker-data` is the C32ZZ-owned empty mode-0700 directory. After C33E,
+Docker owns its managed state and the root becomes mode `0710`. C33E/C33F allow
+only that directory to transition, require the exact reviewed empty-engine
+top-level names/types/modes and UID/GID 991 ownership, and keep all other
+provisioned directories under the original closed static-asset checks.
