@@ -47,7 +47,11 @@ C32ZH is evidence only and does not perform the host migration. C32ZI derives
 the aligned successor executor/broker configuration pair and changes only the
 reviewed application commit while preserving runtime/ingress authority and all
 existing identities. It is pure repository authority and performs no host
-configuration change. With the proposed 427680 subordinate UID/GID
+configuration change. C32ZJ adds the pure four-phase migration state machine:
+C32W, successor application, successor executor configuration, then successor
+broker configuration. It preserves the broker workflow SHA and rejects every
+other partial or reordered state. No root mutation is implemented in C32ZJ.
+With the proposed 427680 subordinate UID/GID
 start, container 10001 maps to host 437680 and Nginx 65532 maps to host 493211.
 The canary runtime bind source must be 991:437680 mode 0770 so the daemon can
 resolve it and mapped GID 10001 can write during the explicit migration;

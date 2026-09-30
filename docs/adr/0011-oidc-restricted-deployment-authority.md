@@ -206,6 +206,15 @@ executor/broker identities, runtime/ingress hashes and installation authority
 must remain identical. C32ZI performs no host I/O and does not migrate either
 configuration file.
 
+C32ZJ defines the pure successor host-migration state machine. It reconstructs
+the exact frozen C32W executor/broker pair, derives the exact C32ZI successor
+pair while preserving `expected_workflow_sha`, and accepts only four ordered
+states: original C32W, successor application only, successor application plus
+executor configuration, and complete aligned successor authority. Out-of-order
+or mixed authority fails closed. C32ZJ performs no filesystem or service
+operation; a separate root-only implementation is required to execute these
+transitions.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.

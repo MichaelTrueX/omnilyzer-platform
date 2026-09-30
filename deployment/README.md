@@ -3521,6 +3521,22 @@ Executor and broker must agree on every shared authority field and on their
 installation contract. C32ZI performs no file I/O, Docker operation, service
 action, host migration or deployment activation.
 
+## C32ZJ successor host-migration authority (repository only)
+
+`successor_host_migration_authority.py` defines the only accepted resumable
+ordering from the frozen C32W host authority to the C32ZH/C32ZI successor. It
+is deliberately pure and performs no host I/O or mutation. The predecessor
+executor/broker pair is reconstructed through the frozen C32X authority, and
+the successor pair is derived through C32ZI while preserving the independently
+reviewed workflow SHA. The migration state machine accepts exactly four prefixes:
+C32W -> successor application -> successor executor configuration -> successor
+broker configuration. The application phase is identified by the pinned C32W
+and C32ZG `deployment/docker_runtime.py` blob SHA-256 values. Any out-of-order,
+mixed-workflow, substituted configuration or unknown application digest fails
+closed. A later root-only implementation must consume this state machine; C32ZJ
+itself cannot replace files, install Docker, start services or activate
+deployment.
+
 ## Local validation
 
 ```bash
