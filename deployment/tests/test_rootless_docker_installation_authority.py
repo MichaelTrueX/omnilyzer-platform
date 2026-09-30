@@ -234,6 +234,9 @@ class RootlessDockerInstallationAuthorityTests(unittest.TestCase):
             authority.staging_directory,
             "/var/lib/omnilyzer/deployment/.rootless-docker-install",
         )
+        self.assertEqual(authority.staging_directory_mode, 0o700)
+        self.assertEqual(authority.staged_package_mode, 0o600)
+        self.assertEqual(authority.bundle_size(), 83_353_528)
 
     def test_corrected_subordinate_range_is_the_only_install_target(self) -> None:
         self.assertEqual(
