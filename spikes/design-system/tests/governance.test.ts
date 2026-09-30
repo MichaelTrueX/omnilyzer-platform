@@ -1,3 +1,9 @@
+/**
+ * File: spikes/design-system/tests/governance.test.ts
+ * Purpose: Enforces design-system source, styling, dependency-boundary, and public-API governance.
+ * Related: ../src/styles.css, ../src/components/, ../package.json
+ */
+
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -31,6 +37,12 @@ describe("shared-source governance", () => {
       expect(source, name).not.toMatch(/\bstyle\s*=\s*\{\{|Bisma|SHSLearningStudio|Valoria|\bHR\b/);
       expect(source, name).not.toMatch(/from ["'][^"']*(?:product|app)\//);
     }
+  });
+
+  it("keeps exactly one reviewed responsive breakpoint", async () => {
+    const styles = await readFile(path.join(root, "src/styles.css"), "utf8");
+    expect(styles).toContain("--breakpoint-lg: 64rem");
+    expect(styles.match(/--breakpoint-[a-z0-9-]+\s*:/g)).toEqual(["--breakpoint-lg:"]);
   });
 
   it("keeps Radix behind the public index", async () => {

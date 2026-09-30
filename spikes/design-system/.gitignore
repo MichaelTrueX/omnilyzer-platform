@@ -1,4 +1,10 @@
+# File: spikes/design-system/.gitignore
+# Purpose: Excludes local design-system build, dependency, token, and browser-test artifacts.
+# Related: package.json, playwright.config.ts
+
 node_modules/
 dist/
 .token-build/
+playwright-report/
+test-results/
 

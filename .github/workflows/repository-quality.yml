@@ -53,6 +53,7 @@ jobs:
               ".github/pull_request_template.md",
               ".github/workflows/repository-quality.yml",
               ".github/workflows/dependency-review.yml",
+              ".github/workflows/design-system-browser.yml",
               ".github/dependabot.yml",
           }
           missing = sorted(path for path in required if not Path(path).is_file())
