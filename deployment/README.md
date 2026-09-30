@@ -3468,6 +3468,27 @@ and removes only the newly reviewed Docker assets/data after preserving audit
 and migration evidence. It never resets replay/audit or substitutes rootful
 Docker. This repository work makes no host, service or network change.
 
+## C32ZG successor rootless runtime adapter (repository only)
+
+C32ZG changes the current repository copy of `deployment/docker_runtime.py` so
+every Docker and Compose invocation uses the exact absolute client prefix
+`/usr/bin/docker --config /etc/omnilyzer/deployment/docker-client --host
+unix:///run/omnilyzer/deployment/rootless-docker/docker.sock`. The adapter does
+not inherit `DOCKER_HOST` or `DOCKER_CONTEXT`. Before each Docker operation it
+requires the executor-visible projected endpoint to be one real UID/GID 991,
+mode 0660 Unix socket with one link. Missing or substituted endpoints fail
+closed before the command runner is called. Candidate probes, image pull and
+inspection, candidate start, explicit migration, Nginx validation, and Nginx
+reload all use the same fixed rootless endpoint.
+
+This remains repository-only application source. The installed C32W generation
+is still pinned to merge `e4f0030c7a028beb834618254781c2fbff5d6b0d` and keeps
+its historical adapter bytes. C32ZG does not redefine C32W, alter the frozen
+application evidence, install Docker, update the host application, start a
+service, or activate deployment. A follow-up successor application-generation
+review must pin the merged C32ZG Git object and provide the explicit host
+migration before the rootless daemon or deployment path can be activated.
+
 ## Local validation
 
 ```bash

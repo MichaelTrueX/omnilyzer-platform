@@ -7,16 +7,19 @@ import json
 import os
 from pathlib import Path
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from deployment.controller import DeploymentPlan
 import deployment.docker_runtime as runtime_module
 from deployment.docker_runtime import (
-    COMMAND_TIMEOUT_SECONDS, COMPOSE_FILE, HTTP_TIMEOUT_SECONDS, IMAGE_PREFIX,
+    COMMAND_TIMEOUT_SECONDS, COMPOSE_FILE, DOCKER_CLIENT_CONFIG, DOCKER_CLI,
+    DOCKER_HOST, DOCKER_PREFIX, DOCKER_SOCKET, HTTP_TIMEOUT_SECONDS, IMAGE_PREFIX,
     MAX_HTTP_RESPONSE, MIGRATION_CHECKSUM, MIGRATION_IDENTITY, PROJECT,
     RUNTIME_CONFIG_BYTES, WORKING_DIRECTORY, CandidateHttpClient, CommandResult,
     DockerComposeCandidateHttpClient, DockerRuntimeAdapter, RuntimeOperationError,
@@ -24,6 +27,9 @@ from deployment.docker_runtime import (
     validate_runtime_configuration,
 )
 from deployment.policy import DeploymentPolicyError
+
+
+REAL_REQUIRE_ROOTLESS_SOCKET = runtime_module._require_rootless_socket
 
 
 IMAGE = IMAGE_PREFIX + "sha256:" + "6" * 64
@@ -97,9 +103,14 @@ class DockerComposeCandidateHttpClientTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.runner = FakeRunner()
+        self.socket_guard = patch.object(runtime_module, "_require_rootless_socket")
+        self.require_socket = self.socket_guard.start()
         self.client = DockerComposeCandidateHttpClient(
             self.runner, canary_image=IMAGE,
         )
+
+    def tearDown(self) -> None:
+        self.socket_guard.stop()
 
     def get(self, slot: object = "blue", path: object = "/livez") -> tuple[int, bytes]:
         """Invoke the client with the exact reviewed timeout and response bound."""
@@ -158,7 +169,7 @@ class DockerComposeCandidateHttpClientTests(unittest.TestCase):
         for slot, service in (("blue", "canary-blue"), ("green", "canary-green")):
             self.runner.results = [probe_result()]
             self.get(slot=slot)
-            self.assertEqual(self.runner.calls[-1][0][8], service)
+            self.assertIn(service, self.runner.calls[-1][0])
         invalid = (
             "Blue", "GREEN", "canary-blue", "blue:8080", "blue/", " blue",
             "blue ", "", "database", Text("blue"), None, 1,
@@ -192,7 +203,7 @@ class DockerComposeCandidateHttpClientTests(unittest.TestCase):
                 self.get(slot=slot, path=path)
                 argv = self.runner.calls[-1][0]
                 self.assertEqual(argv, (
-                    "docker", "compose", "--project-name", PROJECT,
+                    *DOCKER_PREFIX, "compose", "--project-name", PROJECT,
                     "--file", str(COMPOSE_FILE), "exec", "--no-TTY", service,
                     "/usr/bin/python", "-c",
                     runtime_module._CANDIDATE_PROBE_SCRIPT, path,
@@ -222,6 +233,7 @@ class DockerComposeCandidateHttpClientTests(unittest.TestCase):
     def test_runner_receives_only_exact_minimal_environment_and_bounds(self) -> None:
         self.runner.results = [probe_result()]
         self.get()
+        self.require_socket.assert_called_once_with()
         _argv, cwd, environment, timeout = self.runner.calls[0]
         self.assertEqual(cwd, WORKING_DIRECTORY)
         self.assertEqual(environment, EXPECTED_ENVIRONMENT)
@@ -336,6 +348,8 @@ class DockerComposeCandidateHttpClientTests(unittest.TestCase):
 class DockerRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
+        self.socket_guard = patch.object(runtime_module, "_require_rootless_socket")
+        self.require_socket = self.socket_guard.start()
         self.runner = FakeRunner()
         self.http = FakeHttp()
         self.migration = Path(self.temp.name) / "migration"
@@ -347,7 +361,45 @@ class DockerRuntimeTests(unittest.TestCase):
         self.adapter._migration_directory = self.migration
 
     def tearDown(self) -> None:
+        self.socket_guard.stop()
         self.temp.cleanup()
+
+    def test_rootless_cli_and_private_endpoint_are_exact(self) -> None:
+        self.assertEqual(DOCKER_CLI, "/usr/bin/docker")
+        self.assertEqual(DOCKER_CLIENT_CONFIG, "/etc/omnilyzer/deployment/docker-client")
+        self.assertEqual(DOCKER_SOCKET, Path("/run/omnilyzer/deployment/rootless-docker/docker.sock"))
+        self.assertEqual(DOCKER_HOST, "unix:///run/omnilyzer/deployment/rootless-docker/docker.sock")
+        self.assertEqual(
+            DOCKER_PREFIX,
+            (
+                "/usr/bin/docker", "--config", "/etc/omnilyzer/deployment/docker-client",
+                "--host", "unix:///run/omnilyzer/deployment/rootless-docker/docker.sock",
+            ),
+        )
+        self.assertNotIn("DOCKER_HOST", EXPECTED_ENVIRONMENT)
+        self.assertNotIn("DOCKER_CONTEXT", EXPECTED_ENVIRONMENT)
+
+    def test_rootless_socket_guard_requires_exact_projected_socket(self) -> None:
+        safe = SimpleNamespace(
+            st_mode=stat.S_IFSOCK | 0o660, st_nlink=1, st_uid=991, st_gid=991,
+        )
+        with patch.object(runtime_module.os, "lstat", return_value=safe):
+            REAL_REQUIRE_ROOTLESS_SOCKET()
+        with patch.object(runtime_module.os, "lstat", side_effect=FileNotFoundError), \
+                self.assertRaisesRegex(RuntimeOperationError, "endpoint is unavailable"):
+            REAL_REQUIRE_ROOTLESS_SOCKET()
+        unsafe = (
+            SimpleNamespace(st_mode=stat.S_IFREG | 0o660, st_nlink=1, st_uid=991, st_gid=991),
+            SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660, st_nlink=2, st_uid=991, st_gid=991),
+            SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660, st_nlink=1, st_uid=0, st_gid=991),
+            SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660, st_nlink=1, st_uid=991, st_gid=0),
+            SimpleNamespace(st_mode=stat.S_IFSOCK | 0o600, st_nlink=1, st_uid=991, st_gid=991),
+        )
+        for opened in unsafe:
+            with self.subTest(opened=opened), patch.object(
+                runtime_module.os, "lstat", return_value=opened,
+            ), self.assertRaisesRegex(RuntimeOperationError, "endpoint is unavailable"):
+                REAL_REQUIRE_ROOTLESS_SOCKET()
 
     def test_image_contract_rejects_tags_origins_repositories_and_whitespace(self) -> None:
         bad = [
@@ -384,7 +436,7 @@ class DockerRuntimeTests(unittest.TestCase):
     def test_pull_argv_is_exact_and_bounded(self) -> None:
         self.adapter.pull_exact_image(IMAGE)
         argv, _, environment, timeout = self.runner.calls[0]
-        self.assertEqual(argv, ("docker", "pull", IMAGE))
+        self.assertEqual(argv, (*DOCKER_PREFIX, "pull", IMAGE))
         self.assertEqual(environment, EXPECTED_ENVIRONMENT)
         self.assertEqual(timeout, COMMAND_TIMEOUT_SECONDS)
 
@@ -459,7 +511,7 @@ class DockerRuntimeTests(unittest.TestCase):
             identity=MIGRATION_IDENTITY, checksum=MIGRATION_CHECKSUM,
         )
         argv = self.runner.calls[0][0]
-        self.assertEqual(argv[:3], ("docker", "run", "--rm"))
+        self.assertEqual(argv[:len(DOCKER_PREFIX) + 2], (*DOCKER_PREFIX, "run", "--rm"))
         self.assertIn("/app/migration.py", argv)
         mount = next(item for item in argv if "dst=/run/omnilyzer-canary" in item)
         self.assertNotIn("readonly", mount)
