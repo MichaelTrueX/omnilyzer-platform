@@ -89,22 +89,23 @@ class RootlessDockerInstallationAuthority:
     def __post_init__(self) -> None:
         """Fail closed if any installation choice drifts from reviewed authority."""
 
-        docker_names = {
-            "docker-ce",
-            "docker-ce-cli",
-            "docker-ce-rootless-extras",
-            "docker-compose-plugin",
-            "containerd.io",
+        expected_origins = {
+            "docker-ce": AUTHORITY.packages[0].origin,
+            "docker-ce-cli": AUTHORITY.packages[1].origin,
+            "docker-ce-rootless-extras": AUTHORITY.packages[2].origin,
+            "docker-compose-plugin": AUTHORITY.packages[3].origin,
+            "containerd.io": AUTHORITY.packages[4].origin,
+            "uidmap": AUTHORITY.packages[5].origin,
+            "slirp4netns": AUTHORITY.packages[6].origin,
         }
-        ubuntu_names = {"uidmap", "slirp4netns"}
         names = tuple(item.name for item in self.packages)
         if (
             len(self.packages) != 7
             or len(set(names)) != 7
-            or set(names) != docker_names | ubuntu_names
+            or set(names) != set(expected_origins)
             or any(type(item) is not PackageAuthority for item in self.packages)
             or any(
-                ("download.docker.com" in item.origin) != (item.name in docker_names)
+                item.origin != expected_origins.get(item.name)
                 for item in self.packages
             )
             or "docker-buildx-plugin" in names
