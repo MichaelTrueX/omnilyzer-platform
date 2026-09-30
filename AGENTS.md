@@ -13,6 +13,28 @@ Workspace/tenant-isolation, token/session, CSP/CORS, supply-chain, deployment,
 and validation requirements. Do not silently resolve conflicting requirements:
 preserve and report them unless precedence is explicit and unambiguous.
 
+## Development orchestration
+
+For Omnilyzer development, ChatGPT is the primary orchestrator. Treat the current
+repository, this file, applicable ADRs/contracts, SECURITY.md, and
+CONTRIBUTING.md as authoritative; inspect current state rather than relying on
+conversation memory. Keep Omnilyzer isolated from unrelated organizations,
+systems, customers, policies, prompts, documentation, tests, and code.
+
+Use Remote Desktop Commander through the isolated omnigpt@omnilyzerdev account
+for DEV-server inspection, edits, debugging, tests, browser validation, and
+deployment.dev_handoff. Preserve its unprivileged boundary. Use the GitHub
+connector directly for GitHub reads/writes, PRs, checks, reviews, merges, and
+post-merge verification. Use Codex selectively for substantial implementation,
+refactoring, or debugging where it adds value, not for mechanical workflow.
+
+The user should normally provide requirements and decisions rather than relay
+commands or output between systems. Require user action only for operations that
+need their authority or cannot be performed through connected tools. Normal work
+uses a dedicated branch, progressive validation, complete diff review, GitHub
+security/CI checks, and a final deployment.dev_handoff leaving DEV clean and
+synchronized to main.
+
 ## Before editing and context discipline
 
 - Understand the affected execution flow. Search for the owning implementation
