@@ -3752,6 +3752,48 @@ and installation. C32ZV performs no network, command execution, write, package,
 service, Docker, subordinate-ID or deployment mutation. A separate reviewed
 privileged installer must consume C32ZV immediately before changing host state.
 
+## C32ZW exact offline rootless Docker package installer
+
+`rootless_docker_package_installation.py` is the first package-mutation runtime.
+It accepts no caller inputs, acquires the shared privileged mutation lock, and
+requires C32ZV immediately before the clean host crosses the package-install
+boundary. Before `dpkg` can consume any package, C32ZW creates the exact temporary
+`/usr/sbin/policy-rc.d` blocker, creates persistent `/dev/null` masks for only
+`docker.service`, `docker.socket`, and `containerd.service`, reloads systemd,
+requires all three units to report masked/inactive, executes the exact blocker
+and denied masked start attempts, and requires no Docker/containerd process or
+socket. There is no start-then-stop path.
+
+The exact C32ZS bundle is opened through retained descriptors and every staged
+file is rebound to its C32ZV fingerprint. Immediately before the fixed
+`/usr/bin/dpkg --install` call, all nine descriptors are rewound and rehashed to
+the C32ZR sizes and SHA-256 values. `dpkg` receives only `/proc/self/fd/N` paths
+for those held descriptors through `pass_fds`; no APT command, repository lookup,
+network request, shell, caller package/path selection, dependency expansion or
+Buildx package exists in the installer. The fixed package order remains the
+C32ZR safe order.
+
+C32ZW is prefix-resumable across interruption. A clean first invocation requires
+C32ZV. Recovery is accepted only when the exact C32ZW policy blocker remains,
+the rootful masks form the exact reviewed prefix, every changed target package
+has the exact reviewed version/amd64 architecture and an install-desired dpkg
+state, conflicting packages remain absent, the C32ZS bundle still qualifies,
+and the successor migration, dependency versions, executor identity, free
+subordinate-ID range, kernel/AppArmor/cgroup prerequisites and rootless sockets
+remain unchanged. A package change before all three masks exist, missing blocker
+during a partial install, wrong package version/architecture, unexpected mask,
+or any other mixed state fails closed.
+
+The temporary start blocker is deliberately retained on any installation or
+post-check failure. It is removed only after all nine packages are exact `ii`,
+the pre-mutation workflow/dependency/controller observation is unchanged, all
+three rootful units remain masked/inactive, no rootful process or Docker socket
+exists, and the staged bundle independently requalifies. The masks remain
+persistent. C32ZW does not allocate `/etc/subuid` or `/etc/subgid`, provision
+rootless configuration/assets, enable linger, start a user manager or Docker,
+create a Docker API socket, alter ingress, or activate broker/executor/deployment.
+A separate post-install qualification remains required before host bootstrap.
+
 ## Local validation
 
 ```bash

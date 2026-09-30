@@ -93,7 +93,14 @@ only and still performs no package installation or service activation. C32ZV
 adds the post-staging read-only gate: public C32ZQ still requires no final bundle,
 while C32ZV allows only the exact C32ZS final bundle, rejects any C32ZU incoming
 object, brackets the bundle with identical host-only observations, and repeats
-the combined evidence. It performs no installation or activation.
+the combined evidence. It performs no installation or activation. C32ZW then
+adds the first package-mutation runtime: exact temporary `policy-rc.d`, persistent
+rootful Docker/containerd masks before `dpkg`, denied-start verification, held
+and immediately rehashed staged descriptors, one fixed offline `dpkg --install`
+shape, exact-prefix interruption recovery, and removal of the start blocker only
+after all nine packages are exact `ii` and the unchanged host/bundle boundary
+requalifies. C32ZW still does not allocate subordinate IDs, provision rootless
+assets, start Docker, expose its socket, or activate deployment.
 
 `/var/lib/omnilyzer/deployment/dev/canary-runtime` is mounted read-only at `/run/omnilyzer-canary` in application slots. The explicit migration operation alone mounts it read-write and runs `/app/migration.py`; migration is never startup behavior. Identity is `task014-executable-canary-v1`, definition checksum is `b25e7d2d55bce3e233f58f9607e715daebc2a1a69c37603adbb569604ef76421`, and durable files are `migration.lock` and `migration.json`.
 
