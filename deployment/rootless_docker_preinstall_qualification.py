@@ -228,6 +228,18 @@ def _require_package_absent(name: str) -> None:
         raise OSError
 
 
+def _require_package_not_installed(name: str) -> None:
+    """Require no installed package while allowing dpkg's exact `un` stub."""
+
+    if type(name) is not str or name not in _ABSENT_PACKAGE_NAMES:
+        raise OSError
+    result = _run((_DPKG_QUERY, "-W", _DPKG_FORMAT, name))
+    if result.returncode == 1 and result.stdout == b"":
+        return
+    if result.returncode != 0 or result.stdout != b"un \t\t\n":
+        raise OSError
+
+
 def _require_host_dependency(requirement) -> tuple[str, str, str]:
     """Require one exact-architecture installed dependency satisfying its floor."""
 

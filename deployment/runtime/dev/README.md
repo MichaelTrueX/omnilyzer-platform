@@ -99,7 +99,10 @@ rootful Docker/containerd masks before `dpkg`, denied-start verification, held
 and immediately rehashed staged descriptors, one fixed offline `dpkg --install`
 shape, exact-prefix interruption recovery, and removal of the start blocker only
 after all nine packages are exact `ii` and the unchanged host/bundle boundary
-requalifies. C32ZW still does not allocate subordinate IDs, provision rootless
+requalifies. Post-install conflict checks accept only no dpkg record or the exact
+`un` not-installed stub that dpkg may create while processing Conflicts/Replaces;
+C32ZQ/C32ZV keep their stricter no-record pre-install rule. C32ZW still does not
+allocate subordinate IDs, provision rootless
 assets, start Docker, expose its socket, or activate deployment. C32ZX adds an
 independent read-only post-install proof before rootless bootstrap: exact `ii`
 package versions, exact persistent masks/inactivity, unchanged host/sub-ID/kernel

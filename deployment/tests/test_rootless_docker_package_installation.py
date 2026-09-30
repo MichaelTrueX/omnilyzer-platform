@@ -278,6 +278,48 @@ class RootlessDockerPackageInstallationTests(unittest.TestCase):
                 module._run(argv)
             run.assert_not_called()
 
+    def test_static_host_uses_postinstall_not_installed_conflict_gate(self):
+        migrated = SimpleNamespace(
+            phase="complete",
+            next_operation="complete",
+            application_sha256=module._EXPECTED_APPLICATION_SHA256,
+            executor_reviewed_commit=TARGET_REVIEWED_COMMIT,
+            broker_reviewed_commit=TARGET_REVIEWED_COMMIT,
+            expected_workflow_sha=WORKFLOW,
+        )
+        seen = []
+        dependencies = tuple(
+            (item.package, "9.9-test", item.architecture)
+            for item in INSTALLATION_AUTHORITY.host_dependencies
+        )
+        with patch.object(module, "_root_identity", return_value=(0, 0, 0, 0)), \
+             patch.object(module, "qualify_successor_host_migration", return_value=migrated), \
+             patch.object(module.preinstall, "_require_executor_identity", return_value=(992,)), \
+             patch.object(module.preinstall, "_require_host_dependency", side_effect=dependencies), \
+             patch.object(
+                 module.preinstall,
+                 "_require_package_not_installed",
+                 side_effect=lambda name: seen.append(name),
+             ), \
+             patch.object(module.preinstall, "_require_subid_authority"), \
+             patch.object(
+                 module.preinstall,
+                 "_require_kernel_prerequisites",
+                 return_value=("cpu", "memory", "pids"),
+             ), \
+             patch.object(module, "_require_no_runtime"):
+            value = module._qualify_static_host()
+        self.assertEqual(value[0], WORKFLOW)
+        targets = set(module._TARGET_VERSIONS)
+        self.assertEqual(
+            seen,
+            [
+                name
+                for name in INSTALLATION_AUTHORITY.conflicting_packages
+                if name not in targets
+            ],
+        )
+
     def test_initial_install_consumes_c32zv_before_mutation_and_removes_policy_last(self):
         bundle = bundle_evidence()
         staged = RootlessDockerStagedPreinstallEvidence(host_evidence(), bundle)

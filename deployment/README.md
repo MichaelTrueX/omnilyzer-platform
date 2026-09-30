@@ -3782,7 +3782,12 @@ and the successor migration, dependency versions, executor identity, free
 subordinate-ID range, kernel/AppArmor/cgroup prerequisites and rootless sockets
 remain unchanged. A package change before all three masks exist, missing blocker
 during a partial install, wrong package version/architecture, unexpected mask,
-or any other mixed state fails closed.
+or any other mixed state fails closed. After dpkg has consumed the reviewed
+payloads, conflict-name checks use distinct post-install semantics: either no
+dpkg record or the exact `un` (`unknown`/`not-installed`) stub with empty version
+and architecture is accepted. Residual-config, partial, installed, versioned,
+architectured, or malformed records remain rejected. The stricter C32ZQ/C32ZV
+pre-install rule still requires no dpkg record at all.
 
 The temporary start blocker is deliberately retained on any installation or
 post-check failure. It is removed only after all nine packages are exact `ii`,
