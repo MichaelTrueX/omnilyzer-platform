@@ -344,7 +344,7 @@ def _require_conflicts_absent() -> None:
     targets = frozenset(_TARGET_VERSIONS)
     for name in INSTALLATION_AUTHORITY.conflicting_packages:
         if name not in targets:
-            preinstall._require_package_absent(name)
+            preinstall._require_package_not_installed(name)
 
 
 def _hash_exact_file(

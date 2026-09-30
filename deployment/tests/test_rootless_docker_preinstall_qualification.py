@@ -117,6 +117,33 @@ class RootlessDockerPreinstallQualificationTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(OSError):
                 module._require_package_absent(name)
 
+    def test_package_not_installed_accepts_only_absence_or_exact_un_stub(self) -> None:
+        for result in (
+            completed(1),
+            completed(0, b"un \t\t\n"),
+        ):
+            with self.subTest(result=result), patch.object(
+                module, "_run", return_value=result,
+            ):
+                module._require_package_not_installed("docker.io")
+
+        for result in (
+            completed(0, b"ii \t29.8.1\tamd64\n"),
+            completed(0, b"rc \t1.0\tamd64\n"),
+            completed(0, b"un \t1.0\tamd64\n"),
+            completed(0, b"un \t\tamd64\n"),
+            completed(1, b"unexpected"),
+            completed(2),
+        ):
+            with self.subTest(result=result), patch.object(
+                module, "_run", return_value=result,
+            ), self.assertRaises(OSError):
+                module._require_package_not_installed("docker.io")
+
+        for name in ("", "../docker", "DOCKER", "docker_ce", "curl"):
+            with self.subTest(name=name), self.assertRaises(OSError):
+                module._require_package_not_installed(name)
+
     def test_host_dependency_query_and_version_floor_are_closed(self) -> None:
         requirement = INSTALLATION_AUTHORITY.host_dependencies[0]
         self.assertEqual(requirement.package, "libc6")

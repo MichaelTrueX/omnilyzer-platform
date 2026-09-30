@@ -459,7 +459,7 @@ def _qualify_static_host() -> tuple[str, tuple[tuple[str, str, str], ...], tuple
     for name in INSTALLATION_AUTHORITY.conflicting_packages:
         if name in _TARGET_VERSIONS:
             continue
-        preinstall._require_package_absent(name)
+        preinstall._require_package_not_installed(name)
     preinstall._require_subid_authority()
     controllers = preinstall._require_kernel_prerequisites()
     _require_no_runtime()

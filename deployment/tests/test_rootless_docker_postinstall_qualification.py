@@ -210,6 +210,24 @@ class RootlessDockerPostinstallQualificationTests(unittest.TestCase):
         with patch.object(module.subprocess, "run", return_value=bad), self.assertRaises(OSError):
             module._run_owner(path)
 
+    def test_conflict_gate_uses_postinstall_not_installed_semantics(self):
+        seen = []
+        with patch.object(
+            module.preinstall,
+            "_require_package_not_installed",
+            side_effect=lambda name: seen.append(name),
+        ):
+            module._require_conflicts_absent()
+        targets = set(module._TARGET_VERSIONS)
+        self.assertEqual(
+            seen,
+            [
+                name
+                for name in INSTALLATION_AUTHORITY.conflicting_packages
+                if name not in targets
+            ],
+        )
+
     def test_rootful_mask_gate_requires_exact_links_masked_inactive_and_no_runtime(self):
         link = SimpleNamespace(st_mode=0o120777, st_uid=0, st_gid=0)
         properties = {

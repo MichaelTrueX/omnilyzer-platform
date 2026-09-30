@@ -333,7 +333,12 @@ package versions/architecture in install-desired dpkg states, unchanged staged
 bundle, absent conflicting packages, and the unchanged non-package host authority.
 The blocker remains on every failed or partial path and is removed only after all
 nine packages are exact `ii`, rootful runtime remains impossible, and both the
-static host observation and C32ZS bundle requalify. The masks remain. C32ZW does
+static host observation and C32ZS bundle requalify. Because dpkg may create
+`unknown`/`not-installed` (`un`) database stubs for reviewed conflict names while
+processing the install, the post-install/resume conflict gate accepts only either
+no record or an exact `un` record with empty version and architecture; every
+other dpkg state remains rejected. C32ZQ/C32ZV continue to require no record at
+all before mutation. The masks remain. C32ZW does
 not allocate subordinate IDs, provision rootless assets, enable/start services,
 start Docker, expose a Docker socket, alter ingress, or activate deployment.
 Those steps require later independently reviewed qualification and bootstrap.
