@@ -169,3 +169,12 @@ inactive. The executor socket drop-in now owns
 `RuntimeDirectory=omnilyzer/deployment/rootless-docker` with mode `0700`, so the
 private projection directory is recreated by systemd after reboot instead of
 being treated as durable `/run` bootstrap state.
+
+### C33A static bootstrap qualification
+
+C33A independently rechecks the complete C32ZZ static host state twice without
+importing the bootstrap mutator. It requires exact sub-UID/sub-GID records,
+closed persistent directory contents and asset hashes, loaded reviewed drop-ins,
+all deployment services inactive, no linger marker, no UID-991 runtime, and no
+rootless Docker projection directory. Passing C33A authorizes only the next
+reviewed user-manager bootstrap step; it does not start or enable anything.

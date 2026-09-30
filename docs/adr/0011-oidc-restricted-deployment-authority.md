@@ -429,3 +429,12 @@ state, created by `RuntimeDirectory=omnilyzer/deployment/rootless-docker` with
 mode `0700` when the executor later starts; C32ZZ does not persist that `/run`
 path. Linger, the UID-991 user manager and the rootless Docker daemon remain
 separate reviewed transitions.
+
+
+C33A is the independent read-only qualification after C32ZZ. It intentionally
+does not import the C32ZZ mutation module. It binds the exact subordinate-ID
+authority, persistent rootless directories and assets, package/runtime proof,
+systemd drop-in visibility and inactivity into two identical observations,
+while also requiring that linger, `/run/user/991`, and the executor projection
+directory remain absent. User-manager and daemon startup remain separately
+reviewed transitions.
