@@ -40,6 +40,7 @@ __all__ = (
 _ERROR = "rootless Docker static bootstrap qualification is unavailable"
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _SYSTEMCTL = "/usr/bin/systemctl"
+_DPKG_QUERY = "/usr/bin/dpkg-query"
 _TIMEOUT = 5.0
 _OUTPUT_LIMIT = 256 * 1024
 _FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
@@ -184,7 +185,7 @@ class RootlessDockerStaticBootstrapEvidence:
                 frozenset(self.cgroup_controllers)
             )
             or self.executor_dropins != (AUTHORITY.executor_socket_dropin,)
-            or self.user_manager_dropins != (AUTHORITY.cgroup_dropin,)
+            or self.user_manager_dropins != _expected_user_manager_dropins()
             or type(self.bundle) is not RootlessDockerPackageBundleEvidence
             or self.bundle.staging_directory
             != INSTALLATION_AUTHORITY.staging_directory
@@ -368,6 +369,60 @@ def _require_static_assets() -> tuple[
     return directories, assets
 
 
+def _expected_user_manager_dropins() -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            (
+                *(item.path for item in AUTHORITY.user_manager_template_dropins),
+                AUTHORITY.cgroup_dropin,
+            ),
+            key=os.path.basename,
+        )
+    )
+
+
+def _require_user_manager_template_dropins() -> tuple[str, ...]:
+    observed = []
+    for item in AUTHORITY.user_manager_template_dropins:
+        if _require_file(item.path, item.sha256, item.uid, item.gid, item.mode) != (
+            item.path, item.sha256, item.uid, item.gid, item.mode
+        ):
+            raise OSError
+
+        package = subprocess.run(
+            (_DPKG_QUERY, "-W", preinstall._DPKG_FORMAT, item.package),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+            shell=False,
+            timeout=_TIMEOUT,
+            check=False,
+        )
+        expected = f"ii \t{item.apt_version}\t{item.architecture}\n".encode("ascii")
+        if package.returncode != 0 or package.stdout != expected:
+            raise OSError
+
+        owner = subprocess.run(
+            (_DPKG_QUERY, "-S", item.path),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+            shell=False,
+            timeout=_TIMEOUT,
+            check=False,
+        )
+        expected_owners = {
+            f"{item.package}: {item.path}\n".encode("ascii"),
+            f"{item.package}:{item.architecture}: {item.path}\n".encode("ascii"),
+        }
+        if owner.returncode != 0 or owner.stdout not in expected_owners:
+            raise OSError
+        observed.append(item.path)
+    return tuple(observed)
+
+
 def _require_inert_systemd() -> tuple[tuple[str, ...], tuple[str, ...]]:
     for unit in _DEPLOYMENT_UNITS:
         if _read_systemctl(unit, "ActiveState") != "inactive":
@@ -383,9 +438,10 @@ def _require_inert_systemd() -> tuple[tuple[str, ...], tuple[str, ...]]:
         ).split()
     )
     user_dropins = tuple(_read_systemctl(_USER_MANAGER, "DropInPaths").split())
+    _require_user_manager_template_dropins()
     if (
         executor_dropins != (AUTHORITY.executor_socket_dropin,)
-        or user_dropins != (AUTHORITY.cgroup_dropin,)
+        or user_dropins != _expected_user_manager_dropins()
         or os.path.lexists(_LINGER_PATH)
         or os.path.lexists(_USER_UNIT_ENABLE_LINK)
     ):

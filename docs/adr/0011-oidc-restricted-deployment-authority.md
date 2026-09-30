@@ -438,3 +438,11 @@ systemd drop-in visibility and inactivity into two identical observations,
 while also requiring that linger, `/run/user/991`, and the executor projection
 directory remain absent. User-manager and daemon startup remain separately
 reviewed transitions.
+
+
+C33B records that `user@991.service` inherits package-owned `user@.service`
+template drop-ins in addition to the reviewed instance-specific cgroup drop-in.
+The authority therefore pins the exact composed four-path baseline and the
+three inherited files by package, exact version/architecture, dpkg ownership,
+root metadata and SHA-256. This is a compatibility correction, not a relaxation:
+unknown or modified drop-ins remain prohibited.

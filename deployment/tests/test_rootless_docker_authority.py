@@ -177,6 +177,36 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
         broker = (ROOT / "deployment/systemd/dev/omnilyzer-deployment-broker.service").read_text()
         self.assertNotIn("docker", broker.lower())
 
+    def test_user_manager_template_dropins_are_exact_package_pinned_baseline(self) -> None:
+        expected = (
+            (
+                "/usr/lib/systemd/system/user@.service.d/10-login-barrier.conf",
+                "systemd", "255.4-1ubuntu8.17", "amd64",
+                "1c1452839b609b0609cccaba3c648d780372df6f244deb487da6da5ee002a993",
+            ),
+            (
+                "/usr/lib/systemd/system/user@.service.d/10-oomd-user-service-defaults.conf",
+                "systemd-oomd", "255.4-1ubuntu8.17", "amd64",
+                "ddf0f174373b79ea32997999cf2139e595c3fe9ccaf6ff66b2230d493fc664ef",
+            ),
+            (
+                "/usr/lib/systemd/system/user@.service.d/timeout.conf",
+                "systemd", "255.4-1ubuntu8.17", "amd64",
+                "597eac16d8d7a289bb16aeeb01be0191d0c90beca4c6e0dba0f0c2d7c4e0ea81",
+            ),
+        )
+        self.assertEqual(
+            tuple(
+                (x.path, x.package, x.apt_version, x.architecture, x.sha256)
+                for x in AUTHORITY.user_manager_template_dropins
+            ),
+            expected,
+        )
+        self.assertTrue(
+            all((x.uid, x.gid, x.mode) == (0, 0, 0o644)
+                for x in AUTHORITY.user_manager_template_dropins)
+        )
+
     def test_vendor_bootstrap_environment_is_explicit_and_closed(self) -> None:
         expected = {
             "DOCKERD": "/usr/bin/dockerd",

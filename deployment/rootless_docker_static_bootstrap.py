@@ -46,6 +46,7 @@ _ERROR = "rootless Docker static bootstrap is unavailable"
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _SYSTEMCTL = "/usr/bin/systemctl"
 _USERMOD = "/usr/sbin/usermod"
+_DPKG_QUERY = "/usr/bin/dpkg-query"
 _OUTPUT_LIMIT = 1024 * 1024
 _TIMEOUT = 30.0
 _DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -734,14 +735,71 @@ def _install_static_assets() -> None:
         _ensure_file(source, destination, digest, uid, gid, mode)
 
 
+def _expected_user_manager_dropins() -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            (
+                *(item.path for item in AUTHORITY.user_manager_template_dropins),
+                AUTHORITY.cgroup_dropin,
+            ),
+            key=os.path.basename,
+        )
+    )
+
+
+def _require_user_manager_template_dropins() -> tuple[str, ...]:
+    observed = []
+    allowed = AUTHORITY.user_manager_template_dropins
+    for item in allowed:
+        if _file_state(item.path, item.sha256, item.uid, item.gid, item.mode) != "exact":
+            raise OSError
+
+        package = subprocess.run(
+            (_DPKG_QUERY, "-W", preinstall._DPKG_FORMAT, item.package),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+            shell=False,
+            timeout=5.0,
+            check=False,
+        )
+        expected = f"ii \t{item.apt_version}\t{item.architecture}\n".encode("ascii")
+        if package.returncode != 0 or package.stdout != expected:
+            raise OSError
+
+        owner = subprocess.run(
+            (_DPKG_QUERY, "-S", item.path),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+            shell=False,
+            timeout=5.0,
+            check=False,
+        )
+        expected_owners = {
+            f"{item.package}: {item.path}\n".encode("ascii"),
+            f"{item.package}:{item.architecture}: {item.path}\n".encode("ascii"),
+        }
+        if owner.returncode != 0 or owner.stdout not in expected_owners:
+            raise OSError
+        observed.append(item.path)
+    return tuple(observed)
+
+
 def _require_systemd_assets_visible() -> None:
-    executor_dropin = AUTHORITY.executor_socket_dropin
-    user_dropin = AUTHORITY.cgroup_dropin
-    executor_paths = _read_systemctl(
-        "omnilyzer-deployment-executor.service", "DropInPaths"
-    ).split()
-    user_paths = _read_systemctl(_USER_MANAGER, "DropInPaths").split()
-    if executor_paths != [executor_dropin] or user_paths != [user_dropin]:
+    executor_paths = tuple(
+        _read_systemctl(
+            "omnilyzer-deployment-executor.service", "DropInPaths"
+        ).split()
+    )
+    user_paths = tuple(_read_systemctl(_USER_MANAGER, "DropInPaths").split())
+    _require_user_manager_template_dropins()
+    if (
+        executor_paths != (AUTHORITY.executor_socket_dropin,)
+        or user_paths != _expected_user_manager_dropins()
+    ):
         raise OSError
     for unit in _DEPLOYMENT_UNITS:
         if _read_systemctl(unit, "ActiveState") != "inactive":
