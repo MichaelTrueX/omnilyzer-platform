@@ -46,16 +46,16 @@ _TIMEOUT = 5.0
 _SUBUID = "/etc/subuid"
 _SUBGID = "/etc/subgid"
 _APPARMOR_PROFILE = "/etc/apparmor.d/rootlesskit"
-_FORBIDDEN_PATHS = (
+_COMMON_FORBIDDEN_PATHS = (
     "/var/run/docker.sock",
     "/run/user/991/docker.sock",
     "/run/omnilyzer/deployment/rootless-docker/docker.sock",
     INSTALLATION_AUTHORITY.docker_key_path,
     INSTALLATION_AUTHORITY.docker_source_path,
     INSTALLATION_AUTHORITY.policy_rc_d_path,
-    INSTALLATION_AUTHORITY.staging_directory,
     "/run/user/991",
 )
+_FINAL_STAGING_PATH = INSTALLATION_AUTHORITY.staging_directory
 _ROOTFUL_MASK_PATHS = tuple(
     "/etc/systemd/system/" + unit
     for unit in INSTALLATION_AUTHORITY.rootful_units
@@ -314,12 +314,22 @@ def _require_rootful_runtime_absent() -> None:
         result = _run((_PGREP, "-x", process_name))
         if result.returncode != 1 or result.stdout != b"":
             raise OSError
-    for path in (*_FORBIDDEN_PATHS, *_ROOTFUL_MASK_PATHS):
+    for path in (*_COMMON_FORBIDDEN_PATHS, *_ROOTFUL_MASK_PATHS):
         try:
             os.lstat(path)
         except FileNotFoundError:
             continue
         raise OSError
+
+
+def _require_final_bundle_absent() -> None:
+    """Require the fixed published C32ZS staging path to be absent."""
+
+    try:
+        os.lstat(_FINAL_STAGING_PATH)
+    except FileNotFoundError:
+        return
+    raise OSError
 
 
 def _read_root_regular(path: str, maximum: int) -> bytes:
@@ -499,8 +509,8 @@ def _require_kernel_prerequisites() -> tuple[str, ...]:
     return controllers
 
 
-def _qualify_once() -> RootlessDockerPreinstallEvidence:
-    """Perform one complete read-only clean-host qualification."""
+def _qualify_host_once() -> RootlessDockerPreinstallEvidence:
+    """Perform the shared read-only host qualification without staging policy."""
 
     identity = _root_identity()
     migrated = qualify_successor_host_migration()
@@ -551,6 +561,15 @@ def _qualify_once() -> RootlessDockerPreinstallEvidence:
         host_dependencies=dependencies,
         cgroup_controllers=controllers,
     )
+
+
+def _qualify_once() -> RootlessDockerPreinstallEvidence:
+    """Require the shared host boundary while no final package bundle exists."""
+
+    _require_final_bundle_absent()
+    result = _qualify_host_once()
+    _require_final_bundle_absent()
+    return result
 
 
 def qualify_rootless_docker_preinstall() -> RootlessDockerPreinstallEvidence:

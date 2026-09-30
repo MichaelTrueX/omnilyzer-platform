@@ -89,7 +89,11 @@ or redirect path, a deterministic private incoming directory, safe resume only
 for exact root-owned partial files, two C32ZQ observations around download,
 Linux no-replace atomic publication, and final independent C32ZS qualification.
 It stages bytes
-only and still performs no package installation or service activation.
+only and still performs no package installation or service activation. C32ZV
+adds the post-staging read-only gate: public C32ZQ still requires no final bundle,
+while C32ZV allows only the exact C32ZS final bundle, rejects any C32ZU incoming
+object, brackets the bundle with identical host-only observations, and repeats
+the combined evidence. It performs no installation or activation.
 
 `/var/lib/omnilyzer/deployment/dev/canary-runtime` is mounted read-only at `/run/omnilyzer-canary` in application slots. The explicit migration operation alone mounts it read-write and runs `/app/migration.py`; migration is never startup behavior. Identity is `task014-executable-canary-v1`, definition checksum is `b25e7d2d55bce3e233f58f9607e715daebc2a1a69c37603adbb569604ef76421`, and durable files are `migration.lock` and `migration.json`.
 

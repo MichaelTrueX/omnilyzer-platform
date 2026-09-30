@@ -237,6 +237,18 @@ class RootlessDockerPreinstallQualificationTests(unittest.TestCase):
                 self.assertRaises(OSError):
             module._require_rootful_runtime_absent()
 
+    def test_public_preinstall_requires_final_bundle_absent(self) -> None:
+        with patch.object(
+            module.os, "lstat", side_effect=FileNotFoundError,
+        ) as lstat:
+            module._require_final_bundle_absent()
+        lstat.assert_called_once_with(INSTALLATION_AUTHORITY.staging_directory)
+
+        with patch.object(
+            module.os, "lstat", return_value=SimpleNamespace(),
+        ), self.assertRaises(OSError):
+            module._require_final_bundle_absent()
+
     def test_subid_parser_rejects_overlap_and_target_collision(self) -> None:
         clean = (
             b"ysabel:100000:65536\n"
@@ -361,8 +373,11 @@ class RootlessDockerPreinstallQualificationTests(unittest.TestCase):
             (item.package, "9.9-test", item.architecture)
             for item in INSTALLATION_AUTHORITY.host_dependencies
         )
-        with patch.object(module, "_root_identity", return_value=(0, 0, 0, 0)), \
-                patch.object(
+        with patch.object(
+            module, "_require_final_bundle_absent",
+        ) as final_absent, patch.object(
+            module, "_root_identity", return_value=(0, 0, 0, 0),
+        ), patch.object(
                     module, "qualify_successor_host_migration",
                     return_value=migrated,
                 ), patch.object(
@@ -386,6 +401,7 @@ class RootlessDockerPreinstallQualificationTests(unittest.TestCase):
                 ):
             result = module._qualify_once()
         self.assertEqual(result, evidence(host_dependencies=dependency_evidence))
+        self.assertEqual(final_absent.call_count, 2)
         self.assertEqual(
             checked_dependencies,
             [item.package for item in INSTALLATION_AUTHORITY.host_dependencies],
