@@ -464,3 +464,12 @@ static rootless authority plus exact logind/systemd runtime ownership and cgroup
 delegation, while proving the dedicated rootless Docker user service remains
 disabled/inactive and no Docker socket or process exists. Daemon startup remains
 a separate reviewed transition.
+
+
+C33E starts only the reviewed rootless Docker user unit after the independently
+qualified C33D user-manager state. It does not enable that unit. Success binds
+the active unit to the exact UID-991 private Unix socket, Docker 29.8.1 rootless
+server identity, overlay2, systemd cgroups v2, reviewed data root and exact
+dockerd command line with an empty pre-workload inventory. Rootful Docker stays
+masked and the broker/executor/deployment path remains inactive. Reboot
+persistence and workload execution require later reviewed transitions.

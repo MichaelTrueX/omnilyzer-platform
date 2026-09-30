@@ -203,3 +203,12 @@ must prove exact linger and `/run/user/991`, UID-991 cgroup delegation, all
 static bootstrap/package invariants, and a loaded but disabled/inactive rootless
 Docker user unit. Passing C33D authorizes only a future separately reviewed
 rootless-Docker daemon startup phase.
+
+### C33E rootless daemon start
+
+After C33D, C33E may start only the reviewed rootless Docker user service through
+UID 991's active user manager. The unit remains disabled. C33E proves the exact
+private socket, Docker 29.8.1 rootless identity, overlay2/systemd-cgroup-v2
+configuration, empty pre-workload inventory and exact dockerd argv while the
+projected executor socket and all deployment units remain inactive. Reboot
+enablement and workload activation are later review boundaries.
