@@ -3948,3 +3948,21 @@ installed at `/etc/systemd/user`. C33F accepts only that exact alias, requires
 the exact symlink target/ownership, and proves the alias and reviewed path are
 the same root-owned mode-0644 inode before canonicalizing evidence to the
 reviewed `/etc/systemd/user` path. Arbitrary fragment aliases remain rejected.
+
+## C33H post-daemon data-root authority
+
+C33H separates the C32ZZ/C33A pre-daemon static-directory contract from the
+post-daemon C33E/C33F contract. The Docker data root is created by C32ZZ as
+UID/GID 991 mode `0700` and must remain empty at the static-bootstrap boundary.
+Once the reviewed daemon starts, Docker legitimately transitions that directory
+to mode `0710` and creates its empty-engine top-level state. C33E/C33F therefore
+use a separate post-daemon authority while every other provisioned directory
+continues to use the original exact closed-directory proof.
+
+The post-daemon data-root proof requires exactly the reviewed 12-entry top level
+(`buildkit`, `containerd`, `containers`, `engine-id`, `image`, `network`,
+`overlay2`, `plugins`, `runtimes`, `swarm`, `tmp`, `volumes`), exact type and
+mode for every entry, UID/GID 991 ownership, and a canonical 36-byte UUID
+`engine-id`. It does not pin Docker-managed database contents, timestamps or
+inodes. The Docker API must independently continue to report zero containers
+and zero images at this pre-workload boundary.

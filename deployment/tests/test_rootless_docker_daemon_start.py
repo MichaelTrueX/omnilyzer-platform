@@ -121,6 +121,39 @@ class RootlessDockerDaemonStartTests(unittest.TestCase):
                 module._run(argv)
             run.assert_not_called()
 
+    def test_post_daemon_static_assets_use_transitioned_data_root_only(self):
+        expected_data = next(
+            item for item in AUTHORITY.post_daemon_provisioned_directories
+            if item[0] == AUTHORITY.data_root
+        )
+        with patch.object(
+            module, "_require_post_daemon_data_root", return_value=expected_data
+        ) as data_root, patch.object(
+            module.userq.staticq,
+            "_require_directory",
+            side_effect=lambda path, uid, gid, mode, _children: (path, uid, gid, mode),
+        ) as require_directory, patch.object(
+            module.userq.staticq,
+            "_require_file",
+            side_effect=lambda path, digest, uid, gid, mode: (path, digest, uid, gid, mode),
+        ):
+            directories, assets = module._require_post_daemon_static_assets()
+
+        self.assertEqual(directories, AUTHORITY.post_daemon_provisioned_directories)
+        self.assertEqual(
+            assets,
+            tuple(
+                (destination, digest, uid, gid, mode)
+                for _source, destination, digest, uid, gid, mode
+                in AUTHORITY.installed_assets
+            ),
+        )
+        data_root.assert_called_once_with()
+        self.assertEqual(
+            require_directory.call_count,
+            len(AUTHORITY.post_daemon_provisioned_directories) - 1,
+        )
+
     def test_runtime_artifact_modes_are_exact_rootless_host_view(self):
         pid = type("S", (), {
             "st_mode": stat.S_IFREG | AUTHORITY.pid_file_mode,
@@ -194,7 +227,7 @@ class RootlessDockerDaemonStartTests(unittest.TestCase):
             expected_workflow_sha=WORKFLOW,
             subuid_records=(("omnigpt", 427680, 65536),),
             subgid_records=(("omnigpt", 427680, 65536),),
-            directories=("dirs",),
+            directories=AUTHORITY.provisioned_directories,
             assets=("assets",),
             linger_mode=0o644,
             runtime_directory=AUTHORITY.runtime_directory,
@@ -223,7 +256,7 @@ class RootlessDockerDaemonStartTests(unittest.TestCase):
             ),
             before.subuid_records,
             before.subgid_records,
-            before.directories,
+            AUTHORITY.post_daemon_provisioned_directories,
             before.assets,
             before.linger_mode,
             (

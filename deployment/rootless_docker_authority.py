@@ -171,6 +171,38 @@ class RootlessDockerAuthority:
         ("/etc/systemd/system/user@991.service.d", 0, 0, 0o755),
         ("/etc/systemd/system/omnilyzer-deployment-executor.service.d", 0, 0, 0o755),
     ))
+    post_daemon_provisioned_directories: tuple[tuple[str, int, int, int], ...] = field(
+        init=False,
+        default=(
+            ("/var/lib/omnilyzer/deployment/rootless-home", 991, 991, 0o700),
+            ("/var/lib/omnilyzer/deployment/rootless-docker-data", 991, 991, 0o710),
+            ("/var/lib/omnilyzer/deployment/dev/canary-runtime", 991, 503216, 0o770),
+            ("/var/lib/omnilyzer/deployment/dev/nginx-runtime", 991, 991, 0o755),
+            ("/etc/omnilyzer/deployment/rootless-docker", 0, 0, 0o755),
+            ("/etc/omnilyzer/deployment/docker-client", 0, 0, 0o755),
+            ("/opt/omnilyzer/deployment/rootless-docker", 0, 0, 0o755),
+            ("/etc/systemd/system/user@991.service.d", 0, 0, 0o755),
+            ("/etc/systemd/system/omnilyzer-deployment-executor.service.d", 0, 0, 0o755),
+        ),
+    )
+    post_daemon_data_root_entries: tuple[tuple[str, str, int], ...] = field(
+        init=False,
+        default=(
+            ("buildkit", "directory", 0o711),
+            ("containerd", "directory", 0o700),
+            ("containers", "directory", 0o710),
+            ("engine-id", "file", 0o600),
+            ("image", "directory", 0o700),
+            ("network", "directory", 0o750),
+            ("overlay2", "directory", 0o710),
+            ("plugins", "directory", 0o700),
+            ("runtimes", "directory", 0o700),
+            ("swarm", "directory", 0o700),
+            ("tmp", "directory", 0o700),
+            ("volumes", "directory", 0o701),
+        ),
+    )
+    post_daemon_engine_id_size: int = field(init=False, default=36)
     external_runtime_prerequisites: tuple[tuple[str, int, int, int], ...] = field(init=False, default=(
         ("/run/user/991", 991, 991, 0o700),
         ("/run/omnilyzer", 0, 0, 0o755),
