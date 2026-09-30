@@ -484,3 +484,13 @@ identity with an empty pre-workload inventory. No executor projection, rootful
 Docker activation or deployment activation is permitted.
 
 C33F independently qualifies the running rootless Docker daemon after C33E. It does not import the daemon-start mutator. The proof binds the active-but-disabled user unit to RootlessKit and the exact dockerd command line, validates the private UID-991 Unix socket and rootless Docker server properties, and requires two identical observations while broker/executor/deployment remain inactive. Enabling the user unit for reboot persistence is a later reviewed transition.
+
+
+C33G records the live rootless runtime semantics discovered during the first
+C33E daemon start. RootlessKit/Docker expose the private daemon socket with mode
+`01660`, PID file `01644`, exec-root `01700`, and RootlessKit state `0700`; the
+extra sticky bit does not broaden read/write permission and is now pinned as
+part of the reviewed host contract. The active user manager reports the unit via
+the `/etc/xdg/systemd/user` alias, which is accepted only when the root-owned
+symlink target is exactly `../../systemd/user` and both alias and reviewed unit
+resolve to the same root-owned mode-0644 inode.

@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import SimpleNamespace
 import json
+import stat
 import subprocess
 import unittest
 from unittest.mock import patch
@@ -45,7 +46,7 @@ def evidence(operation="started"):
         daemon_socket=AUTHORITY.daemon_socket,
         socket_uid=AUTHORITY.executor_uid,
         socket_gid=AUTHORITY.executor_gid,
-        socket_mode=0o660,
+        socket_mode=AUTHORITY.daemon_socket_mode,
         dockerd_pid=4242,
         dockerd_argv=module._EXPECTED_DOCKERD_ARGV,
         server_version=AUTHORITY.engine_version,
@@ -119,6 +120,28 @@ class RootlessDockerDaemonStartTests(unittest.TestCase):
             ) as run, self.assertRaises(OSError):
                 module._run(argv)
             run.assert_not_called()
+
+    def test_runtime_artifact_modes_are_exact_rootless_host_view(self):
+        pid = type("S", (), {
+            "st_mode": stat.S_IFREG | AUTHORITY.pid_file_mode,
+            "st_uid": 991, "st_gid": 991,
+        })()
+        root = type("S", (), {
+            "st_mode": stat.S_IFDIR | AUTHORITY.exec_root_mode,
+            "st_uid": 991, "st_gid": 991,
+        })()
+        with patch.object(
+            module.os, "lstat",
+            side_effect=lambda path: pid if path == AUTHORITY.pid_file else root,
+        ):
+            module._runtime_artifacts_exact()
+
+        bad = type("S", (), {
+            "st_mode": stat.S_IFREG | 0o644,
+            "st_uid": 991, "st_gid": 991,
+        })()
+        with patch.object(module.os, "lstat", return_value=bad), self.assertRaises(OSError):
+            module._runtime_artifacts_exact()
 
     def test_docker_info_uses_exact_private_endpoint_and_closed_config(self):
         payload = json.dumps(info_payload()).encode("utf-8") + b"\n"

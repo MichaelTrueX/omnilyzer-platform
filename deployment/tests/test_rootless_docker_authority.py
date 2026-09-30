@@ -124,6 +124,20 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
         self.assertEqual((AUTHORITY.nginx_host_uid, AUTHORITY.nginx_host_gid),
                          (493216 + 65532 - 1, 493216 + 65532 - 1))
         self.assertEqual(AUTHORITY.daemon_socket, "/run/user/991/docker.sock")
+        self.assertEqual(AUTHORITY.daemon_socket_mode, 0o1660)
+        self.assertEqual(AUTHORITY.pid_file_mode, 0o1644)
+        self.assertEqual(AUTHORITY.exec_root_mode, 0o1700)
+        self.assertEqual(AUTHORITY.rootlesskit_state_mode, 0o700)
+        self.assertEqual(
+            AUTHORITY.user_unit_fragment_alias,
+            "/etc/xdg/systemd/user/omnilyzer-task014-rootless-docker.service",
+        )
+        self.assertEqual(
+            AUTHORITY.user_unit_fragment_alias_parent, "/etc/xdg/systemd/user"
+        )
+        self.assertEqual(
+            AUTHORITY.user_unit_fragment_alias_target, "../../systemd/user"
+        )
         self.assertEqual(AUTHORITY.socket,
                          "/run/omnilyzer/deployment/rootless-docker/docker.sock")
         self.assertEqual(AUTHORITY.data_root,

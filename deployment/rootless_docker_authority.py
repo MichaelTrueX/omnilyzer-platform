@@ -85,19 +85,33 @@ class RootlessDockerAuthority:
     dockerd: str = field(init=False, default="/usr/bin/dockerd")
     runtime_directory: str = field(init=False, default="/run/user/991")
     daemon_socket: str = field(init=False, default="/run/user/991/docker.sock")
+    daemon_socket_mode: int = field(init=False, default=0o1660)
     socket_directory: str = field(init=False, default="/run/omnilyzer/deployment/rootless-docker")
     socket: str = field(init=False, default="/run/omnilyzer/deployment/rootless-docker/docker.sock")
     socket_host: str = field(init=False, default="unix:///run/omnilyzer/deployment/rootless-docker/docker.sock")
     data_root: str = field(init=False, default="/var/lib/omnilyzer/deployment/rootless-docker-data")
     exec_root: str = field(init=False, default="/run/user/991/docker-exec")
+    exec_root_mode: int = field(init=False, default=0o1700)
     rootlesskit_state: str = field(init=False, default="/run/user/991/dockerd-rootless")
+    rootlesskit_state_mode: int = field(init=False, default=0o700)
     containerd_rootless_state: str = field(init=False, default="/run/user/991/containerd-rootless")
     pid_file: str = field(init=False, default="/run/user/991/docker.pid")
+    pid_file_mode: int = field(init=False, default=0o1644)
     home: str = field(init=False, default="/var/lib/omnilyzer/deployment/rootless-home")
     daemon_config: str = field(init=False, default="/etc/omnilyzer/deployment/rootless-docker/daemon.json")
     client_config: str = field(init=False, default="/etc/omnilyzer/deployment/docker-client/config.json")
     launcher: str = field(init=False, default="/opt/omnilyzer/deployment/rootless-docker/launch.py")
     user_unit: str = field(init=False, default="/etc/systemd/user/omnilyzer-task014-rootless-docker.service")
+    user_unit_fragment_alias: str = field(
+        init=False,
+        default="/etc/xdg/systemd/user/omnilyzer-task014-rootless-docker.service",
+    )
+    user_unit_fragment_alias_parent: str = field(
+        init=False, default="/etc/xdg/systemd/user"
+    )
+    user_unit_fragment_alias_target: str = field(
+        init=False, default="../../systemd/user"
+    )
     cgroup_dropin: str = field(init=False, default="/etc/systemd/system/user@991.service.d/omnilyzer-task014-cgroup-delegation.conf")
     executor_socket_dropin: str = field(init=False, default="/etc/systemd/system/omnilyzer-deployment-executor.service.d/rootless-docker-socket.conf")
     user_manager_template_dropins: tuple[SystemdTemplateDropInAuthority, ...] = field(

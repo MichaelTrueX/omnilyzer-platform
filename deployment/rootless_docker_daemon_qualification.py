@@ -192,9 +192,18 @@ class RootlessDockerDaemonEvidence:
             or self.dockerd_argv != _EXPECTED_DOCKERD_ARGV
             or self.daemon_socket != AUTHORITY.daemon_socket
             or (self.socket_uid, self.socket_gid, self.socket_mode)
-            != (AUTHORITY.executor_uid, AUTHORITY.executor_gid, 0o660)
+            != (
+                AUTHORITY.executor_uid,
+                AUTHORITY.executor_gid,
+                AUTHORITY.daemon_socket_mode,
+            )
             or self.rootlesskit_state
-            != (AUTHORITY.rootlesskit_state, AUTHORITY.executor_uid, AUTHORITY.executor_gid, 0o700)
+            != (
+                AUTHORITY.rootlesskit_state,
+                AUTHORITY.executor_uid,
+                AUTHORITY.executor_gid,
+                AUTHORITY.rootlesskit_state_mode,
+            )
             or self.server_version != AUTHORITY.engine_version
             or self.storage_driver != "overlay2"
             or self.docker_root_dir != AUTHORITY.data_root
@@ -324,6 +333,35 @@ def _read_user_systemctl(property_name: str) -> str:
     return result.stdout[:-1].decode("ascii")
 
 
+def _canonical_user_unit_fragment(fragment: str) -> str:
+    if fragment != AUTHORITY.user_unit_fragment_alias:
+        raise OSError
+    parent = os.lstat(AUTHORITY.user_unit_fragment_alias_parent)
+    if (
+        not stat.S_ISLNK(parent.st_mode)
+        or (parent.st_uid, parent.st_gid) != (0, 0)
+        or os.readlink(AUTHORITY.user_unit_fragment_alias_parent)
+        != AUTHORITY.user_unit_fragment_alias_target
+    ):
+        raise OSError
+    try:
+        alias = os.stat(AUTHORITY.user_unit_fragment_alias, follow_symlinks=True)
+        reviewed = os.stat(AUTHORITY.user_unit, follow_symlinks=True)
+    except OSError:
+        raise OSError from None
+    if (
+        not stat.S_ISREG(alias.st_mode)
+        or not stat.S_ISREG(reviewed.st_mode)
+        or (alias.st_uid, alias.st_gid) != (0, 0)
+        or (reviewed.st_uid, reviewed.st_gid) != (0, 0)
+        or stat.S_IMODE(alias.st_mode) != 0o644
+        or stat.S_IMODE(reviewed.st_mode) != 0o644
+        or (alias.st_dev, alias.st_ino) != (reviewed.st_dev, reviewed.st_ino)
+    ):
+        raise OSError
+    return AUTHORITY.user_unit
+
+
 def _user_unit_evidence() -> tuple[tuple[str, str, str, str], str, int]:
     state = (
         _read_user_systemctl("LoadState"),
@@ -331,7 +369,9 @@ def _user_unit_evidence() -> tuple[tuple[str, str, str, str], str, int]:
         _read_user_systemctl("SubState"),
         _read_user_systemctl("UnitFileState"),
     )
-    fragment = _read_user_systemctl("FragmentPath")
+    fragment = _canonical_user_unit_fragment(
+        _read_user_systemctl("FragmentPath")
+    )
     try:
         main_pid = int(_read_user_systemctl("MainPID"))
     except ValueError:
@@ -452,7 +492,7 @@ def _socket_evidence() -> tuple[str, int, int, int]:
         or value.st_nlink != 1
         or (value.st_uid, value.st_gid)
         != (AUTHORITY.executor_uid, AUTHORITY.executor_gid)
-        or stat.S_IMODE(value.st_mode) != 0o660
+        or stat.S_IMODE(value.st_mode) != AUTHORITY.daemon_socket_mode
     ):
         raise OSError
     probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -475,7 +515,7 @@ def _rootlesskit_state_evidence() -> tuple[str, int, int, int]:
         not stat.S_ISDIR(value.st_mode)
         or (value.st_uid, value.st_gid)
         != (AUTHORITY.executor_uid, AUTHORITY.executor_gid)
-        or stat.S_IMODE(value.st_mode) != 0o700
+        or stat.S_IMODE(value.st_mode) != AUTHORITY.rootlesskit_state_mode
         or os.path.lexists(AUTHORITY.containerd_rootless_state)
     ):
         raise OSError
@@ -485,6 +525,22 @@ def _rootlesskit_state_evidence() -> tuple[str, int, int, int]:
         value.st_gid,
         stat.S_IMODE(value.st_mode),
     )
+
+
+def _runtime_artifacts_exact() -> None:
+    checks = (
+        (AUTHORITY.pid_file, stat.S_IFREG, AUTHORITY.pid_file_mode),
+        (AUTHORITY.exec_root, stat.S_IFDIR, AUTHORITY.exec_root_mode),
+    )
+    for path, kind, mode in checks:
+        value = os.lstat(path)
+        if (
+            stat.S_IFMT(value.st_mode) != kind
+            or (value.st_uid, value.st_gid)
+            != (AUTHORITY.executor_uid, AUTHORITY.executor_gid)
+            or stat.S_IMODE(value.st_mode) != mode
+        ):
+            raise OSError
 
 
 def _docker_info_evidence() -> tuple[
@@ -709,6 +765,7 @@ def _qualify_once() -> RootlessDockerDaemonEvidence:
     )
     socket_evidence = _socket_evidence()
     rootlesskit_state = _rootlesskit_state_evidence()
+    _runtime_artifacts_exact()
     info = _docker_info_evidence()
     linger_mode, runtime, control_group, delegates = _user_manager_evidence()
 
