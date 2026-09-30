@@ -3882,3 +3882,17 @@ those four paths, while each inherited file is independently pinned by package
 name, exact installed package version/architecture, root ownership/mode, dpkg
 ownership, and SHA-256. Arbitrary additional `/etc` or `/usr/lib` drop-ins remain
 rejected.
+
+## C33C UID-991 user-manager bootstrap
+
+`rootless_docker_user_manager_bootstrap.py` is the next privileged transition
+after C33A/C33B. It first consumes the independent static-bootstrap proof, then
+permits only `loginctl enable-linger omnilyzer-executor` and
+`systemctl start user@991.service`. The transition is resumable if linger is
+created but the user manager does not start. It requires the systemd-owned
+`/run/user/991` runtime directory to be UID/GID 991 mode 0700, the exact
+`/user.slice/user-991.slice/user@991.service` control group with CPU/memory/PID
+delegation, and the reviewed rootless Docker user unit to remain loaded but
+disabled and inactive. Rootful Docker stays masked, no Docker process/socket
+may exist, and broker/executor/deployment remain inactive. C33C never starts or
+enables the rootless Docker user unit.
