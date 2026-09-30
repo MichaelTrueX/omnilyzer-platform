@@ -100,7 +100,12 @@ and immediately rehashed staged descriptors, one fixed offline `dpkg --install`
 shape, exact-prefix interruption recovery, and removal of the start blocker only
 after all nine packages are exact `ii` and the unchanged host/bundle boundary
 requalifies. C32ZW still does not allocate subordinate IDs, provision rootless
-assets, start Docker, expose its socket, or activate deployment.
+assets, start Docker, expose its socket, or activate deployment. C32ZX adds an
+independent read-only post-install proof before rootless bootstrap: exact `ii`
+package versions, exact persistent masks/inactivity, unchanged host/sub-ID/kernel
+authority and C32ZS bundle, exact package ownership/mode for every critical
+executable, repeated executable SHA-256 evidence, pinned vendor-script digest,
+and rejection of RootlessKit/Compose shadowing and Buildx. It mutates nothing.
 
 `/var/lib/omnilyzer/deployment/dev/canary-runtime` is mounted read-only at `/run/omnilyzer-canary` in application slots. The explicit migration operation alone mounts it read-write and runs `/app/migration.py`; migration is never startup behavior. Identity is `task014-executable-canary-v1`, definition checksum is `b25e7d2d55bce3e233f58f9607e715daebc2a1a69c37603adbb569604ef76421`, and durable files are `migration.lock` and `migration.json`.
 
