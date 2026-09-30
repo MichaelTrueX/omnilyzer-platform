@@ -118,7 +118,7 @@ def evidence(workflow=WORKFLOW):
         critical_executables=executable_rows(),
         cgroup_controllers=("cpu", "io", "memory", "pids"),
         executor_dropins=(AUTHORITY.executor_socket_dropin,),
-        user_manager_dropins=(AUTHORITY.cgroup_dropin,),
+        user_manager_dropins=module._expected_user_manager_dropins(),
         bundle=bundle_evidence(),
     )
 
@@ -224,24 +224,88 @@ class RootlessDockerStaticBootstrapQualificationTests(unittest.TestCase):
                 "omnilyzer-deployment-executor.service",
                 "DropInPaths",
             ): AUTHORITY.executor_socket_dropin,
-            (module._USER_MANAGER, "DropInPaths"): AUTHORITY.cgroup_dropin,
+            (module._USER_MANAGER, "DropInPaths"): " ".join(
+                module._expected_user_manager_dropins()
+            ),
         }
 
         def read(unit, prop):
             return values[(unit, prop)]
 
-        with patch.object(module, "_read_systemctl", side_effect=read),              patch.object(module.os.path, "lexists", return_value=False),              patch.object(module.os, "lstat", side_effect=FileNotFoundError):
+        with patch.object(module, "_read_systemctl", side_effect=read),              patch.object(module, "_require_user_manager_template_dropins"),              patch.object(module.os.path, "lexists", return_value=False),              patch.object(module.os, "lstat", side_effect=FileNotFoundError):
             self.assertEqual(
                 module._require_inert_systemd(),
-                ((AUTHORITY.executor_socket_dropin,), (AUTHORITY.cgroup_dropin,)),
+                (
+                    (AUTHORITY.executor_socket_dropin,),
+                    module._expected_user_manager_dropins(),
+                ),
             )
 
-        with patch.object(module, "_read_systemctl", side_effect=read),              patch.object(
+        with patch.object(module, "_read_systemctl", side_effect=read),              patch.object(module, "_require_user_manager_template_dropins"),              patch.object(
                  module.os.path,
                  "lexists",
                  side_effect=lambda p: p == module._LINGER_PATH,
              ),              self.assertRaises(OSError):
             module._require_inert_systemd()
+
+    def test_template_dropin_authority_is_exact_and_closed(self):
+        expected = (
+            "/usr/lib/systemd/system/user@.service.d/10-login-barrier.conf",
+            "/usr/lib/systemd/system/user@.service.d/10-oomd-user-service-defaults.conf",
+            AUTHORITY.cgroup_dropin,
+            "/usr/lib/systemd/system/user@.service.d/timeout.conf",
+        )
+        self.assertEqual(module._expected_user_manager_dropins(), expected)
+
+        item = AUTHORITY.user_manager_template_dropins[0]
+        package = subprocess.CompletedProcess(
+            (), 0,
+            f"ii \t{item.apt_version}\t{item.architecture}\n".encode("ascii"),
+            b"",
+        )
+        owner = subprocess.CompletedProcess(
+            (), 0, f"{item.package}: {item.path}\n".encode("ascii"), b""
+        )
+        with patch.object(
+            module,
+            "_require_file",
+            side_effect=lambda path, digest, uid, gid, mode: (
+                path, digest, uid, gid, mode
+            ),
+        ), patch.object(
+            module.subprocess,
+            "run",
+            side_effect=sum(
+                (
+                    [
+                        subprocess.CompletedProcess(
+                            (), 0,
+                            f"ii \t{x.apt_version}\t{x.architecture}\n".encode("ascii"),
+                            b"",
+                        ),
+                        subprocess.CompletedProcess(
+                            (), 0, f"{x.package}: {x.path}\n".encode("ascii"), b""
+                        ),
+                    ]
+                    for x in AUTHORITY.user_manager_template_dropins
+                ),
+                [],
+            ),
+        ):
+            self.assertEqual(
+                module._require_user_manager_template_dropins(),
+                tuple(x.path for x in AUTHORITY.user_manager_template_dropins),
+            )
+
+        bad_package = subprocess.CompletedProcess((), 0, b"ii \t0\tamd64\n", b"")
+        with patch.object(
+            module,
+            "_require_file",
+            side_effect=lambda path, digest, uid, gid, mode: (
+                path, digest, uid, gid, mode
+            ),
+        ), patch.object(module.subprocess, "run", return_value=bad_package), self.assertRaises(OSError):
+            module._require_user_manager_template_dropins()
 
     def test_one_observation_combines_independent_proofs(self):
         with patch.object(module, "_root_identity", return_value=(0, 0, 0, 0)),              patch.object(
@@ -272,7 +336,7 @@ class RootlessDockerStaticBootstrapQualificationTests(unittest.TestCase):
                  "_require_inert_systemd",
                  return_value=(
                      (AUTHORITY.executor_socket_dropin,),
-                     (AUTHORITY.cgroup_dropin,),
+                     module._expected_user_manager_dropins(),
                  ),
              ):
             self.assertEqual(module._qualify_once(), evidence())

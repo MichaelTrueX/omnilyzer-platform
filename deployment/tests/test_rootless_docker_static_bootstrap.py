@@ -320,6 +320,33 @@ class RootlessDockerStaticBootstrapTests(unittest.TestCase):
         assets.assert_not_called()
         run.assert_not_called()
 
+    def test_systemd_visibility_accepts_only_reviewed_composed_user_dropins(self):
+        expected_user = module._expected_user_manager_dropins()
+        values = {
+            ("omnilyzer-deployment-executor.service", "DropInPaths"):
+                AUTHORITY.executor_socket_dropin,
+            (module._USER_MANAGER, "DropInPaths"): " ".join(expected_user),
+            ("omnilyzer-deployment-broker.service", "ActiveState"): "inactive",
+            ("omnilyzer-deployment-executor.service", "ActiveState"): "inactive",
+            ("omnilyzer-deployment-executor.socket", "ActiveState"): "inactive",
+        }
+        with patch.object(
+            module, "_read_systemctl", side_effect=lambda unit, prop: values[(unit, prop)]
+        ), patch.object(
+            module, "_require_user_manager_template_dropins",
+            return_value=tuple(x.path for x in AUTHORITY.user_manager_template_dropins),
+        ):
+            module._require_systemd_assets_visible()
+
+        values[(module._USER_MANAGER, "DropInPaths")] += " /etc/systemd/system/unexpected.conf"
+        with patch.object(
+            module, "_read_systemctl", side_effect=lambda unit, prop: values[(unit, prop)]
+        ), patch.object(
+            module, "_require_user_manager_template_dropins",
+            return_value=tuple(x.path for x in AUTHORITY.user_manager_template_dropins),
+        ), self.assertRaises(OSError):
+            module._require_systemd_assets_visible()
+
     def test_directory_content_gate_rejects_unknown_children_and_requires_final_assets(self):
         path, expected = next(
             (item for item in module._EXPECTED_DIRECTORY_CHILDREN.items() if item[1])

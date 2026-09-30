@@ -178,3 +178,12 @@ closed persistent directory contents and asset hashes, loaded reviewed drop-ins,
 all deployment services inactive, no linger marker, no UID-991 runtime, and no
 rootless Docker projection directory. Passing C33A authorizes only the next
 reviewed user-manager bootstrap step; it does not start or enable anything.
+
+### C33B composed systemd drop-in baseline
+
+The UID-991 user-manager proof accounts for systemd's normal composition of
+instance and template drop-ins. C32ZZ/C33A accept only the reviewed instance
+cgroup drop-in plus the three exact Ubuntu package-owned template drop-ins
+(`10-login-barrier.conf`, `10-oomd-user-service-defaults.conf`, and
+`timeout.conf`). Their hashes, package versions and ownership are pinned; any
+additional or changed drop-in fails closed.

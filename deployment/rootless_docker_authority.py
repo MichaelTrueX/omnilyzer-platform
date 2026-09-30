@@ -16,6 +16,18 @@ class PackageAuthority:
     required_executables: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class SystemdTemplateDropInAuthority:
+    path: str
+    package: str
+    apt_version: str
+    architecture: str
+    sha256: str
+    uid: int
+    gid: int
+    mode: int
+
+
 DOCKER_ORIGIN = "https://download.docker.com/linux/ubuntu noble/stable amd64"
 UBUNTU_MAIN = "Ubuntu signed noble-updates/main amd64"
 UBUNTU_UNIVERSE = "Ubuntu signed noble/universe amd64"
@@ -88,6 +100,35 @@ class RootlessDockerAuthority:
     user_unit: str = field(init=False, default="/etc/systemd/user/omnilyzer-task014-rootless-docker.service")
     cgroup_dropin: str = field(init=False, default="/etc/systemd/system/user@991.service.d/omnilyzer-task014-cgroup-delegation.conf")
     executor_socket_dropin: str = field(init=False, default="/etc/systemd/system/omnilyzer-deployment-executor.service.d/rootless-docker-socket.conf")
+    user_manager_template_dropins: tuple[SystemdTemplateDropInAuthority, ...] = field(
+        init=False,
+        default=(
+            SystemdTemplateDropInAuthority(
+                "/usr/lib/systemd/system/user@.service.d/10-login-barrier.conf",
+                "systemd",
+                "255.4-1ubuntu8.17",
+                "amd64",
+                "1c1452839b609b0609cccaba3c648d780372df6f244deb487da6da5ee002a993",
+                0, 0, 0o644,
+            ),
+            SystemdTemplateDropInAuthority(
+                "/usr/lib/systemd/system/user@.service.d/10-oomd-user-service-defaults.conf",
+                "systemd-oomd",
+                "255.4-1ubuntu8.17",
+                "amd64",
+                "ddf0f174373b79ea32997999cf2139e595c3fe9ccaf6ff66b2230d493fc664ef",
+                0, 0, 0o644,
+            ),
+            SystemdTemplateDropInAuthority(
+                "/usr/lib/systemd/system/user@.service.d/timeout.conf",
+                "systemd",
+                "255.4-1ubuntu8.17",
+                "amd64",
+                "597eac16d8d7a289bb16aeeb01be0191d0c90beca4c6e0dba0f0c2d7c4e0ea81",
+                0, 0, 0o644,
+            ),
+        ),
+    )
     canary_runtime: str = field(init=False, default="/var/lib/omnilyzer/deployment/dev/canary-runtime")
     nginx_runtime: str = field(init=False, default="/var/lib/omnilyzer/deployment/dev/nginx-runtime")
     detach_netns: bool = field(init=False, default=True)
@@ -197,4 +238,4 @@ class RootlessDockerAuthority:
 AUTHORITY = RootlessDockerAuthority()
 
 
-__all__ = ("PackageAuthority", "RootlessDockerAuthority", "AUTHORITY")
+__all__ = ("PackageAuthority", "SystemdTemplateDropInAuthority", "RootlessDockerAuthority", "AUTHORITY")

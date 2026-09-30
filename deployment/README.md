@@ -3871,3 +3871,14 @@ persistent bootstrap directory and byte-pinned asset is exact, the reviewed
 systemd drop-ins are loaded, deployment units remain inactive, the executor
 linger marker is absent, and both `/run/user/991` and the executor Docker
 projection directory are still absent. C33A performs no mutation.
+
+## C33B systemd template drop-in baseline
+
+C33B corrects the C32ZZ/C33A systemd visibility proof for `user@991.service`.
+Systemd composes the instance-specific reviewed cgroup drop-in with three
+package-owned `user@.service` template drop-ins supplied by Ubuntu. The accepted
+baseline is still closed: the composed `DropInPaths` list must contain exactly
+those four paths, while each inherited file is independently pinned by package
+name, exact installed package version/architecture, root ownership/mode, dpkg
+ownership, and SHA-256. Arbitrary additional `/etc` or `/usr/lib` drop-ins remain
+rejected.
