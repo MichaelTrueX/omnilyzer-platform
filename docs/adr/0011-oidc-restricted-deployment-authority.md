@@ -473,3 +473,14 @@ server identity, overlay2, systemd cgroups v2, reviewed data root and exact
 dockerd command line with an empty pre-workload inventory. Rootful Docker stays
 masked and the broker/executor/deployment path remains inactive. Reboot
 persistence and workload execution require later reviewed transitions.
+
+
+C33F independently proves the running rootless daemon after C33E. The proof
+requires the active user unit to remain disabled, binds its MainPID to the
+UID-991 RootlessKit process with the reviewed static-subid/slirp/detached-netns
+authority, binds exactly one UID-991 dockerd to the reviewed argv and private
+Unix socket, and verifies Docker 29.8.1 rootless overlay2/systemd-cgroup-v2
+identity with an empty pre-workload inventory. No executor projection, rootful
+Docker activation or deployment activation is permitted.
+
+C33F independently qualifies the running rootless Docker daemon after C33E. It does not import the daemon-start mutator. The proof binds the active-but-disabled user unit to RootlessKit and the exact dockerd command line, validates the private UID-991 Unix socket and rootless Docker server properties, and requires two identical observations while broker/executor/deployment remain inactive. Enabling the user unit for reboot persistence is a later reviewed transition.

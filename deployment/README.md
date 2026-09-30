@@ -3925,3 +3925,9 @@ root, rootless+cgroupns security options and an empty container/image inventory.
 The sole dockerd process must be UID 991 and use the exact reviewed daemon argv.
 Rootful Docker remains masked, the executor projection directory remains absent,
 and broker/executor/deployment remain inactive. C33E never enables a unit.
+
+## C33F rootless Docker daemon qualification
+
+`rootless_docker_daemon_qualification.py` is the independent read-only proof required after C33E. It does not import the C33E mutator. Two identical observations must bind systemd's active-but-disabled rootless user unit to its RootlessKit MainPID, require the reviewed RootlessKit static-subid/slirp/detached-netns token set, and bind the sole UID-991 dockerd process to the exact reviewed daemon argv.
+
+C33F separately verifies the UID/GID-991 mode-0660 private Unix socket, RootlessKit state directory, Docker 29.8.1, overlay2, systemd cgroups v2, the reviewed data root, rootless+cgroupns security options and an empty pre-workload inventory. Rootful Docker remains masked, no TCP/rootful endpoint or executor projection is permitted, and broker/executor/deployment remain inactive. The rootless user unit must remain disabled; reboot persistence is still deferred.
