@@ -317,6 +317,27 @@ observation. No package installer may treat staging alone as installation
 authority. C32ZV has no network, subprocess, filesystem-write, package, service,
 Docker, subordinate-ID or activation capability.
 
+C32ZW is the first reviewed package-mutation runtime. A clean invocation consumes
+C32ZV under the shared privileged mutation lock before creating the exact
+maintainer-script blocker and the three persistent rootful `/dev/null` masks.
+Systemd must report those units masked and inactive, the blocker must return its
+reviewed denial result, masked starts must fail, and no Docker/containerd process
+or socket may exist before package consumption. The nine C32ZR files remain open
+through retained descriptors and are rehashed immediately before one fixed
+offline `/usr/bin/dpkg --install` invocation using only `/proc/self/fd/N` paths.
+No APT/network/repository resolution or caller-selected package/path exists.
+
+Interruption recovery accepts only an exact C32ZW-owned prefix: the exact blocker,
+an ordered prefix or complete set of the three exact masks, exact reviewed target
+package versions/architecture in install-desired dpkg states, unchanged staged
+bundle, absent conflicting packages, and the unchanged non-package host authority.
+The blocker remains on every failed or partial path and is removed only after all
+nine packages are exact `ii`, rootful runtime remains impossible, and both the
+static host observation and C32ZS bundle requalify. The masks remain. C32ZW does
+not allocate subordinate IDs, provision rootless assets, enable/start services,
+start Docker, expose a Docker socket, alter ingress, or activate deployment.
+Those steps require later independently reviewed qualification and bootstrap.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.
