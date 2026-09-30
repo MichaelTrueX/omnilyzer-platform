@@ -92,6 +92,21 @@ class _OverreadResponse(_Response):
         return result
 
 
+class _Context:
+    """Minimal TLS context recording fixed trust-store configuration."""
+
+    def __init__(self):
+        self.minimum_version = None
+        self.verify_mode = None
+        self.check_hostname = None
+        self.loaded = []
+
+    def load_verify_locations(self, *, cafile):
+        """Record the exact CA bundle path."""
+
+        self.loaded.append(cafile)
+
+
 class _Connection:
     """Minimal deterministic HTTPS connection used by downloader tests."""
 
@@ -160,9 +175,9 @@ class RootlessDockerPackageStagingTests(unittest.TestCase):
         body = b"x" * payload.size
         response = _Response(body)
         connection = _Connection(response)
-        context = SimpleNamespace(minimum_version=None)
+        context = _Context()
         with tempfile.TemporaryFile() as target, patch.object(
-            module.ssl, "create_default_context", return_value=context,
+            module.ssl, "SSLContext", return_value=context,
         ) as context_factory, patch.object(
             module.http.client,
             "HTTPSConnection",
@@ -172,9 +187,14 @@ class RootlessDockerPackageStagingTests(unittest.TestCase):
             target.seek(0)
             self.assertEqual(target.read(), body)
 
-        context_factory.assert_called_once_with(
-            cafile="/etc/ssl/certs/ca-certificates.crt"
+        context_factory.assert_called_once_with(module.ssl.PROTOCOL_TLS_CLIENT)
+        self.assertEqual(
+            context.loaded,
+            ["/etc/ssl/certs/ca-certificates.crt"],
         )
+        self.assertEqual(context.minimum_version, module.ssl.TLSVersion.TLSv1_2)
+        self.assertEqual(context.verify_mode, module.ssl.CERT_REQUIRED)
+        self.assertIs(context.check_hostname, True)
         constructor.assert_called_once_with(
             "archive.ubuntu.com",
             443,
@@ -203,10 +223,10 @@ class RootlessDockerPackageStagingTests(unittest.TestCase):
         )
         for response in cases:
             connection = _Connection(response)
-            context = SimpleNamespace(minimum_version=None)
-            with self.subTest(status=response.status), tempfile.TemporaryFile() as target,                     patch.object(
+            context = _Context()
+            with self.subTest(status=response.status), tempfile.TemporaryFile() as target, patch.object(
                         module.ssl,
-                        "create_default_context",
+                        "SSLContext",
                         return_value=context,
                     ), patch.object(
                         module.http.client,
@@ -220,9 +240,9 @@ class RootlessDockerPackageStagingTests(unittest.TestCase):
         body = b"x" * (payload.size + 1)
         response = _OverreadResponse(body, length=str(payload.size))
         connection = _Connection(response)
-        context = SimpleNamespace(minimum_version=None)
+        context = _Context()
         with tempfile.TemporaryFile() as target, patch.object(
-            module.ssl, "create_default_context", return_value=context,
+            module.ssl, "SSLContext", return_value=context,
         ), patch.object(
             module.http.client,
             "HTTPSConnection",
@@ -552,6 +572,8 @@ class RootlessDockerPackageStagingTests(unittest.TestCase):
             "urllib.request",
             "http_proxy",
             "https_proxy",
+            "SSLKEYLOGFILE",
+            "create_default_context",
         ):
             self.assertNotIn(forbidden, source)
 

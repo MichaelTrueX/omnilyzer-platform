@@ -199,6 +199,8 @@ def _open_parent(
     if stat.S_IMODE(os.fstat(parent).st_mode) != _PARENT_MODE:
         raise OSError
     return parent, tuple(chain)
+
+
 def _same_directory_identity(
     current: tuple[int, ...],
     expected: tuple[int, ...],
@@ -322,10 +324,13 @@ def _download_payload(payload: PackagePayloadAuthority, descriptor: int) -> None
     ):
         raise OSError
 
-    context = ssl.create_default_context(
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.verify_mode = ssl.CERT_REQUIRED
+    context.check_hostname = True
+    context.load_verify_locations(
         cafile="/etc/ssl/certs/ca-certificates.crt"
     )
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
     connection = http.client.HTTPSConnection(
         parsed.hostname,
         443,

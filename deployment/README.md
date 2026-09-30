@@ -3724,8 +3724,8 @@ unchanged, the incoming directory is fsynced and atomically published to the
 fixed C32ZS staging path with Linux `RENAME_NOREPLACE`, so a concurrently
 appearing final path can never be overwritten. C32ZS then performs its
 independent two-pass exact bundle qualification. A pre-existing final bundle is
-idempotently accepted only
-when C32ZS requalification succeeds and no incoming directory also exists.
+idempotently accepted only when C32ZS requalification succeeds and no incoming
+directory also exists.
 C32ZU downloads package bytes only; it does not install packages, modify APT
 sources, mask/start services, change subordinate IDs, start Docker, or activate
 deployment.
