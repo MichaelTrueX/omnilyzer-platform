@@ -195,3 +195,11 @@ C33C enables linger only for `omnilyzer-executor` and starts only
 `/run/user/991` runtime and CPU/memory/PID delegation while keeping the reviewed
 rootless Docker user unit disabled/inactive and every deployment service
 inactive. No Docker daemon or socket is created in this phase.
+
+### C33D user-manager qualification
+
+C33D is the independent read-only gate after C33C. Two identical observations
+must prove exact linger and `/run/user/991`, UID-991 cgroup delegation, all
+static bootstrap/package invariants, and a loaded but disabled/inactive rootless
+Docker user unit. Passing C33D authorizes only a future separately reviewed
+rootless-Docker daemon startup phase.

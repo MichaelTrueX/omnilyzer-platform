@@ -456,3 +456,11 @@ logind/systemd-owned ephemeral runtime authority with UID/GID 991 mode 0700 and
 reviewed cgroup delegation. The rootless Docker user service remains disabled
 and inactive; Docker startup and deployment activation remain separate reviewed
 transitions.
+
+
+C33D independently qualifies the C33C linger/user-manager state without
+importing the mutator. It requires two identical complete observations of the
+static rootless authority plus exact logind/systemd runtime ownership and cgroup
+delegation, while proving the dedicated rootless Docker user service remains
+disabled/inactive and no Docker socket or process exists. Daemon startup remains
+a separate reviewed transition.

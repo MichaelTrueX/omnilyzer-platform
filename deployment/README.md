@@ -3896,3 +3896,15 @@ delegation, and the reviewed rootless Docker user unit to remain loaded but
 disabled and inactive. Rootful Docker stays masked, no Docker process/socket
 may exist, and broker/executor/deployment remain inactive. C33C never starts or
 enables the rootless Docker user unit.
+
+## C33D UID-991 user-manager qualification
+
+`rootless_docker_user_manager_qualification.py` independently proves the C33C
+state twice without importing the mutator. It requalifies the static package,
+sub-ID, directory, asset and systemd authority while allowing only the
+systemd-owned `/run/user/991` runtime. It requires exact linger identity,
+UID/GID 991 mode 0700 runtime ownership, the exact UID-991 user-manager control
+group and CPU/memory/PID delegation, and a functioning user-manager query path.
+The reviewed rootless Docker user unit must remain loaded, disabled and inactive;
+rootful Docker stays masked; no Docker process/socket, executor, broker or
+deployment activation is allowed.
