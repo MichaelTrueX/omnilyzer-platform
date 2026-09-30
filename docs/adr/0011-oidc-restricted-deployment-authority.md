@@ -181,6 +181,15 @@ generation, including its unchanged Docker adapter; that adapter cannot use
 the future rootless endpoint. A separately reviewed successor application
 generation and host migration are mandatory before activation.
 
+C32ZG updates the current repository runtime adapter to the selected rootless
+transport without changing the installed C32W generation. Every Docker/Compose
+operation uses the absolute `/usr/bin/docker` client with the root-owned client
+configuration and exact executor-visible Unix endpoint; no ambient Docker
+context or host selection is accepted. The adapter validates that projected
+socket before command execution. This is still inert repository source: a
+subsequent generation review must pin the merged Git object and explicitly
+migrate the installed application before any runtime activation.
+
 The broker must not have Docker socket access. Cryptographic JWT signature, issuer, and JWKS verification occurs before the pure authorization-claim policy. The authorization policy then requires the exact reviewed issuer, audience, numeric repository and owner identities, repository, workflow ref and revision, main ref, protected environment, manual event, GitHub-hosted runner, run identity, actor ID, temporal claims, and JTI.
 
 The privileged executor must parse and revalidate the closed canonical request independently. Local broker provenance is not sufficient authorization. The executor exposes no shell execution, arbitrary command, arbitrary Compose file, arbitrary filesystem path, arbitrary repository, arbitrary image reference, or arbitrary environment. Its initial operation allowlist contains only DEV deployment. It accepts exact release evidence, an exact zot repository and digest reference, exact GitHub execution identity, and hash-bound runtime and ingress references.

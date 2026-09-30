@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import re
 import selectors
+import stat
 import subprocess
 import tempfile
 import time
@@ -29,6 +30,16 @@ from .policy import DeploymentPolicyError, validate_semver, validate_slot, valid
 PROJECT = "omnilyzer-task014-dev"
 COMPOSE_FILE = Path(__file__).parent / "runtime/dev/compose.yaml"
 WORKING_DIRECTORY = COMPOSE_FILE.parent.resolve()
+DOCKER_CLI = "/usr/bin/docker"
+DOCKER_CLIENT_CONFIG = "/etc/omnilyzer/deployment/docker-client"
+DOCKER_SOCKET = Path("/run/omnilyzer/deployment/rootless-docker/docker.sock")
+DOCKER_HOST = "unix:///run/omnilyzer/deployment/rootless-docker/docker.sock"
+DOCKER_PREFIX = (
+    DOCKER_CLI, "--config", DOCKER_CLIENT_CONFIG, "--host", DOCKER_HOST,
+)
+DOCKER_SOCKET_UID = 991
+DOCKER_SOCKET_GID = 991
+DOCKER_SOCKET_MODE = 0o660
 RUNTIME_CONFIG_FILE = WORKING_DIRECTORY / "canary-runtime.json"
 RUNTIME_CONFIG_BYTES = b'{"CANARY_DEPENDENCY_REQUIRED":"false","CANARY_RUNTIME_CONFIG_ID":"task014-dev","schema_version":1}\n'
 IMAGE_PREFIX = "oci-dev.omnilyzer.ai/omnilyzer/task013-release-canary@"
@@ -75,6 +86,29 @@ raise SystemExit(main())
 
 class RuntimeOperationError(DeploymentPolicyError):
     pass
+
+
+def _require_rootless_socket() -> None:
+    """Fail closed unless the executor sees the exact reviewed rootless socket."""
+
+    try:
+        opened = os.lstat(DOCKER_SOCKET)
+    except OSError as exc:
+        raise RuntimeOperationError("rootless Docker endpoint is unavailable") from exc
+    if (
+        not stat.S_ISSOCK(opened.st_mode)
+        or opened.st_nlink != 1
+        or opened.st_uid != DOCKER_SOCKET_UID
+        or opened.st_gid != DOCKER_SOCKET_GID
+        or stat.S_IMODE(opened.st_mode) != DOCKER_SOCKET_MODE
+    ):
+        raise RuntimeOperationError("rootless Docker endpoint is unavailable")
+
+
+def _docker(*parts: str) -> tuple[str, ...]:
+    """Return one exact Docker CLI invocation bound to the private rootless API."""
+
+    return (*DOCKER_PREFIX, *parts)
 
 
 @dataclass(frozen=True)
@@ -236,8 +270,9 @@ class DockerComposeCandidateHttpClient:
         ):
             raise RuntimeOperationError("candidate probe failed")
         run, environment = object.__getattribute__(self, "_configuration")
-        argv = (
-            "docker", "compose", "--project-name", PROJECT,
+        _require_rootless_socket()
+        argv = _docker(
+            "compose", "--project-name", PROJECT,
             "--file", str(COMPOSE_FILE), "exec", "--no-TTY",
             _PROBE_SERVICES[slot], "/usr/bin/python", "-c",
             _CANDIDATE_PROBE_SCRIPT, path,
@@ -340,6 +375,7 @@ class DockerRuntimeAdapter:
         return image
 
     def _run(self, argv: tuple[str, ...], *, timeout: float = COMMAND_TIMEOUT_SECONDS) -> CommandResult:
+        _require_rootless_socket()
         result = self._runner.run(
             argv, cwd=WORKING_DIRECTORY,
             environment=dict(self._environment), timeout=timeout,
@@ -350,15 +386,15 @@ class DockerRuntimeAdapter:
 
     @staticmethod
     def _compose(*parts: str) -> tuple[str, ...]:
-        return ("docker", "compose", "--project-name", PROJECT, "--file", str(COMPOSE_FILE), *parts)
+        return _docker("compose", "--project-name", PROJECT, "--file", str(COMPOSE_FILE), *parts)
 
     def pull_exact_image(self, image: str) -> None:
         image = self._require_bound_image(image)
-        self._run(("docker", "pull", image))
+        self._run(_docker("pull", image))
 
     def verify_local_repo_digest(self, image: str) -> None:
         image = self._require_bound_image(image)
-        result = self._run(("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image))
+        result = self._run(_docker("image", "inspect", "--format", "{{json .RepoDigests}}", image))
         if len(result.stdout.encode("utf-8")) > MAX_COMMAND_OUTPUT:
             raise RuntimeOperationError("local image identity output exceeded its bound")
         try:
@@ -389,8 +425,8 @@ class DockerRuntimeAdapter:
             raise RuntimeOperationError("migration identity or checksum is not authorized")
         if self._migration_directory.is_symlink() or not self._migration_directory.is_dir():
             raise RuntimeOperationError("migration runtime directory is not preinstalled")
-        argv = (
-            "docker", "run", "--rm", "--network", "none", "--user", "10001:10001", "--read-only",
+        argv = _docker(
+            "run", "--rm", "--network", "none", "--user", "10001:10001", "--read-only",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
             "--pids-limit", "128", "--memory", "128m", "--cpus", "0.50",
             "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777",

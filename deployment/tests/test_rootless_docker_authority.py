@@ -15,7 +15,9 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+from deployment import final_application_generation as frozen
 from deployment.application_source_set import DevApplicationSourceSet
+import deployment.docker_runtime as docker_runtime
 from deployment.rootless_docker_authority import AUTHORITY
 
 
@@ -40,23 +42,24 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
               gid: int = 991, mode: int = 0o660, links: int = 1):
         return os.stat_result((kind | mode, inode, 17, links, uid, gid, 0, 0, 0, 0))
 
-    def test_complete_c32w_application_and_freeze_tests_are_unchanged(self) -> None:
+    def test_complete_c32w_application_and_freeze_tests_remain_historical(self) -> None:
         selected = tuple(item.repository_path for item in DevApplicationSourceSet().files)
         self.assertEqual(len(selected), 41)
         self.assertIn("deployment/docker_runtime.py", selected)
+        self.assertEqual(frozen.TARGET_REVIEWED_COMMIT,
+                         "e4f0030c7a028beb834618254781c2fbff5d6b0d")
         self.assertEqual(subprocess.run(
-            ("git", "diff", "--quiet", BASE, "--", *selected), cwd=ROOT,
-            check=False,
+            ("git", "diff", "--quiet", BASE, frozen.TARGET_REVIEWED_COMMIT, "--", *selected),
+            cwd=ROOT, check=False,
         ).returncode, 0)
-        historical_tests = (
-            "deployment/tests/test_docker_runtime.py",
-            "deployment/tests/test_final_application_generation.py",
-            "deployment/tests/test_final_configuration_authority.py",
-            "deployment/tests/test_broker_edge_contract.py",
+        historical_freeze = (
+            "deployment/final_application_generation.py",
+            "deployment/final_configuration_authority.py",
+            "deployment/dev_final_application_update.py",
             "deployment/broker_edge_contract.py",
         )
         self.assertEqual(subprocess.run(
-            ("git", "diff", "--quiet", BASE, "--", *historical_tests),
+            ("git", "diff", "--quiet", BASE, "--", *historical_freeze),
             cwd=ROOT, check=False,
         ).returncode, 0)
         self.assertIn("frozen-c32w-application-authority-unchanged",
@@ -64,6 +67,26 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
         for source, *_ in AUTHORITY.installed_assets:
             self.assertNotIn(source, selected)
         self.assertNotIn("deployment/rootless_docker_authority.py", selected)
+
+    def test_successor_repository_adapter_matches_rootless_host_authority(self) -> None:
+        self.assertEqual(docker_runtime.DOCKER_CLI, AUTHORITY.docker_cli)
+        self.assertEqual(docker_runtime.DOCKER_SOCKET, Path(AUTHORITY.socket))
+        self.assertEqual(docker_runtime.DOCKER_HOST, AUTHORITY.socket_host)
+        self.assertEqual(
+            docker_runtime.DOCKER_CLIENT_CONFIG, str(Path(AUTHORITY.client_config).parent),
+        )
+        self.assertEqual(
+            docker_runtime.DOCKER_PREFIX,
+            (
+                AUTHORITY.docker_cli, "--config", str(Path(AUTHORITY.client_config).parent),
+                "--host", AUTHORITY.socket_host,
+            ),
+        )
+        self.assertEqual(
+            (docker_runtime.DOCKER_SOCKET_UID, docker_runtime.DOCKER_SOCKET_GID,
+             docker_runtime.DOCKER_SOCKET_MODE),
+            (AUTHORITY.executor_uid, AUTHORITY.executor_gid, 0o660),
+        )
 
     def test_exact_seven_package_authorities_and_provenance(self) -> None:
         expected = {

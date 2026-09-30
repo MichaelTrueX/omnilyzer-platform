@@ -45,6 +45,7 @@ class FrozenGenerationTests(unittest.TestCase):
         self.assertEqual((sum(x.kind == "python-module" for x in selected),
                           sum(x.kind == "runtime-data" for x in selected)), (38, 3))
         entries = []
+        successor_deltas = []
         for path in paths:
             record = git("ls-tree", "-z", module.TARGET_REVIEWED_COMMIT, "--", path)
             mode, kind, rest = record.split(b" ", 2)
@@ -52,7 +53,9 @@ class FrozenGenerationTests(unittest.TestCase):
             self.assertEqual((mode, kind, recorded_path), (b"100644", b"blob", path.encode()))
             data = git("cat-file", "blob", oid.decode())
             entries.append(c26.ApplicationManifestEntry(path, hashlib.sha256(data).hexdigest(), "0644"))
-            self.assertEqual((ROOT / path).read_bytes(), data, path)
+            if (ROOT / path).read_bytes() != data:
+                successor_deltas.append(path)
+        self.assertEqual(tuple(successor_deltas), ("deployment/docker_runtime.py",))
         manifest = c26.DevApplicationManifest("canonical-relative-file-set-v1", "sha256",
                                              module.TARGET_REVIEWED_COMMIT, tuple(entries))
         self.assertEqual(hashlib.sha256(manifest.canonical_bytes()).hexdigest(),

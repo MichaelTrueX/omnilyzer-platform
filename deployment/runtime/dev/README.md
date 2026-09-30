@@ -32,10 +32,14 @@ Compose project `omnilyzer-task014-dev` has exactly `canary-blue`, `canary-green
 Application slots run as `10001:10001`, read-only, cap-drop ALL, no-new-privileges, hardened 16 MiB `/tmp`, 128 PID, 0.5 CPU and 128 MiB limits, bounded json-file logs, and no host port. The only network is internal `task014_frontend`; there is no backend network, Docker socket, registry credential, or application port publication. Deployment Nginx is likewise non-root/read-only/hardened and alone publishes `127.0.0.1:3020` to 8080.
 
 C32ZF adds inert host authority for a future dedicated rootless daemon while
-retaining these exact Compose bytes and hashes. The installed C32W adapter is
+retaining these exact Compose bytes and hashes. C32ZG changes only the current
+repository adapter source to use the exact `/usr/bin/docker` client, root-owned
+client config, and executor-visible private rootless socket. It validates that
+projected socket before each Docker/Compose operation and does not inherit
+`DOCKER_HOST` or `DOCKER_CONTEXT`. The installed C32W application remains
 unchanged and cannot use that daemon; a separately reviewed successor
-application generation is required before activation. With the proposed
-427680 subordinate UID/GID
+application generation must pin the merged C32ZG source and migrate the host
+before activation. With the proposed 427680 subordinate UID/GID
 start, container 10001 maps to host 437680 and Nginx 65532 maps to host 493211.
 The canary runtime bind source must be 991:437680 mode 0770 so the daemon can
 resolve it and mapped GID 10001 can write during the explicit migration;

@@ -255,13 +255,17 @@ assert integrity.python_environment_requirement().implementation == "CPython"
         self.assertEqual(len(selected), 41)
         self.assertEqual(selected, manifest._current_paths())
         self.assertNotIn("deployment/final_configuration_authority.py", selected)
+        successor_deltas = []
         for path in (*selected, "deployment/application_source_set.py",
                      "deployment/application_manifest.py",
                      "deployment/final_application_generation.py",
                      "deployment/dev_final_application_update.py",
                      "deployment/dev_post_c31_application_update.py"):
-            self.assertEqual((ROOT / path).read_bytes(),
-                subprocess.check_output(("git", "show", f"2a99fbe5fe0a376a04b37a2dfa7cc1da7faa3893:{path}")), path)
+            historical = subprocess.check_output(
+                ("git", "show", f"2a99fbe5fe0a376a04b37a2dfa7cc1da7faa3893:{path}"))
+            if (ROOT / path).read_bytes() != historical:
+                successor_deltas.append(path)
+        self.assertEqual(tuple(successor_deltas), ("deployment/docker_runtime.py",))
         policy = json.loads((ROOT / "deployment/environments/dev.json").read_text())
         self.assertIs(policy["activation"]["deployment_enabled"], False)
         source = (ROOT / "deployment/final_configuration_authority.py").read_text()

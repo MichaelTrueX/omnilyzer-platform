@@ -205,9 +205,11 @@ class DevBrokerEdgeContractTests(unittest.TestCase):
                     "deployment/dev_final_broker_resources.py",
                     "deployment/ingress/dev-broker-tailscale-origin.nginx.conf"):
             self.assertNotIn(new, selected)
-        self.assertEqual(subprocess.run(
-            ["git", "diff", "--quiet", TARGET_REVIEWED_COMMIT, "--", *selected],
-            cwd=ROOT, check=False).returncode, 0)
+        successor_deltas = tuple(subprocess.check_output(
+            ["git", "diff", "--name-only", TARGET_REVIEWED_COMMIT, "--", *selected],
+            cwd=ROOT, text=True,
+        ).splitlines())
+        self.assertEqual(successor_deltas, ("deployment/docker_runtime.py",))
         self.assertEqual(TARGET_MANIFEST_SHA256,
                          "774391d16235855222aa4dedb617112cccc9a862d1599d2546c08b5f8b17c8f9")
         self.assertEqual(TARGET_RUNTIME_SHA256,
