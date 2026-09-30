@@ -3489,6 +3489,24 @@ service, or activate deployment. A follow-up successor application-generation
 review must pin the merged C32ZG Git object and provide the explicit host
 migration before the rootless daemon or deployment path can be activated.
 
+## C32ZH successor application generation (repository only)
+
+`successor_application_generation.py` pins the exact C32ZG merge
+`47a602d3f2b97fafd6fb8a18240fd5bbb3857ba9` as the next 41-file DEV
+application generation. Its manifest SHA-256 is
+`f0fa38089665e48c84f2a0969875d0fd2d069c96e2d079d7e271aea84c7988db`.
+The frozen C32W generation remains the sole predecessor and is not redefined.
+The exact successor plan contains only `deployment/docker_runtime.py`; its plan
+SHA-256 is `ac3447e64f3bfcdeecc8aa0478379fd31f0e574e4eb4f3318e6b1d6d6cb6cb96`.
+The predecessor Docker adapter blob SHA-256 is
+`bed69d1608a497d980d1658b6b6db4b5768a216f99b7c56d21871a6eec304e68`
+and the successor blob SHA-256 is
+`9bb162e1712a8ec76874c229ce1af1c8a88f527686d4a43376ca93a8b0d00b88`.
+Runtime configuration and all three ingress hashes remain byte-identical to
+C32W. C32ZH performs Git-object review only: it does not change the installed
+application, executor configuration, host packages, services, Docker state, or
+deployment activation. The root-only host migration remains a separate review.
+
 ## Local validation
 
 ```bash
