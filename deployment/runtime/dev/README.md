@@ -73,8 +73,13 @@ corrected subordinate-ID availability, executor identity, AppArmor/userns and
 cgroup controls. Both remain repository-only and mutate no package or service.
 C32ZR additionally pins the exact nine `.deb` payload filenames, byte sizes,
 SHA-256 values and HTTPS source URLs for a future offline staging bundle. It
-still performs no download or host mutation. See the C32ZF/C32ZP/C32ZQ/C32ZR
-sections of [deployment/README.md](../../README.md).
+still performs no download or host mutation. C32ZS defines the root-only
+read-only exact-bundle qualifier: private root:root 0700 staging, root:root 0600
+package files, exact nine-entry set, bounded SHA-256 of every payload, retained-
+descriptor revalidation, and two identical observations. It still performs no
+package, service, Docker, network, or deployment mutation. See the
+C32ZF/C32ZP/C32ZQ/C32ZR/C32ZS sections of
+[deployment/README.md](../../README.md).
 
 `/var/lib/omnilyzer/deployment/dev/canary-runtime` is mounted read-only at `/run/omnilyzer-canary` in application slots. The explicit migration operation alone mounts it read-write and runs `/app/migration.py`; migration is never startup behavior. Identity is `task014-executable-canary-v1`, definition checksum is `b25e7d2d55bce3e233f58f9607e715daebc2a1a69c37603adbb569604ef76421`, and durable files are `migration.lock` and `migration.json`.
 
