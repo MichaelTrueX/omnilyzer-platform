@@ -110,7 +110,11 @@ class RootlessDockerDaemonStartEvidence:
             or self.user_unit_state != ("loaded", "active", "running", "disabled")
             or self.daemon_socket != AUTHORITY.daemon_socket
             or (self.socket_uid, self.socket_gid, self.socket_mode)
-            != (AUTHORITY.executor_uid, AUTHORITY.executor_gid, 0o660)
+            != (
+                AUTHORITY.executor_uid,
+                AUTHORITY.executor_gid,
+                AUTHORITY.daemon_socket_mode,
+            )
             or type(self.dockerd_pid) is not int
             or self.dockerd_pid <= 1
             or self.dockerd_argv != _EXPECTED_DOCKERD_ARGV
@@ -215,7 +219,7 @@ def _socket_evidence() -> tuple[str, int, int, int]:
         or value.st_nlink != 1
         or (value.st_uid, value.st_gid)
         != (AUTHORITY.executor_uid, AUTHORITY.executor_gid)
-        or stat.S_IMODE(value.st_mode) != 0o660
+        or stat.S_IMODE(value.st_mode) != AUTHORITY.daemon_socket_mode
     ):
         raise OSError
     probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -230,6 +234,22 @@ def _socket_evidence() -> tuple[str, int, int, int]:
         value.st_gid,
         stat.S_IMODE(value.st_mode),
     )
+
+
+def _runtime_artifacts_exact() -> None:
+    checks = (
+        (AUTHORITY.pid_file, stat.S_IFREG, AUTHORITY.pid_file_mode),
+        (AUTHORITY.exec_root, stat.S_IFDIR, AUTHORITY.exec_root_mode),
+    )
+    for path, kind, mode in checks:
+        value = os.lstat(path)
+        if (
+            stat.S_IFMT(value.st_mode) != kind
+            or (value.st_uid, value.st_gid)
+            != (AUTHORITY.executor_uid, AUTHORITY.executor_gid)
+            or stat.S_IMODE(value.st_mode) != mode
+        ):
+            raise OSError
 
 
 def _docker_info() -> dict[str, object]:
@@ -527,6 +547,7 @@ def _ready_evidence(operation: str) -> RootlessDockerDaemonStartEvidence:
     if state != ("loaded", "active", "running", "disabled"):
         raise OSError
     socket_evidence = _socket_evidence()
+    _runtime_artifacts_exact()
     info = _docker_info_evidence()
     pid, argv = _dockerd_evidence()
     if os.path.lexists(

@@ -3931,3 +3931,20 @@ and broker/executor/deployment remain inactive. C33E never enables a unit.
 `rootless_docker_daemon_qualification.py` is the independent read-only proof required after C33E. It does not import the C33E mutator. Two identical observations must bind systemd's active-but-disabled rootless user unit to its RootlessKit MainPID, require the reviewed RootlessKit static-subid/slirp/detached-netns token set, and bind the sole UID-991 dockerd process to the exact reviewed daemon argv.
 
 C33F separately verifies the UID/GID-991 mode-0660 private Unix socket, RootlessKit state directory, Docker 29.8.1, overlay2, systemd cgroups v2, the reviewed data root, rootless+cgroupns security options and an empty pre-workload inventory. Rootful Docker remains masked, no TCP/rootful endpoint or executor projection is permitted, and broker/executor/deployment remain inactive. The rootless user unit must remain disabled; reboot persistence is still deferred.
+
+## C33G rootless runtime semantics correction
+
+C33G corrects two runtime assumptions exposed by the first live C33E start.
+Rootless Docker creates its host-visible runtime artifacts under RootlessKit with
+sticky-bit modes: the daemon socket is `01660`, the PID file is `01644`, and
+the Docker exec-root directory is `01700`; the RootlessKit state directory
+remains `0700`. These modes are now explicit authority and are enforced by C33E
+and C33F rather than treating the sticky bit as a failure.
+
+C33G also corrects C33F's user-unit fragment proof. On this Ubuntu host,
+`/etc/xdg/systemd/user` is the root-owned symlink `../../systemd/user`, so
+systemd reports the XDG alias in `FragmentPath` even though the reviewed unit is
+installed at `/etc/systemd/user`. C33F accepts only that exact alias, requires
+the exact symlink target/ownership, and proves the alias and reviewed path are
+the same root-owned mode-0644 inode before canonicalizing evidence to the
+reviewed `/etc/systemd/user` path. Arbitrary fragment aliases remain rejected.

@@ -140,8 +140,8 @@ def evidence(workflow=WORKFLOW):
         daemon_socket=AUTHORITY.daemon_socket,
         socket_uid=991,
         socket_gid=991,
-        socket_mode=0o660,
-        rootlesskit_state=(AUTHORITY.rootlesskit_state, 991, 991, 0o700),
+        socket_mode=AUTHORITY.daemon_socket_mode,
+        rootlesskit_state=(AUTHORITY.rootlesskit_state, 991, 991, AUTHORITY.rootlesskit_state_mode),
         server_version=AUTHORITY.engine_version,
         storage_driver="overlay2",
         docker_root_dir=AUTHORITY.data_root,
@@ -230,12 +230,22 @@ class RootlessDockerDaemonQualificationTests(unittest.TestCase):
             "ActiveState": "active",
             "SubState": "running",
             "UnitFileState": "disabled",
-            "FragmentPath": AUTHORITY.user_unit,
+            "FragmentPath": AUTHORITY.user_unit_fragment_alias,
             "MainPID": "4000",
         }
+        link = type("S", (), {
+            "st_mode": stat.S_IFLNK | 0o777, "st_uid": 0, "st_gid": 0,
+        })()
+        reviewed = type("S", (), {
+            "st_mode": stat.S_IFREG | 0o644, "st_uid": 0, "st_gid": 0,
+            "st_dev": 17, "st_ino": 41,
+        })()
         with patch.object(
             module, "_read_user_systemctl", side_effect=lambda name: values[name]
-        ), patch.object(module.os.path, "lexists", return_value=False):
+        ), patch.object(module.os.path, "lexists", return_value=False), \
+             patch.object(module.os, "lstat", return_value=link), \
+             patch.object(module.os, "readlink", return_value=AUTHORITY.user_unit_fragment_alias_target), \
+             patch.object(module.os, "stat", return_value=reviewed):
             self.assertEqual(
                 module._user_unit_evidence(),
                 (("loaded", "active", "running", "disabled"), AUTHORITY.user_unit, 4000),
@@ -244,8 +254,48 @@ class RootlessDockerDaemonQualificationTests(unittest.TestCase):
         values["UnitFileState"] = "enabled"
         with patch.object(
             module, "_read_user_systemctl", side_effect=lambda name: values[name]
-        ), patch.object(module.os.path, "lexists", return_value=False), self.assertRaises(OSError):
+        ), patch.object(module.os.path, "lexists", return_value=False), \
+             patch.object(module.os, "lstat", return_value=link), \
+             patch.object(module.os, "readlink", return_value=AUTHORITY.user_unit_fragment_alias_target), \
+             patch.object(module.os, "stat", return_value=reviewed), self.assertRaises(OSError):
             module._user_unit_evidence()
+
+    def test_fragment_alias_must_be_exact_symlink_to_reviewed_unit(self):
+        link = type("S", (), {
+            "st_mode": stat.S_IFLNK | 0o777, "st_uid": 0, "st_gid": 0,
+        })()
+        reviewed = type("S", (), {
+            "st_mode": stat.S_IFREG | 0o644, "st_uid": 0, "st_gid": 0,
+            "st_dev": 17, "st_ino": 41,
+        })()
+        with patch.object(module.os, "lstat", return_value=link), \
+             patch.object(module.os, "readlink", return_value=AUTHORITY.user_unit_fragment_alias_target), \
+             patch.object(module.os, "stat", return_value=reviewed):
+            self.assertEqual(
+                module._canonical_user_unit_fragment(AUTHORITY.user_unit_fragment_alias),
+                AUTHORITY.user_unit,
+            )
+        with patch.object(module.os, "lstat", return_value=link), \
+             patch.object(module.os, "readlink", return_value="../../other"), \
+             self.assertRaises(OSError):
+            module._canonical_user_unit_fragment(AUTHORITY.user_unit_fragment_alias)
+        with self.assertRaises(OSError):
+            module._canonical_user_unit_fragment(AUTHORITY.user_unit)
+
+    def test_runtime_artifact_modes_are_exact_rootless_host_view(self):
+        pid = type("S", (), {
+            "st_mode": stat.S_IFREG | AUTHORITY.pid_file_mode,
+            "st_uid": 991, "st_gid": 991,
+        })()
+        root = type("S", (), {
+            "st_mode": stat.S_IFDIR | AUTHORITY.exec_root_mode,
+            "st_uid": 991, "st_gid": 991,
+        })()
+        with patch.object(
+            module.os, "lstat",
+            side_effect=lambda path: pid if path == AUTHORITY.pid_file else root,
+        ):
+            module._runtime_artifacts_exact()
 
     def test_process_gate_binds_mainpid_to_rootlesskit_and_exact_dockerd_argv(self):
         with patch.object(
@@ -316,7 +366,7 @@ class RootlessDockerDaemonQualificationTests(unittest.TestCase):
         ):
             self.assertEqual(
                 module._rootlesskit_state_evidence(),
-                (AUTHORITY.rootlesskit_state, 991, 991, 0o700),
+                (AUTHORITY.rootlesskit_state, 991, 991, AUTHORITY.rootlesskit_state_mode),
             )
         with patch.object(module.os, "lstat", return_value=fake), patch.object(
             module.os.path, "lexists", return_value=True

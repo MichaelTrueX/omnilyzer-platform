@@ -225,3 +225,13 @@ services remain inactive, and the executor projection directory remains absent.
 ### C33F running daemon qualification
 
 C33F independently proves the live C33E daemon without importing the mutator. It binds systemd MainPID to the UID-991 RootlessKit process, verifies the reviewed RootlessKit bootstrap tokens and exact dockerd argv, then validates the private Unix socket and Docker 29.8.1 rootless engine configuration. The engine must still have zero containers/images and the user unit must remain disabled while deployment services remain inactive.
+
+### C33G runtime semantics correction
+
+The first live C33E start established the reviewed rootless runtime semantics:
+`docker.sock` is host-visible as UID/GID 991 mode `01660`, `docker.pid` as
+`01644`, `docker-exec` as `01700`, and the RootlessKit state directory as
+`0700`. C33G pins and verifies those exact modes. It also treats systemd's
+`/etc/xdg/systemd/user` FragmentPath only as an exact symlink alias of the
+reviewed `/etc/systemd/user` unit, requiring the same inode and root-owned
+mode-0644 bytes.
