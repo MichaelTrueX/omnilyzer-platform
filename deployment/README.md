@@ -3859,3 +3859,15 @@ python3 -m unittest discover -s deployment/tests -p 'test_*.py'
 ```
 
 The package is governed by [ADR 0006](../docs/adr/0006-immutable-oci-deployment-and-promotion.md) and [ADR 0011](../docs/adr/0011-oidc-restricted-deployment-authority.md). Task 007 remains historical validation evidence; production code does not import from `spikes/`.
+
+## C33A static rootless Docker bootstrap qualification
+
+`rootless_docker_static_bootstrap_qualification.py` is the independent
+read-only proof required after C32ZZ and before any linger, UID-991 user-manager
+or rootless Docker startup. It does not import the C32ZZ mutator. Two identical
+observations must prove the package/runtime boundary still holds, `/etc/subuid`
+and `/etc/subgid` contain the same exact reviewed executor range, every
+persistent bootstrap directory and byte-pinned asset is exact, the reviewed
+systemd drop-ins are loaded, deployment units remain inactive, the executor
+linger marker is absent, and both `/run/user/991` and the executor Docker
+projection directory are still absent. C33A performs no mutation.
