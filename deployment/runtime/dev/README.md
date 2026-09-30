@@ -58,11 +58,11 @@ C32W or C32ZH, and rejects concurrent change. C32ZM implements only the fixed
 root migration order - adapter, executor config, broker config - using exact
 resumable stages and atomic replacement while rechecking the inactive service
 boundary. It still performs no Docker installation or deployment activation.
-With the proposed 427680 subordinate UID/GID
-start, container 10001 maps to host 437680 and Nginx 65532 maps to host 493211.
-The canary runtime bind source must be 991:437680 mode 0770 so the daemon can
+With the reviewed 493216 subordinate UID/GID
+start, container 10001 maps to host 503216 and Nginx 65532 maps to host 558747.
+The canary runtime bind source must be 991:503216 mode 0770 so the daemon can
 resolve it and mapped GID 10001 can write during the explicit migration;
-migration files created by UID 10001 map to host UID 437680. The Nginx runtime
+migration files created by UID 10001 map to host UID 503216. The Nginx runtime
 source stays executor-owned 0755 with 0644 generated fragments. This mapping and enforcement of all three
 cgroup limits require live proof before deployment activation. See the C32ZF
 section of [deployment/README.md](../../README.md).
