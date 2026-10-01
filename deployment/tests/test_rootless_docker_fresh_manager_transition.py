@@ -385,6 +385,68 @@ class RootlessDockerFreshManagerTransitionTests(unittest.TestCase):
             ), self.assertRaises(OSError):
                 module._run_user_manager_restart()
 
+    def test_post_user_unit_ready_requires_exact_enabled_notify_state(self):
+        """Accept only the fresh manager's active/running/enabled unit state."""
+
+        values = {
+            "LoadState": "loaded",
+            "ActiveState": "active",
+            "SubState": "running",
+            "UnitFileState": "enabled",
+            "MainPID": "6000",
+        }
+        with patch.object(
+            module.c33f,
+            "_read_user_systemctl",
+            side_effect=lambda prop: values[prop],
+        ):
+            self.assertEqual(
+                module._post_user_unit_ready(),
+                (module._AFTER_UNIT_STATE, 6000),
+            )
+
+        values["SubState"] = "activating"
+        with patch.object(
+            module.c33f,
+            "_read_user_systemctl",
+            side_effect=lambda prop: values[prop],
+        ), self.assertRaises(OSError):
+            module._post_user_unit_ready()
+
+    def test_post_ready_wait_is_bounded_read_only_and_never_mutates(self):
+        """Poll only readiness evidence until ready or the fixed deadline expires."""
+
+        ready = (module._AFTER_UNIT_STATE, 6000)
+        with patch.object(
+            module,
+            "_post_user_unit_ready",
+            side_effect=(OSError(), OSError(), ready),
+        ) as observe, patch.object(
+            module.time,
+            "monotonic",
+            side_effect=(100.0, 100.1, 100.2),
+        ), patch.object(module.time, "sleep") as sleep, patch.object(
+            module,
+            "_run_user_manager_restart",
+        ) as restart:
+            self.assertEqual(module._await_post_user_unit_ready(), ready)
+
+        self.assertEqual(observe.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+        restart.assert_not_called()
+
+        with patch.object(
+            module,
+            "_post_user_unit_ready",
+            side_effect=OSError(),
+        ), patch.object(
+            module.time,
+            "monotonic",
+            side_effect=(200.0, 265.0),
+        ), patch.object(module.time, "sleep") as sleep, self.assertRaises(OSError):
+            module._await_post_user_unit_ready()
+        sleep.assert_not_called()
+
     def test_transition_rechecks_preflight_then_mutates_once_then_qualifies(self):
         """Require exhaustive pre-state immediately before the single mutation."""
 
@@ -419,6 +481,11 @@ class RootlessDockerFreshManagerTransitionTests(unittest.TestCase):
             side_effect=lambda: events.append("restart"),
         ) as restart, patch.object(
             module,
+            "_await_post_user_unit_ready",
+            side_effect=lambda: events.append("ready")
+            or (module._AFTER_UNIT_STATE, 6000),
+        ), patch.object(
+            module,
             "qualify_rootless_docker_fresh_manager_post",
             side_effect=lambda: events.append("post") or after,
         ):
@@ -432,6 +499,7 @@ class RootlessDockerFreshManagerTransitionTests(unittest.TestCase):
                 ("lifecycle", module._BEFORE_UNIT_STATE),
                 "bind",
                 "restart",
+                "ready",
                 "post",
             ],
         )
@@ -480,6 +548,10 @@ class RootlessDockerFreshManagerTransitionTests(unittest.TestCase):
             "_run_user_manager_restart",
         ) as restart, patch.object(
             module,
+            "_await_post_user_unit_ready",
+            return_value=(module._AFTER_UNIT_STATE, 6000),
+        ), patch.object(
+            module,
             "qualify_rootless_docker_fresh_manager_post",
             side_effect=module.RootlessDockerFreshManagerPostQualificationError(
                 module._POST_ERROR
@@ -520,6 +592,10 @@ class RootlessDockerFreshManagerTransitionTests(unittest.TestCase):
             "_run_user_manager_restart",
         ) as restart, patch.object(
             module,
+            "_await_post_user_unit_ready",
+            return_value=(module._AFTER_UNIT_STATE, 6000),
+        ), patch.object(
+            module,
             "qualify_rootless_docker_fresh_manager_post",
             return_value=reused,
         ), self.assertRaises(OSError):
@@ -553,6 +629,10 @@ class RootlessDockerFreshManagerTransitionTests(unittest.TestCase):
             module,
             "_run_user_manager_restart",
         ) as restart, patch.object(
+            module,
+            "_await_post_user_unit_ready",
+            return_value=(module._AFTER_UNIT_STATE, 6000),
+        ), patch.object(
             module,
             "qualify_rootless_docker_fresh_manager_post",
             return_value=drifted,

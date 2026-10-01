@@ -625,3 +625,17 @@ must expose the rootless Docker unit as loaded, active, running, and enabled.
 Global persistence, unit wiring, Docker engine configuration, private socket
 authority, RootlessKit state, empty inventory, rootful masks, inactive deployment
 broker/executor surfaces, and UID-991 cgroup containment must all remain valid.
+
+C33T adds bounded read-only readiness convergence to the C33S post-recycle
+boundary. A fresh systemd user manager may report its own startup complete while
+services queued from `default.target` are still starting. The rootless-Docker
+service is `Type=notify` and has a 60-second start timeout, so an immediate full
+qualification could otherwise misclassify a normal startup interval as recovery
+failure.
+
+After the single authorized C33S restart, C33T therefore permits only repeated
+read-only reads of the rootless-Docker user-unit properties for up to 65 seconds.
+The expected readiness state is exactly loaded, active, running, enabled with a
+positive MainPID. Reaching that state proceeds to the unchanged full C33S
+post-qualification. Timeout is a hard failure. It never authorizes a second
+restart, daemon reload, start, enable, disable, rollback, or deployment action.

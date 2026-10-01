@@ -356,3 +356,15 @@ manager must report the globally persisted rootless Docker unit as
 PIDs must change, while Docker configuration, private socket authority,
 RootlessKit state, zero inventory, rootful masks, UID-991 cgroup containment, and
 inactive broker/executor surfaces remain unchanged.
+
+### C33T bounded post-recycle readiness
+
+C33T adds a bounded read-only convergence gate after the one C33S
+`user@991.service` recycle. Because the fresh user manager can become active
+while units queued under `default.target` are still starting, the transition
+waits for the `Type=notify` rootless-Docker unit itself to report
+`loaded/active/running/enabled` with a positive MainPID.
+
+The wait is capped at 65 seconds, matching the unit's 60-second start timeout plus
+a small observation margin. It performs no mutation and never retries the
+user-manager restart. Full C33S post-qualification still decides final success.

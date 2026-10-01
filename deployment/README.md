@@ -4160,3 +4160,17 @@ disjoint new RootlessKit/dockerd/containerd/slirp4netns PID set, persistence sti
 RootlessKit state, empty inventory, rootful masks, and inactive broker/executor
 surfaces must remain unchanged. Every UID-991 process must remain contained below
 `/user.slice/user-991.slice/user@991.service`.
+
+## C33T post-recycle readiness convergence
+
+C33T hardens C33S against a systemd startup race without broadening mutation
+authority. Restarting `user@991.service` can make the fresh user manager active
+before every service queued under its `default.target` has finished starting.
+The persisted rootless-Docker unit is `Type=notify` with a 60-second start
+timeout, so C33T waits up to 65 seconds using read-only user-unit property reads
+for the exact `loaded/active/running/enabled` state and a positive MainPID.
+
+The wait occurs only after the single already-authorized user-manager restart and
+before full C33S post-qualification. It never starts, restarts, reloads, enables,
+disables, or retries any service. Timeout or unexpected state remains a hard
+failure and does not trigger a second restart.
