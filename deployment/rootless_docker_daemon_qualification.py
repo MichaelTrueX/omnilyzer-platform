@@ -436,6 +436,15 @@ def _proc_cmdline(pid: int) -> tuple[str, ...]:
     return parts
 
 
+def _proc_dir_uid(pid: int) -> int:
+    if type(pid) is not int or pid <= 1:
+        raise OSError
+    value = os.stat(f"/proc/{pid}", follow_symlinks=False)
+    if not stat.S_ISDIR(value.st_mode):
+        raise OSError
+    return value.st_uid
+
+
 def _proc_comm(pid: int) -> str:
     if type(pid) is not int or pid <= 1:
         raise OSError
@@ -475,11 +484,23 @@ def _pids(name: str) -> tuple[int, ...]:
         if pid <= 1:
             continue
         try:
+            directory_uid = _proc_dir_uid(pid)
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except OSError:
+            if not os.path.exists(f"/proc/{pid}"):
+                continue
+            raise
+        if directory_uid != AUTHORITY.executor_uid:
+            continue
+
+        try:
             comm = _proc_comm(pid)
         except (FileNotFoundError, ProcessLookupError):
             continue
         except OSError:
-            # A process may disappear between /proc enumeration and inspection.
+            # A UID-991 candidate that still exists but cannot be inspected is
+            # security-relevant and must fail closed.
             if not os.path.exists(f"/proc/{pid}"):
                 continue
             raise
@@ -887,7 +908,7 @@ def _user_manager_evidence() -> tuple[int, tuple[str, int, int, int], str, tuple
     return linger_mode, runtime, control_group, controllers
 
 
-def _qualify_once() -> RootlessDockerDaemonEvidence:
+def _qualify_once_with_user_unit(user_unit_evidence) -> RootlessDockerDaemonEvidence:
     identity = _root_identity()
     package_host = _package_host()
     subuid, subgid = userq.staticq._require_subids()
@@ -911,7 +932,7 @@ def _qualify_once() -> RootlessDockerDaemonEvidence:
         if userq._read_systemctl(unit, "ActiveState") != "inactive":
             raise OSError
 
-    state, fragment, main_pid = _user_unit_evidence()
+    state, fragment, main_pid = user_unit_evidence()
     rootlesskit_pid, rootlesskit_argv, dockerd_pid, dockerd_argv = (
         _process_evidence(main_pid)
     )
@@ -964,6 +985,10 @@ def _qualify_once() -> RootlessDockerDaemonEvidence:
         user_manager_dropins=user_dropins,
         bundle=package_host[6],
     )
+
+
+def _qualify_once() -> RootlessDockerDaemonEvidence:
+    return _qualify_once_with_user_unit(_user_unit_evidence)
 
 
 def qualify_rootless_docker_daemon() -> RootlessDockerDaemonEvidence:
