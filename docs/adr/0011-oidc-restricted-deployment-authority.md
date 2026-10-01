@@ -523,3 +523,11 @@ daemon-socket authority and still validates a pre-existing socket as `0660`.
 The live daemon is not restarted as part of C33I. Intentional daemon stop,
 restart, or host reboot remains prohibited until a separately reviewed launcher
 asset correction is installed and qualified.
+
+C33J separates component preflight from the public fail-closed qualifier. The
+non-fail-fast daemon preflight evaluates all component assertions, two independent
+`_qualify_once()` observations, and explicit equality of those observations, but
+it must not invoke public C33F. Public C33F is a separate gate permitted only
+after every named preflight check passes. This preserves diagnostic completeness
+without turning a diagnostic matrix into the privileged final qualification it
+is intended to precede.

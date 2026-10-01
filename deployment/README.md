@@ -3983,10 +3983,8 @@ reviewed dependency and package, sub-IDs, each static directory and asset, the
 post-daemon data root, drop-ins, deployment inactivity, user-unit/process/socket
 runtime evidence, Docker server state, user-manager delegation, two independent
 `_qualify_once()` observations plus explicit equality without invoking public
-C33F during preflight. Public C33F is permitted only after every preflight check
-passes. Live
-C33F handoffs must run this matrix first and may proceed to the fail-closed C33F
-qualification only when every named check passes.
+C33F during preflight. Live C33F handoffs must run this matrix first. Public
+C33F is permitted only after every named preflight check passes.
 
 C33I restart safety hold:
 

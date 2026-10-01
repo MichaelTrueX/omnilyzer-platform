@@ -218,7 +218,7 @@ enablement and workload activation are later review boundaries.
 C33F independently rechecks the running rootless Docker daemon twice without
 importing C33E. It binds the active-but-disabled user unit to the UID-991
 RootlessKit MainPID, exact RootlessKit authority, exact dockerd argv, private
-mode-0660 Unix socket, Docker 29.8.1 rootless/overlay2/systemd-cgroup-v2 server
+mode-01660 Unix socket, Docker 29.8.1 rootless/overlay2/systemd-cgroup-v2 server
 identity and empty pre-workload inventory. Rootful Docker and all deployment
 services remain inactive, and the executor projection directory remains absent.
 

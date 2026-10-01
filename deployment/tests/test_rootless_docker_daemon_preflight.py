@@ -128,6 +128,7 @@ class RootlessDockerDaemonPreflightTests(unittest.TestCase):
             ROOT / "deployment/rootless_docker_daemon_preflight.py"
         ).read_text(encoding="utf-8")
         self.assertNotIn("rootless_docker_daemon_start", source)
+        self.assertNotIn("daemonq.qualify_rootless_docker_daemon(", source)
         for forbidden in (
             '"start"',
             '"stop"',
