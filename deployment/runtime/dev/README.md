@@ -335,3 +335,10 @@ C33Q is read-only. It pins the later mutation to exactly `systemctl restart
 user@991.service` but never runs it. The stale pre-persistence comment inside the
 byte-pinned unit is deliberately left untouched until recovery is proven because
 it has no systemd semantics.
+
+### C33R loginctl empty-value handling
+
+C33R allows zero-byte `loginctl --value` output only for `Sessions` and `Display`,
+where it represents an empty value. All other systemd/loginctl reads retain the
+strict one-line parser. This fixes the C33Q no-login-session preflight without
+changing any recovery or runtime authority.

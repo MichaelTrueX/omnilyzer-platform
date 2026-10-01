@@ -600,3 +600,10 @@ The original comment in the byte-pinned unit that predates global persistence is
 recognized as stale but is intentionally deferred for later cleanup. Changing a
 comment-only installed asset immediately before recovery validation would expand
 the mutation surface without changing systemd behavior.
+
+
+C33R corrects empty loginctl-value parsing discovered during the C33Q live gate.
+A no-session `Sessions` property can return zero stdout bytes rather than a blank
+newline. Only `Sessions` and `Display` may map that exact zero-byte result to the
+empty string; all other reads remain strict and newline-terminated. This is a
+qualification-only correction and authorizes no user-manager or Docker mutation.
