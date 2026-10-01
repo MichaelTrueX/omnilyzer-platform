@@ -101,6 +101,15 @@ Preserve complete failure/error information; do not suppress or summarize away
 details needed for diagnosis. Treat security, authentication, database, and
 migration failures conservatively.
 
+For privileged live-state qualification whose public boundary intentionally
+collapses internal errors, run a reviewed read-only component-level preflight
+against the live host before asking for or performing the fail-closed gate. The
+preflight must continue across independent assertion failures and surface the
+complete mismatch set in one run. Do not promote newly observed live values into
+authority until that full matrix has been inspected; fix cross-phase helper or
+allowlist coupling at its owning layer instead of widening an earlier-phase
+contract.
+
 ## Completion report
 
 Work thoroughly and report concisely. Unless the task requests another format,

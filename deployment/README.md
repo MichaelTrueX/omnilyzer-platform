@@ -3918,7 +3918,7 @@ omnilyzer-task014-rootless-docker.service`. The user unit must remain disabled;
 reboot persistence is deliberately deferred to a later review.
 
 C33E requires the unit to become loaded/active/running, proves the exact
-UID/GID-991 mode-0660 private Unix socket at `/run/user/991/docker.sock`,
+UID/GID-991 mode-01660 private Unix socket at `/run/user/991/docker.sock`,
 connects only to that socket with the root-owned empty Docker client config, and
 requires Docker 29.8.1 using overlay2, systemd cgroups v2, the reviewed data
 root, rootless+cgroupns security options and an empty container/image inventory.
@@ -3930,7 +3930,7 @@ and broker/executor/deployment remain inactive. C33E never enables a unit.
 
 `rootless_docker_daemon_qualification.py` is the independent read-only proof required after C33E. It does not import the C33E mutator. Two identical observations must bind systemd's active-but-disabled rootless user unit to its RootlessKit MainPID, require the reviewed RootlessKit static-subid/slirp/detached-netns token set, and bind the sole UID-991 dockerd process to the exact reviewed daemon argv.
 
-C33F separately verifies the UID/GID-991 mode-0660 private Unix socket, RootlessKit state directory, Docker 29.8.1, overlay2, systemd cgroups v2, the reviewed data root, rootless+cgroupns security options and an empty pre-workload inventory. Rootful Docker remains masked, no TCP/rootful endpoint or executor projection is permitted, and broker/executor/deployment remain inactive. The rootless user unit must remain disabled; reboot persistence is still deferred.
+C33F separately verifies the UID/GID-991 mode-01660 private Unix socket, RootlessKit state directory, Docker 29.8.1, overlay2, systemd cgroups v2, the reviewed data root, rootless+cgroupns security options and an empty pre-workload inventory. Rootful Docker remains masked, no TCP/rootful endpoint or executor projection is permitted, and broker/executor/deployment remain inactive. The rootless user unit must remain disabled; reboot persistence is still deferred.
 
 ## C33G rootless runtime semantics correction
 
@@ -3966,3 +3966,31 @@ mode for every entry, UID/GID 991 ownership, and a canonical 36-byte UUID
 `engine-id`. It does not pin Docker-managed database contents, timestamps or
 inodes. The Docker API must independently continue to report zero containers
 and zero images at this pre-workload boundary.
+
+## C33I runtime process proof independence and live preflight
+
+C33I removes C33F's runtime-process dependency on the C32ZQ pre-install command
+runner. That runner intentionally allows `pgrep` only for `dockerd` and
+`containerd`; reusing it for `rootlesskit` and `slirp4netns` caused a qualifier
+failure even though the live daemon state was correct. C33F now discovers the
+closed runtime process-name set directly through `/proc`, then applies its
+existing exact UID-991 and command-line checks. The pre-install allowlist remains
+unchanged.
+
+`rootless_docker_daemon_preflight.py` is the permanent non-mutating preflight
+for the live daemon boundary. It evaluates package/migration authority, every
+reviewed dependency and package, sub-IDs, each static directory and asset, the
+post-daemon data root, drop-ins, deployment inactivity, user-unit/process/socket
+runtime evidence, Docker server state, user-manager delegation, two independent
+`_qualify_once()` observations, and public C33F without fail-fast behavior. Live
+C33F handoffs must run this matrix first and may proceed to the fail-closed C33F
+qualification only when every named check passes.
+
+C33I restart safety hold:
+
+C33I restart safety hold: the currently installed launcher still validates an
+existing pre-start Docker socket as mode `0660`, while live Docker creates
+`01660`. This does not affect the already-running daemon or C33F proof, but it
+can affect stale-socket crash recovery. Do not intentionally stop, restart, or
+reboot the rootless daemon until a separately reviewed launcher-asset correction
+is merged, installed, and qualified.

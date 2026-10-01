@@ -436,23 +436,61 @@ def _proc_cmdline(pid: int) -> tuple[str, ...]:
     return parts
 
 
+def _proc_comm(pid: int) -> str:
+    if type(pid) is not int or pid <= 1:
+        raise OSError
+    data = _read_proc_file(f"/proc/{pid}/comm", 64)
+    if (
+        not data.endswith(b"\n")
+        or b"\r" in data
+        or b"\n" in data[:-1]
+    ):
+        raise OSError
+    try:
+        name = data[:-1].decode("ascii")
+    except UnicodeDecodeError:
+        raise OSError from None
+    if not name:
+        raise OSError
+    return name
+
+
 def _pids(name: str) -> tuple[int, ...]:
     if name not in {"rootlesskit", "dockerd", "containerd", "slirp4netns"}:
         raise OSError
-    result = userq.staticq.preinstall._run(
-        (userq.staticq.preinstall._PGREP, "-x", name)
-    )
-    if result.returncode != 0 or not result.stdout.endswith(b"\n"):
-        raise OSError
+
+    observed = []
     try:
-        pids = tuple(
-            int(line) for line in result.stdout.decode("ascii").strip().splitlines()
-        )
-    except (UnicodeDecodeError, ValueError):
+        entries = tuple(os.scandir("/proc"))
+    except OSError:
         raise OSError from None
+
+    for entry in entries:
+        if not entry.name.isascii() or not entry.name.isdecimal():
+            continue
+        try:
+            pid = int(entry.name)
+        except ValueError:
+            continue
+        if pid <= 1:
+            continue
+        try:
+            comm = _proc_comm(pid)
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except OSError:
+            # A process may disappear between /proc enumeration and inspection.
+            if not os.path.exists(f"/proc/{pid}"):
+                continue
+            raise
+        if comm != name:
+            continue
+        if _proc_uid(pid) != AUTHORITY.executor_uid:
+            raise OSError
+        observed.append(pid)
+
+    pids = tuple(sorted(observed))
     if not pids or len(set(pids)) != len(pids):
-        raise OSError
-    if any(_proc_uid(pid) != AUTHORITY.executor_uid for pid in pids):
         raise OSError
     return pids
 

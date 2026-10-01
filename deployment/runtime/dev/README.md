@@ -244,3 +244,20 @@ Docker owns its managed state and the root becomes mode `0710`. C33E/C33F allow
 only that directory to transition, require the exact reviewed empty-engine
 top-level names/types/modes and UID/GID 991 ownership, and keep all other
 provisioned directories under the original closed static-asset checks.
+
+### C33I process proof and mandatory live preflight
+
+C33F no longer borrows C32ZQ's pre-install `pgrep` allowlist for live runtime
+process discovery. It enumerates `/proc` directly for exactly `rootlesskit`,
+`dockerd`, `containerd`, and `slirp4netns`, then enforces UID 991 and the
+reviewed command-line authority. The pre-install allowlist is unchanged. Before
+a live fail-closed C33F run, `rootless_docker_daemon_preflight.py` must execute
+the full component matrix non-fail-fast and report all assertion failures in one
+pass; C33F is run only after that preflight is fully green.
+
+C33I restart safety hold:
+
+C33I restart safety hold: the installed launcher still carries the earlier
+`0660` pre-existing-socket assumption. The current daemon remains running; do
+not intentionally stop/restart it or reboot the host until the launcher is
+separately corrected to the reviewed `01660` runtime authority and requalified.
