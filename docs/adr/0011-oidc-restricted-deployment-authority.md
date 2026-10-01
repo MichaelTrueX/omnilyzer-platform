@@ -551,3 +551,14 @@ transformations performed by that pinned script before RootlessKit exec:
 `_DOCKERD_ROOTLESS_CHILD=1` is exported and `--detach-netns` is prepended to the
 RootlessKit flags when detach mode is enabled. No other environment drift is
 accepted, and forbidden Docker endpoint/proxy variables remain disallowed.
+
+
+C33M authorizes one reviewed rootless Docker restart after C33L proves the
+corrected launcher and restart authority. The only service mutation is the exact
+user-unit `restart` command under the deployment process lock. A complete
+pre-restart qualification is mandatory. Post-restart authority requires a new
+disjoint RootlessKit/dockerd/containerd/slirp4netns process set, two identical
+restart-preflight observations, and public C33F. All C33F evidence except runtime
+process IDs must remain stable. The transition never automatically retries the
+restart after a failed postcondition, does not enable the unit, and does not
+activate broker, executor, workloads, or deployment.
