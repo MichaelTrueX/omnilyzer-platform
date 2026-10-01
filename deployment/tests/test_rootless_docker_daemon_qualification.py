@@ -417,7 +417,7 @@ class RootlessDockerDaemonQualificationTests(unittest.TestCase):
         with patch.object(module.os, "stat", return_value=regular), self.assertRaises(OSError):
             module._proc_dir_uid(4000)
 
-    def test_pid_discovery_filters_unrelated_process_before_comm_read(self):
+    def test_pid_discovery_ignores_unreadable_unrelated_process(self):
         entries = (
             type("E", (), {"name": "4001"})(),
             type("E", (), {"name": "5000"})(),

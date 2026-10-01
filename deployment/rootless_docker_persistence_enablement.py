@@ -1,14 +1,14 @@
-"""C33N/C33O persistence enablement and immediate post-enable qualification.
+"""C33N persistence enablement and C33O immediate post-enable qualification.
 
 Persistent install state and the already-running user manager's cached unit-file
-state are intentionally distinct. The global enable link plus
-"systemctl --global is-enabled" are the persistence authority. Immediately after
-enablement, the current UID-991 user manager must otherwise remain unchanged and
-continue to report UnitFileState=disabled, proving no reload or restart occurred.
+state are distinct authorities. The exact global enable link plus
+`systemctl --global is-enabled` establish persistence on disk. Immediately
+after enablement, the current UID-991 user manager must remain unchanged and
+continue to report UnitFileState=disabled, proving that no reload or restart
+occurred.
 
 No --now operation, daemon reload, restart, or automatic disable rollback is
-authorized here. A later fresh-manager or boot milestone owns qualification of
-the enabled metadata observed after user-manager replacement.
+authorized here.
 """
 
 from __future__ import annotations
@@ -25,8 +25,8 @@ from .rootless_docker_authority import AUTHORITY
 
 __all__ = (
     "RootlessDockerPersistenceEnablementError",
-    "RootlessDockerPersistenceEnablementEvidence",
     "RootlessDockerPersistenceQualificationError",
+    "RootlessDockerPersistenceEnablementEvidence",
     "RootlessDockerPersistenceStateEvidence",
     "enable_rootless_docker_persistence",
     "qualify_rootless_docker_persistence",
@@ -108,9 +108,9 @@ def _root_identity() -> tuple[int, int]:
     return value
 
 
-def _run_enable() -> None:
+def _run_systemctl(argv: tuple[str, ...]) -> subprocess.CompletedProcess:
     result = subprocess.run(
-        (_SYSTEMCTL, "--global", "enable", _USER_UNIT),
+        argv,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -128,37 +128,22 @@ def _run_enable() -> None:
         type(result.returncode) is not int
         or type(result.stdout) is not bytes
         or type(result.stderr) is not bytes
-        or result.returncode != 0
         or len(result.stdout) > _OUTPUT_LIMIT
         or len(result.stderr) > _OUTPUT_LIMIT
     ):
         raise OSError
+    return result
+
+
+def _run_enable() -> None:
+    result = _run_systemctl((_SYSTEMCTL, "--global", "enable", _USER_UNIT))
+    if result.returncode != 0:
+        raise OSError
 
 
 def _global_enable_evidence() -> str:
-    result = subprocess.run(
-        (_SYSTEMCTL, "--global", "is-enabled", _USER_UNIT),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env={
-            "PATH": "/usr/bin:/bin",
-            "LANG": "C",
-            "LC_ALL": "C",
-            "HOME": "/root",
-        },
-        shell=False,
-        timeout=_TIMEOUT,
-        check=False,
-    )
-    if (
-        result.returncode != 0
-        or type(result.stdout) is not bytes
-        or type(result.stderr) is not bytes
-        or result.stdout != b"enabled\n"
-        or len(result.stdout) > _OUTPUT_LIMIT
-        or len(result.stderr) > _OUTPUT_LIMIT
-    ):
+    result = _run_systemctl((_SYSTEMCTL, "--global", "is-enabled", _USER_UNIT))
+    if result.returncode != 0 or result.stdout != b"enabled\n":
         raise OSError
     return _PERSISTENT_STATE
 
@@ -226,22 +211,20 @@ def _qualify_persistence_once() -> RootlessDockerPersistenceStateEvidence:
 def qualify_rootless_docker_persistence() -> (
     RootlessDockerPersistenceStateEvidence
 ):
-    """Qualify enabled-on-disk persistence with the current manager unchanged."""
+    """Require two identical immediate post-enable persistence observations."""
 
     try:
         first = _qualify_persistence_once()
         second = _qualify_persistence_once()
+        if second != first:
+            raise OSError
+        return first
     except _CONTROL:
         raise
     except Exception:
         raise RootlessDockerPersistenceQualificationError(
             _QUALIFICATION_ERROR
         ) from None
-    if second != first:
-        raise RootlessDockerPersistenceQualificationError(
-            _QUALIFICATION_ERROR
-        ) from None
-    return first
 
 
 def _post_enable_matches(

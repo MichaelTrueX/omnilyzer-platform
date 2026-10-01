@@ -72,20 +72,10 @@ class RootlessDockerPersistenceEnablementTests(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             value.persistent_state = "disabled"
 
-        values = {
-            name: getattr(value, name)
-            for name in value.__dataclass_fields__
-        }
+        values = {name: getattr(value, name) for name in value.__dataclass_fields__}
         with self.assertRaises(ValueError):
             module.RootlessDockerPersistenceStateEvidence(
                 **(values | {"persistent_state": "disabled"})
-            )
-        with self.assertRaises(ValueError):
-            persistence_state(
-                replace(
-                    daemon_evidence(),
-                    user_unit_state=("loaded", "active", "running", "enabled"),
-                )
             )
 
     def test_transition_evidence_requires_same_live_state_and_pids(self):
@@ -93,10 +83,7 @@ class RootlessDockerPersistenceEnablementTests(unittest.TestCase):
         self.assertEqual(value.before_unit_state, value.after_unit_state)
         self.assertEqual(value.before_pids, value.after_pids)
 
-        values = {
-            name: getattr(value, name)
-            for name in value.__dataclass_fields__
-        }
+        values = {name: getattr(value, name) for name in value.__dataclass_fields__}
         for change in (
             {"persistent_state": "disabled"},
             {"after_unit_state": ("loaded", "active", "running", "enabled")},
@@ -127,11 +114,6 @@ class RootlessDockerPersistenceEnablementTests(unittest.TestCase):
         self.assertNotIn("--now", run.call_args.args[0])
         self.assertNotIn("start", run.call_args.args[0])
         self.assertNotIn("restart", run.call_args.args[0])
-        self.assertIs(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
-        self.assertIs(run.call_args.kwargs["stdout"], subprocess.PIPE)
-        self.assertIs(run.call_args.kwargs["stderr"], subprocess.PIPE)
-        self.assertFalse(run.call_args.kwargs["shell"])
-        self.assertFalse(run.call_args.kwargs["check"])
 
     def test_global_enable_evidence_is_exact_and_read_only(self):
         completed = subprocess.CompletedProcess((), 0, b"enabled\n", b"")

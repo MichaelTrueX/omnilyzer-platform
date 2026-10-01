@@ -314,7 +314,7 @@ No broker/executor or deployment activation is part of this step.
 C33O distinguishes persistence-on-disk from the running user manager's cached
 unit metadata. Immediately after `systemctl --global enable`, the exact global
 enable link and `systemctl --global is-enabled` must report `enabled`, while the
-already-running UID-991 manager remains otherwise unchanged and continues to
+already-running UID-991 manager must remain otherwise unchanged and continue to
 report `UnitFileState=disabled`. No daemon reload or restart is part of this
 lifecycle phase.
 

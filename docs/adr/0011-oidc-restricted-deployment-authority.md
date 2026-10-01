@@ -577,9 +577,10 @@ disable rollback is forbidden after a failed postcondition.
 C33O separates persistent install state from live-manager cache state. Persistence
 is established by the exact root-owned global user-unit enable symlink and
 `systemctl --global is-enabled=enabled`. The already-running UID-991 user manager
-need not refresh `UnitFileState` as part of enablement and is instead required to
-remain unchanged, demonstrating that no reload or restart occurred. Historical
-C33F retains its pre-persistence disabled/link-absent contract.
+is required to retain its cached `UnitFileState=disabled` immediately after
+enablement, demonstrating that no reload or restart occurred. Historical C33F
+retains its pre-persistence disabled/link-absent contract; a later fresh-manager
+or boot milestone owns the live enabled-state transition.
 
 C33O also changes C33F process discovery to filter `/proc` by executor UID before
 reading process names. Unrelated host processes therefore cannot poison rootless
