@@ -261,3 +261,19 @@ C33I restart safety hold: the installed launcher still carries the earlier
 `0660` pre-existing-socket assumption. The current daemon remains running; do
 not intentionally stop/restart it or reboot the host until the launcher is
 separately corrected to the reviewed `01660` runtime authority and requalified.
+
+### C33K launcher restart-authority correction
+
+C33K removes the current restart safety hold without restarting the daemon as
+part of the correction. The candidate launcher accepts the exact empty `0700`
+data-root state used for first start and the exact Docker-managed `0710` state
+used after the daemon has initialized its data root. It also validates an
+existing rootless socket as UID/GID 991 mode `01660`, never `0660`.
+
+The live transition is preflight-first: run the four-check read-only candidate
+preflight, replace only the exact predecessor launcher asset, then run the full
+six-check post-replacement restart preflight. The replacement function also
+enforces the candidate check under the shared lock and requires the full
+post-replacement matrix before returning success. The daemon remains active and
+the user unit remains disabled during this asset correction. Restart/reboot
+remains prohibited until the post-replacement preflight is fully green.
