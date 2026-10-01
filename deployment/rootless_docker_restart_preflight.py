@@ -42,7 +42,7 @@ _LAUNCHER_SOURCE = (
     / "rootless"
     / "rootless-docker-launcher.py"
 )
-_EXPECTED_ENVIRONMENT = {
+_LAUNCH_ENVIRONMENT = {
     "HOME": AUTHORITY.home,
     "XDG_RUNTIME_DIR": AUTHORITY.runtime_directory,
     "PATH": "/usr/bin:/usr/sbin:/bin",
@@ -51,6 +51,13 @@ _EXPECTED_ENVIRONMENT = {
     "NOTIFY_SOCKET": "/run/user/991/systemd/notify",
     **dict(AUTHORITY.rootless_environment),
 }
+_RUNTIME_ENVIRONMENT = dict(_LAUNCH_ENVIRONMENT)
+if AUTHORITY.detach_netns:
+    _RUNTIME_ENVIRONMENT["DOCKERD_ROOTLESS_ROOTLESSKIT_FLAGS"] = (
+        "--detach-netns "
+        + _LAUNCH_ENVIRONMENT["DOCKERD_ROOTLESS_ROOTLESSKIT_FLAGS"]
+    )
+_RUNTIME_ENVIRONMENT["_DOCKERD_ROOTLESS_CHILD"] = "1"
 _FORBIDDEN_ENVIRONMENT = frozenset(
     {
         "DOCKER_HOST",
@@ -279,7 +286,7 @@ def _runtime_principal_and_environment() -> None:
         raise OSError
 
     environment = _read_proc_environment(rootlesskit_pid)
-    for name, expected in _EXPECTED_ENVIRONMENT.items():
+    for name, expected in _RUNTIME_ENVIRONMENT.items():
         if environment.get(name) != expected:
             raise OSError
     if any(name in environment for name in _FORBIDDEN_ENVIRONMENT):

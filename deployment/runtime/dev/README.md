@@ -277,3 +277,12 @@ enforces the candidate check under the shared lock and requires the full
 post-replacement matrix before returning success. The daemon remains active and
 the user unit remains disabled during this asset correction. Restart/reboot
 remains prohibited until the post-replacement preflight is fully green.
+
+### C33L vendor-transformed runtime environment
+
+The C33K candidate preflight validates the live RootlessKit environment after the
+pinned vendor wrapper has transformed it. The launcher input still contains the
+reviewed `DOCKERD_ROOTLESS_ROOTLESSKIT_FLAGS` without `--detach-netns`; the vendor
+wrapper prepends that flag when detach mode is enabled and exports
+`_DOCKERD_ROOTLESS_CHILD=1` before executing RootlessKit. These are the only
+reviewed runtime transformations.

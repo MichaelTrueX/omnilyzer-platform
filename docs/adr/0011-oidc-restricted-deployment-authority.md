@@ -542,3 +542,12 @@ can report success. The replacement performs no service, Docker, package,
 network, sub-ID, broker, executor, or deployment activation. Intentional restart
 or reboot remains prohibited until the post-replacement matrix passes
 completely.
+
+
+C33L separates launcher-input and vendor-runtime environment authority. The
+launcher-input contract remains the exact values supplied to the pinned Docker
+rootless vendor script. Runtime qualification models only the two deterministic
+transformations performed by that pinned script before RootlessKit exec:
+`_DOCKERD_ROOTLESS_CHILD=1` is exported and `--detach-netns` is prepended to the
+RootlessKit flags when detach mode is enabled. No other environment drift is
+accepted, and forbidden Docker endpoint/proxy variables remain disallowed.
