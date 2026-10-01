@@ -4105,3 +4105,26 @@ transient processes while preserving fail-closed behavior for any UID-991
 candidate that still exists but cannot be inspected. C33N now exposes a
 read-only post-enable persistence qualifier that reuses the full C33F daemon
 proof with lifecycle-specific user-unit evidence.
+
+## C33Q fresh user-manager recovery preflight
+
+C33Q is a read-only, non-fail-fast preflight for the next persistence milestone:
+replacing the running UID-991 systemd user manager and proving that the globally
+enabled rootless Docker unit starts again under a fresh manager. C33Q itself does
+not restart, reload, enable, disable, start, stop, or otherwise mutate any unit.
+
+The preflight requires two identical C33O persistence snapshots, an active/static
+`user@991.service`, active `user-runtime-dir@991.service`, linger enabled with no
+login sessions, and all UID-991 processes contained below
+`/user.slice/user-991.slice/user@991.service`. It also proves the installed unit
+contains the reviewed `ConditionUser=omnilyzer-executor`, exact launcher
+`ExecStart`, `Restart=always`, and `WantedBy=default.target`, while the exact
+global enable link remains enabled. The future mutation command is pinned to
+`/usr/bin/systemctl restart user@991.service`, but C33Q never executes it.
+
+The original unit comment saying that the unit should never be globally enabled
+is now known to be stale documentation. It is intentionally not changed before
+recovery testing because the installed unit is byte-pinned and the comment has no
+runtime semantics; a comment-only asset replacement would add transition risk
+without strengthening the recovery proof. Cleanup is deferred until persistence
+recovery is proven.

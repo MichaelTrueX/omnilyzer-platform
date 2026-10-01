@@ -585,3 +585,18 @@ C33O also changes C33F process discovery to filter `/proc` by executor UID befor
 reading process names. Unrelated host processes therefore cannot poison rootless
 Docker qualification, while inspection failures for UID-991 candidates still fail
 closed.
+
+
+C33Q defines the fresh user-manager recovery boundary without performing a
+mutation. The candidate state must retain stable C33O persistence, an active
+static UID-991 user manager, active runtime directory service, linger with no
+login sessions, and complete containment of UID-991 processes beneath the
+dedicated user-manager cgroup. The rootless Docker unit must remain globally
+enabled on disk, `WantedBy=default.target`, and guarded by
+`ConditionUser=omnilyzer-executor`. The future manager mutation is restricted to
+exactly `systemctl restart user@991.service`; C33Q does not execute it.
+
+The original comment in the byte-pinned unit that predates global persistence is
+recognized as stale but is intentionally deferred for later cleanup. Changing a
+comment-only installed asset immediately before recovery validation would expand
+the mutation surface without changing systemd behavior.
