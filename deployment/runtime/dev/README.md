@@ -298,3 +298,13 @@ process set, two identical post-restart six-check observations, and public C33F.
 All stable C33F evidence must be unchanged across the restart and Docker
 inventory must remain zero. The unit remains disabled; no broker/executor or
 deployment activation is part of this step.
+
+### C33N persistence enablement
+
+C33N changes only the rootless Docker user's install state from disabled to
+enabled. Because the executor's NSS home remains `/nonexistent`, persistence is
+expressed as the global user-unit `default.target.wants` link. The reviewed unit's
+exact `ConditionUser=omnilyzer-executor` remains the hard activation guard. The
+transition runs `systemctl --global enable` without `--now`; the running daemon
+must keep the same MainPID, RootlessKit/dockerd PIDs and all C33F-observed state.
+No broker/executor or deployment activation is part of this step.

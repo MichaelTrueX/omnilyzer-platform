@@ -562,3 +562,13 @@ restart-preflight observations, and public C33F. All C33F evidence except runtim
 process IDs must remain stable. The transition never automatically retries the
 restart after a failed postcondition, does not enable the unit, and does not
 activate broker, executor, workloads, or deployment.
+
+
+C33N enables persistence without changing executor identity. The executor keeps
+its `/nonexistent` passwd home; instead, the reviewed user unit is enabled through
+the system-wide user-unit `default.target.wants` link. This does not authorize
+the service for arbitrary users because the unit remains byte-pinned with
+`ConditionUser=omnilyzer-executor`. The enable operation is deliberately not
+`--now`, and post-enable qualification requires that the currently running daemon
+and every C33F-observed non-install-state property remain unchanged. Automatic
+disable rollback is forbidden after a failed postcondition.
