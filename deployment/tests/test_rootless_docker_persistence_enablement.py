@@ -1,7 +1,6 @@
-"""Tests for the C33N rootless Docker persistence enablement."""
+"""Tests for C33N/C33O immediate post-enable persistence authority."""
 
-from dataclasses import FrozenInstanceError
-import os
+from dataclasses import FrozenInstanceError, replace
 import stat
 import subprocess
 import unittest
@@ -26,36 +25,81 @@ def link_stat():
     )()
 
 
+def persistence_state(daemon=None):
+    return module.RootlessDockerPersistenceStateEvidence(
+        persistent_state="enabled",
+        enable_link=(
+            module._ENABLE_LINK,
+            module.AUTHORITY.user_unit,
+            0,
+            0,
+            0o777,
+        ),
+        daemon=daemon or daemon_evidence(),
+    )
+
+
+def transition_evidence():
+    before = daemon_evidence()
+    return module.RootlessDockerPersistenceEnablementEvidence(
+        operation="enabled",
+        persistent_state="enabled",
+        enable_link=(
+            module._ENABLE_LINK,
+            module.AUTHORITY.user_unit,
+            0,
+            0,
+            0o777,
+        ),
+        before_unit_state=before.user_unit_state,
+        after_unit_state=before.user_unit_state,
+        before_pids=(before.rootlesskit_pid, before.dockerd_pid),
+        after_pids=(before.rootlesskit_pid, before.dockerd_pid),
+        daemon_signature_equal=True,
+        containers=before.containers,
+        images=before.images,
+    )
+
+
 class RootlessDockerPersistenceEnablementTests(unittest.TestCase):
-    def test_evidence_is_exact_and_immutable(self):
-        value = module.RootlessDockerPersistenceEnablementEvidence(
-            operation="enabled",
-            enable_link=(
-                module._ENABLE_LINK,
-                module.AUTHORITY.user_unit,
-                0,
-                0,
-                0o777,
-            ),
-            before_unit_state=("loaded", "active", "running", "disabled"),
-            after_unit_state=("loaded", "active", "running", "enabled"),
-            before_pids=(4000, 4001),
-            after_pids=(4000, 4001),
-            daemon_signature_equal=True,
-            containers=(0, 0, 0, 0),
-            images=0,
+    def test_state_evidence_requires_enabled_disk_and_cached_disabled_manager(self):
+        value = persistence_state()
+        self.assertEqual(value.persistent_state, "enabled")
+        self.assertEqual(
+            value.daemon.user_unit_state,
+            ("loaded", "active", "running", "disabled"),
         )
         with self.assertRaises(FrozenInstanceError):
-            value.images = 1
+            value.persistent_state = "disabled"
+
+        values = {
+            name: getattr(value, name)
+            for name in value.__dataclass_fields__
+        }
+        with self.assertRaises(ValueError):
+            module.RootlessDockerPersistenceStateEvidence(
+                **(values | {"persistent_state": "disabled"})
+            )
+        with self.assertRaises(ValueError):
+            persistence_state(
+                replace(
+                    daemon_evidence(),
+                    user_unit_state=("loaded", "active", "running", "enabled"),
+                )
+            )
+
+    def test_transition_evidence_requires_same_live_state_and_pids(self):
+        value = transition_evidence()
+        self.assertEqual(value.before_unit_state, value.after_unit_state)
+        self.assertEqual(value.before_pids, value.after_pids)
 
         values = {
             name: getattr(value, name)
             for name in value.__dataclass_fields__
         }
         for change in (
-            {"operation": "wrong"},
-            {"enable_link": (module._ENABLE_LINK, "wrong", 0, 0, 0o777)},
-            {"after_unit_state": ("loaded", "active", "running", "disabled")},
+            {"persistent_state": "disabled"},
+            {"after_unit_state": ("loaded", "active", "running", "enabled")},
             {"after_pids": (5000, 5001)},
             {"daemon_signature_equal": False},
             {"containers": (1, 1, 0, 0)},
@@ -89,19 +133,35 @@ class RootlessDockerPersistenceEnablementTests(unittest.TestCase):
         self.assertFalse(run.call_args.kwargs["shell"])
         self.assertFalse(run.call_args.kwargs["check"])
 
-        with patch.object(
-            module.subprocess,
-            "run",
-            return_value=subprocess.CompletedProcess((), 1, b"", b"failed"),
-        ), self.assertRaises(OSError):
-            module._run_enable()
+    def test_global_enable_evidence_is_exact_and_read_only(self):
+        completed = subprocess.CompletedProcess((), 0, b"enabled\n", b"")
+        with patch.object(module.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(module._global_enable_evidence(), "enabled")
+        self.assertEqual(
+            run.call_args.args[0],
+            (
+                "/usr/bin/systemctl",
+                "--global",
+                "is-enabled",
+                "omnilyzer-task014-rootless-docker.service",
+            ),
+        )
+
+        for bad in (
+            subprocess.CompletedProcess((), 1, b"disabled\n", b""),
+            subprocess.CompletedProcess((), 0, b"enabled-runtime\n", b""),
+        ):
+            with self.subTest(bad=bad), patch.object(
+                module.subprocess, "run", return_value=bad
+            ), self.assertRaises(OSError):
+                module._global_enable_evidence()
 
     def test_enable_link_requires_exact_global_symlink(self):
-        with patch.object(module.os, "lstat", return_value=link_stat()),              patch.object(
-                 module.os,
-                 "readlink",
-                 return_value=module.AUTHORITY.user_unit,
-             ):
+        with patch.object(module.os, "lstat", return_value=link_stat()), patch.object(
+            module.os,
+            "readlink",
+            return_value=module.AUTHORITY.user_unit,
+        ):
             self.assertEqual(
                 module._enable_link_evidence(),
                 (
@@ -115,19 +175,19 @@ class RootlessDockerPersistenceEnablementTests(unittest.TestCase):
 
         bad = link_stat()
         bad.st_uid = 991
-        with patch.object(module.os, "lstat", return_value=bad),              patch.object(
-                 module.os,
-                 "readlink",
-                 return_value=module.AUTHORITY.user_unit,
-             ), self.assertRaises(OSError):
+        with patch.object(module.os, "lstat", return_value=bad), patch.object(
+            module.os,
+            "readlink",
+            return_value=module.AUTHORITY.user_unit,
+        ), self.assertRaises(OSError):
             module._enable_link_evidence()
 
-    def test_enabled_user_unit_requires_enabled_running_same_fragment(self):
+    def test_post_enable_user_unit_requires_cached_disabled_manager(self):
         values = {
             "LoadState": "loaded",
             "ActiveState": "active",
             "SubState": "running",
-            "UnitFileState": "enabled",
+            "UnitFileState": "disabled",
             "FragmentPath": module.AUTHORITY.user_unit,
             "MainPID": "4000",
         }
@@ -139,17 +199,19 @@ class RootlessDockerPersistenceEnablementTests(unittest.TestCase):
             module.c33f,
             "_canonical_user_unit_fragment",
             side_effect=lambda value: value,
-        ), patch.object(module, "_enable_link_evidence"):
+        ), patch.object(module, "_enable_link_evidence"), patch.object(
+            module, "_global_enable_evidence", return_value="enabled"
+        ):
             self.assertEqual(
-                module._enabled_user_unit_evidence(),
+                module._post_enable_user_unit_evidence(),
                 (
-                    ("loaded", "active", "running", "enabled"),
+                    ("loaded", "active", "running", "disabled"),
                     module.AUTHORITY.user_unit,
                     4000,
                 ),
             )
 
-        values["UnitFileState"] = "disabled"
+        values["UnitFileState"] = "enabled"
         with patch.object(
             module.c33f,
             "_read_user_systemctl",
@@ -158,37 +220,13 @@ class RootlessDockerPersistenceEnablementTests(unittest.TestCase):
             module.c33f,
             "_canonical_user_unit_fragment",
             side_effect=lambda value: value,
+        ), patch.object(module, "_enable_link_evidence"), patch.object(
+            module, "_global_enable_evidence", return_value="enabled"
         ), self.assertRaises(OSError):
-            module._enabled_user_unit_evidence()
+            module._post_enable_user_unit_evidence()
 
-    def test_post_enable_requires_full_c33f_equivalence_and_same_pids(self):
-        before = daemon_evidence()
-        package_host = (
-            before.expected_workflow_sha,
-            ("ignored",),
-            before.host_dependencies,
-            before.packages,
-            before.cgroup_controllers,
-            before.critical_executables,
-            before.bundle,
-        )
-        info = (
-            before.server_version,
-            before.storage_driver,
-            before.docker_root_dir,
-            before.cgroup_driver,
-            before.cgroup_version,
-            before.security_options,
-            before.containers,
-            before.images,
-        )
-        user_manager = (
-            before.linger_mode,
-            before.runtime_directory,
-            before.user_manager_control_group,
-            before.delegate_controllers,
-        )
-        enabled_state = ("loaded", "active", "running", "enabled")
+    def test_persistence_qualification_reuses_full_c33f_proof(self):
+        daemon = daemon_evidence()
         link = (
             module._ENABLE_LINK,
             module.AUTHORITY.user_unit,
@@ -196,161 +234,73 @@ class RootlessDockerPersistenceEnablementTests(unittest.TestCase):
             0,
             0o777,
         )
+        with patch.object(
+            module, "_global_enable_evidence", return_value="enabled"
+        ), patch.object(
+            module, "_enable_link_evidence", return_value=link
+        ), patch.object(
+            module.c33f,
+            "_qualify_once_with_user_unit",
+            return_value=daemon,
+        ) as qualify:
+            result = module._qualify_persistence_once()
 
-        def static_systemctl(unit, prop):
-            self.assertEqual(prop, "DropInPaths")
-            return (
-                " ".join(before.executor_dropins)
-                if unit == "omnilyzer-deployment-executor.service"
-                else " ".join(before.user_manager_dropins)
+        self.assertEqual(result, persistence_state(daemon))
+        qualify.assert_called_once_with(module._post_enable_user_unit_evidence)
+
+    def test_public_persistence_qualification_requires_two_identical_observations(self):
+        first = persistence_state()
+        with patch.object(
+            module, "_qualify_persistence_once", side_effect=(first, first)
+        ) as once:
+            self.assertEqual(
+                module.qualify_rootless_docker_persistence(),
+                first,
             )
+        self.assertEqual(once.call_count, 2)
 
-        with patch.object(module, "_root_identity", return_value=(0, 0)),              patch.object(module.c33f, "_package_host", return_value=package_host),              patch.object(
-                 module.c33f.userq.staticq,
-                 "_require_subids",
-                 return_value=(before.subuid_records, before.subgid_records),
-             ), patch.object(
-                 module.c33f,
-                 "_require_post_daemon_static_assets",
-                 return_value=(before.directories, before.assets),
-             ), patch.object(
-                 module.c33f.userq.staticq,
-                 "_require_user_manager_template_dropins",
-             ), patch.object(
-                 module.c33f.userq.staticq,
-                 "_read_systemctl",
-                 side_effect=static_systemctl,
-             ), patch.object(
-                 module.c33f.userq,
-                 "_read_systemctl",
-                 return_value="inactive",
-             ), patch.object(
-                 module,
-                 "_enabled_user_unit_evidence",
-                 return_value=(
-                     enabled_state,
-                     before.user_unit_fragment,
-                     before.user_unit_main_pid,
-                 ),
-             ), patch.object(
-                 module.c33f,
-                 "_process_evidence",
-                 return_value=(
-                     before.rootlesskit_pid,
-                     before.rootlesskit_argv,
-                     before.dockerd_pid,
-                     before.dockerd_argv,
-                 ),
-             ), patch.object(
-                 module.c33f,
-                 "_socket_evidence",
-                 return_value=(
-                     before.daemon_socket,
-                     before.socket_uid,
-                     before.socket_gid,
-                     before.socket_mode,
-                 ),
-             ), patch.object(
-                 module.c33f,
-                 "_rootlesskit_state_evidence",
-                 return_value=before.rootlesskit_state,
-             ), patch.object(
-                 module.c33f,
-                 "_runtime_artifacts_exact",
-             ), patch.object(
-                 module.c33f,
-                 "_docker_info_evidence",
-                 return_value=info,
-             ), patch.object(
-                 module.c33f,
-                 "_user_manager_evidence",
-                 return_value=user_manager,
-             ), patch.object(
-                 module,
-                 "_enable_link_evidence",
-                 return_value=link,
-             ):
+        changed = persistence_state(
+            replace(daemon_evidence(), expected_workflow_sha="b" * 40)
+        )
+        with patch.object(
+            module,
+            "_qualify_persistence_once",
+            side_effect=(first, changed),
+        ), self.assertRaises(module.RootlessDockerPersistenceQualificationError):
+            module.qualify_rootless_docker_persistence()
+
+    def test_post_enable_matches_requires_full_daemon_equality(self):
+        before = daemon_evidence()
+        state = persistence_state(before)
+        with patch.object(
+            module,
+            "qualify_rootless_docker_persistence",
+            return_value=state,
+        ):
             self.assertEqual(
                 module._post_enable_matches(before),
                 (
-                    enabled_state,
+                    before.user_unit_state,
                     (before.rootlesskit_pid, before.dockerd_pid),
-                    link,
+                    state.enable_link,
+                    "enabled",
                 ),
             )
 
-        drift_info = (*info[:-1], 1)
-        with patch.object(module, "_root_identity", return_value=(0, 0)),              patch.object(module.c33f, "_package_host", return_value=package_host),              patch.object(
-                 module.c33f.userq.staticq,
-                 "_require_subids",
-                 return_value=(before.subuid_records, before.subgid_records),
-             ), patch.object(
-                 module.c33f,
-                 "_require_post_daemon_static_assets",
-                 return_value=(before.directories, before.assets),
-             ), patch.object(
-                 module.c33f.userq.staticq,
-                 "_require_user_manager_template_dropins",
-             ), patch.object(
-                 module.c33f.userq.staticq,
-                 "_read_systemctl",
-                 side_effect=static_systemctl,
-             ), patch.object(
-                 module.c33f.userq,
-                 "_read_systemctl",
-                 return_value="inactive",
-             ), patch.object(
-                 module,
-                 "_enabled_user_unit_evidence",
-                 return_value=(
-                     enabled_state,
-                     before.user_unit_fragment,
-                     before.user_unit_main_pid,
-                 ),
-             ), patch.object(
-                 module.c33f,
-                 "_process_evidence",
-                 return_value=(
-                     before.rootlesskit_pid,
-                     before.rootlesskit_argv,
-                     before.dockerd_pid,
-                     before.dockerd_argv,
-                 ),
-             ), patch.object(
-                 module.c33f,
-                 "_socket_evidence",
-                 return_value=(
-                     before.daemon_socket,
-                     before.socket_uid,
-                     before.socket_gid,
-                     before.socket_mode,
-                 ),
-             ), patch.object(
-                 module.c33f,
-                 "_rootlesskit_state_evidence",
-                 return_value=before.rootlesskit_state,
-             ), patch.object(module.c33f, "_runtime_artifacts_exact"),              patch.object(
-                 module.c33f,
-                 "_docker_info_evidence",
-                 return_value=drift_info,
-             ), patch.object(
-                 module.c33f,
-                 "_user_manager_evidence",
-                 return_value=user_manager,
-             ), self.assertRaises(OSError):
+        drift_mode = 0o644 if before.linger_mode == 0o600 else 0o600
+        drift = persistence_state(replace(before, linger_mode=drift_mode))
+        with patch.object(
+            module,
+            "qualify_rootless_docker_persistence",
+            return_value=drift,
+        ), self.assertRaises(OSError):
             module._post_enable_matches(before)
 
     def test_enable_under_lock_runs_c33f_then_one_enable_then_postcheck(self):
         before = daemon_evidence()
-        state = ("loaded", "active", "running", "enabled")
-        link = (
-            module._ENABLE_LINK,
-            module.AUTHORITY.user_unit,
-            0,
-            0,
-            0o777,
-        )
+        state = persistence_state(before)
         events = []
+
         with patch.object(
             module.c33f,
             "qualify_rootless_docker_daemon",
@@ -363,47 +313,31 @@ class RootlessDockerPersistenceEnablementTests(unittest.TestCase):
             module,
             "_post_enable_matches",
             side_effect=lambda _before: events.append("post") or (
-                state,
+                before.user_unit_state,
                 (before.rootlesskit_pid, before.dockerd_pid),
-                link,
+                state.enable_link,
+                "enabled",
             ),
         ):
             result = module._enable_under_lock()
 
         self.assertEqual(events, ["c33f", "enable", "post"])
-        self.assertEqual(result.operation, "enabled")
-        self.assertEqual(result.before_pids, result.after_pids)
+        self.assertEqual(result, transition_evidence())
 
     def test_public_transition_is_root_locked_and_generic_on_failure(self):
-        expected = module.RootlessDockerPersistenceEnablementEvidence(
-            operation="enabled",
-            enable_link=(
-                module._ENABLE_LINK,
-                module.AUTHORITY.user_unit,
-                0,
-                0,
-                0o777,
-            ),
-            before_unit_state=("loaded", "active", "running", "disabled"),
-            after_unit_state=("loaded", "active", "running", "enabled"),
-            before_pids=(4000, 4001),
-            after_pids=(4000, 4001),
-            daemon_signature_equal=True,
-            containers=(0, 0, 0, 0),
-            images=0,
-        )
-        with patch.object(module, "_root_identity", return_value=(0, 0)),              patch.object(
-                 module.orchestration,
-                 "_acquire_process_lock",
-                 return_value=70,
-             ) as acquire, patch.object(
-                 module,
-                 "_enable_under_lock",
-                 return_value=expected,
-             ), patch.object(
-                 module.orchestration,
-                 "_release_process_lock",
-             ) as release:
+        expected = transition_evidence()
+        with patch.object(module, "_root_identity", return_value=(0, 0)), patch.object(
+            module.orchestration,
+            "_acquire_process_lock",
+            return_value=70,
+        ) as acquire, patch.object(
+            module,
+            "_enable_under_lock",
+            return_value=expected,
+        ), patch.object(
+            module.orchestration,
+            "_release_process_lock",
+        ) as release:
             self.assertEqual(
                 module.enable_rootless_docker_persistence(),
                 expected,
