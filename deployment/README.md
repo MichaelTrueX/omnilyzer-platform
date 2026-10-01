@@ -4174,3 +4174,20 @@ The wait occurs only after the single already-authorized user-manager restart an
 before full C33S post-qualification. It never starts, restarts, reloads, enables,
 disables, or retries any service. Timeout or unexpected state remains a hard
 failure and does not trigger a second restart.
+
+## C33U successor host migration rootless-runtime gate
+
+C33U binds the existing resumable C32ZM successor host migration to the
+successfully proven C33T fresh-manager rootless Docker lifecycle. The migration
+still changes only the pinned application Docker adapter, executor
+configuration, and broker configuration in the existing C32ZJ order. It does
+not start, enable, reload, or restart any service.
+
+Before any file replacement, the migration must obtain the full C33T
+post-recycle qualification and record a signature that includes the active
+UID-991 user manager and all four rootless Docker runtime process identities.
+The same rootless signature is required before and after every migration step
+and again before success. Unrelated contained UID-991 process churn remains
+permitted. Any rootless manager/runtime drift is a hard failure; no additional
+migration phase is attempted automatically, and the existing prefix-resumable
+migration state is preserved for diagnosis and reviewed continuation.
