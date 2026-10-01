@@ -22,6 +22,7 @@ from . import dev_host_provisioning_orchestration as orchestration
 from . import dev_post_c31_application_update as stage_tools
 from . import executor_service_config as executor_config
 from . import final_application_generation as c32w
+from . import rootless_docker_fresh_manager_transition as c33t
 from . import successor_application_generation as generation
 from .identity import validate_expected_workflow_sha
 from .root_broker_configuration_reader import read_root_dev_broker_configuration
@@ -294,15 +295,48 @@ def _inspect() -> _Inspection:
     )
 
 
+def _rootless_runtime_evidence() -> c33t.RootlessDockerFreshManagerLifecycleEvidence:
+    """Require the exact C33T fresh-manager rootless Docker post-state."""
+
+    evidence = c33t.qualify_rootless_docker_fresh_manager_post()
+    if evidence.user_unit_state != c33t._AFTER_UNIT_STATE:
+        raise OSError
+    return evidence
+
+
+def _rootless_runtime_signature(
+    evidence: c33t.RootlessDockerFreshManagerLifecycleEvidence,
+) -> tuple[tuple[str, object], ...]:
+    """Bind manager and Docker runtime PIDs while allowing unrelated contained PID churn."""
+
+    return c33t._observation_signature(evidence)
+
+
+def _require_rootless_runtime_unchanged(
+    expected: tuple[tuple[str, object], ...],
+) -> None:
+    """Fail closed if C33T rootless Docker authority changes during migration."""
+
+    current = _rootless_runtime_evidence()
+    if _rootless_runtime_signature(current) != expected:
+        raise OSError
+
+
 def qualify_successor_host_migration_runtime() -> SuccessorHostMigrationRuntimeState:
-    """Read-only root qualification that also accepts one exact resumable stage."""
+    """Read-only root qualification bound to stable C33T rootless Docker authority."""
 
     try:
         identity = _root_identity()
         services = _systemd_snapshot()
+        rootless = _rootless_runtime_evidence()
+        rootless_signature = _rootless_runtime_signature(rootless)
         first = _inspect()
-        if _root_identity() != identity or _systemd_snapshot() != services:
+        if (
+            _root_identity() != identity
+            or _systemd_snapshot() != services
+        ):
             raise OSError
+        _require_rootless_runtime_unchanged(rootless_signature)
         second = _inspect()
         if (
             second.state != first.state
@@ -312,6 +346,7 @@ def qualify_successor_host_migration_runtime() -> SuccessorHostMigrationRuntimeS
             or _systemd_snapshot() != services
         ):
             raise OSError
+        _require_rootless_runtime_unchanged(rootless_signature)
         return first.state
     except _CONTROL:
         raise
@@ -483,13 +518,16 @@ def _advance_broker(inspection: _Inspection) -> None:
 
 
 def _migrate_under_lock() -> SuccessorHostMigrationQualificationEvidence:
-    """Advance exact prefixes until the clean successor is fully qualified."""
+    """Advance exact prefixes while preserving the qualified C33T runtime."""
 
     identity = _root_identity()
     services = _systemd_snapshot()
+    rootless = _rootless_runtime_evidence()
+    rootless_signature = _rootless_runtime_signature(rootless)
     order = {"c32w": 0, "application": 1, "executor": 2, "complete": 3}
     previous_rank = -1
     for _step in range(_MAX_STEPS):
+        _require_rootless_runtime_unchanged(rootless_signature)
         inspection = _inspect()
         rank = order.get(inspection.state.phase)
         if rank is None or rank < previous_rank:
@@ -505,6 +543,7 @@ def _migrate_under_lock() -> SuccessorHostMigrationQualificationEvidence:
             )):
                 raise OSError
             evidence = qualify_successor_host_migration()
+            _require_rootless_runtime_unchanged(rootless_signature)
             if (
                 evidence.phase != "complete"
                 or evidence.expected_workflow_sha
@@ -522,6 +561,7 @@ def _migrate_under_lock() -> SuccessorHostMigrationQualificationEvidence:
             raise OSError
         if _root_identity() != identity or _systemd_snapshot() != services:
             raise OSError
+        _require_rootless_runtime_unchanged(rootless_signature)
     raise OSError
 
 

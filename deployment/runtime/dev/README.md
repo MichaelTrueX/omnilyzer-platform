@@ -368,3 +368,16 @@ waits for the `Type=notify` rootless-Docker unit itself to report
 The wait is capped at 65 seconds, matching the unit's 60-second start timeout plus
 a small observation margin. It performs no mutation and never retries the
 user-manager restart. Full C33S post-qualification still decides final success.
+
+### C33U successor migration rootless binding
+
+C33U makes the existing C32ZM application/configuration migration conditional
+on the qualified C33T fresh-manager rootless Docker state. The migration holds
+the existing deployment process lock and requires the same user-manager and
+RootlessKit/dockerd/containerd/slirp4netns runtime signature around every
+application or configuration replacement.
+
+This adds no service lifecycle operation. Broker, executor, and executor socket
+must remain inactive throughout. If the rootless runtime changes, C33U fails
+closed without advancing another migration phase; C32ZM's existing resumable
+prefix state remains the recovery boundary.

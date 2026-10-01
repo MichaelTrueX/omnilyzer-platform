@@ -639,3 +639,17 @@ The expected readiness state is exactly loaded, active, running, enabled with a
 positive MainPID. Reaching that state proceeds to the unchanged full C33S
 post-qualification. Timeout is a hard failure. It never authorizes a second
 restart, daemon reload, start, enable, disable, rollback, or deployment action.
+
+C33U binds the previously repository-reviewed C32ZM successor host migration to
+the now live-proven C33T rootless Docker lifecycle. A host migration may replace
+only the pinned successor application adapter and the executor/broker
+configuration pair, in the existing C32ZJ prefix order, while all related
+services remain inactive.
+
+The root-locked migration now requires full C33T post-recycle qualification
+before file mutation and requires the same fresh user-manager plus
+RootlessKit/dockerd/containerd/slirp4netns runtime signature before and after
+each migration phase. Rootless runtime drift fails closed and does not authorize
+a subsequent migration phase or any service restart. This closes the authority
+gap between the successor rootless adapter and the live rootless daemon without
+activating broker, executor, workflow, or deployment authority.

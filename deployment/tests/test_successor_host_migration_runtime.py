@@ -118,19 +118,37 @@ class SuccessorHostMigrationRuntimeTests(unittest.TestCase):
 
     def test_read_only_runtime_qualification_repeats_exact_snapshot(self) -> None:
         inspection = self.inspection("application")
+        rootless = object()
+        signature = (("rootless", "stable"),)
         with patch.object(module, "_root_identity", return_value=(0, 0, 0, 0)), \
                 patch.object(module, "_systemd_snapshot", return_value=self.services), \
-                patch.object(module, "_inspect", return_value=inspection) as inspect:
+                patch.object(module, "_rootless_runtime_evidence", return_value=rootless), \
+                patch.object(
+                    module, "_rootless_runtime_signature", return_value=signature,
+                ), patch.object(
+                    module, "_require_rootless_runtime_unchanged",
+                ) as rootless_unchanged, patch.object(
+                    module, "_inspect", return_value=inspection,
+                ) as inspect:
             state = module.qualify_successor_host_migration_runtime()
         self.assertEqual(state.phase, "application")
         self.assertEqual(inspect.call_count, 2)
+        self.assertEqual(rootless_unchanged.call_count, 2)
+        rootless_unchanged.assert_called_with(signature)
 
         changed = self.inspection("executor")
         with patch.object(module, "_root_identity", return_value=(0, 0, 0, 0)), \
                 patch.object(module, "_systemd_snapshot", return_value=self.services), \
-                patch.object(module, "_inspect", side_effect=(inspection, changed)), \
-                self.assertRaises(module.SuccessorHostMigrationRuntimeError):
+                patch.object(module, "_rootless_runtime_evidence", return_value=rootless), \
+                patch.object(
+                    module, "_rootless_runtime_signature", return_value=signature,
+                ), patch.object(
+                    module, "_require_rootless_runtime_unchanged",
+                ), patch.object(
+                    module, "_inspect", side_effect=(inspection, changed),
+                ), self.assertRaises(module.SuccessorHostMigrationRuntimeError):
             module.qualify_successor_host_migration_runtime()
+
     def test_migrate_under_lock_dispatches_exact_order_and_is_idempotent(self) -> None:
         inspections = tuple(
             self.inspection(phase)
@@ -144,13 +162,24 @@ class SuccessorHostMigrationRuntimeTests(unittest.TestCase):
             generation.TARGET_REVIEWED_COMMIT,
             WORKFLOW,
         )
+        rootless = object()
+        signature = (("rootless", "stable"),)
         with patch.object(module, "_root_identity", return_value=(0, 0, 0, 0)), \
                 patch.object(module, "_systemd_snapshot", return_value=self.services), \
-                patch.object(module, "_inspect", side_effect=inspections), \
-                patch.object(module, "_advance_application") as app, \
-                patch.object(module, "_advance_executor") as executor, \
-                patch.object(module, "_advance_broker") as broker, \
+                patch.object(module, "_rootless_runtime_evidence", return_value=rootless), \
                 patch.object(
+                    module, "_rootless_runtime_signature", return_value=signature,
+                ), patch.object(
+                    module, "_require_rootless_runtime_unchanged",
+                ) as rootless_unchanged, patch.object(
+                    module, "_inspect", side_effect=inspections,
+                ), patch.object(
+                    module, "_advance_application",
+                ) as app, patch.object(
+                    module, "_advance_executor",
+                ) as executor, patch.object(
+                    module, "_advance_broker",
+                ) as broker, patch.object(
                     module, "qualify_successor_host_migration",
                     return_value=evidence,
                 ):
@@ -159,20 +188,109 @@ class SuccessorHostMigrationRuntimeTests(unittest.TestCase):
         app.assert_called_once_with(inspections[0])
         executor.assert_called_once_with(inspections[1])
         broker.assert_called_once_with(inspections[2])
+        self.assertEqual(rootless_unchanged.call_count, 8)
+        rootless_unchanged.assert_called_with(signature)
 
         complete = self.inspection("complete")
         with patch.object(module, "_root_identity", return_value=(0, 0, 0, 0)), \
                 patch.object(module, "_systemd_snapshot", return_value=self.services), \
-                patch.object(module, "_inspect", return_value=complete), \
-                patch.object(module, "_advance_application") as app, \
-                patch.object(module, "_advance_executor") as executor, \
-                patch.object(module, "_advance_broker") as broker, \
+                patch.object(module, "_rootless_runtime_evidence", return_value=rootless), \
                 patch.object(
+                    module, "_rootless_runtime_signature", return_value=signature,
+                ), patch.object(
+                    module, "_require_rootless_runtime_unchanged",
+                ) as rootless_unchanged, patch.object(
+                    module, "_inspect", return_value=complete,
+                ), patch.object(
+                    module, "_advance_application",
+                ) as app, patch.object(
+                    module, "_advance_executor",
+                ) as executor, patch.object(
+                    module, "_advance_broker",
+                ) as broker, patch.object(
                     module, "qualify_successor_host_migration",
                     return_value=evidence,
                 ):
             self.assertEqual(module._migrate_under_lock(), evidence)
         app.assert_not_called()
+        executor.assert_not_called()
+        broker.assert_not_called()
+        self.assertEqual(rootless_unchanged.call_count, 2)
+
+    def test_rootless_gate_requires_fresh_manager_state_and_stable_signature(self) -> None:
+        """Bind C32ZM to the exact qualified C33T post-state."""
+
+        evidence = type(
+            "RootlessEvidence",
+            (),
+            {"user_unit_state": module.c33t._AFTER_UNIT_STATE},
+        )()
+        signature = (
+            ("user_manager_pid", 647147),
+            ("runtime_pids", (1, 2, 3, 4)),
+        )
+        with patch.object(
+            module.c33t,
+            "qualify_rootless_docker_fresh_manager_post",
+            return_value=evidence,
+        ), patch.object(
+            module.c33t,
+            "_observation_signature",
+            return_value=signature,
+        ):
+            self.assertIs(module._rootless_runtime_evidence(), evidence)
+            self.assertEqual(module._rootless_runtime_signature(evidence), signature)
+            module._require_rootless_runtime_unchanged(signature)
+
+        bad = type(
+            "RootlessEvidence",
+            (),
+            {"user_unit_state": module.c33t._BEFORE_UNIT_STATE},
+        )()
+        with patch.object(
+            module.c33t,
+            "qualify_rootless_docker_fresh_manager_post",
+            return_value=bad,
+        ), self.assertRaises(OSError):
+            module._rootless_runtime_evidence()
+
+        with patch.object(
+            module,
+            "_rootless_runtime_evidence",
+            return_value=evidence,
+        ), patch.object(
+            module,
+            "_rootless_runtime_signature",
+            return_value=(("user_manager_pid", 999999),),
+        ), self.assertRaises(OSError):
+            module._require_rootless_runtime_unchanged(signature)
+
+    def test_rootless_drift_stops_resumable_migration_after_current_step(self) -> None:
+        """Never advance another migration phase after C33T runtime drift."""
+
+        first = self.inspection("c32w")
+        signature = (("rootless", "stable"),)
+        with patch.object(module, "_root_identity", return_value=(0, 0, 0, 0)), \
+                patch.object(module, "_systemd_snapshot", return_value=self.services), \
+                patch.object(module, "_rootless_runtime_evidence", return_value=object()), \
+                patch.object(
+                    module, "_rootless_runtime_signature", return_value=signature,
+                ), patch.object(
+                    module,
+                    "_require_rootless_runtime_unchanged",
+                    side_effect=(None, OSError()),
+                ), patch.object(
+                    module, "_inspect", return_value=first,
+                ), patch.object(
+                    module, "_advance_application",
+                ) as app, patch.object(
+                    module, "_advance_executor",
+                ) as executor, patch.object(
+                    module, "_advance_broker",
+                ) as broker, self.assertRaises(OSError):
+            module._migrate_under_lock()
+
+        app.assert_called_once_with(first)
         executor.assert_not_called()
         broker.assert_not_called()
 
