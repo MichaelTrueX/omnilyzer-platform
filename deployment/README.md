@@ -4191,3 +4191,33 @@ and again before success. Unrelated contained UID-991 process churn remains
 permitted. Any rootless manager/runtime drift is a hard failure; no additional
 migration phase is attempted automatically, and the existing prefix-resumable
 migration state is preserved for diagnosis and reviewed continuation.
+
+## C33V successor workflow authority
+
+C33V supersedes the historical C32Y/C32ZC workflow-SHA rotation only for a
+host that has completed the C32ZH/C32ZI successor migration. Historical C32W
+qualifiers and the historical 38-check C32ZC edge plan remain unchanged.
+
+The successor qualifier reconstructs the installed C32ZH executor authority,
+derives the matching successor broker configuration for one explicit workflow
+SHA, verifies the complete C33U migration state, exact broker resources,
+replay and Sigstore installation, and requires the same C33T fresh-manager
+rootless Docker signature before and after qualification.
+
+The successor rotation is root-only and process-locked. It may change only
+`expected_workflow_sha` in the canonical broker configuration and reuses the
+previously reviewed atomic broker-config publication primitive. It performs no
+service action and has no automatic rollback or retry. A failure after
+publication requires read-only qualification before any operator decision.
+
+C33V also defines the successor continuation of the 38-check private-edge
+qualification plan. The first 36 C32ZC checks are preserved exactly. The two
+historical C32W tail checks are replaced by:
+
+- `successor-application-authority-exact-and-migration-complete`
+- `successor-static-resource-authority-otherwise-unchanged`
+
+The installed broker workflow SHA remains unchanged until the final
+pre-activation code freeze. Rotation must target that final merged `main`
+commit so a later repository change does not immediately invalidate broker
+OIDC authority.

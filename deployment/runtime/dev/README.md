@@ -381,3 +381,17 @@ This adds no service lifecycle operation. Broker, executor, and executor socket
 must remain inactive throughout. If the rootless runtime changes, C33U fails
 closed without advancing another migration phase; C32ZM's existing resumable
 prefix state remains the recovery boundary.
+
+### C33V successor workflow-SHA authority
+
+C33V provides the successor-only replacement for the historical C32Y workflow
+authority rotation. It requires C33U migration `complete`, exact C32ZH/C32ZI
+executor and broker configuration authority, complete broker/Sigstore/replay
+resources, and a stable C33T fresh-manager rootless Docker lifecycle.
+
+The root-only rotation changes only broker `expected_workflow_sha` under the
+existing deployment process lock. Broker, executor, executor socket, rootless
+Docker, Tailscale Serve, Nginx, and deployment activation are not started,
+stopped, restarted, enabled, disabled, or reloaded by C33V. The installed
+workflow SHA is intentionally not rotated until the final pre-activation
+repository merge is known.

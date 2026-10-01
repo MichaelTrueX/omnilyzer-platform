@@ -653,3 +653,19 @@ each migration phase. Rootless runtime drift fails closed and does not authorize
 a subsequent migration phase or any service restart. This closes the authority
 gap between the successor rootless adapter and the live rootless daemon without
 activating broker, executor, workflow, or deployment authority.
+
+C33V closes the workflow-authority gap created after the C32ZH/C32ZI successor
+host migration. The historical C32Y rotation is intentionally C32W-bound and
+must not be reused on the successor host. C33V reconstructs successor
+configuration authority from the installed executor, requires the complete
+C33U migration state and stable C33T fresh-manager rootless Docker authority,
+and qualifies the shared broker resources without invoking the historical
+C32W pair builder.
+
+A future pre-activation workflow-SHA rotation may atomically replace only the
+canonical broker configuration's `expected_workflow_sha`. No automatic retry
+or rollback is permitted after publication. The first 36 historical C32ZC
+private-edge checks remain applicable; its two C32W-specific tail checks are
+superseded by exact successor-application/migration-complete authority and
+otherwise-unchanged successor static-resource authority. Workflow-SHA rotation
+is deliberately deferred until the final pre-activation `main` merge is frozen.
