@@ -4062,3 +4062,25 @@ must remain empty, the corrected launcher and all static authority must remain
 exact, rootful Docker stays masked, and broker/executor/deployment stay inactive.
 C33M never issues a second explicit restart as recovery; any post-restart proof
 failure is fail-closed and requires diagnosis before another mutation.
+
+## C33N rootless Docker persistence enablement
+
+C33N enables boot persistence for the already-qualified rootless Docker user
+service without starting or restarting it. The dedicated executor account keeps
+its passwd home at `/nonexistent`; changing that identity or the user-manager
+environment solely to obtain a per-user enable path would broaden the security
+surface. C33N therefore uses systemd's global user-unit enable link under
+`/etc/systemd/user/default.target.wants/`, while relying on the already
+byte-pinned `ConditionUser=omnilyzer-executor` in the unit to prevent activation
+for any other user manager.
+
+The only mutation is exactly `systemctl --global enable
+omnilyzer-task014-rootless-docker.service`; `--now`, start and restart are
+prohibited. Before that mutation C33F must prove the active daemon in its
+historical disabled state. After enablement C33N requires the exact root-owned
+mode-0777 one-link symlink to the reviewed `/etc/systemd/user` unit,
+`UnitFileState=enabled`, and the same MainPID, RootlessKit/dockerd PIDs, argv,
+socket, Docker engine state, packages, assets, cgroups, user-manager state and
+zero inventory as before. Broker/executor remain inactive and rootful Docker
+remains masked. A failed postcondition does not trigger an automatic disable
+rollback; further mutation requires diagnosis.
