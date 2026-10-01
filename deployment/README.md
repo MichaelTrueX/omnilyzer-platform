@@ -3996,3 +3996,33 @@ existing pre-start Docker socket as mode `0660`, while live Docker creates
 can affect stale-socket crash recovery. Do not intentionally stop, restart, or
 reboot the rootless daemon until a separately reviewed launcher-asset correction
 is merged, installed, and qualified.
+
+## C33K launcher restart-authority correction
+
+C33K corrects the reviewed rootless Docker launcher before any intentional
+restart or reboot. The first live daemon start proved two restart-phase semantics
+that the original launcher did not model: the daemon-managed data root changes
+from the clean first-start mode `0700` to the reviewed managed mode `0710`, and
+the rootless Docker socket is UID/GID 991 mode `01660`. The launcher now accepts
+only two exact data-root phases: an empty UID/GID-991 mode-0700 first-start
+directory or the reviewed UID/GID-991 mode-0710 managed top level. The managed
+phase requires the exact 12 Docker top-level entries, exact entry types/modes,
+and a canonical 36-byte UUID `engine-id`. The existing-socket probe requires the
+reviewed `01660` mode and continues to refuse a live owner; it never unlinks the
+socket before the vendor RootlessKit lock.
+
+C33K is deliberately split into three gates. First,
+`rootless_docker_restart_preflight.py` provides a four-check read-only candidate
+preflight that exercises the proposed launcher source against the live host,
+including data-root/socket state, runtime principal/environment, and exact user
+unit restart policy. Second, `rootless_docker_launcher_replacement.py` may replace
+only the exact predecessor launcher SHA
+`34d5557a068e030c75e063cf6b6106ef118ec7ff87de1d953d900dfbd1eaefff`
+with the reviewed target SHA. The transition is same-directory atomic, fsync'd,
+locked, idempotent, and has no systemd/Docker/network action. The replacement
+function itself reruns the candidate preflight under the shared process lock and
+refuses to report success unless the full post-replacement restart preflight is
+green. Third, the full six-check restart preflight requires the normal daemon
+assertion matrix, the new installed launcher, and all four candidate checks. No
+intentional daemon stop/restart/reboot is permitted until all six
+post-replacement checks pass.
