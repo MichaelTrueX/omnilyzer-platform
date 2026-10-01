@@ -122,7 +122,7 @@ class RootlessDockerRestartPreflightTests(unittest.TestCase):
             ), self.assertRaises(OSError):
                 module._restart_unit_policy()
 
-    def test_runtime_principal_requires_exact_groups_and_launcher_environment(self):
+    def test_runtime_principal_requires_exact_groups_and_vendor_runtime_environment(self):
         status = (
             b"Name:\trootlesskit\n"
             b"Uid:\t991\t991\t991\t991\n"
@@ -144,11 +144,11 @@ class RootlessDockerRestartPreflightTests(unittest.TestCase):
         ), patch.object(
             module,
             "_read_proc_environment",
-            return_value=dict(module._EXPECTED_ENVIRONMENT),
+            return_value=dict(module._RUNTIME_ENVIRONMENT),
         ):
             module._runtime_principal_and_environment()
 
-        hostile = dict(module._EXPECTED_ENVIRONMENT)
+        hostile = dict(module._RUNTIME_ENVIRONMENT)
         hostile["DOCKER_HOST"] = "tcp://127.0.0.1:2375"
         with patch.object(
             module.daemonq,
@@ -168,6 +168,24 @@ class RootlessDockerRestartPreflightTests(unittest.TestCase):
             return_value=hostile,
         ), self.assertRaises(OSError):
             module._runtime_principal_and_environment()
+
+    def test_runtime_environment_models_only_reviewed_vendor_transformations(self):
+        launch = dict(module._LAUNCH_ENVIRONMENT)
+        runtime = dict(module._RUNTIME_ENVIRONMENT)
+        self.assertEqual(
+            launch["DOCKERD_ROOTLESS_ROOTLESSKIT_FLAGS"],
+            "--subid-source=static --slirp4netns-binary=/usr/bin/slirp4netns",
+        )
+        self.assertEqual(
+            runtime["DOCKERD_ROOTLESS_ROOTLESSKIT_FLAGS"],
+            "--detach-netns --subid-source=static --slirp4netns-binary=/usr/bin/slirp4netns",
+        )
+        self.assertNotIn("_DOCKERD_ROOTLESS_CHILD", launch)
+        self.assertEqual(runtime["_DOCKERD_ROOTLESS_CHILD"], "1")
+        unchanged = set(launch) - {"DOCKERD_ROOTLESS_ROOTLESSKIT_FLAGS"}
+        for name in unchanged:
+            with self.subTest(name=name):
+                self.assertEqual(runtime[name], launch[name])
 
     def test_launcher_digest_matches_authority(self):
         expected = next(

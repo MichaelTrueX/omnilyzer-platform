@@ -4026,3 +4026,19 @@ green. Third, the full six-check restart preflight requires the normal daemon
 assertion matrix, the new installed launcher, and all four candidate checks. No
 intentional daemon stop/restart/reboot is permitted until all six
 post-replacement checks pass.
+
+## C33L vendor-transformed runtime environment
+
+C33L distinguishes the launcher-input environment from the environment observed
+on the live RootlessKit process. The launcher continues to pass the reviewed
+`AUTHORITY.rootless_environment` unchanged. The pinned Docker 29.8.1
+`dockerd-rootless.sh` then performs two deterministic parent-side transformations
+before `exec` of RootlessKit: it exports `_DOCKERD_ROOTLESS_CHILD=1` and, when
+`DOCKERD_ROOTLESS_ROOTLESSKIT_DETACH_NETNS=true`, prepends `--detach-netns` to
+`DOCKERD_ROOTLESS_ROOTLESSKIT_FLAGS`.
+
+The C33K restart preflight now validates the vendor-transformed runtime
+environment rather than incorrectly comparing the RootlessKit process to the raw
+launcher input. Tests require those two transformations exactly and require every
+other approved environment value to remain unchanged. The forbidden proxy and
+Docker endpoint variables remain prohibited.
