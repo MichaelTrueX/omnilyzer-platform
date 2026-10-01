@@ -308,3 +308,16 @@ exact `ConditionUser=omnilyzer-executor` remains the hard activation guard. The
 transition runs `systemctl --global enable` without `--now`; the running daemon
 must keep the same MainPID, RootlessKit/dockerd PIDs and all C33F-observed state.
 No broker/executor or deployment activation is part of this step.
+
+### C33O post-enable persistence authority
+
+C33O distinguishes persistence-on-disk from the running user manager's cached
+unit metadata. Immediately after `systemctl --global enable`, the exact global
+enable link and `systemctl --global is-enabled` must report `enabled`, while the
+already-running UID-991 manager remains otherwise unchanged and continues to
+report `UnitFileState=disabled`. No daemon reload or restart is part of this
+lifecycle phase.
+
+C33F PID enumeration is also hardened to pre-filter `/proc` entries by UID 991
+before reading `comm`, so unrelated protected processes cannot invalidate Docker
+qualification. UID-991 candidates remain fail-closed if they cannot be inspected.
