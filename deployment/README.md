@@ -4,15 +4,19 @@ Task 014 consumes accepted Task 013 release outputs and controls their ordered d
 
 ## Phase 1 boundary and final DEV workflow slice
 
-Phase 1 established a repository-side, non-live foundation. All three environment files still set `deployment_enabled` to `false` and leave runtime configuration, secret, and ingress references unset. The `Platform promotion request` workflow retains its independent read-only validation gate. Its final DEV slice adds one job that runs only after that gate succeeds for a manual `dev` request on `main`. The job binds the protected `task014-dev` GitHub environment, grants only `contents: read` and `id-token: write`, creates a fresh private canonical request, obtains three short-lived GitHub OIDC tokens for the exact deployment, Zot read, and Forgejo read audiences, and sends those bytes once to `https://deploy-dev.omnilyzer.ai/task014/dev/promote`. It requires HTTP 202 with the exact accepted response. STAGING and PROD have no deployment job or broker call.
+Phase 1 established the original repository-side, non-live foundation. C33W now authorizes **DEV only** through a dedicated live-activation authority while preserving that historical application source set. `deployment/environments/dev.json` remains the historical disabled environment file. `deployment/dev-live-activation.json` carries the qualified successor runtime and ingress references plus the reviewed pre-activation controls verification timestamp `2026-10-01T09:48:30Z`. STAGING and PROD remain disabled with null runtime references.
 
-The final merged `main` commit must be supplied independently as the broker's immutable `expected_workflow_sha`; the workflow does not supply or derive that authority. Host provisioning, DNS, TLS, Nginx, and service activation are separate host operations. This repository change alone does not start services or deploy an application, and the host is not yet live-qualified. Later stage activation and live ingress, migration, health, switching, rollback, ownership, restart/recovery, registry authorization, and audit rotation still require their own validation. PROD requires explicit approval. The current DEV protection state is recorded below.
+The `Platform promotion request` workflow keeps its non-OIDC gate. Manual DEV requests on `main` are validated by the repository-only C33W live policy before the `task014-dev` deployment job can run; STAGING and PROD continue through the historical non-live controller and still have no deployment job. The DEV job remains limited to `contents: read` and `id-token: write`, obtains three short-lived GitHub OIDC tokens, and submits one bounded request over the private Task 014 ingress.
 
-## GitHub protection state (2026-09-24)
+The final merged `main` commit must still be supplied independently as the broker's immutable `expected_workflow_sha`; the workflow never supplies or derives that authority. C33W authorizes the later host service transition but **does not itself start a service or deploy an application**. The reviewed service order is executor socket -> socket qualification -> broker service -> private-ingress qualification. Direct executor-service start and automatic retry are prohibited.
 
-The repository is now public. `main` is protected by the active repository ruleset `Protect main`. The GitHub deployment environment `task014-dev` exists with `deployment_branch_policy.protected_branches=true` and `deployment_branch_policy.custom_branch_policies=false`. The branch/environment protection capability prerequisite is satisfied for DEV; these protections must remain enforced. ADR 0011's 2026-09-08 private-repository limitation remains historical context.
+## GitHub and private-edge protection state (2026-10-01)
 
-C31 provisioning and its pinned step-20 recovery have now completed and converged under separate authorization. Installed runtime assets remain inactive. Deployment activation remains prohibited. `deployment/environments/dev.json` retains `activation.deployment_enabled=false`.
+`main` is protected by the active repository ruleset `Protect main` with no bypass actors. The GitHub deployment environment `task014-dev` permits exactly the selected `main` branch, administrator bypass is disabled, and the required `TS_OAUTH_CLIENT_ID` and `TS_AUDIENCE` environment secrets are present.
+
+The Tailscale OIDC credential is restricted to the exact Task 014 DEV GitHub environment subject, `auth_keys` scope, and `tag:omnilyzer-task014-ci`, with exact repository/workflow/ref/environment/event/runner claims and no `workflow_sha` claim. Tailnet policy permits that CI tag only to `omnilyzerdev` TCP 443 for this ingress and denies the tested 22/80/3031/3032 paths. Funnel capability was removed and the Tailscale Funnel machine filter returned zero machines. These account-side controls were reviewed before the C33W activation authority was created.
+
+C31 provisioning, successor host migration, C33T rootless persistence recovery, and C33V workflow-authority rotation completed under separate authorization. Installed broker/executor units are still inactive. C33W changes repository authorization only; live host service activation remains a separate root-controlled transition.
 
 ## Pinned C31 step-20 recovery (completed historical procedure)
 
@@ -4221,3 +4225,13 @@ The installed broker workflow SHA remains unchanged until the final
 pre-activation code freeze. Rotation must target that final merged `main`
 commit so a later repository change does not immediately invalidate broker
 OIDC authority.
+
+## C33W DEV live activation contract
+
+C33W is the final repository-side authorization boundary before first DEV service activation. It deliberately keeps `deployment/controller.py` byte-identical to the frozen successor application source set, so no additional host application migration is required. The new `dev_live_activation_policy.py` is workflow-side only and is excluded from `DevApplicationSourceSet`.
+
+`deployment/dev-live-activation.json` contains the exact existing executor reference schemas: successor reviewed commit `47a602d3f2b97fafd6fb8a18240fd5bbb3857ba9`, runtime SHA-256 `8978b0608a6ef434ad6818a4d654c804ecdba8cabf5dc5916658a8194e7d839f`, the three reviewed ingress hashes, and the synthetic no-secrets authority. Any partial activation, changed hash, changed stage, changed timestamp, or alternate runtime reference fails closed.
+
+`dev_live_activation_contract.py` is declarative and mutation-free. It fixes the later host sequence to: start `omnilyzer-deployment-executor.socket`; qualify the exact Unix socket while the executor service remains socket-activated; start `omnilyzer-deployment-broker.service`; then qualify the loopback broker, Nginx, private Tailscale HTTPS ingress, unchanged rootless Docker authority, replay/audit prerequisites, and closed network boundaries.
+
+There is no automatic retry. A failed live step must be diagnosed from the resulting state before another mutation is authorized. After the C33W merge, the broker workflow SHA must be rotated once more to that exact final merge SHA before any service start.

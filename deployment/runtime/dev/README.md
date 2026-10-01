@@ -1,6 +1,6 @@
-# Task 014 DEV runtime (reviewed, non-live)
+# Task 014 DEV runtime (reviewed, activation-authorized)
 
-This directory defines the production-owned synthetic Task 014 DEV deployment boundary. C31 installed runtime assets, but no service or deployment is activated. DEV remains disabled; activation must bind these bytes to a reviewed merge SHA. This Nginx selection is only for the synthetic Task 014 DEV deployment boundary, not a production-wide base-image decision.
+This directory defines the production-owned synthetic Task 014 DEV deployment boundary. C31 installed the runtime assets and later successor/rootless milestones qualified them. C33W now authorizes DEV activation through exact repository references and a reviewed controls-verification timestamp, but broker/executor services remain inactive until the separate root-controlled live transition. STAGING and PROD remain disabled. This Nginx selection is only for the synthetic Task 014 DEV deployment boundary, not a production-wide base-image decision.
 
 ## Qualified deployment Nginx
 
@@ -395,3 +395,9 @@ Docker, Tailscale Serve, Nginx, and deployment activation are not started,
 stopped, restarted, enabled, disabled, or reloaded by C33V. The installed
 workflow SHA is intentionally not rotated until the final pre-activation
 repository merge is known.
+
+### C33W DEV activation authority
+
+C33W keeps the installed successor application generation unchanged. The workflow-side live validator and `deployment/dev-live-activation.json` authority are outside the frozen host application source set. DEV promotion requests on `main` must pass this exact validator; later stages remain on the historical non-live controller.
+
+The reviewed live service order is executor socket first, then socket qualification, broker service start, and private-ingress qualification. Direct executor-service start and automatic retry are forbidden. C33W itself performs no host mutation; after merge, the broker workflow SHA must be rotated to the exact final merge before the first socket start.

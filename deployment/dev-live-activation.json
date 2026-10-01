@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "stage": "dev",
+  "promotion_policy": {
+    "required_prior_stage": null,
+    "source_registry_origin": "https://oci-dev.omnilyzer.ai",
+    "approved_repositories": [
+      "omnilyzer/task013-release-canary"
+    ],
+    "github_environment": "task014-dev",
+    "production_approval_required": false
+  },
+  "runtime": {
+    "configuration_reference": {
+      "schema_version": 1,
+      "kind": "repository-blob-sha256",
+      "repository_id": 1350104356,
+      "reviewed_commit": "47a602d3f2b97fafd6fb8a18240fd5bbb3857ba9",
+      "path": "deployment/runtime/dev/canary-runtime.json",
+      "sha256": "8978b0608a6ef434ad6818a4d654c804ecdba8cabf5dc5916658a8194e7d839f"
+    },
+    "secrets_reference": {
+      "schema_version": 1,
+      "kind": "none",
+      "required": [],
+      "reason": "task014-synthetic-canary-has-no-runtime-secrets"
+    },
+    "ingress_reference": {
+      "schema_version": 1,
+      "kind": "repository-file-set-sha256",
+      "repository_id": 1350104356,
+      "reviewed_commit": "47a602d3f2b97fafd6fb8a18240fd5bbb3857ba9",
+      "files": [
+        {
+          "path": "deployment/runtime/dev/compose.yaml",
+          "sha256": "ac12c1958d5e65ab64a69ea58ca053d11cd664732edb20fb7dce39aabde6b3bc"
+        },
+        {
+          "path": "deployment/runtime/dev/host-nginx.conf",
+          "sha256": "bfed4b9e0be612723ed545362bb80262d18dbf9f1895d974b5c295d35d4e08bb"
+        },
+        {
+          "path": "deployment/runtime/dev/nginx/nginx.conf",
+          "sha256": "cbb696e51219bea9d6b337db0346cf93a807c5477143dad7f9baf23764fd476b"
+        }
+      ],
+      "loopback_address": "127.0.0.1",
+      "loopback_port": 3020,
+      "public_origin": "https://canary-dev.omnilyzer.ai"
+    }
+  },
+  "activation": {
+    "deployment_enabled": true,
+    "verified_at": "2026-10-01T09:48:30Z"
+  }
+}

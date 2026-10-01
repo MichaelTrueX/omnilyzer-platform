@@ -15,11 +15,11 @@ Task 014 Phase 2B2 discovery found no dedicated deployment identity, no self-hos
 
 On 2026-09-08, the private repository/account capability could not enforce the branch and GitHub environment protections required by this decision. That historical limitation restricted work to architecture and inert repository-side implementation until the protection capability prerequisite could be satisfied.
 
-As of 2026-09-24, the repository is public, `main` is protected by the active repository ruleset `Protect main`, and the GitHub deployment environment `task014-dev` exists with `deployment_branch_policy.protected_branches=true` and `deployment_branch_policy.custom_branch_policies=false`. The branch/environment protection capability prerequisite is now satisfied for DEV.
+As of 2026-10-01, the repository is public, `main` is protected by the active repository ruleset `Protect main` with no bypass actors, and `task014-dev` permits exactly the selected `main` branch with administrator bypass disabled. The required Tailscale environment secret names are present. The Tailscale WIF credential, CI tag policy, private Serve path, and no-Funnel state were separately reviewed and matched the Task 014 edge contract.
 
-This satisfied the protection capability prerequisite. C31 host provisioning and pinned recovery subsequently completed and converged under separate authorization; installed runtime assets remain inactive. A separate live-authority review is still required before deployment activation. `deployment/environments/dev.json` retains `activation.deployment_enabled=false`, which must remain false pending reviewed activation. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or grants, installs, exposes, or exercises live deployment authority.
+C31 host provisioning and pinned recovery, successor host migration, C33T rootless persistence recovery, and C33V successor workflow authority subsequently completed under separate authorization. C33W is the reviewed repository-side DEV live-authority change: the historical `deployment/environments/dev.json` remains disabled, while `deployment/dev-live-activation.json` carries the exact successor runtime references and fixed pre-activation verification timestamp. STAGING and PROD remain disabled. C33W itself does not start services; the host transition remains separately root-controlled. PR names do not determine authority: the boundary is whether a change remains inert and repository-only or exercises live host authority.
 
-Pending that separate live-authority review, work remains limited to:
+Before C33W, pending the separate live-authority review, work was limited to:
 
 - closed verifier and authorization code;
 - durable replay code;
@@ -29,7 +29,7 @@ Pending that separate live-authority review, work remains limited to:
 - inert systemd, Nginx, and layout fixtures, with C31-installed runtime assets inactive; and
 - deterministic repository tests and static validation.
 
-Until the live-authority change is separately reviewed, the following remain prohibited:
+Before C33W review completed, the following were prohibited:
 
 - `id-token: write` in a deployment workflow;
 - GitHub environment attachment or a deployment job;
@@ -669,3 +669,11 @@ private-edge checks remain applicable; its two C32W-specific tail checks are
 superseded by exact successor-application/migration-complete authority and
 otherwise-unchanged successor static-resource authority. Workflow-SHA rotation
 is deliberately deferred until the final pre-activation `main` merge is frozen.
+
+### C33W repository-side DEV activation authorization
+
+C33W separates repository activation policy from the frozen successor host application generation. `deployment/controller.py` remains byte-identical to the installed source-set authority; a new workflow-only DEV validator consumes the exact `deployment/dev-live-activation.json` authority. This avoids broadening or re-migrating the host application solely to represent activation state.
+
+The live DEV policy pins the existing successor runtime configuration and ingress hashes, requires the synthetic no-secrets reference, and records the completed GitHub/Tailscale/host readiness review at `2026-10-01T09:48:30Z`. The workflow calls this validator only for DEV. STAGING and PROD continue through the historical non-live controller and have no deployment job.
+
+The host lifecycle contract is socket-first: executor socket, socket qualification, broker service, then private-ingress qualification. The executor service is not directly started; systemd socket activation remains its only reviewed start path. No automatic retry is authorized. C33W performs no service mutation. Its merge advances `main`, so the broker's immutable `expected_workflow_sha` must be rotated to the exact merged C33W commit before first live service activation.

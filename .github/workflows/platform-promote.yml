@@ -74,9 +74,15 @@ jobs:
             --target-stage "$TARGET_STAGE" \
             --requested-by "$REQUESTED_BY" \
             --output "$request"
-          python3 -m deployment.controller \
-            --request "$request" \
-            --environment "deployment/environments/$TARGET_STAGE.json"
+          if [ "$TARGET_STAGE" = "dev" ]; then
+            python3 -m deployment.dev_live_activation_policy \
+              --request "$request" \
+              --environment "deployment/dev-live-activation.json"
+          else
+            python3 -m deployment.controller \
+              --request "$request" \
+              --environment "deployment/environments/$TARGET_STAGE.json"
+          fi
 
   deploy_dev:
     if: ${{ inputs.target_stage == 'dev' }}
