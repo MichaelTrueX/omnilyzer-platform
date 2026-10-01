@@ -321,3 +321,17 @@ lifecycle phase.
 C33F PID enumeration is also hardened to pre-filter `/proc` entries by UID 991
 before reading `comm`, so unrelated protected processes cannot invalidate Docker
 qualification. UID-991 candidates remain fail-closed if they cannot be inspected.
+
+### C33Q fresh-manager recovery preflight
+
+C33Q qualifies whether UID 991 can safely undergo a fresh systemd user-manager
+cycle after persistence has been enabled. It requires stable C33O persistence,
+no login sessions, linger enabled, the exact user-manager/runtime state, and all
+UID-991 processes contained beneath the dedicated `user@991.service` cgroup. It
+also verifies the installed rootless-Docker unit is wired to `default.target` and
+restricted by `ConditionUser=omnilyzer-executor`.
+
+C33Q is read-only. It pins the later mutation to exactly `systemctl restart
+user@991.service` but never runs it. The stale pre-persistence comment inside the
+byte-pinned unit is deliberately left untouched until recovery is proven because
+it has no systemd semantics.
