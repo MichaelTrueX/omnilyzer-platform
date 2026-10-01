@@ -230,7 +230,7 @@ class RootlessDockerAuthority:
         (
             "deployment/systemd/rootless/rootless-docker-launcher.py",
             "/opt/omnilyzer/deployment/rootless-docker/launch.py",
-            "34d5557a068e030c75e063cf6b6106ef118ec7ff87de1d953d900dfbd1eaefff",
+            "0267629962e615da13b21099fab91d5032a88a3387c5473e6df9dae8c7b13b17",
             0, 0, 0o644,
         ),
         (
@@ -263,6 +263,7 @@ class RootlessDockerAuthority:
         "rootless-data-home-runtime-socket-and-exec-path-ownership-modes",
         "vendor-containerd-conflict-copyup-cleanup-and-ipv4-ipv6-forwarding-behavior",
         "safe-rootlesskit-state-owned-0700-vendor-lock-and-crash-recovery",
+        "launcher-first-start-empty-0700-or-managed-restart-0710-and-socket-01660",
         "existing-docker-socket-exact-identity-live-probe-refused-defers-to-vendor-lock-no-launcher-unlink",
         "executor-protecthome-preserved-with-one-readonly-private-socket-bind",
         "daemon-rootless-overlay2-systemd-cgroup-and-exact-version",

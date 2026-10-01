@@ -39,8 +39,8 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
 
     @staticmethod
     def _stat(kind: int, *, inode: int = 41, uid: int = 991,
-              gid: int = 991, mode: int = 0o660, links: int = 1):
-        return os.stat_result((kind | mode, inode, 17, links, uid, gid, 0, 0, 0, 0))
+              gid: int = 991, mode: int = 0o660, links: int = 1, size: int = 0):
+        return os.stat_result((kind | mode, inode, 17, links, uid, gid, size, 0, 0, 0))
 
     def test_complete_c32w_application_and_freeze_tests_remain_historical(self) -> None:
         selected = tuple(item.repository_path for item in DevApplicationSourceSet().files)
@@ -281,6 +281,10 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
         self.assertIn('"DOCKERD_ROOTLESS_ROOTLESSKIT_FLAGS": ROOTLESSKIT_FLAGS', launcher)
         self.assertNotIn("os.unlink", launcher)
         self.assertIn('_directory(RUNTIME, UID, GID, 0o700)', launcher)
+        self.assertIn('_data_root()', launcher)
+        self.assertIn('SOCKET_MODE = 0o1660', launcher)
+        self.assertIn('DATA_INITIAL_MODE = 0o700', launcher)
+        self.assertIn('DATA_MANAGED_MODE = 0o710', launcher)
         self.assertNotIn("os.mkdir", launcher)
         self.assertNotIn("os.chown", launcher)
         self.assertNotIn("os.chmod", launcher)
@@ -309,6 +313,7 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
                 patch.object(launcher.os, "getegid", return_value=991), \
                 patch.object(launcher.os, "getgroups", return_value=[992]), \
                 patch.object(launcher, "_directory"), patch.object(launcher, "_file"), \
+                patch.object(launcher, "_data_root"), \
                 patch("builtins.open", side_effect=opened), \
                 patch.object(launcher, "VENDOR_SCRIPT_SHA256", digest), \
                 patch.object(launcher.os.path, "lexists", return_value=False), \
@@ -358,6 +363,78 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
                 self.assertRaises(RuntimeError):
             launcher.main()
 
+    def test_launcher_data_root_accepts_only_clean_initial_or_exact_managed_state(self) -> None:
+        launcher = self._launcher()
+        initial = self._stat(stat.S_IFDIR, mode=0o700)
+        with patch.object(launcher.os, "lstat", return_value=initial), \
+                patch.object(launcher.os, "open", return_value=50), \
+                patch.object(launcher.os, "fstat", return_value=initial), \
+                patch.object(launcher.os, "listdir", return_value=[]), \
+                patch.object(launcher.os, "close") as close:
+            launcher._data_root()
+        close.assert_called_once_with(50)
+
+        with patch.object(launcher.os, "lstat", return_value=initial), \
+                patch.object(launcher.os, "open", return_value=50), \
+                patch.object(launcher.os, "fstat", return_value=initial), \
+                patch.object(launcher.os, "listdir", return_value=["unexpected"]), \
+                patch.object(launcher.os, "close"), self.assertRaises(RuntimeError):
+            launcher._data_root()
+
+        managed = self._stat(stat.S_IFDIR, mode=0o710)
+        expected = {name: (kind, mode) for name, kind, mode in launcher.DATA_MANAGED_ENTRIES}
+
+        def child_stat(name, *, dir_fd, follow_symlinks):
+            self.assertEqual(dir_fd, 50)
+            self.assertFalse(follow_symlinks)
+            kind, mode = expected[name]
+            return self._stat(
+                stat.S_IFDIR if kind == "directory" else stat.S_IFREG,
+                mode=mode, links=2 if kind == "directory" else 1,
+                size=launcher.ENGINE_ID_SIZE if name == "engine-id" else 4096,
+            )
+
+        def opened(path, flags, *, dir_fd=None):
+            if path == launcher.DATA and dir_fd is None:
+                return 50
+            if path == "engine-id" and dir_fd == 50:
+                return 51
+            raise AssertionError((path, flags, dir_fd))
+
+        names = list(expected)
+        with patch.object(launcher.os, "lstat", return_value=managed), \
+                patch.object(launcher.os, "open", side_effect=opened), \
+                patch.object(launcher.os, "fstat", return_value=managed), \
+                patch.object(launcher.os, "listdir", return_value=names), \
+                patch.object(launcher.os, "stat", side_effect=child_stat), \
+                patch.object(launcher.os, "read", return_value=b"c03e22b6-225e-4318-8d26-bd7e6eaa104d"), \
+                patch.object(launcher.os, "close"):
+            launcher._data_root()
+
+        with patch.object(launcher.os, "lstat", return_value=managed), \
+                patch.object(launcher.os, "open", return_value=50), \
+                patch.object(launcher.os, "fstat", return_value=managed), \
+                patch.object(launcher.os, "listdir", return_value=names + ["unexpected"]), \
+                patch.object(launcher.os, "close"), self.assertRaises(RuntimeError):
+            launcher._data_root()
+
+        wrong_mode = self._stat(stat.S_IFDIR, mode=0o711)
+        with patch.object(launcher.os, "lstat", return_value=wrong_mode), \
+                self.assertRaises(RuntimeError):
+            launcher._data_root()
+
+    def test_launcher_runtime_modes_match_live_authority(self) -> None:
+        launcher = self._launcher()
+        self.assertEqual(launcher.SOCKET_MODE, AUTHORITY.daemon_socket_mode)
+        self.assertEqual(launcher.DATA_INITIAL_MODE, dict(
+            (path, mode) for path, _uid, _gid, mode in AUTHORITY.provisioned_directories
+        )[AUTHORITY.data_root])
+        self.assertEqual(launcher.DATA_MANAGED_MODE, dict(
+            (path, mode) for path, _uid, _gid, mode in AUTHORITY.post_daemon_provisioned_directories
+        )[AUTHORITY.data_root])
+        self.assertEqual(launcher.DATA_MANAGED_ENTRIES, AUTHORITY.post_daemon_data_root_entries)
+        self.assertEqual(launcher.ENGINE_ID_SIZE, AUTHORITY.post_daemon_engine_id_size)
+
     def test_rootlesskit_state_absent_or_safe_stale_is_vendor_managed(self) -> None:
         launcher = self._launcher()
         with patch.object(launcher.os, "lstat", side_effect=FileNotFoundError):
@@ -383,7 +460,7 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
     def test_existing_socket_probe_never_unlinks_before_vendor_lock(self) -> None:
         launcher = self._launcher()
         path = "/run/user/991/docker.sock"
-        safe = self._stat(stat.S_IFSOCK)
+        safe = self._stat(stat.S_IFSOCK, mode=0o1660)
         with patch.object(launcher.os, "lstat", side_effect=FileNotFoundError), \
                 patch.object(launcher.socket, "socket") as socket_factory, \
                 patch.object(launcher.os, "unlink") as unlink:
@@ -414,6 +491,7 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
             self._stat(stat.S_IFLNK), self._stat(stat.S_IFREG),
             self._stat(stat.S_IFSOCK, uid=0), self._stat(stat.S_IFSOCK, gid=0),
             self._stat(stat.S_IFSOCK, mode=0o600),
+            self._stat(stat.S_IFSOCK, mode=0o660),
         ):
             with self.subTest(unsafe=unsafe), patch.object(launcher.os, "lstat", return_value=unsafe), \
                     patch.object(launcher.socket, "socket") as socket_factory, \
@@ -467,6 +545,7 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
             "static-subid-source-exact-etc-subuid-and-subgid-entry-no-extra-or-overlap",
             "slirp4netns-exact-absolute-package-owned-binary-no-path-shadow",
             "safe-rootlesskit-state-owned-0700-vendor-lock-and-crash-recovery",
+            "launcher-first-start-empty-0700-or-managed-restart-0710-and-socket-01660",
             "existing-docker-socket-exact-identity-live-probe-refused-defers-to-vendor-lock-no-launcher-unlink",
         ):
             self.assertIn(required, checks)

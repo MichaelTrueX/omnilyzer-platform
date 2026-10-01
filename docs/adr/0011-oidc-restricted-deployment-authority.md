@@ -523,3 +523,22 @@ daemon-socket authority and still validates a pre-existing socket as `0660`.
 The live daemon is not restarted as part of C33I. Intentional daemon stop,
 restart, or host reboot remains prohibited until a separately reviewed launcher
 asset correction is installed and qualified.
+
+
+C33K corrects restart-phase launcher authority before any intentional rootless
+Docker restart or reboot. The launcher now distinguishes the empty first-start
+mode-0700 data root from the exact Docker-managed mode-0710 post-start state and
+requires the reviewed UID/GID-991 mode-01660 daemon socket when one exists. The
+correction does not broaden stale-state cleanup: the launcher still never
+unlinks the Docker socket or RootlessKit state before vendor lock ownership is
+resolved.
+
+The correction uses a mandatory three-stage boundary: a non-fail-fast read-only
+candidate preflight against the live host, a locked atomic replacement accepting
+only the exact predecessor launcher bytes, and a non-fail-fast post-replacement
+restart preflight. The replacement function repeats the candidate preflight
+under the shared lock and requires the full post-replacement preflight before it
+can report success. The replacement performs no service, Docker, package,
+network, sub-ID, broker, executor, or deployment activation. Intentional restart
+or reboot remains prohibited until the post-replacement matrix passes
+completely.
