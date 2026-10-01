@@ -607,3 +607,21 @@ A no-session `Sessions` property can return zero stdout bytes rather than a blan
 newline. Only `Sessions` and `Display` may map that exact zero-byte result to the
 empty string; all other reads remain strict and newline-terminated. This is a
 qualification-only correction and authorizes no user-manager or Docker mutation.
+
+C33S authorizes one fresh UID-991 user-manager recycle after C33R proves the
+post-persistence candidate state. The transition does not reinterpret historical
+C33F or C33O. C33F remains the disabled pre-persistence daemon qualifier and C33O
+remains the enabled-on-disk/cached-disabled immediate-post-enable qualifier.
+
+Immediately before mutation C33S reruns the complete C33R matrix, binds a stable
+lifecycle observation to the C33R snapshot, and then executes exactly
+`/usr/bin/systemctl restart user@991.service` under the deployment process lock.
+No second restart, rollback restart, daemon reload, enable/disable operation, or
+alternative service mutation is permitted after failure.
+
+A successful fresh-manager transition requires a changed user-manager PID and a
+fully disjoint RootlessKit/dockerd/containerd/slirp4netns PID set. The new manager
+must expose the rootless Docker unit as loaded, active, running, and enabled.
+Global persistence, unit wiring, Docker engine configuration, private socket
+authority, RootlessKit state, empty inventory, rootful masks, inactive deployment
+broker/executor surfaces, and UID-991 cgroup containment must all remain valid.

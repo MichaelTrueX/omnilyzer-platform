@@ -4142,3 +4142,21 @@ properties may interpret zero-byte stdout as the empty string. Systemd property
 reads and all non-empty loginctl properties still require exactly one bounded
 newline-terminated ASCII line. No service, persistence, Docker, or deployment
 behavior changes in C33R.
+
+## C33S fresh user-manager recycle
+
+C33S owns the first intentional replacement of the persisted UID-991 systemd
+user manager. It does not reuse historical C33F or immediate-post-enable C33O
+unit-file semantics. Immediately before mutation it reruns the complete C33R
+non-fail-fast preflight, captures a stable disabled-cache lifecycle, and binds
+that lifecycle to a fresh C33R snapshot.
+
+The only mutation is exactly `/usr/bin/systemctl restart user@991.service`,
+executed once under the deployment process lock. There is no automatic retry or
+fallback. Post-transition qualification requires a new user-manager PID, a
+disjoint new RootlessKit/dockerd/containerd/slirp4netns PID set, persistence still
+`enabled`, and the fresh manager reporting the rootless Docker unit as
+`loaded/active/running/enabled`. Docker engine configuration, socket authority,
+RootlessKit state, empty inventory, rootful masks, and inactive broker/executor
+surfaces must remain unchanged. Every UID-991 process must remain contained below
+`/user.slice/user-991.slice/user@991.service`.

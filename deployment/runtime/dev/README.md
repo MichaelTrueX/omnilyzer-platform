@@ -342,3 +342,17 @@ C33R allows zero-byte `loginctl --value` output only for `Sessions` and `Display
 where it represents an empty value. All other systemd/loginctl reads retain the
 strict one-line parser. This fixes the C33Q no-login-session preflight without
 changing any recovery or runtime authority.
+
+### C33S fresh user-manager recycle
+
+C33S performs one controlled recycle of `user@991.service` only after the full
+C33R preflight passes again immediately before mutation. The exact mutation is
+`/usr/bin/systemctl restart user@991.service` and is never retried
+automatically.
+
+The post-recycle lifecycle is intentionally distinct from C33F/C33O: the fresh
+manager must report the globally persisted rootless Docker unit as
+`loaded/active/running/enabled`. The manager PID and all four Docker runtime
+PIDs must change, while Docker configuration, private socket authority,
+RootlessKit state, zero inventory, rootful masks, UID-991 cgroup containment, and
+inactive broker/executor surfaces remain unchanged.
