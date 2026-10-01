@@ -1,4 +1,4 @@
-"""deployment/rootless_docker_fresh_manager_transition.py - C33S lifecycle transition.
+"""deployment/rootless_docker_fresh_manager_transition.py - C33S lifecycle transition with C33T readiness correction.
 
 Purpose:
 - recycle the already-qualified UID-991 user manager exactly once;
@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 import os
 import subprocess
+import time
 
 from . import dev_host_provisioning_orchestration as orchestration
 from . import rootless_docker_daemon_qualification as c33f
@@ -55,6 +56,8 @@ _USER_UNIT = "omnilyzer-task014-rootless-docker.service"
 _ENABLE_LINK = "/etc/systemd/user/default.target.wants/" + _USER_UNIT
 _RESTART_COMMAND = (_SYSTEMCTL, "restart", _USER_MANAGER)
 _TIMEOUT = 120.0
+_POST_READY_TIMEOUT = 65.0
+_POST_READY_INTERVAL = 0.25
 _OUTPUT_LIMIT = 1024 * 1024
 _CGROUP_ROOT = "/user.slice/user-991.slice/user@991.service"
 _PID_NAMES = ("rootlesskit", "dockerd", "containerd", "slirp4netns")
@@ -490,6 +493,40 @@ def _run_user_manager_restart() -> None:
         raise OSError
 
 
+def _post_user_unit_ready() -> tuple[tuple[str, str, str, str], int]:
+    """Observe only the fresh manager's rootless-Docker unit readiness state."""
+
+    state = (
+        c33f._read_user_systemctl("LoadState"),
+        c33f._read_user_systemctl("ActiveState"),
+        c33f._read_user_systemctl("SubState"),
+        c33f._read_user_systemctl("UnitFileState"),
+    )
+    try:
+        main_pid = int(c33f._read_user_systemctl("MainPID"))
+    except ValueError:
+        raise OSError from None
+    if state != _AFTER_UNIT_STATE or main_pid <= 1:
+        raise OSError
+    return state, main_pid
+
+
+def _await_post_user_unit_ready() -> tuple[tuple[str, str, str, str], int]:
+    """Wait boundedly and read-only for the Type=notify unit to report ready."""
+
+    deadline = time.monotonic() + _POST_READY_TIMEOUT
+    while True:
+        try:
+            return _post_user_unit_ready()
+        except _CONTROL:
+            raise
+        except (OSError, subprocess.SubprocessError, ValueError):
+            now = time.monotonic()
+            if now >= deadline:
+                raise OSError from None
+            time.sleep(min(_POST_READY_INTERVAL, deadline - now))
+
+
 def _transition_under_lock() -> RootlessDockerFreshManagerTransitionEvidence:
     """Perform one gated recycle and then require the new lifecycle to qualify."""
 
@@ -499,6 +536,7 @@ def _transition_under_lock() -> RootlessDockerFreshManagerTransitionEvidence:
     _require_preflight_snapshot_match(snapshot, before)
 
     _run_user_manager_restart()
+    _await_post_user_unit_ready()
 
     after = qualify_rootless_docker_fresh_manager_post()
     before_runtime = {pid for _name, pid in before.runtime_pids}
