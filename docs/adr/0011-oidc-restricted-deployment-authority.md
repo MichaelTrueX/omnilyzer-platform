@@ -504,3 +504,22 @@ closed pre-daemon checks for every other static directory. Docker-managed DB
 contents, timestamps and inodes are intentionally not frozen; authority is
 carried by the exact top-level structure, ownership/modes and independent Docker
 API proof of zero images and containers.
+
+
+C33I removes cross-phase process-discovery coupling from the live rootless
+daemon proof. C33F must not use the C32ZQ pre-install command runner to discover
+RootlessKit-era processes; it enumerates `/proc` read-only for the closed
+`rootlesskit`, `dockerd`, `containerd`, and `slirp4netns` set and independently
+verifies UID and command-line authority. The earlier pre-install allowlist is not
+widened. A permanent non-fail-fast daemon preflight must execute the live
+component assertions and report the complete mismatch set before the fail-closed
+C33F qualification is invoked. This prevents one-at-a-time discovery of host
+semantics through generic privileged-gate failures.
+
+C33I restart safety hold:
+
+C33I restart safety hold: the installed launcher predates the live `01660`
+daemon-socket authority and still validates a pre-existing socket as `0660`.
+The live daemon is not restarted as part of C33I. Intentional daemon stop,
+restart, or host reboot remains prohibited until a separately reviewed launcher
+asset correction is installed and qualified.

@@ -359,6 +359,46 @@ class RootlessDockerDaemonQualificationTests(unittest.TestCase):
         ):
             module._runtime_artifacts_exact()
 
+    def test_runtime_process_discovery_is_procfs_only_and_uid_bound(self):
+        entries = tuple(
+            type("E", (), {"name": str(pid)})()
+            for pid in (4000, 4001, 4002, 4003, 5000)
+        )
+        names = {
+            4000: "rootlesskit",
+            4001: "dockerd",
+            4002: "containerd",
+            4003: "slirp4netns",
+            5000: "unrelated",
+        }
+        with patch.object(module.os, "scandir", return_value=entries), \
+             patch.object(module, "_proc_comm", side_effect=lambda pid: names[pid]), \
+             patch.object(module, "_proc_uid", return_value=AUTHORITY.executor_uid), \
+             patch.object(module.userq.staticq.preinstall, "_run") as old_runner:
+            self.assertEqual(module._pids("rootlesskit"), (4000,))
+            self.assertEqual(module._pids("dockerd"), (4001,))
+            self.assertEqual(module._pids("containerd"), (4002,))
+            self.assertEqual(module._pids("slirp4netns"), (4003,))
+        old_runner.assert_not_called()
+
+        with patch.object(module.os, "scandir", return_value=entries), \
+             patch.object(module, "_proc_comm", side_effect=lambda pid: names[pid]), \
+             patch.object(module, "_proc_uid", return_value=0), \
+             self.assertRaises(OSError):
+            module._pids("dockerd")
+
+        with self.assertRaises(OSError):
+            module._pids("not-reviewed")
+
+    def test_proc_comm_requires_one_bounded_ascii_line(self):
+        with patch.object(module, "_read_proc_file", return_value=b"dockerd\n"):
+            self.assertEqual(module._proc_comm(4001), "dockerd")
+        for bad in (b"", b"dockerd", b"dockerd\nextra\n", b"\xff\n"):
+            with self.subTest(bad=bad), patch.object(
+                module, "_read_proc_file", return_value=bad
+            ), self.assertRaises(OSError):
+                module._proc_comm(4001)
+
     def test_process_gate_binds_mainpid_to_rootlesskit_and_exact_dockerd_argv(self):
         with patch.object(
             module, "_pids", side_effect=lambda name: {
@@ -460,6 +500,8 @@ class RootlessDockerDaemonQualificationTests(unittest.TestCase):
             ROOT / "deployment/rootless_docker_daemon_qualification.py"
         ).read_text()
         self.assertNotIn("rootless_docker_daemon_start import", source)
+        self.assertNotIn("preinstall._run", source)
+        self.assertNotIn("_PGREP", source)
         for forbidden in (
             '"start"',
             '"enable"',
