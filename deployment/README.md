@@ -4042,3 +4042,23 @@ environment rather than incorrectly comparing the RootlessKit process to the raw
 launcher input. Tests require those two transformations exactly and require every
 other approved environment value to remain unchanged. The forbidden proxy and
 Docker endpoint variables remain prohibited.
+
+## C33M reviewed rootless Docker restart
+
+C33M is the first intentional restart of the qualified rootless Docker user
+service. It is a single reviewed mutation under the deployment process lock.
+Immediately before the restart, C33M requires the complete six-check restart
+preflight and public C33F daemon qualification, and records the exact
+`rootlesskit`, `dockerd`, `containerd`, and `slirp4netns` process IDs. It then
+permits exactly one command: `systemctl --user --machine=omnilyzer-executor@.host
+restart omnilyzer-task014-rootless-docker.service`.
+
+After that command returns successfully, C33M requires a completely new,
+disjoint four-process runtime set, two identical six-check restart preflight
+observations, and a final public C33F qualification. Every C33F evidence field
+except the three process-ID fields must be byte/value equivalent across the
+restart. The unit must remain loaded/active/running but disabled, Docker inventory
+must remain empty, the corrected launcher and all static authority must remain
+exact, rootful Docker stays masked, and broker/executor/deployment stay inactive.
+C33M never issues a second explicit restart as recovery; any post-restart proof
+failure is fail-closed and requires diagnosis before another mutation.

@@ -286,3 +286,15 @@ reviewed `DOCKERD_ROOTLESS_ROOTLESSKIT_FLAGS` without `--detach-netns`; the vend
 wrapper prepends that flag when detach mode is enabled and exports
 `_DOCKERD_ROOTLESS_CHILD=1` before executing RootlessKit. These are the only
 reviewed runtime transformations.
+
+### C33M reviewed daemon restart
+
+C33M performs one intentional rootless Docker user-unit restart only after the
+C33L launcher replacement and independent restart-authority closure are green.
+The transition runs under the deployment process lock, performs a six-check
+restart preflight plus public C33F before mutation, records all four runtime
+process IDs, executes one exact user-unit `restart`, then requires a disjoint new
+process set, two identical post-restart six-check observations, and public C33F.
+All stable C33F evidence must be unchanged across the restart and Docker
+inventory must remain zero. The unit remains disabled; no broker/executor or
+deployment activation is part of this step.
