@@ -165,7 +165,11 @@ def _evaluate(
         )
 
 
-def _run_one_line(argv: tuple[str, ...]) -> str:
+def _run_one_line(
+    argv: tuple[str, ...],
+    *,
+    allow_empty: bool = False,
+) -> str:
     result = subprocess.run(
         argv,
         stdin=subprocess.DEVNULL,
@@ -185,8 +189,15 @@ def _run_one_line(argv: tuple[str, ...]) -> str:
         result.returncode != 0
         or type(result.stdout) is not bytes
         or len(result.stdout) > _OUTPUT_LIMIT
-        or not result.stdout.endswith(b"\n")
         or b"\r" in result.stdout
+    ):
+        raise OSError
+    if result.stdout == b"":
+        if allow_empty is not True:
+            raise OSError
+        return ""
+    if (
+        not result.stdout.endswith(b"\n")
         or b"\n" in result.stdout[:-1]
     ):
         raise OSError
@@ -241,7 +252,8 @@ def _login_value(property_name: str) -> str:
             AUTHORITY.executor_user,
             "--property=" + property_name,
             "--value",
-        )
+        ),
+        allow_empty=property_name in {"Sessions", "Display"},
     )
 
 

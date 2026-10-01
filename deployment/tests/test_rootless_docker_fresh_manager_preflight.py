@@ -133,6 +133,15 @@ class RootlessDockerFreshManagerPreflightTests(unittest.TestCase):
             ),
         )
 
+        empty = subprocess.CompletedProcess((), 0, b"", b"")
+        with patch.object(module.subprocess, "run", return_value=empty):
+            self.assertEqual(module._login_value("Sessions"), "")
+            self.assertEqual(module._login_value("Display"), "")
+        with patch.object(module.subprocess, "run", return_value=empty), self.assertRaises(OSError):
+            module._login_value("Linger")
+        with patch.object(module.subprocess, "run", return_value=empty), self.assertRaises(OSError):
+            module._system_value("user@991.service", "ActiveState")
+
         with self.assertRaises(OSError):
             module._system_value("wrong.service", "ActiveState")
         with self.assertRaises(OSError):

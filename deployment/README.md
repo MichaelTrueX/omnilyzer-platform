@@ -4128,3 +4128,17 @@ recovery testing because the installed unit is byte-pinned and the comment has n
 runtime semantics; a comment-only asset replacement would add transition risk
 without strengthening the recovery proof. Cleanup is deferred until persistence
 recovery is proven.
+
+## C33R empty loginctl-value correction
+
+C33R corrects a read-only parsing defect found by the C33Q live preflight. On the
+qualified Ubuntu host, `loginctl show-user ... --property=Sessions --value` emits
+zero stdout bytes when there are no sessions, while other empty-valued properties
+may emit a single newline. C33Q's generic one-line parser required a newline and
+therefore rejected the valid no-session state before any recovery mutation.
+
+The parser remains strict by default. Only the `Sessions` and `Display` loginctl
+properties may interpret zero-byte stdout as the empty string. Systemd property
+reads and all non-empty loginctl properties still require exactly one bounded
+newline-terminated ASCII line. No service, persistence, Docker, or deployment
+behavior changes in C33R.
