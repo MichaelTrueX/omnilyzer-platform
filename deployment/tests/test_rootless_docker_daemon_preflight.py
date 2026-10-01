@@ -100,7 +100,7 @@ class RootlessDockerDaemonPreflightTests(unittest.TestCase):
             "user_manager",
             "qualify_once_first",
             "qualify_once_second",
-            "public_c33f",
+            "qualify_observations_equal",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, names)
@@ -109,6 +109,19 @@ class RootlessDockerDaemonPreflightTests(unittest.TestCase):
         self.assertTrue(any(name.startswith("package:") for name in names))
         self.assertTrue(any(name.startswith("directory:") for name in names))
         self.assertTrue(any(name.startswith("asset:") for name in names))
+        self.assertNotIn("public_c33f", names)
+
+    def test_observation_equality_is_checked_without_public_qualifier(self):
+        first = object()
+        with patch.object(module.daemonq, "_qualify_once", side_effect=(first, first)) as once, \
+             patch.object(module.daemonq, "qualify_rootless_docker_daemon") as public:
+            module._qualify_observations_equal()
+        self.assertEqual(once.call_count, 2)
+        public.assert_not_called()
+
+        with patch.object(module.daemonq, "_qualify_once", side_effect=(object(), object())), \
+             self.assertRaises(OSError):
+            module._qualify_observations_equal()
 
     def test_preflight_source_is_read_only_and_independent_of_c33e(self):
         source = (

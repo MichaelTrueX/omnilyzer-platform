@@ -143,6 +143,13 @@ def _process_evidence() -> None:
     daemonq._process_evidence(main_pid)
 
 
+def _qualify_observations_equal() -> None:
+    first = daemonq._qualify_once()
+    second = daemonq._qualify_once()
+    if second != first:
+        raise OSError
+
+
 def _component_checks() -> tuple[tuple[str, Callable[[], object]], ...]:
     staticq = daemonq.userq.staticq
     preinstall = staticq.preinstall
@@ -236,7 +243,7 @@ def _component_checks() -> tuple[tuple[str, Callable[[], object]], ...]:
             ("root_identity_final", daemonq._root_identity),
             ("qualify_once_first", daemonq._qualify_once),
             ("qualify_once_second", daemonq._qualify_once),
-            ("public_c33f", daemonq.qualify_rootless_docker_daemon),
+            ("qualify_observations_equal", _qualify_observations_equal),
         )
     )
 
