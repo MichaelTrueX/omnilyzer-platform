@@ -572,3 +572,17 @@ the service for arbitrary users because the unit remains byte-pinned with
 `--now`, and post-enable qualification requires that the currently running daemon
 and every C33F-observed non-install-state property remain unchanged. Automatic
 disable rollback is forbidden after a failed postcondition.
+
+
+C33O separates persistent install state from live-manager cache state. Persistence
+is established by the exact root-owned global user-unit enable symlink and
+`systemctl --global is-enabled=enabled`. The already-running UID-991 user manager
+is required to retain its cached `UnitFileState=disabled` immediately after
+enablement, demonstrating that no reload or restart occurred. Historical C33F
+retains its pre-persistence disabled/link-absent contract; a later fresh-manager
+or boot milestone owns the live enabled-state transition.
+
+C33O also changes C33F process discovery to filter `/proc` by executor UID before
+reading process names. Unrelated host processes therefore cannot poison rootless
+Docker qualification, while inspection failures for UID-991 candidates still fail
+closed.

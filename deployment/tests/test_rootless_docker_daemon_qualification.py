@@ -6,7 +6,7 @@ import json
 import stat
 import subprocess
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from deployment import rootless_docker_daemon_qualification as module
 from deployment.rootless_docker_authority import AUTHORITY
@@ -372,7 +372,14 @@ class RootlessDockerDaemonQualificationTests(unittest.TestCase):
             5000: "unrelated",
         }
         with patch.object(module.os, "scandir", return_value=entries), \
-             patch.object(module, "_proc_comm", side_effect=lambda pid: names[pid]), \
+             patch.object(
+                 module,
+                 "_proc_dir_uid",
+                 side_effect=lambda pid: (
+                     AUTHORITY.executor_uid if pid != 5000 else 0
+                 ),
+             ), \
+             patch.object(module, "_proc_comm", side_effect=lambda pid: names[pid]) as comm, \
              patch.object(module, "_proc_uid", return_value=AUTHORITY.executor_uid), \
              patch.object(module.userq.staticq.preinstall, "_run") as old_runner:
             self.assertEqual(module._pids("rootlesskit"), (4000,))
@@ -380,15 +387,55 @@ class RootlessDockerDaemonQualificationTests(unittest.TestCase):
             self.assertEqual(module._pids("containerd"), (4002,))
             self.assertEqual(module._pids("slirp4netns"), (4003,))
         old_runner.assert_not_called()
+        self.assertNotIn(call(5000), comm.call_args_list)
 
         with patch.object(module.os, "scandir", return_value=entries), \
-             patch.object(module, "_proc_comm", side_effect=lambda pid: names[pid]), \
-             patch.object(module, "_proc_uid", return_value=0), \
+             patch.object(module, "_proc_dir_uid", return_value=0), \
+             patch.object(module, "_proc_comm") as comm, \
              self.assertRaises(OSError):
             module._pids("dockerd")
+        comm.assert_not_called()
 
         with self.assertRaises(OSError):
             module._pids("not-reviewed")
+
+    def test_proc_dir_uid_requires_real_proc_directory(self):
+        directory = type(
+            "S",
+            (),
+            {"st_mode": stat.S_IFDIR | 0o555, "st_uid": AUTHORITY.executor_uid},
+        )()
+        with patch.object(module.os, "stat", return_value=directory) as observed:
+            self.assertEqual(module._proc_dir_uid(4000), AUTHORITY.executor_uid)
+        observed.assert_called_once_with("/proc/4000", follow_symlinks=False)
+
+        regular = type(
+            "S",
+            (),
+            {"st_mode": stat.S_IFREG | 0o444, "st_uid": AUTHORITY.executor_uid},
+        )()
+        with patch.object(module.os, "stat", return_value=regular), self.assertRaises(OSError):
+            module._proc_dir_uid(4000)
+
+    def test_pid_discovery_ignores_unreadable_unrelated_process(self):
+        entries = (
+            type("E", (), {"name": "4001"})(),
+            type("E", (), {"name": "5000"})(),
+        )
+        with patch.object(module.os, "scandir", return_value=entries), \
+             patch.object(
+                 module,
+                 "_proc_dir_uid",
+                 side_effect=lambda pid: AUTHORITY.executor_uid if pid == 4001 else 0,
+             ), \
+             patch.object(
+                 module,
+                 "_proc_comm",
+                 side_effect=lambda pid: "dockerd" if pid == 4001 else (_ for _ in ()).throw(OSError()),
+             ) as comm, \
+             patch.object(module, "_proc_uid", return_value=AUTHORITY.executor_uid):
+            self.assertEqual(module._pids("dockerd"), (4001,))
+        self.assertNotIn(call(5000), comm.call_args_list)
 
     def test_proc_comm_requires_one_bounded_ascii_line(self):
         with patch.object(module, "_read_proc_file", return_value=b"dockerd\n"):

@@ -4084,3 +4084,24 @@ socket, Docker engine state, packages, assets, cgroups, user-manager state and
 zero inventory as before. Broker/executor remain inactive and rootful Docker
 remains masked. A failed postcondition does not trigger an automatic disable
 rollback; further mutation requires diagnosis.
+
+## C33O post-enable persistence qualification correction
+
+C33O corrects two qualification defects discovered only after C33N successfully
+created the persistence link. First, persistent install state and the already
+running UID-991 user manager's cached `UnitFileState` are separate authorities.
+The exact global `default.target.wants` symlink plus `systemctl --global
+is-enabled` are the persistence authority. The current manager is required to
+remain loaded/active/running with its unchanged cached `disabled` metadata,
+proving that C33N did not reload or restart the daemon. A later fresh-manager or
+boot milestone will qualify the enabled state seen after manager replacement.
+Historical public C33F remains unchanged as the pre-persistence
+`disabled + enable-link-absent` qualifier.
+
+Second, C33F process discovery no longer reads `/proc/<pid>/comm` for every host
+process. It first checks `/proc/<pid>` ownership and only inspects command/name
+state for UID 991 candidates. This removes coupling to unrelated protected or
+transient processes while preserving fail-closed behavior for any UID-991
+candidate that still exists but cannot be inspected. C33O exposes a read-only
+post-enable persistence qualifier that reuses the full C33F daemon proof with
+lifecycle-specific user-unit evidence.

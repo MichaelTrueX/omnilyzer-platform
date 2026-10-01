@@ -1,12 +1,14 @@
-"""C33N persistence enablement for the qualified rootless Docker user unit.
+"""C33N persistence enablement and C33O immediate post-enable qualification.
 
-C33N changes only the system-wide user-unit install link. The unit remains
-restricted by its reviewed ConditionUser=omnilyzer-executor guard. The running
-daemon must remain byte/state equivalent to the pre-enable C33F observation and
-must not restart.
+Persistent install state and the already-running user manager's cached unit-file
+state are distinct authorities. The exact global enable link plus
+`systemctl --global is-enabled` establish persistence on disk. Immediately
+after enablement, the current UID-991 user manager must remain unchanged and
+continue to report UnitFileState=disabled, proving that no reload or restart
+occurred.
 
-No --now operation is allowed. No automatic disable rollback is attempted after
-a failed postcondition.
+No --now operation, daemon reload, restart, or automatic disable rollback is
+authorized here.
 """
 
 from __future__ import annotations
@@ -19,31 +21,59 @@ import subprocess
 from . import dev_host_provisioning_orchestration as orchestration
 from . import rootless_docker_daemon_qualification as c33f
 from .rootless_docker_authority import AUTHORITY
-from .rootless_docker_installation_authority import INSTALLATION_AUTHORITY
 
 
 __all__ = (
     "RootlessDockerPersistenceEnablementError",
+    "RootlessDockerPersistenceQualificationError",
     "RootlessDockerPersistenceEnablementEvidence",
+    "RootlessDockerPersistenceStateEvidence",
     "enable_rootless_docker_persistence",
+    "qualify_rootless_docker_persistence",
 )
 
 _ERROR = "rootless Docker persistence enablement is unavailable"
+_QUALIFICATION_ERROR = "rootless Docker persistence qualification is unavailable"
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _SYSTEMCTL = "/usr/bin/systemctl"
 _USER_UNIT = "omnilyzer-task014-rootless-docker.service"
 _ENABLE_LINK = "/etc/systemd/user/default.target.wants/" + _USER_UNIT
+_LIVE_POST_ENABLE_STATE = ("loaded", "active", "running", "disabled")
+_PERSISTENT_STATE = "enabled"
 _TIMEOUT = 30.0
 _OUTPUT_LIMIT = 256 * 1024
 
 
 class RootlessDockerPersistenceEnablementError(Exception):
-    """One fixed external failure for the privileged C33N boundary."""
+    """One fixed external failure for the privileged C33N mutation boundary."""
+
+
+class RootlessDockerPersistenceQualificationError(Exception):
+    """One fixed external failure for post-enable persistence qualification."""
+
+
+@dataclass(frozen=True, slots=True)
+class RootlessDockerPersistenceStateEvidence:
+    persistent_state: str
+    enable_link: tuple[str, str, int, int, int]
+    daemon: c33f.RootlessDockerDaemonEvidence
+
+    def __post_init__(self) -> None:
+        if (
+            self.persistent_state != _PERSISTENT_STATE
+            or self.enable_link
+            != (_ENABLE_LINK, AUTHORITY.user_unit, 0, 0, 0o777)
+            or self.daemon.user_unit_state != _LIVE_POST_ENABLE_STATE
+            or self.daemon.containers != (0, 0, 0, 0)
+            or self.daemon.images != 0
+        ):
+            raise ValueError(_QUALIFICATION_ERROR)
 
 
 @dataclass(frozen=True, slots=True)
 class RootlessDockerPersistenceEnablementEvidence:
     operation: str
+    persistent_state: str
     enable_link: tuple[str, str, int, int, int]
     before_unit_state: tuple[str, str, str, str]
     after_unit_state: tuple[str, str, str, str]
@@ -56,12 +86,11 @@ class RootlessDockerPersistenceEnablementEvidence:
     def __post_init__(self) -> None:
         if (
             self.operation != "enabled"
+            or self.persistent_state != _PERSISTENT_STATE
             or self.enable_link
             != (_ENABLE_LINK, AUTHORITY.user_unit, 0, 0, 0o777)
-            or self.before_unit_state
-            != ("loaded", "active", "running", "disabled")
-            or self.after_unit_state
-            != ("loaded", "active", "running", "enabled")
+            or self.before_unit_state != _LIVE_POST_ENABLE_STATE
+            or self.after_unit_state != _LIVE_POST_ENABLE_STATE
             or self.before_pids != self.after_pids
             or len(set(self.before_pids)) != 2
             or any(type(pid) is not int or pid <= 1 for pid in self.before_pids)
@@ -79,9 +108,9 @@ def _root_identity() -> tuple[int, int]:
     return value
 
 
-def _run_enable() -> None:
+def _run_systemctl(argv: tuple[str, ...]) -> subprocess.CompletedProcess:
     result = subprocess.run(
-        (_SYSTEMCTL, "--global", "enable", _USER_UNIT),
+        argv,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -99,11 +128,24 @@ def _run_enable() -> None:
         type(result.returncode) is not int
         or type(result.stdout) is not bytes
         or type(result.stderr) is not bytes
-        or result.returncode != 0
         or len(result.stdout) > _OUTPUT_LIMIT
         or len(result.stderr) > _OUTPUT_LIMIT
     ):
         raise OSError
+    return result
+
+
+def _run_enable() -> None:
+    result = _run_systemctl((_SYSTEMCTL, "--global", "enable", _USER_UNIT))
+    if result.returncode != 0:
+        raise OSError
+
+
+def _global_enable_evidence() -> str:
+    result = _run_systemctl((_SYSTEMCTL, "--global", "is-enabled", _USER_UNIT))
+    if result.returncode != 0 or result.stdout != b"enabled\n":
+        raise OSError
+    return _PERSISTENT_STATE
 
 
 def _enable_link_evidence() -> tuple[str, str, int, int, int]:
@@ -125,7 +167,7 @@ def _enable_link_evidence() -> tuple[str, str, int, int, int]:
     return evidence
 
 
-def _enabled_user_unit_evidence() -> tuple[
+def _post_enable_user_unit_evidence() -> tuple[
     tuple[str, str, str, str], str, int
 ]:
     state = (
@@ -142,13 +184,47 @@ def _enabled_user_unit_evidence() -> tuple[
     except ValueError:
         raise OSError from None
     if (
-        state != ("loaded", "active", "running", "enabled")
+        state != _LIVE_POST_ENABLE_STATE
         or fragment != AUTHORITY.user_unit
         or main_pid <= 1
     ):
         raise OSError
+
     _enable_link_evidence()
+    _global_enable_evidence()
     return state, fragment, main_pid
+
+
+def _qualify_persistence_once() -> RootlessDockerPersistenceStateEvidence:
+    persistent_state = _global_enable_evidence()
+    link = _enable_link_evidence()
+    daemon = c33f._qualify_once_with_user_unit(
+        _post_enable_user_unit_evidence
+    )
+    return RootlessDockerPersistenceStateEvidence(
+        persistent_state=persistent_state,
+        enable_link=link,
+        daemon=daemon,
+    )
+
+
+def qualify_rootless_docker_persistence() -> (
+    RootlessDockerPersistenceStateEvidence
+):
+    """Require two identical immediate post-enable persistence observations."""
+
+    try:
+        first = _qualify_persistence_once()
+        second = _qualify_persistence_once()
+        if second != first:
+            raise OSError
+        return first
+    except _CONTROL:
+        raise
+    except Exception:
+        raise RootlessDockerPersistenceQualificationError(
+            _QUALIFICATION_ERROR
+        ) from None
 
 
 def _post_enable_matches(
@@ -157,94 +233,16 @@ def _post_enable_matches(
     tuple[str, str, str, str],
     tuple[int, int],
     tuple[str, str, int, int, int],
+    str,
 ]:
-    identity = _root_identity()
-    package_host = c33f._package_host()
-    subuid, subgid = c33f.userq.staticq._require_subids()
-    directories, assets = c33f._require_post_daemon_static_assets()
-    c33f.userq.staticq._require_user_manager_template_dropins()
-
-    executor_dropins = tuple(
-        c33f.userq.staticq._read_systemctl(
-            "omnilyzer-deployment-executor.service", "DropInPaths"
-        ).split()
-    )
-    user_dropins = tuple(
-        c33f.userq.staticq._read_systemctl(
-            "user@991.service", "DropInPaths"
-        ).split()
-    )
-    if (
-        executor_dropins != before.executor_dropins
-        or user_dropins != before.user_manager_dropins
-    ):
+    after = qualify_rootless_docker_persistence()
+    if after.daemon != before:
         raise OSError
-    for unit in c33f._DEPLOYMENT_UNITS:
-        if c33f.userq._read_systemctl(unit, "ActiveState") != "inactive":
-            raise OSError
-
-    state, fragment, main_pid = _enabled_user_unit_evidence()
-    rootlesskit_pid, rootlesskit_argv, dockerd_pid, dockerd_argv = (
-        c33f._process_evidence(main_pid)
-    )
-    socket_evidence = c33f._socket_evidence()
-    rootlesskit_state = c33f._rootlesskit_state_evidence()
-    c33f._runtime_artifacts_exact()
-    info = c33f._docker_info_evidence()
-    linger_mode, runtime, control_group, delegates = c33f._user_manager_evidence()
-
-    if (
-        _root_identity() != identity
-        or fragment != before.user_unit_fragment
-        or main_pid != before.user_unit_main_pid
-        or rootlesskit_pid != before.rootlesskit_pid
-        or dockerd_pid != before.dockerd_pid
-        or rootlesskit_argv != before.rootlesskit_argv
-        or dockerd_argv != before.dockerd_argv
-        or socket_evidence
-        != (
-            before.daemon_socket,
-            before.socket_uid,
-            before.socket_gid,
-            before.socket_mode,
-        )
-        or rootlesskit_state != before.rootlesskit_state
-        or info
-        != (
-            before.server_version,
-            before.storage_driver,
-            before.docker_root_dir,
-            before.cgroup_driver,
-            before.cgroup_version,
-            before.security_options,
-            before.containers,
-            before.images,
-        )
-        or (linger_mode, runtime, control_group, delegates)
-        != (
-            before.linger_mode,
-            before.runtime_directory,
-            before.user_manager_control_group,
-            before.delegate_controllers,
-        )
-        or subuid != before.subuid_records
-        or subgid != before.subgid_records
-        or directories != before.directories
-        or assets != before.assets
-        or package_host[0] != before.expected_workflow_sha
-        or package_host[2] != before.host_dependencies
-        or package_host[3] != before.packages
-        or package_host[4] != before.cgroup_controllers
-        or package_host[5] != before.critical_executables
-        or package_host[6] != before.bundle
-        or before.masked_units != INSTALLATION_AUTHORITY.rootful_units
-    ):
-        raise OSError
-
     return (
-        state,
-        (rootlesskit_pid, dockerd_pid),
-        _enable_link_evidence(),
+        after.daemon.user_unit_state,
+        (after.daemon.rootlesskit_pid, after.daemon.dockerd_pid),
+        after.enable_link,
+        after.persistent_state,
     )
 
 
@@ -254,9 +252,12 @@ def _enable_under_lock() -> RootlessDockerPersistenceEnablementEvidence:
 
     _run_enable()
 
-    after_state, after_pids, link = _post_enable_matches(before)
+    after_state, after_pids, link, persistent_state = _post_enable_matches(
+        before
+    )
     return RootlessDockerPersistenceEnablementEvidence(
         operation="enabled",
+        persistent_state=persistent_state,
         enable_link=link,
         before_unit_state=before.user_unit_state,
         after_unit_state=after_state,
