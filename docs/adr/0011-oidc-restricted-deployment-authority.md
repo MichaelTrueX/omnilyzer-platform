@@ -694,3 +694,25 @@ executor/broker reviewed-commit projection and live application migration remain
 separate reviewed authorities. This keeps the already running private
 control-plane fail-closed until the host application and configuration authority
 are explicitly advanced together.
+
+### C33AE closed successor migration for the state-store repair
+
+C33AE separates the state-store code repair from live control-plane lifecycle.
+The target application generation is the C33AD-pinned merged C33AC commit
+`f2ece4257b84090b1a6fff5d1aa7f0b6047765cd`, while the live predecessor
+remains C32ZH `47a602d3f2b97fafd6fb8a18240fd5bbb3857ba9`.
+
+The migration authority accepts only four ordered application/config prefixes
+and advances at most one prefix per explicit root invocation under the existing
+deployment process lock. It requires broker, executor service, and executor
+socket all inactive, with the executor socket path absent. This closes the
+socket-activation trigger while reviewed application/config bytes are changing.
+
+Every step binds unchanged rootless Docker identity and pristine persistent
+state. Application mutation is limited to `deployment/state_store.py`; executor
+and broker canonical JSON are replaced only in later separate prefixes. The
+last prefix binds one explicit future workflow SHA. The final merged C33AE
+`main` SHA is therefore resolved only after merge and must be supplied by a
+separate root-reviewed live wrapper. C33AE contains no service lifecycle,
+Docker mutation, Tailscale mutation, promotion dispatch, automatic retry, or
+automatic rollback authority.

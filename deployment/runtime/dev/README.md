@@ -414,3 +414,23 @@ authority. Runtime configuration and ingress bytes remain unchanged.
 This is repository-only generation evidence. The live executor and broker still
 reference reviewed commit `47a602d3f2b97fafd6fb8a18240fd5bbb3857ba9`;
 no application file is replaced and no promotion is authorized by C33AD alone.
+
+### C33AE state-store successor host migration
+
+C33AE consumes the C33AD generation through a root-only, process-locked,
+one-prefix-at-a-time migration. It requires broker, executor service, and
+executor socket fully inactive and requires
+`/run/omnilyzer/deployment/executor.sock` absent before inspecting or changing
+application/config authority. This prevents socket activation from starting the
+executor while its application bytes or configuration are being replaced.
+
+The four admitted prefixes are predecessor, application, executor, and
+complete. Only `deployment/state_store.py` changes in the application prefix;
+then only executor configuration changes; then only broker configuration
+changes. Rootless Docker identity and pristine persistent state are rechecked
+before and after every explicit step. C33AE itself does not change service
+lifecycle state and does not dispatch a promotion.
+
+The final broker configuration must use the merged C33AE `main` SHA as
+`expected_workflow_sha`. That value is supplied only by the later root-reviewed
+live migration wrapper after the merge is frozen.
