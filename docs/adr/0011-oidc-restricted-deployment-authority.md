@@ -677,3 +677,20 @@ C33W separates repository activation policy from the frozen successor host appli
 The live DEV policy pins the existing successor runtime configuration and ingress hashes, requires the synthetic no-secrets reference, and records the completed GitHub/Tailscale/host readiness review at `2026-10-01T09:48:30Z`. The workflow calls this validator only for DEV. STAGING and PROD continue through the historical non-live controller and have no deployment job.
 
 The host lifecycle contract is socket-first: executor socket, socket qualification, broker service, then private-ingress qualification. The executor service is not directly started; systemd socket activation remains its only reviewed start path. No automatic retry is authorized. C33W performs no service mutation. Its merge advances `main`, so the broker's immutable `expected_workflow_sha` must be rotated to the exact merged C33W commit before first live service activation.
+
+### C33AD state-store successor generation
+
+The first live-promotion readiness check exposed a closed-contract mismatch:
+the DEV state store treated its parent as exclusive while the previously
+reviewed rootless authority intentionally provisions `canary-runtime` and
+`nginx-runtime` as sibling directories. C33AC corrects the state-store policy
+without weakening residue checks. C33AD then pins the merged C33AC Git object
+`f2ece4257b84090b1a6fff5d1aa7f0b6047765cd` as a new immutable application
+generation above historical C32ZH.
+
+The generation differs from C32ZH only in `deployment/state_store.py`.
+Runtime and ingress hashes are unchanged. C33AD performs Git-object review only;
+executor/broker reviewed-commit projection and live application migration remain
+separate reviewed authorities. This keeps the already running private
+control-plane fail-closed until the host application and configuration authority
+are explicitly advanced together.
