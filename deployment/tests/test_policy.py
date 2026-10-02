@@ -97,7 +97,6 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(uses, [
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-            "tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd",
         ])
         for value in uses:
             self.assertRegex(value, r"^[^@]+@[0-9a-f]{40}$")
@@ -114,9 +113,19 @@ class WorkflowPolicyTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertNotIn(token, lowered)
         self.assertEqual(self.raw.count("secrets."), 2)
-        self.assertEqual(self.raw.count("retry:"), 1)
-        self.assertIn("retry: '1'", self.raw)
-        self.assertNotIn("retry", self.workflow["jobs"]["deploy_dev"]["steps"][-1]["run"].lower())
+        self.assertNotIn("tailscale/github-action", self.raw)
+        self.assertNotIn("retry:", self.raw)
+        self.assertEqual(self.raw.count("--accept-routes=false"), 1)
+        self.assertNotRegex(
+            self.raw,
+            r"--accept-routes(?:\s|$)",
+        )
+        submit = next(
+            step
+            for step in self.workflow["jobs"]["deploy_dev"]["steps"]
+            if step["name"] == "Submit DEV promotion once"
+        )
+        self.assertNotIn("retry", submit["run"].lower())
 
 
 class SourceBoundaryTests(unittest.TestCase):

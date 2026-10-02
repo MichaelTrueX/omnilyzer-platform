@@ -126,18 +126,205 @@ jobs:
             --target-stage "$TARGET_STAGE" \
             --requested-by "$REQUESTED_BY" \
             --output "$RUNNER_TEMP/task014-dev-promotion-request.json"
-      - name: Join private Task 014 tailnet with federated identity
-        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
-        with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          audience: ${{ secrets.TS_AUDIENCE }}
-          tags: tag:omnilyzer-task014-ci
-          version: '1.102.4'
-          sha256sum: '50748df1045e60b5b695f19f4c56b0da36c019948b440fb456b6584a50f0d8b9'
-          retry: '1'
-          timeout: '2m'
-          use-cache: 'false'
-          args: '--accept-routes=false --accept-dns=true --shields-up=true'
+      # Direct bootstrap is deliberate: the official Tailscale v4 action injects
+      # route acceptance, which conflicts with the reviewed route-rejection setting.
+      - name: Join private Task 014 tailnet with direct federated identity
+        shell: bash
+        env:
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
+        run: |
+          set -euo pipefail
+          umask 077
+          TS_VERSION="1.102.4"
+          TS_SHA256="50748df1045e60b5b695f19f4c56b0da36c019948b440fb456b6584a50f0d8b9"
+          TS_ROOT="$RUNNER_TEMP/task014-tailscale"
+          TS_DIR="$TS_ROOT/tailscale_${TS_VERSION}_amd64"
+          export TS_VERSION TS_SHA256 TS_ROOT TS_DIR
+
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          from urllib import request
+
+          version = os.environ["TS_VERSION"]
+          expected = os.environ["TS_SHA256"]
+          root = Path(os.environ["TS_ROOT"])
+          url = (
+              "https://pkgs.tailscale.com/stable/"
+              f"tailscale_{version}_amd64.tgz"
+          )
+          root.mkdir(mode=0o700)
+          partial = root / "tailscale.tgz.part"
+          final = root / "tailscale.tgz"
+
+          class NoRedirect(request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  raise ValueError("Tailscale tarball redirect rejected")
+
+          opener = request.build_opener(request.ProxyHandler({}), NoRedirect)
+          req = request.Request(
+              url,
+              headers={"User-Agent": "omnilyzer-task014-promotion"},
+          )
+          digest = hashlib.sha256()
+          total = 0
+          with opener.open(req, timeout=30) as response, partial.open("xb") as output:
+              if response.status != 200 or response.geturl() != url:
+                  raise ValueError("unexpected Tailscale tarball response")
+              while True:
+                  chunk = response.read(1024 * 1024)
+                  if not chunk:
+                      break
+                  total += len(chunk)
+                  if total > 64 * 1024 * 1024:
+                      raise ValueError("Tailscale tarball exceeds size bound")
+                  digest.update(chunk)
+                  output.write(chunk)
+          if total == 0 or digest.hexdigest() != expected:
+              raise ValueError("Tailscale tarball SHA-256 mismatch")
+          partial.chmod(0o600)
+          partial.replace(final)
+          PY
+
+          tar -xzf "$TS_ROOT/tailscale.tgz" -C "$TS_ROOT"
+          test -x "$TS_DIR/tailscale"
+          test -x "$TS_DIR/tailscaled"
+
+          sudo -n sh -c '
+            set -eu
+            printf "%s\n" "$$" >"$1"
+            chown "$SUDO_UID:$SUDO_GID" "$1"
+            chmod 0600 "$1"
+            exec "$2" --state=mem:
+          ' sh "$TS_ROOT/tailscaled.pid" "$TS_DIR/tailscaled" \
+            >"$TS_ROOT/tailscaled.log" 2>&1 &
+
+          daemon_ready=false
+          for _ in {1..30}; do
+            if sudo -n "$TS_DIR/tailscale" status --json \
+                >"$TS_ROOT/prelogin-status.json" 2>/dev/null; then
+              daemon_ready=true
+              break
+            fi
+            sleep 0.5
+          done
+          test "$daemon_ready" = true
+
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from urllib import parse, request
+
+          oidc_url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
+          runner_token = os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
+          audience = os.environ["TS_AUDIENCE"]
+          parsed = parse.urlsplit(oidc_url)
+          try:
+              request_port = parsed.port
+          except ValueError as exc:
+              raise ValueError("invalid GitHub OIDC request port") from exc
+          request_host = (parsed.hostname or "").lower()
+          query = parse.parse_qsl(
+              parsed.query,
+              keep_blank_values=True,
+              strict_parsing=False,
+          )
+          if (
+              parsed.scheme != "https"
+              or not request_host.endswith(".actions.githubusercontent.com")
+              or parsed.username is not None
+              or parsed.password is not None
+              or request_port not in (None, 443)
+              or parsed.fragment
+              or any(key == "audience" for key, _value in query)
+              or not runner_token
+              or not audience
+          ):
+              raise ValueError("invalid GitHub OIDC configuration")
+
+          separator = "&" if parsed.query else "?"
+          url = oidc_url + separator + parse.urlencode({"audience": audience})
+
+          class NoRedirect(request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  raise ValueError("GitHub OIDC redirect rejected")
+
+          opener = request.build_opener(request.ProxyHandler({}), NoRedirect)
+          req = request.Request(
+              url,
+              headers={"Authorization": "Bearer " + runner_token},
+          )
+          with opener.open(req, timeout=30) as response:
+              if response.status != 200:
+                  raise ValueError("GitHub OIDC endpoint did not return HTTP 200")
+              raw = response.read(16385)
+          if len(raw) > 16384:
+              raise ValueError("GitHub OIDC response too large")
+
+          def unique_members(pairs):
+              value = {}
+              for key, member in pairs:
+                  if key in value:
+                      raise ValueError("duplicate GitHub OIDC response member")
+                  value[key] = member
+              return value
+
+          value = json.loads(raw, object_pairs_hook=unique_members)
+          if (
+              not isinstance(value, dict)
+              or set(value) != {"value"}
+              or not isinstance(value["value"], str)
+          ):
+              raise ValueError("invalid GitHub OIDC response")
+          jwt = value["value"]
+          parts = jwt.split(".")
+          if (
+              len(jwt) > 16384
+              or len(parts) != 3
+              or any(
+                  not part
+                  or not part.isascii()
+                  or not all(char.isalnum() or char in "-_" for char in part)
+                  for part in parts
+              )
+          ):
+              raise ValueError("invalid GitHub OIDC JWT structure")
+
+          token_path = Path(os.environ["TS_ROOT"]) / "id-token"
+          with token_path.open("x", encoding="ascii") as output:
+              output.write(jwt)
+          token_path.chmod(0o600)
+          PY
+
+          sudo -n "$TS_DIR/tailscale" up \
+            --advertise-tags=tag:omnilyzer-task014-ci \
+            --hostname="github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --accept-routes=false \
+            --accept-dns=true \
+            --shields-up=true \
+            --timeout=2m \
+            --client-id="${TS_OAUTH_CLIENT_ID}?preauthorized=true&ephemeral=true" \
+            --id-token="file:$TS_ROOT/id-token"
+          rm -f "$TS_ROOT/id-token"
+
+          sudo -n "$TS_DIR/tailscale" status --json \
+            >"$TS_ROOT/connected-status.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["TS_ROOT"]) / "connected-status.json"
+          raw = path.read_bytes()
+          if not 1 <= len(raw) <= 1024 * 1024:
+              raise ValueError("invalid Tailscale status size")
+          value = json.loads(raw)
+          if not isinstance(value, dict) or value.get("BackendState") != "Running":
+              raise ValueError("Tailscale did not reach Running state")
+          PY
       - name: Submit DEV promotion once
         shell: bash
         run: |
@@ -214,3 +401,28 @@ jobs:
               if response.status != 202 or response.read(24) != b'{"status":"accepted"}\n':
                   raise ValueError("DEV broker did not return the exact accepted response")
           PY
+      - name: Leave private Task 014 tailnet
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TS_ROOT="$RUNNER_TEMP/task014-tailscale"
+          TS_DIR="$TS_ROOT/tailscale_1.102.4_amd64"
+          rm -f "$TS_ROOT/id-token"
+          if [ -x "$TS_DIR/tailscale" ]; then
+            sudo -n "$TS_DIR/tailscale" logout >/dev/null 2>&1 || true
+          fi
+          if [ -f "$TS_ROOT/tailscaled.pid" ]; then
+            read -r daemon_pid <"$TS_ROOT/tailscaled.pid"
+            case "$daemon_pid" in
+              ''|*[!0-9]*)
+                echo "invalid tailscaled PID file" >&2
+                exit 1
+                ;;
+            esac
+            if sudo -n test -e "/proc/$daemon_pid/exe"; then
+              daemon_exe="$(sudo -n readlink -f "/proc/$daemon_pid/exe")"
+              test "$daemon_exe" = "$TS_DIR/tailscaled"
+              sudo -n kill -TERM "$daemon_pid"
+            fi
+          fi

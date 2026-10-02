@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -51,8 +52,25 @@ class FinalDevWorkflowTests(unittest.TestCase):
         cls.workflow = yaml.load(cls.raw, Loader=yaml.BaseLoader)
         cls.gate = cls.workflow["jobs"]["gate"]
         cls.dev = cls.workflow["jobs"]["deploy_dev"]
-        cls.script = cls.dev["steps"][-1]["run"].split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+        cls.steps = {step["name"]: step for step in cls.dev["steps"]}
+        cls.join = cls.steps[
+            "Join private Task 014 tailnet with direct federated identity"
+        ]
+        cls.submit = cls.steps["Submit DEV promotion once"]
+        cls.cleanup = cls.steps["Leave private Task 014 tailnet"]
+        cls.script = cls.submit["run"].split(
+            "python3 - <<'PY'\n", 1
+        )[1].rsplit("\nPY", 1)[0]
         compile(cls.script, "platform-promote.yml:DEV", "exec")
+        cls.join_python = re.findall(
+            r"python3 - <<'PY'\n(.*?)\nPY",
+            cls.join["run"],
+            re.S,
+        )
+        if len(cls.join_python) != 3:
+            raise AssertionError("expected three direct Tailscale Python blocks")
+        for index, script in enumerate(cls.join_python, 1):
+            compile(script, f"platform-promote.yml:Tailscale:{index}", "exec")
 
     def test_manual_inputs_and_exact_job_authority(self):
         self.assertEqual(set(self.workflow["on"]), {"workflow_dispatch"})
@@ -72,23 +90,72 @@ class FinalDevWorkflowTests(unittest.TestCase):
         self.assertEqual(self.dev["permissions"], {"contents": "read", "id-token": "write"})
         self.assertEqual(self.dev["timeout-minutes"], "25")
         self.assertEqual([step.get("uses") for step in self.gate["steps"] if "tailscale" in str(step).lower()], [])
-        self.assertEqual([step.get("uses") for step in self.dev["steps"] if "tailscale" in str(step).lower()],
-                         ["tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd"])
-        tailscale = self.dev["steps"][2]
-        self.assertEqual(tailscale["with"], {
-            "oauth-client-id": "${{ secrets.TS_OAUTH_CLIENT_ID }}",
-            "audience": "${{ secrets.TS_AUDIENCE }}",
-            "tags": "tag:omnilyzer-task014-ci",
-            "version": "1.102.4",
-            "sha256sum": "50748df1045e60b5b695f19f4c56b0da36c019948b440fb456b6584a50f0d8b9",
-            "retry": "1",
-            "timeout": "2m",
-            "use-cache": "false",
-            "args": "--accept-routes=false --accept-dns=true --shields-up=true",
-        })
-        self.assertNotIn("authkey", str(tailscale).lower())
-        self.assertNotIn("oauth-secret", str(tailscale).lower())
-        self.assertNotIn("funnel", str(tailscale).lower())
+        self.assertEqual(
+            [
+                step.get("uses")
+                for step in self.dev["steps"]
+                if "tailscale" in str(step).lower() and "uses" in step
+            ],
+            [],
+        )
+        self.assertNotIn("uses", self.join)
+        self.assertEqual(
+            self.join["env"],
+            {
+                "TS_OAUTH_CLIENT_ID": "${{ secrets.TS_OAUTH_CLIENT_ID }}",
+                "TS_AUDIENCE": "${{ secrets.TS_AUDIENCE }}",
+            },
+        )
+        join = self.join["run"]
+        self.assertIn('TS_VERSION="1.102.4"', join)
+        self.assertIn(
+            'TS_SHA256="50748df1045e60b5b695f19f4c56b0da36c019948b440fb456b6584a50f0d8b9"',
+            join,
+        )
+        self.assertIn(
+            '"https://pkgs.tailscale.com/stable/"',
+            join,
+        )
+        self.assertEqual(
+            re.findall(r"--accept-routes(?:=[^\s\\]+)?", join),
+            ["--accept-routes=false"],
+        )
+        for argument in (
+            "--accept-dns=true",
+            "--shields-up=true",
+            "--advertise-tags=tag:omnilyzer-task014-ci",
+            "--timeout=2m",
+            "--client-id=",
+            '--id-token="file:$TS_ROOT/id-token"',
+        ):
+            with self.subTest(argument=argument):
+                self.assertEqual(join.count(argument), 1)
+        self.assertEqual(join.count('sudo -n "$TS_DIR/tailscale" up'), 1)
+        self.assertIn('chown "$SUDO_UID:$SUDO_GID" "$1"', join)
+        self.assertIn('chmod 0600 "$1"', join)
+        self.assertNotIn("retry", join.lower())
+        self.assertNotIn("authkey", join.lower())
+        self.assertNotIn("oauth-secret", join.lower())
+        self.assertNotIn("funnel", join.lower())
+        self.assertNotIn("sudo -E", join)
+        self.assertNotIn('ID_TOKEN="$(cat', join)
+        self.assertIn(
+            'request_host.endswith(".actions.githubusercontent.com")',
+            join,
+        )
+        self.assertIn('parsed.scheme != "https"', join)
+        self.assertIn('request_port not in (None, 443)', join)
+        self.assertIn(
+            'any(key == "audience" for key, _value in query)',
+            join,
+        )
+        self.assertEqual(self.cleanup["if"], "${{ always() }}")
+        self.assertIn('sudo -n "$TS_DIR/tailscale" logout', self.cleanup["run"])
+        self.assertIn('read -r daemon_pid <"$TS_ROOT/tailscaled.pid"', self.cleanup["run"])
+        self.assertIn('readlink -f "/proc/$daemon_pid/exe"', self.cleanup["run"])
+        self.assertIn('sudo -n kill -TERM "$daemon_pid"', self.cleanup["run"])
+        self.assertNotIn("pkill", self.cleanup["run"])
+        self.assertNotIn("secrets.", self.cleanup["run"])
 
     def test_request_generation_and_checkout_are_exact(self):
         for job in (self.gate, self.dev):
@@ -112,15 +179,17 @@ class FinalDevWorkflowTests(unittest.TestCase):
         self.assertIn("python3 -m deployment.promotion", create["run"])
         self.assertIn('--output "$RUNNER_TEMP/task014-dev-promotion-request.json"', create["run"])
         self.assertNotIn("deployment.controller", create["run"])
-        self.assertNotIn("deployment.promotion", self.dev["steps"][-1]["run"])
+        self.assertNotIn("deployment.promotion", self.submit["run"])
         self.assertNotIn("upload-artifact", self.raw)
         self.assertEqual(self.raw.count("secrets."), 2)
         self.assertNotIn("set -x", self.raw)
         self.assertNotIn("docker ", self.raw.lower())
         self.assertNotIn("http://", self.raw)
         self.assertNotIn("retry", self.script.lower())
+        self.assertNotIn("tailscale/github-action", self.raw)
         self.assertIn('ENDPOINT = "https://omnilyzerdev.tail52e570.ts.net/task014/dev/promote"', self.script)
         self.assertEqual(self.dev["steps"][3]["name"], "Submit DEV promotion once")
+        self.assertEqual(self.dev["steps"][4]["name"], "Leave private Task 014 tailnet")
 
     def run_client(self, *, broker_status=202, broker_body=b'{"status":"accepted"}\n',
                    oidc_body=None, request_body=None):
