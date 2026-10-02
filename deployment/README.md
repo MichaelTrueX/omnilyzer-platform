@@ -4240,3 +4240,25 @@ C33W is the final repository-side authorization boundary before first DEV servic
 `dev_live_activation_contract.py` is declarative and mutation-free. It fixes the later host sequence to: start `omnilyzer-deployment-executor.socket`; qualify the exact Unix socket while the executor service remains socket-activated; start `omnilyzer-deployment-broker.service`; then qualify the loopback broker, Nginx, private Tailscale HTTPS ingress, unchanged rootless Docker authority, replay/audit prerequisites, and closed network boundaries.
 
 There is no automatic retry. A failed live step must be diagnosed from the resulting state before another mutation is authorized. After the C33W merge, the broker workflow SHA must be rotated once more to that exact final merge SHA before any service start.
+
+## C33AD state-store successor application generation (repository only)
+
+C33AD pins the exact merged C33AC commit
+`f2ece4257b84090b1a6fff5d1aa7f0b6047765cd` as the next 41-file DEV
+application generation, with C32ZH merge
+`47a602d3f2b97fafd6fb8a18240fd5bbb3857ba9` retained as its sole predecessor.
+The canonical target application manifest SHA-256 is
+`3efb117dbaebfefc264d4373e476973aed1dfc9ebb3035998a7778ea229e91e4`.
+The exact generation plan contains only `deployment/state_store.py`; its plan
+SHA-256 is `392ab2b430e40f07d761d948d91bce6721ee2fb0e341a6b92b2e7a5520358fb2`.
+The predecessor and target state-store blob SHA-256 values are respectively
+`c88e2d1da35a04e1cd1dbda3271eba4ee08549ab25b0385117ab5711ef7ea331`
+and
+`322de4edebd8c9f08f318c23660a1f92d8108d79b18e629352e79bd5d7fce683`.
+
+Runtime configuration, Compose, host-Nginx, and container-Nginx bytes remain
+identical to C32ZH. C33AD is Git-object evidence only: it does not redefine the
+historical C32W/C32ZH generations, update executor or broker configuration,
+replace live application files, start or restart services, or dispatch a
+promotion. A separately reviewed configuration/migration authority is required
+before the live host may consume this generation.

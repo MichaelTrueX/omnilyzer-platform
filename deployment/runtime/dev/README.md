@@ -401,3 +401,16 @@ repository merge is known.
 C33W keeps the installed successor application generation unchanged. The workflow-side live validator and `deployment/dev-live-activation.json` authority are outside the frozen host application source set. DEV promotion requests on `main` must pass this exact validator; later stages remain on the historical non-live controller.
 
 The reviewed live service order is executor socket first, then socket qualification, broker service start, and private-ingress qualification. Direct executor-service start and automatic retry are forbidden. C33W itself performs no host mutation; after merge, the broker workflow SHA must be rotated to the exact final merge before the first socket start.
+
+### C33AD state-store successor generation
+
+C33AD pins merged C33AC `f2ece4257b84090b1a6fff5d1aa7f0b6047765cd`
+as a new 41-file application generation above the installed C32ZH generation.
+Git-object evidence proves the only selected application delta is
+`deployment/state_store.py`, which makes the existing
+`canary-runtime`/ `nginx-runtime` siblings explicit fail-closed state-store
+authority. Runtime configuration and ingress bytes remain unchanged.
+
+This is repository-only generation evidence. The live executor and broker still
+reference reviewed commit `47a602d3f2b97fafd6fb8a18240fd5bbb3857ba9`;
+no application file is replaced and no promotion is authorized by C33AD alone.
