@@ -25,6 +25,15 @@ PRODUCTION_DEV_STATE_PATH = "/var/lib/omnilyzer/deployment/dev/state.json"
 STATE_STORE_UNAVAILABLE_MESSAGE = "deployment state storage is unavailable"
 STATE_DIRECTORY_MODE = 0o700
 STATE_FILE_MODE = 0o600
+
+# Production-only sibling directories that intentionally share the fixed DEV
+# state parent. They are provisioned by the reviewed rootless Docker authority.
+# The state store tolerates only these exact names and metadata; all other
+# directory residue remains fail-closed.
+_PRODUCTION_STATE_SIBLING_DIRECTORIES = (
+    ("canary-runtime", 991, 503216, 0o770),
+    ("nginx-runtime", 991, 991, 0o755),
+)
 MAX_STATE_BYTES = 16 * 1024
 MAX_READ_CALLS = 64
 MAX_WRITE_CALLS = 64
@@ -77,6 +86,7 @@ class _Configuration:
     owner_uid: int
     group_gid: int
     state_file_mode: int
+    sibling_directories: tuple[tuple[str, int, int, int], ...]
     state_type: type[DeploymentState]
     directory_flags: int
     read_flags: int
@@ -113,6 +123,7 @@ class _Configuration:
     state_file_validator: Callable[..., Any]
     temporary_file_validator: Callable[..., Any]
     entries: Callable[..., Any]
+    validate_entries: Callable[..., Any]
     load_action: Callable[..., Any]
     save_action: Callable[..., Any]
     unavailable: Callable[[], StateStoreUnavailableError]
@@ -127,6 +138,7 @@ def _configuration_integer(value: object) -> int:
 def _build_configuration(
     *, path: str, owner_uid: int, group_gid: int, owned_start: int,
     state_file_mode: int = STATE_FILE_MODE,
+    sibling_directories: tuple[tuple[str, int, int, int], ...] = (),
 ) -> _Configuration:
     if type(path) is not str or not path.startswith("/") or path.startswith("//"):
         raise TypeError(_CONFIGURATION_MESSAGE)
@@ -139,6 +151,29 @@ def _build_configuration(
     components = tuple(parts[1:-1])
     if type(owned_start) is not int or not 0 <= owned_start < len(components):
         raise TypeError(_CONFIGURATION_MESSAGE)
+    if type(sibling_directories) is not tuple:
+        raise TypeError(_CONFIGURATION_MESSAGE)
+    sibling_names: set[str] = set()
+    for sibling in sibling_directories:
+        if (
+            type(sibling) is not tuple
+            or len(sibling) != 4
+            or type(sibling[0]) is not str
+            or not sibling[0]
+            or "/" in sibling[0]
+            or "\\" in sibling[0]
+            or "\x00" in sibling[0]
+            or sibling[0] in {".", "..", parts[-1], _TEMPORARY_NAME}
+            or sibling[0] in sibling_names
+            or type(sibling[1]) is not int
+            or type(sibling[2]) is not int
+            or type(sibling[3]) is not int
+            or not 0 <= sibling[1] <= MAX_IDENTITY_VALUE
+            or not 0 <= sibling[2] <= MAX_IDENTITY_VALUE
+            or sibling[3] not in range(0o1000)
+        ):
+            raise TypeError(_CONFIGURATION_MESSAGE)
+        sibling_names.add(sibling[0])
     required = ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC")
     if any(type(getattr(os, name, None)) is not int for name in required):
         raise TypeError(_CONFIGURATION_MESSAGE)
@@ -151,7 +186,7 @@ def _build_configuration(
     )
     return _Configuration(
         path, components, parts[-1], _TEMPORARY_NAME, owned_start,
-        owner_uid, group_gid, state_file_mode, DeploymentState,
+        owner_uid, group_gid, state_file_mode, sibling_directories, DeploymentState,
         directory_flags, read_flags, create_flags,
         fcntl.LOCK_EX | fcntl.LOCK_NB, fcntl.LOCK_UN,
         os.open, os.close, os.get_inheritable, os.stat, os.fstat,
@@ -163,7 +198,7 @@ def _build_configuration(
         _write_all, _cleanup_temporary, _open_state, _bounded_read,
         _parse_persisted, _snapshot_state,
         _status, _validate_state_file, _validate_temporary_file, _entries,
-        FilesystemDeploymentStateStore._load_action,
+        _validate_entries, FilesystemDeploymentStateStore._load_action,
         FilesystemDeploymentStateStore._save_action,
         _unavailable,
     )
@@ -383,10 +418,13 @@ def _entries(
     configuration: _Configuration, directory_fd: int,
     current_exception: Callable[[], BaseException | None] = sys.exception,
 ) -> frozenset[str]:
+    """Return one bounded directory-name set for state plus reviewed siblings."""
+
     iterator = configuration.scandir(directory_fd)
     values: list[str] = []
+    maximum = len(configuration.sibling_directories) + 2
     try:
-        for _index in range(3):
+        for _index in range(maximum + 1):
             try:
                 entry = next(iterator)  # type: ignore[arg-type]
             except StopIteration:
@@ -407,9 +445,46 @@ def _entries(
         except BaseException:
             if not isinstance(active, (KeyboardInterrupt, SystemExit, GeneratorExit)):
                 raise
-    if len(values) > 2 or len(values) != len(set(values)):
+    if len(values) > maximum or len(values) != len(set(values)):
         raise OSError("invalid state directory entries")
     return frozenset(values)
+
+
+def _validate_entries(
+    configuration: _Configuration,
+    directory_fd: int,
+    *,
+    state_present: bool,
+    temporary_present: bool = False,
+) -> frozenset[str]:
+    """Require exact state names and exact metadata for reviewed siblings."""
+
+    expected = {name for name, _uid, _gid, _mode in configuration.sibling_directories}
+    if state_present:
+        expected.add(configuration.state_name)
+    if temporary_present:
+        expected.add(configuration.temporary_name)
+    observed = configuration.entries(configuration, directory_fd)
+    if observed != frozenset(expected):
+        raise OSError("invalid state directory contents")
+
+    for name, uid, gid, mode in configuration.sibling_directories:
+        value = configuration.stat_at(
+            name,
+            dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+        fields = configuration.status_parser(value)
+        if (
+            not stat.S_ISDIR(fields[0])
+            or stat.S_ISLNK(fields[0])
+            or fields[3] < 1
+            or fields[4] != uid
+            or fields[5] != gid
+            or stat.S_IMODE(fields[0]) != mode
+        ):
+            raise OSError("invalid state sibling directory")
+    return observed
 
 
 def _open_chain(
@@ -554,10 +629,11 @@ def _read_validated_state(
     owned: dict[int, bool],
     file_validator: Callable[..., tuple[int, int, int]] = _validate_state_file,
 ) -> tuple[DeploymentState, tuple[int, int, int], int, bytes]:
-    if configuration.entries(configuration, directory_fd) != frozenset({
-        configuration.state_name,
-    }):
-        raise OSError("invalid state directory contents")
+    configuration.validate_entries(
+        configuration,
+        directory_fd,
+        state_present=True,
+    )
     descriptor, identity = configuration.open_state(
         configuration, directory_fd, owned,
     )
@@ -578,10 +654,11 @@ def _read_validated_state(
     if opened_identity != identity or named_identity != identity:
         raise OSError("state identity changed")
     configuration.revalidate_chain(configuration, opened_chain)
-    if configuration.entries(configuration, directory_fd) != frozenset({
-        configuration.state_name,
-    }):
-        raise OSError("state directory contents changed")
+    configuration.validate_entries(
+        configuration,
+        directory_fd,
+        state_present=True,
+    )
     state = configuration.parse_persisted(
         raw, configuration.state_parser, configuration.canonicalizer,
     )
@@ -651,7 +728,10 @@ class FilesystemDeploymentStateStore:
         group_gid = _configuration_integer(expected_group_gid)
         configuration = _build_configuration(
             path="/var/lib/omnilyzer/deployment/dev/state.json",
-            owner_uid=owner_uid, group_gid=group_gid, owned_start=4,
+            owner_uid=owner_uid,
+            group_gid=group_gid,
+            owned_start=4,
+            sibling_directories=_PRODUCTION_STATE_SIBLING_DIRECTORIES,
         )
         object.__setattr__(self, "_configuration", configuration)
 
@@ -792,10 +872,12 @@ class FilesystemDeploymentStateStore:
             )
             if named_temporary != temporary_identity:
                 raise OSError("temporary descriptor identity mismatch")
-            if configuration.entries(configuration, directory_fd) != frozenset({
-                configuration.state_name, configuration.temporary_name,
-            }):
-                raise OSError("invalid temporary directory contents")
+            configuration.validate_entries(
+                configuration,
+                directory_fd,
+                state_present=True,
+                temporary_present=True,
+            )
             configuration.write_all(configuration, temporary_fd, canonical)
             if configuration.fsync(temporary_fd) is not None:
                 raise OSError("temporary state fsync failed")
@@ -863,8 +945,11 @@ class FilesystemDeploymentStateStore:
             )
             if resulting[:2] != temporary_identity:
                 raise OSError("replacement identity mismatch")
-            if configuration.entries(configuration, directory_fd) != frozenset({configuration.state_name}):
-                raise OSError("invalid resulting directory contents")
+            configuration.validate_entries(
+                configuration,
+                directory_fd,
+                state_present=True,
+            )
             verify_fd, verify_identity = configuration.open_state(
                 configuration, directory_fd, owned,
             )

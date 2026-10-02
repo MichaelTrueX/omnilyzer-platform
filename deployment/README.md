@@ -3030,9 +3030,14 @@ audited checkpoint. The canonical bytes are 492 bytes with SHA-256
 
 State initialization uses the existing state-store descriptor traversal,
 nonblocking process-local gate and directory `flock`, then exclusively creates
-only `state.json` with C13 mode and ownership. It writes bounded canonical
-bytes, fsyncs the file and directory, reopens and reparses the exact bytes, and
-proves compatibility by loading through `FilesystemDeploymentStateStore`.
+only `state.json` with C13 mode and ownership. The production state parent is
+also the reviewed parent of `canary-runtime` and `nginx-runtime`; C33AC makes
+that coexistence explicit by accepting only those two exact sibling directory
+names with their rootless-authority UID/GID/mode metadata while still rejecting
+all unknown entries, symlinks, metadata drift and state temporary residue. It
+writes bounded canonical bytes, fsyncs the file and directory, reopens and
+reparses the exact bytes, and proves compatibility by loading through
+`FilesystemDeploymentStateStore`.
 Exact initial state converges unchanged. Any valid genuine later deployment
 state is classified as existing and never overwritten; malformed content,
 metadata conflicts, symlinks, hard links and temporary residue fail closed.

@@ -265,7 +265,7 @@ assert integrity.python_environment_requirement().implementation == "CPython"
                 ("git", "show", f"2a99fbe5fe0a376a04b37a2dfa7cc1da7faa3893:{path}"))
             if (ROOT / path).read_bytes() != historical:
                 successor_deltas.append(path)
-        self.assertEqual(tuple(successor_deltas), ("deployment/docker_runtime.py",))
+        self.assertEqual(tuple(successor_deltas), ("deployment/docker_runtime.py", "deployment/state_store.py"))
         policy = json.loads((ROOT / "deployment/environments/dev.json").read_text())
         self.assertIs(policy["activation"]["deployment_enabled"], False)
         source = (ROOT / "deployment/final_configuration_authority.py").read_text()
