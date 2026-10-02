@@ -1205,18 +1205,37 @@ The DEV workflow retains its protected `task014-dev` environment, 25-minute
 job, three separate OIDC audiences, one canonical request of at most 4096
 bytes, one submission with no automatic retry, disabled proxy environment,
 930-second response timeout, and exact HTTP 202 / accepted-response check.
-The pinned Tailscale Action uses only protected environment references for the
-WIF client ID and audience. It pins Tailscale `1.102.4` and the independently
-verified official Linux amd64 static tarball SHA-256
+The DEV job bootstraps Tailscale directly from GitHub workload identity and
+uses only protected environment references for the WIF client ID and audience.
+It pins Tailscale `1.102.4` and the independently verified official Linux amd64
+static tarball SHA-256
 `50748df1045e60b5b695f19f4c56b0da36c019948b440fb456b6584a50f0d8b9`.
-It makes one connection attempt (`retry: '1'`) with a two-minute connection
-timeout. `use-cache: 'false'` prevents deployment authority from depending on
-reused runner tool-cache bytes. `--accept-routes=false` prevents the CI node
-from accepting unrelated subnet routes; `--accept-dns=true` retains MagicDNS,
-and `--shields-up=true` rejects incoming connections to the ephemeral CI node.
+The tarball is downloaded once with redirects rejected, hash-verified before
+extraction, and never taken from a reused runner tool cache. The workflow makes
+one `tailscale up` call with a two-minute connection timeout and no connection
+retry. `--accept-routes=false` prevents the CI node from accepting unrelated
+subnet routes; `--accept-dns=true` retains MagicDNS, and `--shields-up=true`
+rejects incoming connections to the ephemeral CI node. The GitHub OIDC token
+is requested from the runner-provided HTTPS OIDC request URL, constrained to
+GitHub's `*.actions.githubusercontent.com` request domain, then stored in a
+runner-private mode-0600 file and supplied to Tailscale through its `file:`
+token input rather than a shell variable or command-line token.
 No long-lived auth key or OAuth client secret is repository authority. The
-Phase-1 gate and STAGING/PROD do not join the tailnet or deploy. The
-[Tailscale Action input contract](https://github.com/tailscale/github-action/blob/d1b6cd204f8dceda5b3eaad7f1f767be390056cd/action.yml)
+Phase-1 gate and STAGING/PROD do not join the tailnet or deploy.
+
+A merge that changes `.github/workflows/platform-promote.yml` necessarily
+moves the GitHub workflow commit SHA. DEV must not be dispatched again while
+the installed broker still trusts the previous SHA. The control-plane must be
+closed, and
+`deployment/state_store_successor_live_authority.py` (C33AQ) must rotate only
+`expected_workflow_sha` under the deployment lock. The broker and executor
+configuration generation, rootless runtime, persistent state, replay authority,
+and static broker resources must remain unchanged. Service shutdown and
+reactivation are separate reviewed live actions; C33AQ contains no service
+mutation or automatic retry.
+
+The
+[Tailscale 1.102.4 static Linux tarball](https://pkgs.tailscale.com/stable/tailscale_1.102.4_amd64.tgz)
 and [Serve documentation](https://tailscale.com/docs/reference/tailscale-cli/serve)
 are the external behavioral references. This repository does not configure
 WIF, tailnet policy, Serve, HTTPS or services on the host.
