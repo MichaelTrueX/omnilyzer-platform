@@ -4262,3 +4262,33 @@ historical C32W/C32ZH generations, update executor or broker configuration,
 replace live application files, start or restart services, or dispatch a
 promotion. A separately reviewed configuration/migration authority is required
 before the live host may consume this generation.
+
+## C33AE state-store successor host migration authority
+
+C33AE supplies the separately reviewed host/configuration authority required to
+consume C33AD. The predecessor remains the installed C32ZH application and
+executor/broker reviewed commit
+`47a602d3f2b97fafd6fb8a18240fd5bbb3857ba9`; the target application and
+executor/broker reviewed commit is merged C33AC
+`f2ece4257b84090b1a6fff5d1aa7f0b6047765cd`.
+
+Migration is resumable through exactly four admitted prefixes: predecessor,
+application-replaced, executor-config-replaced, and complete. One explicit
+root call may advance at most one prefix. The operation is protected by the
+existing nonblocking deployment process lock. The migration module itself has
+no authority to start, stop, restart, enable, disable, or reload a service.
+
+Before every qualification or mutation the control-plane must be fully closed:
+broker inactive, executor service inactive, executor socket inactive, and the
+executor Unix socket path absent. Rootless Docker must remain at the exact
+qualified C33T runtime identity, and persistent state must remain initial with
+validated zero-consumption replay state and pristine audit history. The first
+step atomically replaces only `deployment/state_store.py`; the next two steps
+atomically replace executor JSON and then broker JSON. The final broker step
+also binds the explicit target workflow SHA.
+
+The target workflow SHA is deliberately not repository-pinned inside C33AE,
+because it must be the final merged C33AE `main` commit. After merge, a
+root-controlled reviewed source and read-only live preflight must bind that
+exact merge SHA before broker shutdown, executor-socket shutdown, or any
+migration prefix is authorized. No automatic retry or rollback is permitted.
