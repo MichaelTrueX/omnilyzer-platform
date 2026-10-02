@@ -177,6 +177,7 @@ class ApiAndInertnessTests(StateStoreTestCase):
             patch.object(store_module, "_read_validated_state", side_effect=AssertionError("redirect")),
             patch.object(store_module, "_state_mapping", side_effect=AssertionError("redirect")),
             patch.object(store_module, "_entries", side_effect=AssertionError("redirect")),
+            patch.object(store_module, "_validate_entries", side_effect=AssertionError("redirect")),
             patch.object(store_module, "_unavailable", side_effect=AssertionError("redirect")),
             patch.object(store_module, "DeploymentState", object),
             patch.object(store_module, "MigrationState", object),
@@ -468,6 +469,113 @@ class LoadFilesystemTests(StateStoreTestCase):
             with self.subTest(name=name):
                 self.unavailable(self.store.load)
             residue.unlink()
+
+
+class ReviewedSiblingDirectoryTests(StateStoreTestCase):
+    """Prove exact reviewed siblings can coexist without weakening residue checks."""
+
+    def _with_siblings(self) -> tuple[Path, Path]:
+        uid, gid = os.getuid(), os.getgid()
+        canary = self.sandbox.directory / "canary-runtime"
+        nginx = self.sandbox.directory / "nginx-runtime"
+        canary.mkdir()
+        canary.chmod(0o770)
+        nginx.mkdir()
+        nginx.chmod(0o755)
+        configuration = store_module._build_configuration(
+            path=str(self.sandbox.path),
+            owner_uid=uid,
+            group_gid=gid,
+            owned_start=1,
+            sibling_directories=(
+                ("canary-runtime", uid, gid, 0o770),
+                ("nginx-runtime", uid, gid, 0o755),
+            ),
+        )
+        object.__setattr__(self.store, "_configuration", configuration)
+        return canary, nginx
+
+    def test_exact_reviewed_siblings_load_and_save_round_trip(self) -> None:
+        canary, nginx = self._with_siblings()
+        self.assertEqual(self.store.load(), state())
+        target = state(candidate=True)
+        self.assertIsNone(self.store.save(target))
+        self.assertEqual(self.store.load(), target)
+        self.assertTrue(canary.is_dir())
+        self.assertTrue(nginx.is_dir())
+        self.assertFalse((self.sandbox.directory / ".state.json.tmp").exists())
+        self.assertEqual(
+            set(item.name for item in self.sandbox.directory.iterdir()),
+            {"state.json", "canary-runtime", "nginx-runtime"},
+        )
+
+    def test_unknown_extra_entry_still_fails_closed(self) -> None:
+        self._with_siblings()
+        residue = self.sandbox.directory / "unexpected"
+        residue.write_bytes(b"marker")
+        residue.chmod(0o600)
+        self.unavailable(self.store.load)
+
+    def test_reviewed_sibling_wrong_type_mode_and_symlink_fail_closed(self) -> None:
+        canary, nginx = self._with_siblings()
+
+        canary.chmod(0o755)
+        self.unavailable(self.store.load)
+        canary.chmod(0o770)
+
+        nginx.rmdir()
+        nginx.write_bytes(b"not-a-directory")
+        nginx.chmod(0o755)
+        self.unavailable(self.store.load)
+        nginx.unlink()
+
+        outside = self.sandbox.directory.parent / (
+            self.sandbox.directory.name + "-sibling-outside"
+        )
+        outside.mkdir(mode=0o755)
+        self.addCleanup(lambda: outside.rmdir() if outside.exists() else None)
+        nginx.symlink_to(outside, target_is_directory=True)
+        self.unavailable(self.store.load)
+
+    def test_sibling_policy_is_captured_and_builder_rejects_ambiguous_names(self) -> None:
+        self._with_siblings()
+        with patch.object(
+            store_module,
+            "_validate_entries",
+            side_effect=AssertionError("redirect"),
+        ):
+            self.assertEqual(self.store.load(), state())
+
+        uid, gid = os.getuid(), os.getgid()
+        invalid = (
+            (("state.json", uid, gid, 0o700),),
+            ((".state.json.tmp", uid, gid, 0o700),),
+            (("nested/name", uid, gid, 0o700),),
+            (("duplicate", uid, gid, 0o700), ("duplicate", uid, gid, 0o700)),
+        )
+        for siblings in invalid:
+            with self.subTest(siblings=siblings), self.assertRaises(TypeError):
+                store_module._build_configuration(
+                    path=str(self.sandbox.path),
+                    owner_uid=uid,
+                    group_gid=gid,
+                    owned_start=1,
+                    sibling_directories=siblings,
+                )
+
+    def test_production_store_captures_exact_reviewed_sibling_policy(self) -> None:
+        production = FilesystemDeploymentStateStore(
+            expected_owner_uid=991,
+            expected_group_gid=991,
+        )
+        configuration = object.__getattribute__(production, "_configuration")
+        self.assertEqual(
+            configuration.sibling_directories,
+            (
+                ("canary-runtime", 991, 503216, 0o770),
+                ("nginx-runtime", 991, 991, 0o755),
+            ),
+        )
 
 
 class SaveAndDurabilityTests(StateStoreTestCase):

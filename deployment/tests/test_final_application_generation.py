@@ -55,7 +55,7 @@ class FrozenGenerationTests(unittest.TestCase):
             entries.append(c26.ApplicationManifestEntry(path, hashlib.sha256(data).hexdigest(), "0644"))
             if (ROOT / path).read_bytes() != data:
                 successor_deltas.append(path)
-        self.assertEqual(tuple(successor_deltas), ("deployment/docker_runtime.py",))
+        self.assertEqual(tuple(successor_deltas), ("deployment/docker_runtime.py", "deployment/state_store.py"))
         manifest = c26.DevApplicationManifest("canonical-relative-file-set-v1", "sha256",
                                              module.TARGET_REVIEWED_COMMIT, tuple(entries))
         self.assertEqual(hashlib.sha256(manifest.canonical_bytes()).hexdigest(),

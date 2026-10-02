@@ -209,7 +209,7 @@ class DevBrokerEdgeContractTests(unittest.TestCase):
             ["git", "diff", "--name-only", TARGET_REVIEWED_COMMIT, "--", *selected],
             cwd=ROOT, text=True,
         ).splitlines())
-        self.assertEqual(successor_deltas, ("deployment/docker_runtime.py",))
+        self.assertEqual(successor_deltas, ("deployment/docker_runtime.py", "deployment/state_store.py"))
         self.assertEqual(TARGET_MANIFEST_SHA256,
                          "774391d16235855222aa4dedb617112cccc9a862d1599d2546c08b5f8b17c8f9")
         self.assertEqual(TARGET_RUNTIME_SHA256,

@@ -124,6 +124,53 @@ class Sandbox:
         return module._replay_guard(self.authority)
 
 
+class StateSiblingPolicyIntegrationTests(unittest.TestCase):
+    """Keep production prerequisite state access aligned with runtime siblings."""
+
+    def test_production_authority_uses_reviewed_state_siblings(self):
+        configuration = c17.DevExecutorServiceConfiguration(
+            **configuration_values()
+        )
+        value = module.DevPersistentStatePrerequisites(
+            configuration=configuration
+        )
+        authority = object.__getattribute__(value, "_authority")
+        state_configuration = module._state_configuration(authority)
+        self.assertEqual(
+            state_configuration.sibling_directories,
+            state_store._PRODUCTION_STATE_SIBLING_DIRECTORIES,
+        )
+
+    def test_nonproduction_state_path_remains_exclusive_without_siblings(self):
+        configuration = c17.DevExecutorServiceConfiguration(
+            **configuration_values()
+        )
+        value = module.DevPersistentStatePrerequisites(
+            configuration=configuration
+        )
+        authority = object.__getattribute__(value, "_authority")
+        with tempfile.TemporaryDirectory() as directory:
+            state_directory = Path(directory)
+            state_file = state_directory / "state.json"
+            nonproduction = dataclasses.replace(
+                authority,
+                state_directory=dataclasses.replace(
+                    authority.state_directory,
+                    path=str(state_directory),
+                    uid=os.getuid(),
+                    gid=os.getgid(),
+                ),
+                state_file=dataclasses.replace(
+                    authority.state_file,
+                    path=str(state_file),
+                    uid=os.getuid(),
+                    gid=os.getgid(),
+                ),
+            )
+            state_configuration = module._state_configuration(nonproduction)
+        self.assertEqual(state_configuration.sibling_directories, ())
+
+
 class InitialStateTests(unittest.TestCase):
     def test_a_zero_input_deterministic_exact_initial_state(self):
         parameters = inspect.signature(module.dev_initial_state).parameters

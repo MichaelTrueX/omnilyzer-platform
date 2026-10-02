@@ -248,11 +248,17 @@ def _build_authority(configuration: object) -> _Authority:
 
 def _state_configuration(authority: _Authority) -> _store._Configuration:
     components = authority.state_file.path.split("/")[1:-1]
+    production_siblings = (
+        _store._PRODUCTION_STATE_SIBLING_DIRECTORIES
+        if authority.state_file.path == _store.PRODUCTION_DEV_STATE_PATH
+        else ()
+    )
     return _store._build_configuration(
         path=authority.state_file.path,
         owner_uid=authority.state_file.uid,
         group_gid=authority.state_file.gid,
         owned_start=len(components) - 1,
+        sibling_directories=production_siblings,
     )
 
 
@@ -298,13 +304,28 @@ def _initialize_state_action(
     chain: list[tuple[int, tuple[int, int], int]], owned: dict[int, bool],
     canonical: bytes,
 ) -> tuple[_DeploymentState, str]:
+    sibling_names = frozenset(
+        name
+        for name, _uid, _gid, _mode in configuration.sibling_directories
+    )
     entries = configuration.entries(configuration, directory)
-    if entries == frozenset({configuration.state_name}):
+    if entries == sibling_names | {configuration.state_name}:
+        configuration.validate_entries(
+            configuration,
+            directory,
+            state_present=True,
+        )
         state, _identity, _descriptor, raw = configuration.read_validated_state(
             configuration, directory, chain, owned,
         )
         return state, "unchanged" if _same_initial(state, raw) else "existing"
-    if entries:
+    if entries == sibling_names:
+        configuration.validate_entries(
+            configuration,
+            directory,
+            state_present=False,
+        )
+    else:
         raise OSError
     descriptor: int | None = None
     identity: tuple[int, int] | None = None

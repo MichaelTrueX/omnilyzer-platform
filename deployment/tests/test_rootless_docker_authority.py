@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 from deployment import final_application_generation as frozen
 from deployment.application_source_set import DevApplicationSourceSet
 import deployment.docker_runtime as docker_runtime
+import deployment.state_store as state_store
 from deployment.rootless_docker_authority import AUTHORITY
 
 
@@ -178,6 +179,16 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
         self.assertEqual(AUTHORITY.post_daemon_engine_id_size, 36)
         self.assertEqual(provisioned[AUTHORITY.canary_runtime], (991, 503216, 0o770))
         self.assertEqual(provisioned[AUTHORITY.nginx_runtime], (991, 991, 0o755))
+        self.assertEqual(
+            state_store._PRODUCTION_STATE_SIBLING_DIRECTORIES,
+            tuple(
+                (
+                    Path(path).name,
+                    *provisioned[path],
+                )
+                for path in (AUTHORITY.canary_runtime, AUTHORITY.nginx_runtime)
+            ),
+        )
 
     def test_inert_assets_are_byte_pinned_and_keep_executor_hardening(self) -> None:
         self.assertEqual(len(AUTHORITY.installed_assets), 6)
