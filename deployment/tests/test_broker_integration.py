@@ -37,7 +37,7 @@ ZOT_TOKEN = jwt.encode(valid_claims() | {
     "aud": "https://oci-dev.omnilyzer.ai", "jti": "zot-request",
 }, private_pem(KEY), algorithm="RS256", headers={"kid": "key-1", "typ": "JWT"})
 FORGEJO_TOKEN = jwt.encode(valid_claims() | {
-    "aud": "u:2:316bec9a-53e4-4807-9557-7febdc979d0a", "jti": "forgejo-request",
+    "aud": "u:3:d4f50b90-f001-4b9f-ad1e-487080ec44fb", "jti": "forgejo-request",
 }, private_pem(KEY), algorithm="RS256", headers={"kid": "key-1", "typ": "JWT"})
 
 

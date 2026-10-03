@@ -911,9 +911,10 @@ The public deployment verifier still accepts only
 `https://deploy-dev.omnilyzer.ai/task014-dev`; it has no caller-selected
 audience. The closed registry audiences are
 `https://oci-dev.omnilyzer.ai` for zot read and
-`u:2:316bec9a-53e4-4807-9557-7febdc979d0a` for Forgejo read. They are
-reviewed deployment constants, cross-checked by tests against
-`release/environments/dev.json`; deployment runtime does not import `release`.
+`u:3:d4f50b90-f001-4b9f-ad1e-487080ec44fb` for Forgejo read. They are reviewed deployment constants. Zot read remains aligned with
+`release/environments/dev.json`; Forgejo read intentionally differs from that
+Task 013 publisher audience because Task 014 uses its dedicated read-only
+consumer integration. Deployment runtime does not import `release`.
 None of the three tokens can substitute for another, and audience arrays fail.
 
 Both registry JWTs use the deployment verifier's bounded compact-JWT parser,
@@ -1183,7 +1184,7 @@ The private **transport** endpoint is exactly
 Task 014 deployment OIDC audience remains
 `https://deploy-dev.omnilyzer.ai/task014-dev`. The Zot and Forgejo audiences
 remain `https://oci-dev.omnilyzer.ai` and
-`u:2:316bec9a-53e4-4807-9557-7febdc979d0a`. DNS transport names do not
+`u:3:d4f50b90-f001-4b9f-ad1e-487080ec44fb`. DNS transport names do not
 change these authorization identities or the frozen broker parser.
 
 [`ingress/dev-broker-tailscale-origin.nginx.conf`](ingress/dev-broker-tailscale-origin.nginx.conf)

@@ -382,8 +382,8 @@ class RequestContextTests(unittest.TestCase):
         handler, promotion, _, replay, transport, _, _ = fixture()
         zot_a = signed("https://oci-dev.omnilyzer.ai", jti="zot-a")
         zot_b = signed("https://oci-dev.omnilyzer.ai", jti="zot-b")
-        forgejo_a = signed("u:2:316bec9a-53e4-4807-9557-7febdc979d0a", jti="forgejo-a")
-        forgejo_b = signed("u:2:316bec9a-53e4-4807-9557-7febdc979d0a", jti="forgejo-b")
+        forgejo_a = signed("u:3:d4f50b90-f001-4b9f-ad1e-487080ec44fb", jti="forgejo-a")
+        forgejo_b = signed("u:3:d4f50b90-f001-4b9f-ad1e-487080ec44fb", jti="forgejo-b")
         providers = []
         triggered = False
         class InterleavedOCI:
