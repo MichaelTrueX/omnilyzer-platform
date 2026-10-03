@@ -25,7 +25,8 @@ from deployment.tests.test_oidc_verifier import b64url, manual_token, private_pe
 ROOT = Path(__file__).resolve().parents[2]
 ERROR = "DEV registry credential verification is unavailable or invalid"
 ZOT_AUDIENCE = "https://oci-dev.omnilyzer.ai"
-FORGEJO_AUDIENCE = "u:2:316bec9a-53e4-4807-9557-7febdc979d0a"
+FORGEJO_AUDIENCE = "u:3:d4f50b90-f001-4b9f-ad1e-487080ec44fb"
+FORGEJO_PUBLISH_AUDIENCE = "u:2:316bec9a-53e4-4807-9557-7febdc979d0a"
 
 
 class StaticCache:
@@ -89,13 +90,14 @@ class RegistryCredentialTests(unittest.TestCase):
             if token:
                 self.assertNotIn(token, str(caught.exception))
 
-    def test_exact_audience_authorities_match_reviewed_release_configuration(self):
+    def test_exact_audience_authorities_preserve_release_publish_separation(self):
         release = json.loads((ROOT / 'release/environments/dev.json').read_text())
         self.assertEqual(identity.DEV_AUDIENCE, 'https://deploy-dev.omnilyzer.ai/task014-dev')
         self.assertEqual(identity.DEV_ZOT_READ_AUDIENCE, ZOT_AUDIENCE)
         self.assertEqual(identity.DEV_FORGEJO_READ_AUDIENCE, FORGEJO_AUDIENCE)
         self.assertEqual(release['zot_oidc_audience'], ZOT_AUDIENCE)
-        self.assertEqual(release['forgejo_oidc_audience'], FORGEJO_AUDIENCE)
+        self.assertEqual(release['forgejo_oidc_audience'], FORGEJO_PUBLISH_AUDIENCE)
+        self.assertNotEqual(FORGEJO_AUDIENCE, FORGEJO_PUBLISH_AUDIENCE)
         self.assertEqual({p.audience for p in (identity.DEV_AUTHORIZATION_POLICY,
             identity._ZOT_AUTHORIZATION_POLICY, identity._FORGEJO_AUTHORIZATION_POLICY)},
             {identity.DEV_AUDIENCE, ZOT_AUDIENCE, FORGEJO_AUDIENCE})

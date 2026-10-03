@@ -339,7 +339,7 @@ jobs:
           AUDIENCES = (
               "https://deploy-dev.omnilyzer.ai/task014-dev",
               "https://oci-dev.omnilyzer.ai",
-              "u:2:316bec9a-53e4-4807-9557-7febdc979d0a",
+              "u:3:d4f50b90-f001-4b9f-ad1e-487080ec44fb",
           )
           ENDPOINT = "https://omnilyzerdev.tail52e570.ts.net/task014/dev/promote"
 

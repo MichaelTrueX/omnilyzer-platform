@@ -20,7 +20,7 @@ from .policy import DeploymentPolicyError, validate_source_sha
 DEV_ISSUER = "https://token.actions.githubusercontent.com"
 DEV_AUDIENCE = "https://deploy-dev.omnilyzer.ai/task014-dev"
 DEV_ZOT_READ_AUDIENCE = "https://oci-dev.omnilyzer.ai"
-DEV_FORGEJO_READ_AUDIENCE = "u:2:316bec9a-53e4-4807-9557-7febdc979d0a"
+DEV_FORGEJO_READ_AUDIENCE = "u:3:d4f50b90-f001-4b9f-ad1e-487080ec44fb"
 DEV_REPOSITORY = "MichaelTrueX/omnilyzer-platform"
 DEV_REPOSITORY_ID = 1350104356
 DEV_REPOSITORY_OWNER_ID = 130741173
