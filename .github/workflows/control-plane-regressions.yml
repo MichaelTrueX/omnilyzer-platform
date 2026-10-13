@@ -1,0 +1,89 @@
+# File: .github/workflows/control-plane-regressions.yml
+# Purpose: Run existing, non-live Task 014 deployment and Task 013 release
+#   Python regression suites automatically before merging and after main changes.
+# Related: deployment/tests/, release/tests/, deployment/pyproject.toml,
+#   release/pyproject.toml, .github/workflows/repository-quality.yml,
+#   .github/workflows/design-system-browser.yml.
+#
+# Security: Hosted ephemeral runner only. Read-only repository permissions,
+# no long-lived tokens, no environment secrets, no access to DEV services,
+# no root-owned host changes, and no deployment actions.
+#
+# Coverage: All Python tests in the deployment and release packages.
+# The separate design-system browser workflow already runs Chromium tests.
+# Do not path-filter this workflow: it must remain available as a PR gate.
+
+name: Control-plane Python regression
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Task 014: validate deployment identity, OIDC, broker, executor,
+  # migration-state, rootless-Docker and fail-closed policy contracts.
+  deployment-regressions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # Retrieve pull-request code without persisting any GitHub credentials.
+      - name: Check out repository without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Match deployment/pyproject.toml's Python 3.12-only requirement.
+      - name: Set up accepted Python interpreter
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+
+      # Install only the existing declared top-level Python dependencies.
+      # These package versions are already fixed in deployment/pyproject.toml.
+      - name: Install declared deployment dependencies
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            'PyJWT[crypto]==2.13.0' 'cryptography==50.0.1'
+
+      # unittest discovery fails the job on any failed test or import error.
+      # This is a repository-only test run, not a privileged live-host check.
+      - name: Run deployment regression suite
+        run: |
+          python -m unittest discover \
+            --start-directory deployment/tests \
+            --top-level-directory . \
+            --pattern 'test_*.py'
+
+  # Task 013: validate immutable release, manifest, provenance and
+  # supply-chain contracts with the Python standard-library test suite.
+  release-regressions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # Use an ephemeral checkout without stored authentication credentials.
+      - name: Check out repository without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The release package supports Python 3.12 and declares no runtime deps.
+      - name: Set up accepted Python interpreter
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+
+      # Run the full existing non-live release contract regression suite.
+      - name: Run release regression suite
+        run: |
+          python -m unittest discover \
+            --start-directory release/tests \
+            --top-level-directory . \
+            --pattern 'test_*.py'
