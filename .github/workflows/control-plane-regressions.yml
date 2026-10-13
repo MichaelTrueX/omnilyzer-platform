@@ -39,6 +39,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # Historical migration tests require every reviewed Git commit
 
       # Match deployment/pyproject.toml's Python 3.12-only requirement.
       - name: Set up accepted Python interpreter
@@ -46,12 +47,20 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Install only the existing declared top-level Python dependencies.
-      # These package versions are already fixed in deployment/pyproject.toml.
-      - name: Install declared deployment dependencies
+      # Use the existing exact-hash lock, including transitive versions
+      # required by the C17 dependency-boundary tests.
+      - name: Install hash-verified deployment dependencies
         run: |
           python -m pip install --disable-pip-version-check --no-cache-dir \
-            'PyJWT[crypto]==2.13.0' 'cryptography==50.0.1'
+            --only-binary=:all: --require-hashes \
+            -r deployment/requirements-linux-x86_64-py312.lock
+
+      # Workflow-policy and JSON schema tests use two reviewed test-only
+      # libraries (already version-pinned in spikes/api/requirements-lock.txt).
+      - name: Install non-live test libraries
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary=:all: 'PyYAML==6.0.3' 'jsonschema==4.26.0'
 
       # unittest discovery fails the job on any failed test or import error.
       # This is a repository-only test run, not a privileged live-host check.
@@ -73,12 +82,20 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # Historical migration tests require every reviewed Git commit
 
       # The release package supports Python 3.12 and declares no runtime deps.
       - name: Set up accepted Python interpreter
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
+
+      # Existing release policy tests parse YAML workflows. This test-only
+      # dependency is already pinned in spikes/api/requirements-lock.txt.
+      - name: Install workflow-test YAML parser
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary=:all: 'PyYAML==6.0.3'
 
       # Run the full existing non-live release contract regression suite.
       - name: Run release regression suite
