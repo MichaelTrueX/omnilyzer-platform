@@ -95,6 +95,37 @@ and a negative acceptance suite demonstrating rollback without touch to
 replay, audit, credentials or running canary. C34G provides only the
 **pure authority constraint** that such a runtime must obey.
 
+## C34G — root-owned read-only installed predecessor preflight
+
+To close the gap between **repository** manifests and **installed** bytes, an
+independent standard-library-only checker now exists at
+`deployment/c34g_installed_predecessor_preflight.py`. It is also staged
+directly on `omnilyzerdev` (not through Windows) at
+`/home/omnigpt/repos/omnilyzer-platform/.task014-c34d-operator/c34g_installed_predecessor_preflight.py`.
+
+The checker is **read-only and fail-closed**, and requires an explicitly
+authorized root account. It embeds all 41 exact predecessor SHA-256 values
+from commit `176ed3...`, validates the entire canonical manifest, checks
+root ownership/mode/hardlink/symlink/directory constraints with descriptor
+traversal and stable file fingerprints, refuses any extra installed path,
+and checks the two root-controlled canonical configurations. Broker
+`expected_workflow_sha` must remain `57919c3...`; both configs must
+still reference the source predecessor. It also snapshots relevant service
+activity before and after inspection without reading private journals.
+
+The review CI runs synthetic tests for its exact 41-file manifest, canonical
+encoding, root-identity restriction, stable PASS/HOLD receipt and absence of
+mutating Python filesystem primitives. **These tests do not certify a live
+root execution.** The on-host script is independently SHA-256 verified
+before any operator runs it. A preflight PASS only proves the predecessor
+is still intact; it does not authorize stopping services, installing files,
+modifying JSON authority or sending a promotion.
+
+No privileged commands have been performed by the assistant. The installed
+host result must be reviewed separately before a five-file transition can be
+approved. If HOLD occurs, neither the source nor config should be
+automatically repaired by the checker.
+
 ## Exact dependency for a privileged successor-generation transition
 
 The historical C33AE migrator changes precisely one state-store source file
