@@ -1,0 +1,83 @@
+# File: .github/workflows/task014-c34d-review.yml
+# Purpose: Validate workflow-only C34D OIDC diagnostics without server deployment.
+# Related: deployment/ci_oidc_diagnostics.py,
+# deployment/tests/test_ci_oidc_diagnostics.py, issue #182.
+# Permissions and authority: read-only pull-request CI, no environment secrets,
+# protected DEV dispatch, privileged host access, SSH or Docker mutation.
+
+name: Task 014 C34D review tests
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  c34d-review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # Section 1: Acquire exact proposed source without stored credentials.
+      - name: Check out PR source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # Section 2: Use the application's supported Python runtime.
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      # Section 3: Install the reviewed hash-locked runtime requirements.
+      - name: Install test dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary=:all: --require-hashes \
+            -r deployment/requirements-linux-x86_64-py312.lock
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary=:all: 'PyYAML==6.0.3' 'jsonschema==4.26.0'
+      # Section 4: Validate new diagnostics and the unchanged broker contract.
+      - name: Test C34D workflow-only diagnostic
+        run: |
+          set -euo pipefail
+          python -m unittest \
+            deployment.tests.test_ci_oidc_diagnostics \
+            deployment.tests.test_final_dev_workflow \
+            deployment.tests.test_broker_https_ingress \
+            deployment.tests.test_broker_loopback_listener \
+            deployment.tests.test_broker \
+            deployment.tests.test_registry_oidc_credentials \
+            deployment.tests.test_oidc_verifier
+      # Section 5: Reuse the existing curated security baseline (PR #180).
+      - name: Test Task 014 security-critical baseline
+        run: |
+          set -euo pipefail
+          python -m unittest \
+            deployment.tests.test_identity \
+            deployment.tests.test_oidc_verifier \
+            deployment.tests.test_broker_service_config \
+            deployment.tests.test_broker_service_config_loader \
+            deployment.tests.test_executor_service_config \
+            deployment.tests.test_executor_service_config_loader \
+            deployment.tests.test_broker_integration \
+            deployment.tests.test_broker_workflow_rotation \
+            deployment.tests.test_state_store_successor_host_migration_runtime \
+            deployment.tests.test_state_store_successor_live_authority \
+            deployment.tests.test_state_store_successor_configuration_authority \
+            deployment.tests.test_registry_oidc_credentials \
+            deployment.tests.test_request_scoped_registry_integration \
+            deployment.tests.test_release_consumer \
+            deployment.tests.test_promotion \
+            deployment.tests.test_policy \
+            deployment.tests.test_oci_verifier \
+            deployment.tests.test_blob_verifier \
+            deployment.tests.test_unix_transport \
+            deployment.tests.test_rootless_docker_fresh_manager_preflight \
+            deployment.tests.test_rootless_docker_restart_preflight \
+            deployment.tests.test_systemd_socket_activation \
+            deployment.tests.test_rootless_docker_daemon_preflight \
+            deployment.tests.test_dev_live_activation_policy \
+            deployment.tests.test_dev_live_activation_contract
