@@ -58,6 +58,22 @@ class C34GMigrationState:
         ):
             raise ValueError(_ERROR)
 
+    def rollback_operation(self) -> str:
+        """Name the sole permitted reverse step; never execute it.
+
+        Reverse order matters because returning the broker's configuration to
+        its predecessor before restoring the three source files would create
+        a mixed source/config authority. This method provides no I/O ability.
+        """
+        return (
+            "complete",
+            "restore-deployment-broker-py",
+            "restore-deployment-broker-https-ingress-py",
+            "restore-deployment-broker-integration-py",
+            "restore-executor-configuration",
+            "restore-broker-configuration",
+        )[self.completed_steps]
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class C34GMigrationAuthority:
