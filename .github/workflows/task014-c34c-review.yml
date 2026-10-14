@@ -46,7 +46,7 @@ jobs:
             --only-binary=:all: --require-hashes \
             -r deployment/requirements-linux-x86_64-py312.lock
           python -m pip install --disable-pip-version-check --no-cache-dir \
-            --only-binary=:all: 'PyYAML==6.0.3'
+            --only-binary=:all: 'PyYAML==6.0.3' 'jsonschema==4.26.0'
 
       # Section 4: Run focused C34C unit tests and existing direct broker /
       # workflow regression contracts. No test contacts a DEV host.
