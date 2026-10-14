@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -9,7 +11,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from urllib import parse, request
+from urllib import error, parse, request
 
 import yaml
 
@@ -192,7 +194,7 @@ class FinalDevWorkflowTests(unittest.TestCase):
         self.assertEqual(self.dev["steps"][4]["name"], "Leave private Task 014 tailnet")
 
     def run_client(self, *, broker_status=202, broker_body=b'{"status":"accepted"}\n',
-                   oidc_body=None, request_body=None):
+                   oidc_body=None, request_body=None, raise_broker_http_error=False):
         with tempfile.TemporaryDirectory() as directory:
             body = (b'{ "canonical": "preserve exact bytes" }\n'
                     if request_body is None else request_body)
@@ -206,6 +208,8 @@ class FinalDevWorkflowTests(unittest.TestCase):
                 def open(self, req, timeout):
                     calls.append((req, timeout))
                     if req.full_url == ENDPOINT:
+                        if raise_broker_http_error:
+                            raise error.HTTPError(req.full_url, broker_status, "synthetic", {}, io.BytesIO(broker_body))
                         return Response(broker_status, broker_body)
                     audience = parse.parse_qs(parse.urlsplit(req.full_url).query)["audience"][0]
                     if audience not in AUDIENCES:
@@ -267,6 +271,24 @@ class FinalDevWorkflowTests(unittest.TestCase):
         for payload in (b'{}', b'{"value":2}', b'{"value":"bad"}'):
             with self.subTest(payload=payload), self.assertRaises(ValueError):
                 self.run_client(oidc_body=payload)
+
+    def test_c34c_http_diagnostic_is_status_and_shape_only(self):
+        """The workflow does not print a rejected response or credentials."""
+        cases = (
+            (403, b'{"status":"rejected"}\n', "broker_shaped_403"),
+            (403, b"<html>upstream denied</html>", "other_http_response"),
+            (503, b'{"status":"unavailable"}\n', "other_http_response"),
+        )
+        for status, body, shape in cases:
+            with self.subTest(status=status, shape=shape):
+                diagnostic = io.StringIO()
+                with contextlib.redirect_stderr(diagnostic), self.assertRaises(error.HTTPError):
+                    self.run_client(broker_status=status, broker_body=body,
+                                    raise_broker_http_error=True)
+                self.assertEqual(diagnostic.getvalue(),
+                                 f"task014_diag http_status={status} response_shape={shape}\n")
+                for forbidden in ("a.b.0", "a.b.1", "a.b.2", "upstream denied", "unavailable"):
+                    self.assertNotIn(forbidden, diagnostic.getvalue())
 
     def test_request_size_matches_reviewed_broker_bound(self):
         self.assertEqual(MAX_PROMOTION_REQUEST_BYTES, 4096)

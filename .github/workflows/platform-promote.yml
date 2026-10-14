@@ -334,7 +334,8 @@ jobs:
           import os
           from pathlib import Path
           import stat
-          from urllib import parse, request
+          import sys
+          from urllib import error, parse, request
 
           AUDIENCES = (
               "https://deploy-dev.omnilyzer.ai/task014-dev",
@@ -397,9 +398,24 @@ jobs:
               "X-Omnilyzer-Forgejo-OIDC": forgejo_jwt,
               "Content-Type": "application/json",
           })
-          with opener.open(req, timeout=930) as response:
-              if response.status != 202 or response.read(24) != b'{"status":"accepted"}\n':
-                  raise ValueError("DEV broker did not return the exact accepted response")
+          try:
+              with opener.open(req, timeout=930) as response:
+                  if response.status != 202 or response.read(24) != b'{"status":"accepted"}\n':
+                      raise ValueError("DEV broker did not return the exact accepted response")
+          except error.HTTPError as rejected:
+              # Only status and a fixed-body match are observable.
+              # Never log response bytes, JWTs, request data, headers or claims.
+              sample = rejected.read(65)
+              shape = (
+                  "broker_shaped_403"
+                  if rejected.code == 403 and sample == b'{"status":"rejected"}\n'
+                  else "other_http_response"
+              )
+              print(
+                  f"task014_diag http_status={rejected.code} response_shape={shape}",
+                  file=sys.stderr,
+              )
+              raise
           PY
       - name: Leave private Task 014 tailnet
         if: ${{ always() }}

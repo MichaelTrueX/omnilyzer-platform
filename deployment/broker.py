@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import logging
 import types
 from typing import Any, Callable
 
@@ -31,6 +32,8 @@ from .identity import (
 )
 from .jwks import OIDCVerificationError, OIDCVerificationUnavailable
 
+
+_AUTHORITY_LOG = logging.getLogger("omnilyzer.task014.authority")
 
 MAX_EXECUTOR_RESPONSE_BYTES = 64 * 1024
 REJECTED_MESSAGE = "deployment request is not accepted"
@@ -208,8 +211,10 @@ class RestrictedDeploymentBroker:
         try:
             returned_identity = verify(compact_token, received_at=received_at)
         except OIDCVerificationUnavailable:
+            _AUTHORITY_LOG.warning("task014_diag stage=deployment_oidc_unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         except OIDCVerificationError:
+            _AUTHORITY_LOG.warning("task014_diag stage=deployment_oidc_rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
@@ -221,6 +226,7 @@ class RestrictedDeploymentBroker:
                 authorization=authorization, expected_fields=expected_identity_fields,
             )
         except OIDCAuthorizationError:
+            _AUTHORITY_LOG.warning("task014_diag stage=deployment_claims_rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
@@ -231,8 +237,10 @@ class RestrictedDeploymentBroker:
                     identity, promotion_context, received_at=received_at,
                 )
             except BrokerRejectedError:
+                _AUTHORITY_LOG.warning("task014_diag stage=registry_oidc_rejected")
                 raise BrokerRejectedError(REJECTED_MESSAGE) from None
             except BrokerUnavailableError:
+                _AUTHORITY_LOG.warning("task014_diag stage=registry_oidc_unavailable")
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
             except Exception:
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
@@ -250,8 +258,10 @@ class RestrictedDeploymentBroker:
             request = parse_request(canonical_request)
             bind_identity(request, identity)
         except (OIDCAuthorizationError, ExecutorRequestError):
+            _AUTHORITY_LOG.warning("task014_diag stage=executor_request_rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
+            _AUTHORITY_LOG.warning("task014_diag stage=release_or_request_unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
         try:
@@ -270,8 +280,10 @@ class RestrictedDeploymentBroker:
                 run_attempt=identity.run_attempt,
             )
         except ReplayUnavailableError:
+            _AUTHORITY_LOG.warning("task014_diag stage=replay_unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         except ReplayError:
+            _AUTHORITY_LOG.warning("task014_diag stage=replay_rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
