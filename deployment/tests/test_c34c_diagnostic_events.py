@@ -107,7 +107,6 @@ class C34CDiagnosticEventTests(unittest.TestCase):
         paths = (
             "deployment/broker.py",
             "deployment/broker_https_ingress.py",
-            "deployment/broker_loopback_listener.py",
             "deployment/broker_integration.py",
         )
         for relative in paths:

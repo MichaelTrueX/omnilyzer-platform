@@ -6,7 +6,6 @@ alone bind the fixed numeric IPv4 loopback address.
 
 from __future__ import annotations
 
-import logging
 import math
 import re
 import socket
@@ -21,8 +20,6 @@ from .broker_https_ingress import (
 from .broker_integration import MAX_PROMOTION_REQUEST_BYTES
 from .oidc_verifier import MAX_COMPACT_TOKEN_BYTES
 
-
-_AUTHORITY_LOG = logging.getLogger("omnilyzer.task014.authority")
 
 LISTENER_UNAVAILABLE_MESSAGE = "deployment listener is unavailable"
 READ_TIMEOUT_SECONDS = 5
@@ -318,7 +315,6 @@ class DevBrokerLoopbackListener:
                     headers=headers, body=body, received_at=received_at,
                 )
             except _FramingRejected:
-                _AUTHORITY_LOG.warning("task014_diag stage=http_framing_rejected")
                 response = _REJECTED
             except (TimeoutError, OSError):
                 response = _UNAVAILABLE

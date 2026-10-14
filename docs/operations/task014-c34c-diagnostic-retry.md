@@ -24,7 +24,7 @@ It does not print response bytes or retry.
 
 ## Rejection categories
 
-- `http_framing_rejected`: broker listener rejected HTTP framing.
+- HTTP framing failures remain intentionally unlogged by the restricted listener, preserving its frozen transport contract. A broker-shaped 403 without a downstream stage event is inconclusive and requires independent network-layer evidence.
 - `ingress_rejected`: semantic request/header contract rejected.
 - `promotion_request_rejected`: canonical promotion payload rejected.
 - `deployment_oidc_rejected`: deployment JWT cryptographic rejection.
