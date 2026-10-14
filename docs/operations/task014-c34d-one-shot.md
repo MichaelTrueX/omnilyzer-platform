@@ -39,10 +39,17 @@ not prove which component generated it.
    commit** and record exact 40-character SHA. A different merge commit means
    a different broker identity. Do not dispatch before rotation.
 3. Perform an independently approved, root-controlled stopped-service
-   transition for the exact `main` SHA using existing
-   `rotate_state_store_successor_workflow_authority` code, with complete
-   C33AE source/config proof, rollout backup/rollback and all existing
-   precursor/inactive-unit qualifications.
+   workflow authority transition for the exact `main` SHA, with complete
+   installed C34B source/config proof, rollout backup/rollback and existing
+   precursor/inactive-unit qualifications. **Do not directly call the
+   historical C33AQ rotate_state_store_successor_workflow_authority
+   function**: it requires the older pinned C33AE reviewed-commit
+   generation `f2ece4257b84090b1a6fff5d1aa7f0b6047765cd`, whereas the
+   live C34B configuration explicitly uses `reviewed_commit`
+   `176ed3a31ffcf23346639ef22ac9bcab3794f0df`. A dedicated,
+   reviewed C34B-compatible workflow-only rotation must preserve that
+   reviewed_commit and every other configuration field. Never mutate
+   any protected application-source-set file.
 4. Requalify the canonical broker authority and the *running instance* after
    restart. The pinned revision is loaded only at broker startup. The running
    broker must not be left with a stale in-memory `expected_workflow_sha`.
