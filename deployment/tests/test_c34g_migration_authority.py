@@ -152,6 +152,25 @@ class C34GPrefixTests(unittest.TestCase):
                 predecessor_broker=self.old_broker,
             )
 
+    def test_all_six_reverse_operations_are_ordered(self) -> None:
+        """The rollback contract restores configs before changing source."""
+        operations = (
+            "complete",
+            "restore-deployment-broker-py",
+            "restore-deployment-broker-https-ingress-py",
+            "restore-deployment-broker-integration-py",
+            "restore-executor-configuration",
+            "restore-broker-configuration",
+        )
+        for prefix, expected in enumerate(operations):
+            with self.subTest(prefix=prefix):
+                state = self.authority.classify(
+                    observed_application_digests=self._prefix(min(prefix, 3)),
+                    executor=self.new_executor if prefix >= 4 else self.old_executor,
+                    broker=self.new_broker if prefix >= 5 else self.old_broker,
+                )
+                self.assertEqual(state.rollback_operation(), expected)
+
     def test_forged_state_and_public_api(self) -> None:
         """The state and exposed operations cannot be caller-selected."""
         with self.assertRaises(ValueError):
