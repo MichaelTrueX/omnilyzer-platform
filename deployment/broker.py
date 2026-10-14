@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import logging
+import threading
+import time
 import types
 from typing import Any, Callable
 
@@ -31,6 +34,69 @@ from .identity import (
 )
 from .jwks import OIDCVerificationError, OIDCVerificationUnavailable
 
+
+# Section: Privacy-bounded, pre-replay failure observability.
+# Only closed literal diagnostic codes may reach stderr/journald. The broker
+# never logs JWTs, JTI, claims, exceptions, headers, request bytes or IDs.
+# Bound output in the process even if systemd per-unit log limiting is disabled.
+_ALLOWED_STAGE_MESSAGES = frozenset({
+    "task014_diag stage=deployment_oidc_unavailable",
+    "task014_diag stage=deployment_oidc_rejected",
+    "task014_diag stage=deployment_claims_rejected",
+    "task014_diag stage=registry_oidc_rejected",
+    "task014_diag stage=registry_oidc_unavailable",
+    "task014_diag stage=executor_request_rejected",
+    "task014_diag stage=release_or_request_unavailable",
+    "task014_diag stage=replay_unavailable",
+    "task014_diag stage=replay_rejected",
+    "task014_diag stage=ingress_rejected",
+    "task014_diag stage=broker_rejected",
+    "task014_diag stage=broker_unavailable",
+    "task014_diag stage=promotion_request_rejected",
+})
+
+
+class _BoundedStageFilter(logging.Filter):
+    """Allow fixed stage literals only, with at most 32 events per minute.
+
+    Filter failures suppress diagnostics, never allow access or alter broker
+    rejection semantics. The listener is sequential; the lock also protects
+    future callers without storing token or request identifiers.
+    """
+
+    _WINDOW_SECONDS = 60
+    _MAX_EVENTS = 32
+
+    def __init__(self) -> None:
+        """Initialize one process-local fixed-size window and concurrency lock."""
+        super().__init__()
+        self._window_start = 0.0
+        self._events = 0
+        self._lock = threading.Lock()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Permit bounded static messages only; never interpolate caller data."""
+        if (type(record.msg) is not str
+                or record.msg not in _ALLOWED_STAGE_MESSAGES
+                or record.args):
+            return False
+        try:
+            now = time.monotonic()
+            with self._lock:
+                if (now < self._window_start
+                        or now - self._window_start >= self._WINDOW_SECONDS):
+                    self._window_start = now
+                    self._events = 0
+                if self._events >= self._MAX_EVENTS:
+                    return False
+                self._events += 1
+            return True
+        except Exception:
+            return False
+
+
+_AUTHORITY_LOG = logging.getLogger("omnilyzer.task014.authority")
+_AUTHORITY_LOG.addFilter(_BoundedStageFilter())
 
 MAX_EXECUTOR_RESPONSE_BYTES = 64 * 1024
 REJECTED_MESSAGE = "deployment request is not accepted"
@@ -208,8 +274,10 @@ class RestrictedDeploymentBroker:
         try:
             returned_identity = verify(compact_token, received_at=received_at)
         except OIDCVerificationUnavailable:
+            _AUTHORITY_LOG.warning("task014_diag stage=deployment_oidc_unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         except OIDCVerificationError:
+            _AUTHORITY_LOG.warning("task014_diag stage=deployment_oidc_rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
@@ -221,6 +289,7 @@ class RestrictedDeploymentBroker:
                 authorization=authorization, expected_fields=expected_identity_fields,
             )
         except OIDCAuthorizationError:
+            _AUTHORITY_LOG.warning("task014_diag stage=deployment_claims_rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
@@ -231,8 +300,10 @@ class RestrictedDeploymentBroker:
                     identity, promotion_context, received_at=received_at,
                 )
             except BrokerRejectedError:
+                _AUTHORITY_LOG.warning("task014_diag stage=registry_oidc_rejected")
                 raise BrokerRejectedError(REJECTED_MESSAGE) from None
             except BrokerUnavailableError:
+                _AUTHORITY_LOG.warning("task014_diag stage=registry_oidc_unavailable")
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
             except Exception:
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
@@ -250,8 +321,10 @@ class RestrictedDeploymentBroker:
             request = parse_request(canonical_request)
             bind_identity(request, identity)
         except (OIDCAuthorizationError, ExecutorRequestError):
+            _AUTHORITY_LOG.warning("task014_diag stage=executor_request_rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
+            _AUTHORITY_LOG.warning("task014_diag stage=release_or_request_unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
         try:
@@ -270,8 +343,10 @@ class RestrictedDeploymentBroker:
                 run_attempt=identity.run_attempt,
             )
         except ReplayUnavailableError:
+            _AUTHORITY_LOG.warning("task014_diag stage=replay_unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         except ReplayError:
+            _AUTHORITY_LOG.warning("task014_diag stage=replay_rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None

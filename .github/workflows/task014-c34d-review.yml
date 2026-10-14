@@ -45,6 +45,7 @@ jobs:
           set -euo pipefail
           python -m unittest \
             deployment.tests.test_ci_oidc_diagnostics \
+            deployment.tests.test_c34e_diagnostic_events \
             deployment.tests.test_final_dev_workflow \
             deployment.tests.test_broker_https_ingress \
             deployment.tests.test_broker_loopback_listener \
