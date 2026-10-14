@@ -1,0 +1,63 @@
+# File: .github/workflows/task014-c34c-review.yml
+# Purpose: Run non-live C34C diagnostic and Task 014 broker regression tests on PRs.
+# Related: deployment/tests/test_c34c_diagnostic_events.py,
+#   deployment/tests/test_final_dev_workflow.py,
+#   docs/operations/task014-c34c-diagnostic-retry.md, issue #182, PR #180.
+#
+# Review gate only: ephemeral GitHub-hosted runner, no secrets, deployments,
+# environment protection bypass, privileged host access, or live broker traffic.
+# Consolidate this temporary focused gate with PR #180's security baseline
+# before production merge, once the full historical suite is repaired.
+
+name: Task 014 C34C review tests
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  c34c-review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # Section 1: Fetch the proposed branch with no persisted credentials.
+      - name: Check out unprivileged PR source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Section 2: Use the existing Python interpreter contract.
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+
+      # Section 3: Install only locked application dependencies and pinned
+      # workflow-test parsing dependency, with no access to deployment secrets.
+      - name: Install reviewed deployment dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary=:all: --require-hashes \
+            -r deployment/requirements-linux-x86_64-py312.lock
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary=:all: 'PyYAML==6.0.3'
+
+      # Section 4: Run focused C34C unit tests and existing direct broker /
+      # workflow regression contracts. No test contacts a DEV host.
+      - name: Run C34C and adjacent broker regression suite
+        run: |
+          set -euo pipefail
+          python -m unittest \
+            deployment.tests.test_c34c_diagnostic_events \
+            deployment.tests.test_final_dev_workflow \
+            deployment.tests.test_broker_https_ingress \
+            deployment.tests.test_broker_loopback_listener \
+            deployment.tests.test_broker \
+            deployment.tests.test_broker_integration \
+            deployment.tests.test_oidc_verifier \
+            deployment.tests.test_registry_oidc_credentials
