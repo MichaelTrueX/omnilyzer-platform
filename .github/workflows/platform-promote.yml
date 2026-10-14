@@ -334,7 +334,11 @@ jobs:
           import os
           from pathlib import Path
           import stat
-          from urllib import parse, request
+          import sys
+          import time
+          from urllib import error, parse, request
+
+          from deployment.ci_oidc_diagnostics import diagnose_oidc_claims
 
           AUDIENCES = (
               "https://deploy-dev.omnilyzer.ai/task014-dev",
@@ -391,15 +395,47 @@ jobs:
           deployment_jwt, zot_jwt, forgejo_jwt = map(github_token, AUDIENCES)
           if len({deployment_jwt, zot_jwt, forgejo_jwt}) != 3:
               raise ValueError("GitHub OIDC audiences did not yield distinct tokens")
+          # Review-only diagnostic: decode bounded claims to compare to the
+          # already-reviewed broker policy. This does NOT verify signatures,
+          # authorize a deployment, or print tokens/claim values. In the real
+          # GitHub runner GITHUB_SHA is always supplied; synthetic contract
+          # tests omit it and therefore exercise the existing path.
+          if os.environ.get("GITHUB_SHA"):
+              codes = diagnose_oidc_claims(
+                  (deployment_jwt, zot_jwt, forgejo_jwt),
+                  expected_workflow_sha=os.environ["GITHUB_SHA"],
+                  run_id=os.environ.get("GITHUB_RUN_ID", ""),
+                  run_attempt=os.environ.get("GITHUB_RUN_ATTEMPT", ""),
+                  actor_id=os.environ.get("GITHUB_ACTOR_ID", ""),
+                  received_at=int(time.time()),
+              )
+              print("task014_diag oidc_codes=" + ",".join(codes),
+                    file=sys.stderr)
+              if codes != ("ok",):
+                  raise ValueError("DEV OIDC claim diagnostic rejected before POST")
           req = request.Request(ENDPOINT, data=body, method="POST", headers={
               "Authorization": "Bearer " + deployment_jwt,
               "X-Omnilyzer-Zot-OIDC": zot_jwt,
               "X-Omnilyzer-Forgejo-OIDC": forgejo_jwt,
               "Content-Type": "application/json",
           })
-          with opener.open(req, timeout=930) as response:
-              if response.status != 202 or response.read(24) != b'{"status":"accepted"}\n':
-                  raise ValueError("DEV broker did not return the exact accepted response")
+          try:
+              with opener.open(req, timeout=930) as response:
+                  if response.status != 202 or response.read(24) != b'{"status":"accepted"}\n':
+                      raise ValueError("DEV broker did not return the exact accepted response")
+          except error.HTTPError as refused:
+              # Only the numeric status and exact fixed-body shape are printed.
+              # Never log the response itself or any request/token/claim bytes.
+              sample = refused.read(65)
+              shape = (
+                  "fixed_broker_rejection_shape"
+                  if refused.code == 403
+                  and sample == b'{"status":"rejected"}\n'
+                  else "other_response_shape"
+              )
+              print("task014_diag http_status=" + str(refused.code)
+                    + " response_shape=" + shape, file=sys.stderr)
+              raise
           PY
       - name: Leave private Task 014 tailnet
         if: ${{ always() }}

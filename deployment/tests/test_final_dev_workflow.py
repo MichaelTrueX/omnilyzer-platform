@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -9,7 +11,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from urllib import parse, request
+from urllib import error, parse, request
 
 import yaml
 
@@ -192,7 +194,7 @@ class FinalDevWorkflowTests(unittest.TestCase):
         self.assertEqual(self.dev["steps"][4]["name"], "Leave private Task 014 tailnet")
 
     def run_client(self, *, broker_status=202, broker_body=b'{"status":"accepted"}\n',
-                   oidc_body=None, request_body=None):
+                   oidc_body=None, request_body=None, raise_broker_http_error=False):
         with tempfile.TemporaryDirectory() as directory:
             body = (b'{ "canonical": "preserve exact bytes" }\n'
                     if request_body is None else request_body)
@@ -206,6 +208,11 @@ class FinalDevWorkflowTests(unittest.TestCase):
                 def open(self, req, timeout):
                     calls.append((req, timeout))
                     if req.full_url == ENDPOINT:
+                        if raise_broker_http_error:
+                            raise error.HTTPError(
+                                req.full_url, broker_status, "synthetic", {},
+                                io.BytesIO(broker_body),
+                            )
                         return Response(broker_status, broker_body)
                     audience = parse.parse_qs(parse.urlsplit(req.full_url).query)["audience"][0]
                     if audience not in AUDIENCES:
@@ -267,6 +274,28 @@ class FinalDevWorkflowTests(unittest.TestCase):
         for payload in (b'{}', b'{"value":2}', b'{"value":"bad"}'):
             with self.subTest(payload=payload), self.assertRaises(ValueError):
                 self.run_client(oidc_body=payload)
+
+    def test_c34d_response_shape_diagnostics_are_secret_free(self):
+        """The workflow reports only a status and fixed rejection shape."""
+        cases = (
+            (403, b'{"status":"rejected"}\n', "fixed_broker_rejection_shape"),
+            (403, b"<html>synthetic secret</html>", "other_response_shape"),
+            (503, b'{"status":"unavailable"}\n', "other_response_shape"),
+        )
+        for status, body, shape in cases:
+            with self.subTest(status=status, shape=shape):
+                output = io.StringIO()
+                with contextlib.redirect_stderr(output), self.assertRaises(error.HTTPError):
+                    self.run_client(
+                        broker_status=status, broker_body=body,
+                        raise_broker_http_error=True,
+                    )
+                result = output.getvalue()
+                self.assertEqual(
+                    result, f"task014_diag http_status={status} response_shape={shape}\n"
+                )
+                self.assertNotIn("synthetic secret", result)
+                self.assertNotIn("a.b.0", result)
 
     def test_request_size_matches_reviewed_broker_bound(self):
         self.assertEqual(MAX_PROMOTION_REQUEST_BYTES, 4096)
