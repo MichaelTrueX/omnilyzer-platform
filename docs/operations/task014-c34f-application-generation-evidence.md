@@ -71,7 +71,12 @@ executor and broker configuration bytes. Their only permitted modifications
 are `reviewed_commit`, with the previous C34D broker
 `expected_workflow_sha` retained. Source/config mixes outside these six
 prefixes are forbidden; classification raises a fixed error and does not
-guess recovery by accepting an arbitrary hybrid.
+guess recovery by accepting an arbitrary hybrid. The immutable
+`C34GMigrationState.rollback_operation()` additionally names the only legal
+reverse step: restore broker config, then executor config, then the three source
+modules in reverse order. This is a **pure rollback plan**, not an executable
+root rollback procedure; live rollback remains blocked pending independent
+acceptance and backup verification.
 
 This authority has **no privileged filesystem reader or installer**.
 Its caller supplies observed content digests; future root-only code must prove
