@@ -1,8 +1,13 @@
-"""Inert restricted deployment broker orchestration core.
+"""File: deployment/broker.py
 
-This module has no listener, socket implementation, installation, runtime
-adapter, registry client, or deployment activation.  It composes only the
-constructor-bound security collaborators supplied by a future reviewed host.
+Purpose: Compose the inert, fail-closed deployment broker's OIDC verification,
+request construction, replay and executor transport, and rate-bound its
+operator-only static diagnostic stages.
+Related: deployment/broker_https_ingress.py, deployment/broker_integration.py,
+deployment/oidc_verifier.py, deployment/tests/test_c34e_diagnostic_events.py.
+
+No listener, socket implementation, registry client, host installation or
+deployment activation is performed by importing this module.
 """
 
 from __future__ import annotations

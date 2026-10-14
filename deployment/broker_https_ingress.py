@@ -1,7 +1,12 @@
-"""Inert, closed HTTP transport contract for the DEV promotion broker.
+"""File: deployment/broker_https_ingress.py
 
-No socket, listener, TLS, filesystem, or network operation exists here. A future
-listener must supply the original ordered header pairs, without losing duplicates.
+Purpose: Strict, inert HTTP transport/semantic ingress for DEV promotion,
+including fixed external 202/403/503 responses and bounded diagnostic stages.
+Related: deployment/broker.py, deployment/broker_integration.py,
+deployment/broker_loopback_listener.py, deployment/tests/test_c34e_diagnostic_events.py.
+
+This module performs no listener, TLS, socket, filesystem or network operation.
+The caller must preserve original ordered header pairs and duplicate detection.
 """
 
 from __future__ import annotations

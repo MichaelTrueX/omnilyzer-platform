@@ -1,7 +1,12 @@
-"""Inert DEV promotion handler; request authority is constructor-bound.
+"""File: deployment/broker_integration.py
 
-The installed source selection stays closed. C32P's repository-only concrete
-registry/Cosign composition lives outside that historical application set.
+Purpose: Construct the immutable DEV promotion handler from reviewed security
+collaborators, parse canonical promotion inputs and emit literal stage codes.
+Related: deployment/broker.py, deployment/broker_https_ingress.py,
+deployment/registry_promotion_composition.py,
+deployment/tests/test_c34e_diagnostic_events.py.
+
+Import is inert, and no host installation or deployment activation is performed.
 """
 
 from __future__ import annotations
