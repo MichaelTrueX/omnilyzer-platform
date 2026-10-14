@@ -50,6 +50,46 @@ no source byte contents or sensitive filesystem details.
 A passing qualification proves only that those repository Git objects match
 the pinned proposal. It does **not** prove installed files have these bytes.
 
+
+## C34G — pure five-file transition authority
+
+The review-only `deployment/c34g_migration_authority.py` extends the source
+evidence with an **exact six-state prefix machine**, validated by
+`deployment/tests/test_c34g_migration_authority.py`. The only admitted
+successive operations are:
+
+1. Replace `deployment/broker.py`
+2. Replace `deployment/broker_https_ingress.py`
+3. Replace `deployment/broker_integration.py`
+4. Replace canonical executor `reviewed_commit`
+5. Replace canonical broker `reviewed_commit`
+6. Complete: **no additional mutation**
+
+For every state it compares **all 41 SHA-256 digests in canonical path order**,
+not merely the three changed paths. It also compares the full normalized
+executor and broker configuration bytes. Their only permitted modifications
+are `reviewed_commit`, with the previous C34D broker
+`expected_workflow_sha` retained. Source/config mixes outside these six
+prefixes are forbidden; classification raises a fixed error and does not
+guess recovery by accepting an arbitrary hybrid.
+
+This authority has **no privileged filesystem reader or installer**.
+Its caller supplies observed content digests; future root-only code must prove
+those values were read from the actual installed files under owner, mode,
+symlink, link-count, traversal and TOCTOU controls. The proposed target
+`9289bbc...` is not a merged deployment authority. **Do not execute** the
+old C33AE migrator, the old SHA-only workflow rotation, or a hand-crafted
+five-file copy against live DEV.
+
+Before a privileged step is ready, still required are an independently pinned
+**final merged target commit**, exact root-owned installed source/config
+qualification, stopped-unit and rootless runtime checks, durable stage/backup
+design, one-step idempotent prefix advancement, recovery tests for interrupted
+writes, journal-control qualification, an operator-controlled service restart,
+and a negative acceptance suite demonstrating rollback without touch to
+replay, audit, credentials or running canary. C34G provides only the
+**pure authority constraint** that such a runtime must obey.
+
 ## Exact dependency for a privileged successor-generation transition
 
 The historical C33AE migrator changes precisely one state-store source file
