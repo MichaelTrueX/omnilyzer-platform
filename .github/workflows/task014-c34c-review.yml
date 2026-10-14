@@ -29,6 +29,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # Frozen migration/history assertions require complete history
 
       # Section 2: Use the existing Python interpreter contract.
       - name: Set up Python 3.12
@@ -61,3 +62,36 @@ jobs:
             deployment.tests.test_broker_integration \
             deployment.tests.test_oidc_verifier \
             deployment.tests.test_registry_oidc_credentials
+
+      # Section 5: Run the established security-critical baseline from
+      # PR #180 without enabling the historically failing complete suite.
+      # The complete historical suite is tracked separately in issue #181.
+      - name: Run existing Task 014 security-critical baseline
+        run: |
+          set -euo pipefail
+          python -m unittest \
+            deployment.tests.test_identity \
+            deployment.tests.test_oidc_verifier \
+            deployment.tests.test_broker_service_config \
+            deployment.tests.test_broker_service_config_loader \
+            deployment.tests.test_executor_service_config \
+            deployment.tests.test_executor_service_config_loader \
+            deployment.tests.test_broker_integration \
+            deployment.tests.test_broker_workflow_rotation \
+            deployment.tests.test_state_store_successor_host_migration_runtime \
+            deployment.tests.test_state_store_successor_live_authority \
+            deployment.tests.test_state_store_successor_configuration_authority \
+            deployment.tests.test_registry_oidc_credentials \
+            deployment.tests.test_request_scoped_registry_integration \
+            deployment.tests.test_release_consumer \
+            deployment.tests.test_promotion \
+            deployment.tests.test_policy \
+            deployment.tests.test_oci_verifier \
+            deployment.tests.test_blob_verifier \
+            deployment.tests.test_unix_transport \
+            deployment.tests.test_rootless_docker_fresh_manager_preflight \
+            deployment.tests.test_rootless_docker_restart_preflight \
+            deployment.tests.test_systemd_socket_activation \
+            deployment.tests.test_rootless_docker_daemon_preflight \
+            deployment.tests.test_dev_live_activation_policy \
+            deployment.tests.test_dev_live_activation_contract
