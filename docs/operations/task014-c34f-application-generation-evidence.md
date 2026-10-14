@@ -64,20 +64,31 @@ A separate security-reviewed **three-file** installer must pass all of:
 2. With root-only privileges, prove every installed member of the 41-file
    allowlist matches the exact expected existing source and owner/mode
    constraints. Do not infer this from the JSON `reviewed_commit` alone.
-3. Verify the C34D workflow pin, canonical broker/executor configurations,
-   systemd unit identities, restricted rootless Docker, replay/audit continuity
-   and ingress. Preserve all unrelated source bytes and configuration fields.
+3. Verify the current C34D workflow pin, canonical root-owned
+   broker/executor configurations, systemd service identities, restricted
+   rootless Docker, replay/audit continuity and ingress. The source-generation
+   transition must explicitly update **both** configurations' `reviewed_commit`
+   to the final merged target commit. Existing
+   `dev_post_provision_qualification.py` requires the executor configuration's
+   `reviewed_commit` to equal the 41-file manifest revision, and the broker
+   uses its own `reviewed_commit` for immutable runtime/ingress references.
+   Retain broker `expected_workflow_sha=57919c3b9aca0cb98e85bbb26460f6267d093fa9`
+   unless a distinct reviewed workflow rotation is approved. Keep the
+   runtime/ingress hashes and every unrelated configuration field unchanged.
 4. Under a reviewed process lock and **stopped broker/executor socket**
-   boundary, stage and atomically replace only the three approved modules.
-   Refuse symlinks, hard links, missing files, unexpected modes or unlisted
-   paths. Revalidate each stage, source-set prefix, and post-state with fsync.
+   boundary, stage and atomically replace exactly the three approved source
+   files **and** the two approved canonical configuration files. Verify
+   exact before/after bytes, UID/GID, mode, no symlinks or hard links and
+   unchanged/unlisted path sets. Revalidate every allowed intermediate
+   prefix and post-state, including `fsync`.
 5. Test partial progress, power-loss/restart recovery, exact rollback,
    root-owned backup and service restart qualification in isolated acceptance
    before installation. Leave credential, replay, audit and session state
    unchanged. Do not enable automatic retries.
 6. Requalify the running broker and effective logging controls only after
-   all three files and the full new 41-file manifest pass. Record a bounded
-   operator receipt without JWTs, claims, JTI, request bytes or private logs.
+   the three source and two configuration files align to the full new
+   41-file manifest. Record a bounded operator receipt without JWTs,
+   claims, JTI, request bytes or private logs.
 7. Require **separate explicit authorization** before another live promotion.
    The October 14 one-shot C34D attempt has been consumed.
 
