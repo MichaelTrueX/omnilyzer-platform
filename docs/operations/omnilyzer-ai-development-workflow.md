@@ -54,6 +54,20 @@ Connected device: `omnilyzerdev`. Unprivileged agent: `omnigpt`.
 - Run test commands in the unprivileged environment. Docker/systemd mutations,
   direct deployments, dependency upgrades and service restarts are privileged
   change-control actions, not casual diagnostics.
+- **No Windows file-transfer intermediary:** stage generated scripts and
+  operator handoffs directly on `omnilyzerdev` using Desktop Commander in
+  the allowed repository workspace, for example
+  `/home/omnigpt/repos/omnilyzer-platform/.task014-c34d-operator/`.
+  Verify by reading back the complete file and matching its SHA-256 before
+  publishing the root-only command. Keep the staging file non-executable.
+  An administrator can open a terminal on the server and use a separate
+  root-authorized, digest-verified `install` step if a privileged operation
+  was approved; do not change the connector's command blocklist or widen
+  directory permissions merely to execute it.
+- Keep unprivileged staging files separate from protected installed app
+  source and root configuration; never treat a dirty Git checkout as a
+  deployment artifact. A privileged root transition must independently
+  verify source, revision, expected configuration and rollback readiness.
 - If Remote Desktop Commander is offline or over quota, use a **single**
   SHA-verified user-run diagnostic where necessary, not repeated PowerShell
   copy-and-paste loops.
