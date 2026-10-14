@@ -91,7 +91,7 @@ class C34GPrefixTests(unittest.TestCase):
             (self.old, self.new_executor, self.old_broker),
             (self._prefix(2), self.new_executor, self.old_broker),
             (self._prefix(3), self.old_executor, self.new_broker),
-            (self._prefix(3), self.new_executor, self.new_broker),
+            (self._prefix(2), self.new_executor, self.new_broker),
             (self._prefix(3), self.new_executor,
              replace(self.new_broker, expected_workflow_sha="f" * 40)),
         )
