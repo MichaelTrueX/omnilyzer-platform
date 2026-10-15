@@ -76,7 +76,7 @@ class C34NTrustedDescriptorTests(unittest.TestCase):
         """Bind the reviewed 41-file names to local fixture bytes only."""
         with patch.object(gate, "_EXPECTED", tuple(self.expected)):
             return gate._read_qualified(
-                self.fd, owner_uid=self.uid,
+                self.fd, owner_uid=self.uid, application_gid=self.gid,
                 executor_gid=self.gid, broker_gid=self.gid,
             )
 
