@@ -139,6 +139,14 @@ class C34QReadOnlyRuntimeRequirementTests(unittest.TestCase):
         with self.assertRaises(subject.C34QPythonRuntimeError):
             self._qualify(config={"reviewed_commit": self.sha})
 
+    def test_executor_revision_must_match_reviewed_blob_commit(self):
+        """A historical executor config cannot attest a new Git generation."""
+        predecessor = DevExecutorServiceConfiguration(
+            **configuration_values(reviewed_commit="f" * 40),
+        )
+        with self.assertRaises(subject.C34QPythonRuntimeError):
+            self._qualify(config=predecessor)
+
     def test_bad_blob_reader_is_rejected(self):
         """No object source means no transitive dependency provenance."""
         with self.assertRaises(subject.C34QPythonRuntimeError):
