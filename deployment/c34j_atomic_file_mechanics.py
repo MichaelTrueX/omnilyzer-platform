@@ -210,6 +210,7 @@ def seal_original_backup(*, backup_dir_fd: int, backup_name: str,
 
 
 def publish_exact_file(*, parent_fd: int, backup_dir_fd: int,
+                       backup_uid: int, backup_gid: int,
                        backup_name: str, identity: C34JFileIdentity,
                        original: bytes, target: bytes, stage_name: str) -> C34JFileReceipt:
     """Publish one backed-up, exact file using same-directory atomic replace.
@@ -244,11 +245,13 @@ def publish_exact_file(*, parent_fd: int, backup_dir_fd: int,
         _directory(parent_fd, uid=identity.uid,
                    gid=(identity.gid if mode == 0o750 else identity.gid),
                    mode=mode)
-        backup, _ = _read_file(
-            backup_dir_fd, backup_name, uid=identity.uid,
-            gid=identity.gid, modes=(0o600,),
+        _directory(
+            backup_dir_fd, uid=backup_uid, gid=backup_gid, mode=0o700,
         )
-        _directory(backup_dir_fd, uid=identity.uid, gid=identity.gid, mode=0o700)
+        backup, _ = _read_file(
+            backup_dir_fd, backup_name, uid=backup_uid,
+            gid=backup_gid, modes=(0o600,),
+        )
         installed, before = _read_file(
             parent_fd, identity.name, uid=identity.uid,
             gid=identity.gid, modes=(identity.mode,),
