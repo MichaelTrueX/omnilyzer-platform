@@ -78,6 +78,12 @@ class C34LOnePrefixTests(unittest.TestCase):
         self.app.mkdir(mode=0o755)
         self.config.mkdir(mode=0o750)
         self.private.mkdir(mode=0o700)
+        # CI runners and the isolated omnilyzerdev account use different
+        # umasks. Explicitly qualify the intended sandbox directory modes;
+        # never weaken any real host permission or installed configuration.
+        self.app.chmod(0o755)
+        self.config.chmod(0o750)
+        self.private.chmod(0o700)
         self.uid, self.gid = os.getuid(), os.getgid()
         self.fd_app = self._open(self.app / "deployment", make=True, mode=0o755)
         self.fd_config = self._open(self.config)
