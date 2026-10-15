@@ -66,9 +66,14 @@ and broker configuration GIDs.
 an independently qualified destination-directory descriptor. It rejects
 unknown destination names, a mismatched backup name, altered source bytes,
 symlinks, hard links, bad owner/GID/mode, wrong stage names and any stage
-content not matching an exact prefix of the reviewed target bytes. A single
-temporary stage is written and fsynced in the destination directory; only
-after the original destination is rechecked can it be atomically renamed.
+content not matching an exact prefix of the reviewed target bytes. A root
+process may create its initial 0600 staging file as root:root even when the
+destination config's protected group differs; `_align_root_stage_group()`
+permits only that verified root-created intermediate state and changes the
+stage to the expected config GID. Nonroot or unexpected ownership changes
+fail closed. A single temporary stage is written and fsynced in the
+destination directory; only after the original destination is rechecked
+can it be atomically renamed.
 The parent directory is fsynced; post-state source bytes are checked again.
 
 A repeated operation after successful publication **must not overwrite**
