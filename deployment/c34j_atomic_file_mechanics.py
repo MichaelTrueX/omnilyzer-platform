@@ -159,6 +159,36 @@ def _write_all(fd: int, raw: bytes) -> None:
         remaining = remaining[count:]
 
 
+def _align_root_stage_group(fd: int, uid: int, gid: int) -> None:
+    """Allow only a root-created mode-0600 stage to adopt its verified config GID.
+
+    A root process commonly creates a new file as root:root in a directory
+    whose canonical configuration target is root:executor_gid/root:broker_gid.
+    Existing C33AE migration mechanics permit this exact intermediate
+    state; do not create an impossible root:root-only precondition here.
+    Reject all other owner/group drift. This helper cannot elevate privileges.
+    """
+    observed = os.fstat(fd)
+    if (observed.st_uid, observed.st_gid) == (uid, gid):
+        return
+    if (
+        (os.getuid(), os.geteuid(), os.getgid(), os.getegid()) != (0, 0, 0, 0)
+        or uid != 0 or observed.st_uid != 0 or observed.st_gid != 0
+        or not stat.S_ISREG(observed.st_mode) or observed.st_nlink != 1
+        or stat.S_IMODE(observed.st_mode) != 0o600
+    ):
+        raise ValueError
+    os.fchown(fd, uid, gid)
+    new = os.fstat(fd)
+    if (
+        (new.st_uid, new.st_gid) != (uid, gid)
+        or not stat.S_ISREG(new.st_mode) or new.st_nlink != 1
+        or stat.S_IMODE(new.st_mode) != 0o600
+        or new.st_size != observed.st_size
+    ):
+        raise ValueError
+
+
 def seal_original_backup(*, backup_dir_fd: int, backup_name: str,
                          original: bytes, uid: int, gid: int) -> str:
     """Create/resume and fsync a private exact original-byte backup.
@@ -267,6 +297,7 @@ def publish_exact_file(*, parent_fd: int, backup_dir_fd: int,
         except FileExistsError:
             fd = os.open(stage_name, _WRITE, dir_fd=parent_fd)
         try:
+            _align_root_stage_group(fd, identity.uid, identity.gid)
             opened = _regular(
                 fd, uid=identity.uid, gid=identity.gid,
                 modes=(0o600, identity.mode),
