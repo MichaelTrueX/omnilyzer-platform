@@ -9,6 +9,18 @@ deployment/state_store_successor_host_migration_runtime.py, Issue #182.
 
 # Task 014 C34F — frozen application-generation evidence
 
+**Release-authority addendum (C34I/C34J):** this earlier stage models
+C34D's authorized workflow SHA only while validating the **predecessor** or
+unmerged C34E proposal. After a final protected-main merge, GitHub OIDC
+`workflow_sha` changes to that merge SHA; the final broker must atomically
+advance both `reviewed_commit` and `expected_workflow_sha` to that exact
+approved revision under separate authority. See
+`docs/operations/task014-c34i-host-transition-gates.md` and
+`docs/operations/task014-c34j-atomic-file-mechanics.md`.
+This addendum supersedes any earlier suggestion that the old workflow SHA
+could be retained for future main-based promotions.
+
+
 **REVIEW ONLY. Not a root migration, production authorization or live deployment.**
 
 ## Verified Git facts
