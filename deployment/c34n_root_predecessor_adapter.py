@@ -130,13 +130,16 @@ def _open_chain(
                                gid=final_gid if final else None,
                                final_mode=mode)
             child = os.open(component, _FLAGS, dir_fd=parent)
-            opened_status = os.fstat(child)
-            _require_directory(opened_status, uid=owner_uid,
-                               gid=final_gid if final else None,
-                               final_mode=mode)
-            if _snapshot(named) != _snapshot(opened_status):
+            try:
+                opened_status = os.fstat(child)
+                _require_directory(opened_status, uid=owner_uid,
+                                   gid=final_gid if final else None,
+                                   final_mode=mode)
+                if _snapshot(named) != _snapshot(opened_status):
+                    raise ValueError
+            except BaseException:
                 os.close(child)
-                raise ValueError
+                raise
             opened.append((child, parent, component, _snapshot(opened_status)))
             parent = child
         return tuple(opened)
