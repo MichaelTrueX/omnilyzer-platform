@@ -169,7 +169,7 @@ def _revalidate_chains(
 
 
 def _read_qualified(
-    anchor_fd: int, *, owner_uid: int,
+    anchor_fd: int, *, owner_uid: int, application_gid: int,
     executor_gid: int, broker_gid: int,
 ) -> observer.C34MSourceObservation:
     """Collect actual 41 source hashes through four trusted retained chains.
@@ -184,8 +184,8 @@ def _read_qualified(
     chains: list[tuple[tuple[int, int, str, tuple[int, ...]], ...]] = []
     try:
         for location, gid, mode in (
-            (_APP, 0, 0o755),
-            (_MODULE, 0, 0o755),
+            (_APP, application_gid, 0o755),
+            (_MODULE, application_gid, 0o755),
             (_EXECUTOR, executor_gid, 0o750),
             (_BROKER, broker_gid, 0o750),
         ):
@@ -199,7 +199,7 @@ def _read_qualified(
             executor_configuration_fd=chains[2][-1][0],
             broker_configuration_fd=chains[3][-1][0],
             application_uid=owner_uid,
-            application_gid=0,
+            application_gid=application_gid,
             configuration_uid=owner_uid,
             executor_gid=executor_gid,
             broker_gid=broker_gid,
@@ -238,8 +238,8 @@ def _qualify_locked() -> C34NRootPredecessorReceipt:
     root = os.open("/", _FLAGS)
     try:
         first = _read_qualified(
-            root, owner_uid=0, executor_gid=executor.executor_gid,
-            broker_gid=broker.broker_gid,
+            root, owner_uid=0, application_gid=0,
+            executor_gid=executor.executor_gid, broker_gid=broker.broker_gid,
         )
         if (
             read_root_dev_executor_configuration().canonical_bytes()
@@ -252,8 +252,8 @@ def _qualify_locked() -> C34NRootPredecessorReceipt:
         ):
             raise ValueError
         second = _read_qualified(
-            root, owner_uid=0, executor_gid=executor.executor_gid,
-            broker_gid=broker.broker_gid,
+            root, owner_uid=0, application_gid=0,
+            executor_gid=executor.executor_gid, broker_gid=broker.broker_gid,
         )
         if (
             second != first
