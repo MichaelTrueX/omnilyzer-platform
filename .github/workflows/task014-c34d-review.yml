@@ -54,6 +54,7 @@ jobs:
             deployment.tests.test_c34i_final_main_seal \
             deployment.tests.test_c34i_merged_migration_authority \
             deployment.tests.test_c34j_atomic_file_mechanics \
+            deployment.tests.test_c34k_five_file_backup_barrier \
             deployment.tests.test_final_dev_workflow \
             deployment.tests.test_broker_https_ingress \
             deployment.tests.test_broker_loopback_listener \
