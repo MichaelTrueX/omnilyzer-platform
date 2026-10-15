@@ -49,6 +49,7 @@ jobs:
             deployment.tests.test_c34f_application_generation_evidence \
             deployment.tests.test_c34g_migration_authority \
             deployment.tests.test_c34g_installed_predecessor_preflight \
+            deployment.tests.test_c34h_transition_rehearsal \
             deployment.tests.test_final_dev_workflow \
             deployment.tests.test_broker_https_ingress \
             deployment.tests.test_broker_loopback_listener \
