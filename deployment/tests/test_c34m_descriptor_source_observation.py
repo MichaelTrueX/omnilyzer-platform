@@ -255,6 +255,23 @@ class C34MClosedSourceTests(unittest.TestCase):
                 scan._STAGE_LABELS[0], scan._STAGE_LABELS[1],
             ))
 
+    def test_forged_path_order_and_digest_shape_refused(self):
+        """A synthetic receipt cannot silently reorder the 41-file source set."""
+        observation = self._scan()
+        swapped = (
+            observation.source_digests[1],
+            observation.source_digests[0],
+            *observation.source_digests[2:],
+        )
+        with self.assertRaises(ValueError):
+            replace(observation, source_digests=swapped)
+        altered = (
+            ("unlisted.py", observation.source_digests[0][1]),
+            *observation.source_digests[1:],
+        )
+        with self.assertRaises(ValueError):
+            replace(observation, source_digests=altered)
+
     def test_no_mutating_or_live_host_public_api(self):
         """Only the two read-only operations are exported."""
         self.assertEqual(scan.__all__, (
