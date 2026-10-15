@@ -12,6 +12,18 @@ Task 014 issue #182, draft PR #190.
 
 # Task 014 C34H — disposable migration recovery rehearsal
 
+**Release-authority addendum (C34I/C34J):** this earlier stage models
+C34D's authorized workflow SHA only while validating the **predecessor** or
+unmerged C34E proposal. After a final protected-main merge, GitHub OIDC
+`workflow_sha` changes to that merge SHA; the final broker must atomically
+advance both `reviewed_commit` and `expected_workflow_sha` to that exact
+approved revision under separate authority. See
+`docs/operations/task014-c34i-host-transition-gates.md` and
+`docs/operations/task014-c34j-atomic-file-mechanics.md`.
+This addendum supersedes any earlier suggestion that the old workflow SHA
+could be retained for future main-based promotions.
+
+
 **Review only. Does not install or authorize anything on omnilyzerdev.**
 
 ## Verified baseline
