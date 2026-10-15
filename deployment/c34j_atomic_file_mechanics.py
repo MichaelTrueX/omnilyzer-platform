@@ -28,10 +28,14 @@ _BACKUPS = frozenset((
     "00-broker.py", "01-broker_https_ingress.py",
     "02-broker_integration.py", "03-executor.json", "04-broker.json",
 ))
-_TARGETS = frozenset((
-    "broker.py", "broker_https_ingress.py", "broker_integration.py",
-    "executor.json", "dev.json",
-))
+_TARGET_TO_BACKUP = {
+    "broker.py": "00-broker.py",
+    "broker_https_ingress.py": "01-broker_https_ingress.py",
+    "broker_integration.py": "02-broker_integration.py",
+    "executor.json": "03-executor.json",
+    "dev.json": "04-broker.json",
+}
+_TARGETS = frozenset(_TARGET_TO_BACKUP)
 _ERR = "C34J atomic file transition is unavailable"
 _READ = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
 _WRITE = os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
@@ -235,15 +239,14 @@ def publish_exact_file(*, parent_fd: int, backup_dir_fd: int,
             or hashlib.sha256(target).hexdigest() != identity.target_sha256
             or type(stage_name) is not str
             or stage_name != ".omnilyzer-c34j-" + identity.name + ".stage"
-            or backup_name not in _BACKUPS
+            or backup_name != _TARGET_TO_BACKUP[identity.name]
         ):
             raise ValueError
         # Source parent is expected mode 0755 for Python modules and 0750 for
         # canonical configurations. Its owner must be root or the test fixture
         # identity explicitly supplied by the root-owned orchestrator.
         mode = 0o750 if identity.name.endswith(".json") else 0o755
-        _directory(parent_fd, uid=identity.uid,
-                   gid=(identity.gid if mode == 0o750 else identity.gid),
+        _directory(parent_fd, uid=identity.uid, gid=identity.gid,
                    mode=mode)
         _directory(
             backup_dir_fd, uid=backup_uid, gid=backup_gid, mode=0o700,
