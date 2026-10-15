@@ -63,6 +63,7 @@ jobs:
             deployment.tests.test_c34q_python_runtime_compatibility \
             deployment.tests.test_c34r_installed_python_observation \
             deployment.tests.test_c34s_signed_python_provenance \
+            deployment.tests.test_c34t_native_dependency_inventory \
             deployment.tests.test_final_dev_workflow \
             deployment.tests.test_broker_https_ingress \
             deployment.tests.test_broker_loopback_listener \
