@@ -216,6 +216,17 @@ def inspect_c34p_git_blob_closure(
             pending.update(local_imports - set(scanned))
             external.update(other_imports)
 
+        # A source object changing while assembling the evidence must HOLD,
+        # even when the first traversal happened to be self-consistent.
+        # A protected Git commit remains the independent trust requirement.
+        for path, digest in sorted(scanned.items()):
+            second = blob_reader(path)
+            if (
+                type(second) is not bytes
+                or not 0 < len(second) <= _LIMIT
+                or hashlib.sha256(second).hexdigest() != digest
+            ):
+                raise ValueError
         sources = tuple(sorted(scanned.items()))
         stdlib = tuple(sorted(external & _STDLIB))
         unresolved = tuple(sorted(external - _STDLIB))
