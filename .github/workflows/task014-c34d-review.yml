@@ -56,6 +56,7 @@ jobs:
             deployment.tests.test_c34j_atomic_file_mechanics \
             deployment.tests.test_c34k_five_file_backup_barrier \
             deployment.tests.test_c34l_one_prefix_coordinator \
+            deployment.tests.test_c34m_descriptor_source_observation \
             deployment.tests.test_final_dev_workflow \
             deployment.tests.test_broker_https_ingress \
             deployment.tests.test_broker_loopback_listener \
