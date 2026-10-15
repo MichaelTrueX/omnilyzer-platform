@@ -305,6 +305,20 @@ class C34LOnePrefixTests(unittest.TestCase):
         self._publish(0)
         self.assertEqual(self._prepare().completed_steps, 1)
 
+    def test_private_fixture_remains_valid_under_strict_umask(self):
+        """Server-style umask 077 must not silently change sandbox policy."""
+        prior = os.umask(0o077)
+        case = None
+        try:
+            case = type(self)("test_no_plan_can_claim_live_authorization")
+            case.setUp()
+            case._seal_all()
+            self.assertEqual(case._prepare().completed_steps, 0)
+        finally:
+            if case is not None:
+                case.doCleanups()
+            os.umask(prior)
+
     def test_no_plan_can_claim_live_authorization(self):
         """The result is review-only, even when all backups and hashes match."""
         self._seal_all()
