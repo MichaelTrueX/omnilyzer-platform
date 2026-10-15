@@ -78,6 +78,16 @@ activation. A SHA that happens to have the right contents is insufficient:
 GitHub protected-main identity and trust must be verified outside this
 pure Git-object helper.
 
+**Important downstream incompatibility:** the existing C34G
+`C34GMigrationAuthority` and C34H sandbox deliberately still require
+`C34E_PROPOSAL` as their exact target SHA. They cannot be reused with a
+different merged `main` revision just because the three broker blobs match.
+Before building/enabling a root writer, a separately reviewed successor
+authority must bind the new seal, its computed 41-file manifest and the
+same five exact source/config transitions. That authority must fail closed
+on any other proposed revision, stage drift or source/config mismatch.
+Do not substitute a different commit into C34G by monkeypatching constants.
+
 ## Remaining, explicit implementation work
 
 A root-capable **five-file writer has NOT yet been enabled**. Its future
