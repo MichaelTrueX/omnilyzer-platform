@@ -85,11 +85,16 @@ different merged `main` revision just because the three broker blobs match.
 
 The review-only successor `deployment/c34i_merged_migration_authority.py`
 now binds one independently verified final-main source seal to the same exact
-**six permitted migration prefixes** as C34G, deriving executor and broker
-target canonical configs with only `reviewed_commit` changed. Every one of
-the 41 observed digests and both configurations must match the selected
-prefix; workflow SHA drift or extra source changes fail closed. Its tests
-exercise all six phases, inverse steps and invalid source/config combinations.
+**six permitted migration prefixes** as C34G. The executor target changes
+only `reviewed_commit`, while the **broker target must change both
+`reviewed_commit` and `expected_workflow_sha` to the final approved main
+commit**. The predecessor retains C34D `expected_workflow_sha`; preserving
+it in the final broker would reject the next workflow_dispatch because the
+OIDC verifier compares the GitHub-signed `workflow_sha` to that field.
+Every one of the 41 observed digests and both complete configurations must
+match the selected prefix. Any other SHA, source drift or unrelated config
+change fails closed. Synthetic tests exercise all six phases, inverse steps
+and invalid source/config combinations.
 
 This successor remains **pure** and `approval_granted=False`: it does not
 verify GitHub's protected branch on the network, read live host files or
@@ -111,9 +116,11 @@ acceptance environment. No trust-boundary widening or manual copies into
 
 After a final-main merge, all five intended publications must be bound to
 that exact SHA: three protected Python module files, executor canonical
-`reviewed_commit`, broker canonical `reviewed_commit`. The unchanged
-C34D `expected_workflow_sha` remains separately root-authorized; neither
-this module nor a source merge rotates it.
+`reviewed_commit`, and broker canonical `reviewed_commit` **plus**
+`expected_workflow_sha`. The latter is an explicit OIDC authority change
+within the same broker configuration file and must be separately reviewed,
+not inferred from source equality or silently updated by a source merge.
+C34I is only a pure, non-activating model and does not rotate the live SHA.
 
 **Important:** Do not merge draft PR #190 into `main`, stop DEV services,
 perform a migration, reset replay/audit, dispatch GitHub Actions or activate
