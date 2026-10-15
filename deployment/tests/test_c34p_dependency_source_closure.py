@@ -136,6 +136,24 @@ class C34PStaticImportTests(unittest.TestCase):
         with self.assertRaises(subject.C34PSourceClosureError):
             self._check(data)
 
+    def test_changing_blob_reader_between_passes_is_a_hold(self):
+        """Never seal a manifest assembled from an unstable object source."""
+        calls = {}
+
+        def mutable_reader(path):
+            """Return a changed transitive blob on its second read only."""
+            calls[path] = calls.get(path, 0) + 1
+            raw = self.modules[path]
+            if path == "deployment/alpha.py" and calls[path] > 1:
+                return raw + b"# changed-after-first-pass\\n"
+            return raw
+
+        with self.assertRaises(subject.C34PSourceClosureError):
+            subject.inspect_c34p_git_blob_closure(
+                candidate_sha=_SHA,
+                blob_reader=mutable_reader,
+            )
+
     def test_receipt_cannot_claim_privileged_approval(self):
         """Receipt cannot be promoted into a root installation capability."""
         result = self._check()
@@ -176,7 +194,7 @@ class C34PActualGitSourceTests(unittest.TestCase):
             candidate_sha=revision,
             blob_reader=immutable_blob,
         )
-        self.assertGreaterEqual(result.local_module_count, 60)
+        self.assertEqual(result.local_module_count, 73)
         self.assertIn(
             "deployment/c34o_six_prefix_recovery_inspection.py",
             dict(result.local_source_blobs),
