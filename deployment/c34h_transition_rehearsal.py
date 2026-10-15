@@ -156,6 +156,54 @@ class C34HIsolatedRehearsal:
             raise C34HRehearsalError(_ERROR)
         return read
 
+    def _verify_selection(self, phase: int) -> None:
+        """Refuse unknown paths, directory links and misplaced stage files.
+
+        The simulator is private and non-root, but testing the full closed
+        installed-file selection prevents false positive rehearsal results.
+        Only one recognized stage may exist, beside the next target file.
+        """
+        all_paths = set(self._paths())
+        directories = {
+            "/".join(name.split("/")[:length])
+            for name in all_paths
+            for length in range(1, len(name.split("/")))
+        }
+        expected_stages = set()
+        if phase < 5:
+            expected_stages.add(
+                str((self._file(_OPERATIONS[phase]).parent / _STAGE)
+                    .relative_to(self._root))
+            )
+        found_stages = set()
+        app = self._root / "app"
+        for parent, subdirs, filenames in os.walk(app, followlinks=False):
+            base = Path(parent)
+            for dirname in subdirs:
+                entry = base / dirname
+                relative = entry.relative_to(app).as_posix()
+                if relative not in directories or entry.is_symlink():
+                    raise C34HRehearsalError(_ERROR)
+            for filename in filenames:
+                entry = base / filename
+                relative = entry.relative_to(app).as_posix()
+                if relative in all_paths and not entry.is_symlink():
+                    continue
+                stage_relative = str(entry.relative_to(self._root))
+                if stage_relative not in expected_stages or entry.is_symlink():
+                    raise C34HRehearsalError(_ERROR)
+                found_stages.add(stage_relative)
+        config = self._root / "config"
+        for entry in config.iterdir():
+            relative = str(entry.relative_to(self._root))
+            if entry.name in ("executor.json", "broker.json") and not entry.is_symlink():
+                continue
+            if relative not in expected_stages or entry.is_symlink():
+                raise C34HRehearsalError(_ERROR)
+            found_stages.add(relative)
+        if len(found_stages) > 1:
+            raise C34HRehearsalError(_ERROR)
+
     def current(self) -> C34GMigrationState:
         """Classify all 41 exact file bytes and both canonical configs."""
         try:
@@ -171,11 +219,13 @@ class C34HIsolatedRehearsal:
             broker = DevBrokerServiceConfiguration.from_dict(
                 self._canonical(self._read_file(self._file("broker.json")))
             )
-            return self.authority.classify(
+            state = self.authority.classify(
                 observed_application_digests=digest,
                 executor=executor,
                 broker=broker,
             )
+            self._verify_selection(state.completed_steps)
+            return state
         except (KeyboardInterrupt, SystemExit, GeneratorExit):
             raise
         except Exception:
