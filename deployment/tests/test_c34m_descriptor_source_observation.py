@@ -48,7 +48,13 @@ class C34MClosedSourceTests(unittest.TestCase):
         for path in self.paths:
             location = self.app / path
             location.parent.mkdir(parents=True, exist_ok=True)
-            location.parent.chmod(0o755)
+            # A strict umask=077 also affects intermediate directories.
+            # Qualify the complete synthetic source hierarchy, not just
+            # each leaf parent; production permissions are never changed.
+            cursor = location.parent
+            while cursor != self.app:
+                cursor.chmod(0o755)
+                cursor = cursor.parent
             data = ("closed test blob: " + path + "\n").encode("ascii")
             location.write_bytes(data)
             location.chmod(0o644)
