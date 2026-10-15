@@ -244,9 +244,16 @@ class C34JAtomicDescriptorTests(unittest.TestCase):
                 target_sha256="b" * 64, uid=self.uid, gid=self.gid,
                 mode=0o777,
             )
-        self._seal()
+        backup_fd = self._seal()
         with self.assertRaises(subject.C34JAtomicFileError):
-            self._publish(backup_fd=self._open_directory(self.backup))
+            subject.publish_exact_file(
+                parent_fd=self._open_directory(self.app),
+                backup_dir_fd=backup_fd, backup_uid=self.uid,
+                backup_gid=self.gid, backup_name="00-broker.py",
+                identity=self.identity, original=self.original,
+                target=self.target, stage_name="../wrong.stage",
+            )
+        self.assertEqual(self.source.read_bytes(), self.original)
 
 
 if __name__ == "__main__":
