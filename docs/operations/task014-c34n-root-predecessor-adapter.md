@@ -88,6 +88,12 @@ installed production source.
 
 1. **No root live run is authorized.** The current broker is supposed to
    remain active. The stopped-host C34N precondition would fail today.
+   Furthermore, these new Python modules are not in the active installed
+   41-file application manifest. Executing them as root by importing from an
+   unprivileged Git checkout would be a privilege-boundary violation.
+   Any eventual root execution requires a separately reviewed immutable,
+   root-owned package with complete transitive import/source provenance,
+   ownership/mode verification and an operator-authorized stopped-host gate.
 2. C34N knows only the pristine predecessor. A later root reader must
    recognize the six C34I **final merged-main** source/config prefixes,
    without accepting unexpected pending stages.
