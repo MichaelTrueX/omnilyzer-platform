@@ -67,6 +67,8 @@ class C34MSourceObservation:
                 or len(x[1]) != 64 or any(c not in "0123456789abcdef" for c in x[1])
                 for x in self.source_digests
             )
+            or tuple(item[0] for item in self.source_digests)
+            != tuple(entry.repository_path for entry in DevApplicationSourceSet().files)
             or type(self.pending_stages) is not tuple
             or len(self.pending_stages) > 1
             or any(x not in _STAGE_LABELS for x in self.pending_stages)
@@ -99,6 +101,7 @@ def _scan_app(app_fd: int, owner_uid: int, owner_gid: int,
     atomic._directory(app_fd, uid=owner_uid, gid=owner_gid, mode=0o755)
     found: dict[str, str] = {}
     stages: list[str] = []
+    total_bytes = [0]
 
     def walk(fd: int, prefix: str) -> None:
         """Revalidate every expected child and forbid symlink/directory drift."""
@@ -131,6 +134,9 @@ def _scan_app(app_fd: int, owner_uid: int, owner_gid: int,
                     modes=(0o644,),
                 )
                 if atomic._fingerprint(before) != atomic._fingerprint(after):
+                    raise ValueError
+                total_bytes[0] += len(raw)
+                if total_bytes[0] > 8 * atomic._MAX:
                     raise ValueError
                 found[relative] = hashlib.sha256(raw).hexdigest()
             elif relative in _APP_STAGE_LABELS:
