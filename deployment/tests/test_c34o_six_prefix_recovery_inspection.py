@@ -278,6 +278,59 @@ class C34OSixPrefixRecoveryTests(unittest.TestCase):
                 self._inspect()
         self.assertEqual(count[0], 1)
 
+    def test_reverse_source_states_are_classified_without_restoring_live_files(self):
+        """Read all 5 reverse prefixes while a sandbox-only fixture restores bytes.
+
+        This proves recovery-state *recognition*, NOT C34J rollback mechanics
+        or actual root-owned power-loss durability and service restart.
+        """
+        for step in range(5):
+            self._advance(step)
+        self.assertEqual(self._inspect().completed_steps, 5)
+        for step in reversed(range(5)):
+            name = backup._ORDER[step]
+            if step < 3:
+                directory, mode = self.module, 0o644
+            elif step == 3:
+                directory, mode = self.executor, 0o640
+            else:
+                directory, mode = self.broker, 0o640
+            # Disposable test fixture only; no API in C34O performs this write.
+            destination = directory / name
+            destination.write_bytes(self.payloads.originals[step])
+            destination.chmod(mode)
+            with self.subTest(restored_step=step):
+                result = self._inspect()
+                self.assertEqual(result.completed_steps, step)
+                self.assertFalse(result.recovery_authorized)
+
+    def test_corrupt_partial_backup_fails_closed(self):
+        """The recovery reader must not accept a partially sealed fifth copy."""
+        item = self.backup / backup._BACKUPS[-1]
+        item.write_bytes(self.payloads.originals[-1][:12])
+        with self.assertRaises(subject.C34ORecoveryInspectionError):
+            self._inspect()
+
+    def test_stage_change_between_two_reads_causes_hold(self):
+        """An otherwise valid stage cannot change during repeated inspection."""
+        stage = self._stage(0, self.payloads.targets[0][:12])
+        actual = subject._inspect_once
+        calls = [0]
+
+        def move_stage(**kw):
+            """Tamper with the synthetic stage after the first verified read."""
+            receipt = actual(**kw)
+            calls[0] += 1
+            if calls[0] == 1:
+                stage.write_bytes(self.payloads.targets[0][:13])
+                stage.chmod(0o600)
+            return receipt
+
+        with patch.object(subject, "_inspect_once", side_effect=move_stage):
+            with self.assertRaises(subject.C34ORecoveryInspectionError):
+                self._inspect()
+        self.assertEqual(calls[0], 2)
+
     def test_untrusted_receipt_cannot_authorize_recovery(self):
         """Readiness evidence cannot be recast as a live mutation capability."""
         receipt = self._inspect()
