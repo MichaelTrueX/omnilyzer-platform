@@ -67,6 +67,7 @@ jobs:
             deployment.tests.test_c34u_signed_external_native_provenance \
             deployment.tests.test_c34v_privileged_import_seal \
             deployment.tests.test_c34w_installed_source_feasibility \
+            deployment.tests.test_c34x_service_recovery_source_reconciliation \
             deployment.tests.test_final_dev_workflow \
             deployment.tests.test_broker_https_ingress \
             deployment.tests.test_broker_loopback_listener \
