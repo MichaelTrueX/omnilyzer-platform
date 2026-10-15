@@ -129,19 +129,30 @@ class C34IMergedMigrationAuthority:
             ):
                 raise ValueError
 
+            # A future GitHub workflow_dispatch from merged protected main
+            # carries workflow_sha=target_sha, NOT the historical C34D SHA.
+            # Source-generation publication and broker OIDC authority must
+            # therefore be advanced as one reviewed source/config transition.
             target_executor = replace(executor, reviewed_commit=target_sha)
-            target_broker = replace(broker, reviewed_commit=target_sha)
-            for old_config, new_config in (
-                (executor, target_executor), (broker, target_broker),
+            target_broker = replace(
+                broker, reviewed_commit=target_sha,
+                expected_workflow_sha=target_sha,
+            )
+            for old_config, new_config, fields in (
+                (executor, target_executor, {"reviewed_commit"}),
+                (broker, target_broker,
+                 {"reviewed_commit", "expected_workflow_sha"}),
             ):
                 left, right = old_config.to_dict(), new_config.to_dict()
                 if (
                     left.keys() != right.keys()
-                    or {k for k in left if left[k] != right[k]}
-                    != {"reviewed_commit"}
+                    or {k for k in left if left[k] != right[k]} != fields
                 ):
                     raise ValueError
-            if target_broker.expected_workflow_sha != evidence.C34D_MAIN:
+            if (
+                broker.expected_workflow_sha != evidence.C34D_MAIN
+                or target_broker.expected_workflow_sha != target_sha
+            ):
                 raise ValueError
             object.__setattr__(self, "predecessor_executor", executor)
             object.__setattr__(self, "predecessor_broker", broker)
