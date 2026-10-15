@@ -82,11 +82,21 @@ pure Git-object helper.
 `C34GMigrationAuthority` and C34H sandbox deliberately still require
 `C34E_PROPOSAL` as their exact target SHA. They cannot be reused with a
 different merged `main` revision just because the three broker blobs match.
-Before building/enabling a root writer, a separately reviewed successor
-authority must bind the new seal, its computed 41-file manifest and the
-same five exact source/config transitions. That authority must fail closed
-on any other proposed revision, stage drift or source/config mismatch.
-Do not substitute a different commit into C34G by monkeypatching constants.
+
+The review-only successor `deployment/c34i_merged_migration_authority.py`
+now binds one independently verified final-main source seal to the same exact
+**six permitted migration prefixes** as C34G, deriving executor and broker
+target canonical configs with only `reviewed_commit` changed. Every one of
+the 41 observed digests and both configurations must match the selected
+prefix; workflow SHA drift or extra source changes fail closed. Its tests
+exercise all six phases, inverse steps and invalid source/config combinations.
+
+This successor remains **pure** and `approval_granted=False`: it does not
+verify GitHub's protected branch on the network, read live host files or
+write anything. Do not substitute a different commit into the older C34G
+model by monkeypatching constants. The future root writer must independently
+bind the new seal to the final protected GitHub main and root-only installed
+file observations under the exact stopped-host maintenance boundary.
 
 ## Remaining, explicit implementation work
 
