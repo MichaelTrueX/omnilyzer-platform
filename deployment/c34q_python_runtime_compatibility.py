@@ -109,6 +109,7 @@ def qualify_c34q_runtime_requirements(
         if (
             type(executor_configuration) is not DevExecutorServiceConfiguration
             or not callable(blob_reader)
+            or executor_configuration.reviewed_commit != candidate_sha
         ):
             raise TypeError
         # Bind requirements to the actual candidate source/config identity.
