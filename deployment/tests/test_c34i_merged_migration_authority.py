@@ -98,6 +98,10 @@ class C34IMergedAuthorityTests(unittest.TestCase):
         """Source/config ordering remains byte-identical to reviewed C34G."""
         authority = self._make_authority()
         new_executor, new_broker = authority.target_configuration_pair()
+        self.assertEqual(self.broker.expected_workflow_sha, original.C34D_MAIN)
+        self.assertEqual(new_broker.expected_workflow_sha, FINAL)
+        self.assertEqual(new_executor.reviewed_commit, FINAL)
+        self.assertEqual(new_broker.reviewed_commit, FINAL)
         for phase in range(6):
             with self.subTest(phase=phase):
                 state = authority.classify(
@@ -129,6 +133,19 @@ class C34IMergedAuthorityTests(unittest.TestCase):
                     observed_application_digests=self._source_prefix(phase),
                     executor=executor, broker=broker,
                 )
+
+    def test_target_broker_maintains_only_reviewed_field_diff(self):
+        """Future broker revision and OIDC SHA change together, nothing else."""
+        authority = self._make_authority()
+        executor, broker = authority.target_configuration_pair()
+        old = self.broker.to_dict()
+        new = broker.to_dict()
+        self.assertEqual(
+            {key for key in old if old[key] != new[key]},
+            {"reviewed_commit", "expected_workflow_sha"},
+        )
+        self.assertEqual(broker.expected_workflow_sha, FINAL)
+        self.assertEqual(executor.reviewed_commit, FINAL)
 
     def test_arbitrary_blob_drift_fails_closed(self):
         """Other 38 protected files must be byte-identical to predecessor."""
