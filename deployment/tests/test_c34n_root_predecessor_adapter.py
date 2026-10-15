@@ -91,7 +91,7 @@ class C34NTrustedDescriptorTests(unittest.TestCase):
         """No extra application entry may be ignored by C34N."""
         extra = self.root.joinpath(*gate._APP, "deployment", "unknown.py")
         extra.write_bytes(b"unreviewed")
-        with self.assertRaises(ValueError):
+        with self.assertRaises(observation.C34MObservationError):
             self._inspect()
 
     def test_unexpected_stage_blocks_predecessor(self):
