@@ -59,6 +59,7 @@ jobs:
             deployment.tests.test_c34m_descriptor_source_observation \
             deployment.tests.test_c34n_root_predecessor_adapter \
             deployment.tests.test_c34o_six_prefix_recovery_inspection \
+            deployment.tests.test_c34p_dependency_source_closure \
             deployment.tests.test_final_dev_workflow \
             deployment.tests.test_broker_https_ingress \
             deployment.tests.test_broker_loopback_listener \
