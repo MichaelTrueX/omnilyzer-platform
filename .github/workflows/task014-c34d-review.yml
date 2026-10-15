@@ -69,6 +69,7 @@ jobs:
             deployment.tests.test_c34w_installed_source_feasibility \
             deployment.tests.test_c34x_service_recovery_source_reconciliation \
             deployment.tests.test_c34y_service_recovery_manifest_review \
+            deployment.tests.test_c34z_main_loader_release_gap \
             deployment.tests.test_final_dev_workflow \
             deployment.tests.test_broker_https_ingress \
             deployment.tests.test_broker_loopback_listener \
