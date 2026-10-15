@@ -202,6 +202,20 @@ class C34JAtomicDescriptorTests(unittest.TestCase):
         with self.assertRaises(subject.C34JAtomicFileError):
             self._publish(backup_fd=backup_fd)
 
+    def test_unprivileged_stage_owner_cannot_be_reassigned(self):
+        """Only actual root may correct a root-created config stage's group."""
+        self.stage.write_bytes(self.target[:3])
+        self.stage.chmod(0o600)
+        fd = os.open(self.stage, os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            subject._align_root_stage_group(fd, self.uid, self.gid)
+            if os.geteuid() != 0:
+                with self.assertRaises(ValueError):
+                    subject._align_root_stage_group(fd, self.uid, self.gid + 1)
+            self.assertEqual(self.stage.read_bytes(), self.target[:3])
+        finally:
+            os.close(fd)
+
     def test_executor_style_config_uses_separate_backup_and_mode(self):
         """Config mode 0640 and 0750 directory differ from app modules."""
         original = b'{"reviewed_commit":"old"}\n'
