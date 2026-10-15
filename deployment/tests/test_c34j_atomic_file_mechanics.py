@@ -230,6 +230,24 @@ class C34JAtomicDescriptorTests(unittest.TestCase):
         self.assertEqual(file.read_bytes(), target)
         self.assertEqual(stat.S_IMODE(file.stat().st_mode), 0o640)
 
+    def test_cross_file_backup_reuse_is_rejected(self):
+        """A broker source may never point to a different step's backup."""
+        self._seal()
+        wrong = self.backup / "01-broker_https_ingress.py"
+        wrong.write_bytes(self.original)
+        wrong.chmod(0o600)
+        with self.assertRaises(subject.C34JAtomicFileError):
+            subject.publish_exact_file(
+                parent_fd=self._open_directory(self.app),
+                backup_dir_fd=self._open_directory(self.backup),
+                backup_uid=self.uid, backup_gid=self.gid,
+                backup_name="01-broker_https_ingress.py",
+                identity=self.identity,
+                original=self.original, target=self.target,
+                stage_name=".omnilyzer-c34j-broker.py.stage",
+            )
+        self.assertEqual(self.source.read_bytes(), self.original)
+
     def test_arbitrary_names_and_modes_rejected(self):
         """Caller cannot request a path traversal or a sixth target."""
         with self.assertRaises(ValueError):
