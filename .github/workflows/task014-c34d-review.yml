@@ -65,6 +65,7 @@ jobs:
             deployment.tests.test_c34s_signed_python_provenance \
             deployment.tests.test_c34t_native_dependency_inventory \
             deployment.tests.test_c34u_signed_external_native_provenance \
+            deployment.tests.test_c34v_privileged_import_seal \
             deployment.tests.test_final_dev_workflow \
             deployment.tests.test_broker_https_ingress \
             deployment.tests.test_broker_loopback_listener \
