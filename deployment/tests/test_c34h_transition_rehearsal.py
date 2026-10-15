@@ -133,6 +133,19 @@ class C34HIsolatedTests(unittest.TestCase):
             with self.assertRaises(C34HRehearsalError):
                 rehearsal.advance()
 
+    def test_unlisted_file_and_misplaced_stage_fail_closed(self):
+        """Reject unknown local sources and stages beside the wrong operation."""
+        with make_rehearsal() as rehearsal:
+            extra = rehearsal._root / "app" / "deployment" / "unreviewed.py"
+            extra.write_bytes(b"UNREVIEWED")
+            with self.assertRaises(C34HRehearsalError):
+                rehearsal.current()
+            extra.unlink()
+            stray = rehearsal._root / "config" / ".c34h-stage"
+            stray.write_bytes(b"")
+            with self.assertRaises(C34HRehearsalError):
+                rehearsal.advance()
+
     def test_root_cannot_run_rehearsal(self):
         """Root execution is categorically forbidden even for a private tree."""
         with patch("deployment.c34h_transition_rehearsal.os.geteuid", return_value=0):
