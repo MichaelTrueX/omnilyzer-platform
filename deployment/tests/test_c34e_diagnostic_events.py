@@ -119,7 +119,7 @@ class C34EDiagnosticEventTests(unittest.TestCase):
             self.assertTrue(subject.filter(record(msg)))
             self.assertFalse(subject.filter(record("SENSITIVE_EXC_DETAIL")))
         self.assertIn(msg, _ALLOWED_STAGE_MESSAGES)
-        self.assertEqual(len(_ALLOWED_STAGE_MESSAGES), 13)
+        self.assertEqual(len(_ALLOWED_STAGE_MESSAGES), 14)
 
     def test_filter_fails_closed_on_clock_failure(self):
         """A failed diagnostic clock must not change authorization behavior."""
@@ -136,6 +136,7 @@ class C34EDiagnosticEventTests(unittest.TestCase):
             "deployment/broker.py",
             "deployment/broker_https_ingress.py",
             "deployment/broker_integration.py",
+            "deployment/broker_loopback_listener.py",
         )
         for relative in paths:
             with self.subTest(path=relative):
