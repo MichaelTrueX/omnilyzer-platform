@@ -45,6 +45,36 @@ jobs:
           set -euo pipefail
           python -m unittest \
             deployment.tests.test_ci_oidc_diagnostics \
+            deployment.tests.test_c34e_diagnostic_events \
+            deployment.tests.test_c34f_application_generation_evidence \
+            deployment.tests.test_c34g_migration_authority \
+            deployment.tests.test_c34g_installed_predecessor_preflight \
+            deployment.tests.test_c34h_transition_rehearsal \
+            deployment.tests.test_c34i_stopped_host_gate \
+            deployment.tests.test_c34i_final_main_seal \
+            deployment.tests.test_c34i_merged_migration_authority \
+            deployment.tests.test_c34j_atomic_file_mechanics \
+            deployment.tests.test_c34k_five_file_backup_barrier \
+            deployment.tests.test_c34l_one_prefix_coordinator \
+            deployment.tests.test_c34m_descriptor_source_observation \
+            deployment.tests.test_c34n_root_predecessor_adapter \
+            deployment.tests.test_c34o_six_prefix_recovery_inspection \
+            deployment.tests.test_c34p_dependency_source_closure \
+            deployment.tests.test_c34q_python_runtime_compatibility \
+            deployment.tests.test_c34r_installed_python_observation \
+            deployment.tests.test_c34s_signed_python_provenance \
+            deployment.tests.test_c34t_native_dependency_inventory \
+            deployment.tests.test_c34u_signed_external_native_provenance \
+            deployment.tests.test_c34v_privileged_import_seal \
+            deployment.tests.test_c34w_installed_source_feasibility \
+            deployment.tests.test_c34x_service_recovery_source_reconciliation \
+            deployment.tests.test_c34y_service_recovery_manifest_review \
+            deployment.tests.test_c34z_main_loader_release_gap \
+            deployment.tests.test_c35a_signed_late_native_modules \
+            deployment.tests.test_c35b_loader_config_dependency_review \
+            deployment.tests.test_c35c_privileged_loader_threat_review \
+            deployment.tests.test_c35d_release_gate_consolidation \
+            deployment.tests.test_task014_p0_403_rejection_origin \
             deployment.tests.test_final_dev_workflow \
             deployment.tests.test_broker_https_ingress \
             deployment.tests.test_broker_loopback_listener \

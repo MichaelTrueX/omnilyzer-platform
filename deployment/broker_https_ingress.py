@@ -1,12 +1,18 @@
-"""Inert, closed HTTP transport contract for the DEV promotion broker.
+"""File: deployment/broker_https_ingress.py
 
-No socket, listener, TLS, filesystem, or network operation exists here. A future
-listener must supply the original ordered header pairs, without losing duplicates.
+Purpose: Strict, inert HTTP transport/semantic ingress for DEV promotion,
+including fixed external 202/403/503 responses and bounded diagnostic stages.
+Related: deployment/broker.py, deployment/broker_integration.py,
+deployment/broker_loopback_listener.py, deployment/tests/test_c34e_diagnostic_events.py.
+
+This module performs no listener, TLS, socket, filesystem or network operation.
+The caller must preserve original ordered header pairs and duplicate detection.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 
 from .broker import (
     BrokerRejectedError, BrokerUnavailableError, MAX_EXECUTOR_RESPONSE_BYTES,
@@ -15,6 +21,8 @@ from .broker import (
 from .broker_integration import MAX_PROMOTION_REQUEST_BYTES
 from .oidc_verifier import MAX_COMPACT_TOKEN_BYTES
 
+
+_AUTHORITY_LOG = logging.getLogger("omnilyzer.task014.authority")
 
 PUBLIC_ORIGIN = "https://deploy-dev.omnilyzer.ai"
 PUBLIC_HOST = "deploy-dev.omnilyzer.ai"
@@ -157,6 +165,7 @@ def dispatch_inert_dev_promotion_ingress(
             received_at=received_at,
         )
     except IngressRejectedError:
+        _AUTHORITY_LOG.warning("task014_diag stage=ingress_rejected")
         return IngressResponse(403, _REJECTED_BODY)
     try:
         handle = _bound_operation(handler, "handle")
@@ -170,8 +179,10 @@ def dispatch_inert_dev_promotion_ingress(
         if type(result) is not bytes or len(result) > MAX_EXECUTOR_RESPONSE_BYTES:
             raise BrokerUnavailableError()
     except BrokerRejectedError:
+        _AUTHORITY_LOG.warning("task014_diag stage=broker_rejected")
         return IngressResponse(403, _REJECTED_BODY)
     except Exception:
+        _AUTHORITY_LOG.warning("task014_diag stage=broker_unavailable")
         return IngressResponse(503, _UNAVAILABLE_BODY)
     return IngressResponse(202, _ACCEPTED_BODY)
 
