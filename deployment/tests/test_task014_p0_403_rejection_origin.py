@@ -103,18 +103,15 @@ class Task014P0RejectionOriginTests(unittest.TestCase):
                 self.assertIn(field, config)
         self.assertNotIn("access_log /", config)
 
-    def test_d_bounded_c34e_has_exactly_one_listener_framing_stage(self) -> None:
-        """Review-only source coverage does not prove an incident-stage cause."""
+    def test_d_bounded_c34e_has_no_listener_framing_attribution_yet(self) -> None:
+        """Do not treat missing C34E event as proof the broker was not reached."""
         listener_source = _LISTENER.read_text(encoding="utf-8")
         self.assertIn("except _FramingRejected:", listener_source)
         self.assertIn("response = _REJECTED", listener_source)
-        self.assertEqual(
-            listener_source.count(
-                '_AUTHORITY_LOG.warning("task014_diag stage=listener_framing_rejected")'
-            ), 1,
-        )
-        self.assertEqual(len(_ALLOWED_STAGE_MESSAGES), 14)
-        self.assertIn(
+        self.assertNotIn("listener_framing_rejected", listener_source)
+        self.assertNotIn("task014_diag stage=", listener_source)
+        self.assertEqual(len(_ALLOWED_STAGE_MESSAGES), 13)
+        self.assertNotIn(
             "task014_diag stage=listener_framing_rejected",
             _ALLOWED_STAGE_MESSAGES,
         )
@@ -123,6 +120,7 @@ class Task014P0RejectionOriginTests(unittest.TestCase):
         """A proposed private stage cannot be enabled by injecting log contents."""
         stage_filter = _BoundedStageFilter()
         for msg, args in (
+            ("task014_diag stage=listener_framing_rejected", ()),
             ("task014_diag stage=broker_rejected %s", ("SENSITIVE",)),
             ("task014_diag stage=broker_rejected", ("SENSITIVE",)),
             ("Bearer SYNTHETIC-TOKEN", ()),
