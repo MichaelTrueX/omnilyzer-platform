@@ -54,6 +54,7 @@ _ALLOWED_STAGE_MESSAGES = frozenset({
     "task014_diag stage=release_or_request_unavailable",
     "task014_diag stage=replay_unavailable",
     "task014_diag stage=replay_rejected",
+    "task014_diag stage=listener_framing_rejected",
     "task014_diag stage=ingress_rejected",
     "task014_diag stage=broker_rejected",
     "task014_diag stage=broker_unavailable",
