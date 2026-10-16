@@ -109,6 +109,11 @@ class TestP0DiagnosticInstrumentation(unittest.TestCase):
         status, wire_bytes, called = _response(wire())
         self.assertEqual((status, called), (202, 1))
         self.assertTrue(wire_bytes.endswith(b'{"status":"accepted"}\n'))
+        unavailable = Handler(RuntimeError("SYNTHETIC_PRIVATE_FAILURE"))
+        status, wire_bytes, called = _response(wire(), unavailable)
+        self.assertEqual((status, called), (503, 1))
+        self.assertTrue(wire_bytes.endswith(b'{"status":"unavailable"}\n'))
+        self.assertNotIn(b"SYNTHETIC_PRIVATE_FAILURE", wire_bytes)
 
     def test_nginx_status_candidate_is_offline_and_no_sensitive_variables(self):
         candidate = _CANDIDATE.read_text(encoding="utf-8")
