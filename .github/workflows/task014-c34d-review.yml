@@ -75,6 +75,7 @@ jobs:
             deployment.tests.test_c35c_privileged_loader_threat_review \
             deployment.tests.test_c35d_release_gate_consolidation \
             deployment.tests.test_task014_p0_403_rejection_origin \
+            deployment.tests.test_task014_p0_403_instrumentation \
             deployment.tests.test_final_dev_workflow \
             deployment.tests.test_broker_https_ingress \
             deployment.tests.test_broker_loopback_listener \
