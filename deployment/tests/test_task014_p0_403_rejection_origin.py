@@ -150,7 +150,7 @@ class Task014P0RejectionOriginTests(unittest.TestCase):
         ):
             with self.subTest(requirement=requirement):
                 self.assertIn(requirement, document)
-        self.assertNotIn("diagnostic instrumentation has been installed", document.lower())
+        self.assertIn("No diagnostic instrumentation has been installed or activated", document)
 
     def test_g_review_only_sources_do_not_change_public_wire_contract(self) -> None:
         """No new response header or internal stage is returned to the caller."""
