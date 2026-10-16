@@ -71,6 +71,7 @@ jobs:
             deployment.tests.test_c34y_service_recovery_manifest_review \
             deployment.tests.test_c34z_main_loader_release_gap \
             deployment.tests.test_c35a_signed_late_native_modules \
+            deployment.tests.test_c35b_loader_config_dependency_review \
             deployment.tests.test_final_dev_workflow \
             deployment.tests.test_broker_https_ingress \
             deployment.tests.test_broker_loopback_listener \
