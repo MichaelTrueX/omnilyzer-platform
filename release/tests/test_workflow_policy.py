@@ -152,3 +152,51 @@ class WorkflowPolicyTests(unittest.TestCase):
         for relative, expected in PROTECTED.items():
             with self.subTest(relative=relative):
                 self.assertEqual(hashlib.sha256((ROOT / relative).read_bytes()).hexdigest(), expected)
+
+
+class CanarySecurityReviewWorkflowTests(unittest.TestCase):
+    """Guard the separate, unprivileged review-only security workflow."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.path = ROOT / ".github/workflows/task013-canary-security-review.yml"
+        cls.raw = cls.path.read_text(encoding="utf-8")
+        cls.workflow = yaml.safe_load(cls.raw)
+        cls.job = cls.workflow["jobs"]["canary-security"]
+        cls.steps = cls.job["steps"]
+
+    def test_event_and_permissions_are_read_only(self) -> None:
+        self.assertEqual(self.workflow["permissions"], {"contents": "read"})
+        self.assertIn("pull_request:", self.raw)
+        self.assertNotRegex(self.raw, r"(?m)^  (?:push|workflow_dispatch|schedule):")
+        self.assertNotIn("environment", self.job)
+        self.assertNotIn("id-token", self.raw)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository",
+                      self.job["if"])
+
+    def test_every_external_action_is_exactly_pinned(self) -> None:
+        names = [step["uses"] for step in self.steps if "uses" in step]
+        self.assertEqual(len(names), 6)
+        for name in names:
+            with self.subTest(action=name):
+                self.assertRegex(name, r"^[^@]+@[0-9a-f]{40}$")
+        checkout = next(item for item in self.steps if item["name"] == "Check out exact PR HEAD")
+        self.assertIs(checkout["with"]["persist-credentials"], False)
+        self.assertEqual(checkout["with"]["ref"], "${{ github.event.pull_request.head.sha }}")
+
+    def test_build_and_policy_are_fail_closed_without_publishing(self) -> None:
+        build = next(item for item in self.steps if item["name"] == "Build private OCI review archive")
+        self.assertIs(build["with"]["push"], False)
+        self.assertIs(build["with"]["load"], False)
+        self.assertEqual(build["with"]["outputs"],
+                         "type=oci,dest=${{ runner.temp }}/task013-review-handoff/"
+                         "task013-release-canary-0.14.3.oci.tar")
+        self.assertIn("network: none", self.raw)
+        names = [step["name"] for step in self.steps]
+        self.assertLess(names.index("Verify exact executable OCI contract"),
+                        names.index("Apply unchanged fail-closed Critical/High policy"))
+        self.assertIn("python3 -m release.denial_evidence", self.raw)
+        self.assertIn("python3 -m release.vulnerability_policy", self.raw)
+        for banned in ("cosign sign", "request_oidc", "publish_zot", "publish_forgejo",
+                       "docker login", "docker push", "gh release create"):
+            self.assertNotIn(banned, self.raw)

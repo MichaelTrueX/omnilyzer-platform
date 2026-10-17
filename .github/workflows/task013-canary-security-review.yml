@@ -1,0 +1,176 @@
+# File: .github/workflows/task013-canary-security-review.yml
+# Purpose: Prove a proposed Task 013 canary release meets the existing executable
+# OCI and Critical/High vulnerability gates before any publication authorization.
+# Related: .github/workflows/platform-release.yml, release/executable_oci.py,
+# release/vulnerability_policy.py, release/fixtures/task013-canary/oci/Dockerfile.
+# Authority: PR-only, no publisher OIDC, no registry write, no deployment.
+
+name: Task 013 canary security review
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/task013-canary-security-review.yml'
+      - 'release/**'
+
+permissions:
+  contents: read
+
+jobs:
+  canary-security:
+    # Section 1: Explicitly exclude forks so untrusted remote source is not built.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      # Section 2: Check out the exact proposed PR source without credentials.
+      - name: Check out exact PR HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      # Section 3: Bind a synthetic, unpublished version and exact source SHA.
+      - name: Create unpublished Task 013 plan and packages
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          mkdir -m 0700 "$RUNNER_TEMP/task013-review-handoff"
+          python3 -m release.release_plan materialize \
+            release/fixtures/task013-canary/release-plan-template.json \
+            0.14.3 "$SOURCE_SHA" "$RUNNER_TEMP/task013-review-plan.json" \
+            --repository "$GITHUB_WORKSPACE"
+          python3 -m release.build_release packages \
+            --plan "$RUNNER_TEMP/task013-review-plan.json" \
+            --output "$RUNNER_TEMP/task013-review-handoff" \
+            --repository "$GITHUB_WORKSPACE"
+
+      # Section 4: Reuse the exact pinned release builder without publishing.
+      - name: Set up pinned Buildx and BuildKit
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          version: v0.36.1
+          driver: docker-container
+          driver-opts: image=moby/buildkit:v0.24.0@sha256:6eceb8971ce4fceb3daca562832642706238b7eea72941fcf9896c93c3c4a53e
+
+      - name: Verify pinned image builder versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx version | python3 -m release.builder_versions buildx
+          docker buildx inspect --bootstrap | python3 -m release.builder_versions buildkit
+
+      - name: Build private OCI review archive
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: release/fixtures/task013-canary/oci
+          file: release/fixtures/task013-canary/oci/Dockerfile
+          platforms: linux/amd64
+          pull: true
+          no-cache: true
+          network: none
+          push: false
+          load: false
+          provenance: false
+          sbom: false
+          build-args: |
+            RELEASE_VERSION=0.14.3
+            SOURCE_SHA=${{ github.event.pull_request.head.sha }}
+            OCI_REPOSITORY=omnilyzer/task013-release-canary
+          outputs: type=oci,dest=${{ runner.temp }}/task013-review-handoff/task013-release-canary-0.14.3.oci.tar
+
+      # Section 5: Verify the complete OCI schema, blobs, platform and runtime.
+      - name: Verify exact executable OCI contract
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 -m release.executable_oci \
+            --archive "$RUNNER_TEMP/task013-review-handoff/task013-release-canary-0.14.3.oci.tar" \
+            --release-version 0.14.3 \
+            --source-sha "$SOURCE_SHA" \
+            --repository omnilyzer/task013-release-canary
+
+      # Section 6: Use the same pinned scanners as the publication workflow.
+      - name: Install pinned Syft
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.22.2
+        with:
+          syft-version: v1.51.0
+
+      - name: Install pinned Grype
+        id: grype
+        uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.3.0
+        with:
+          grype-version: v0.118.0
+
+      - name: Scan all three unpublished artifacts
+        shell: bash
+        env:
+          GRYPE_COMMAND: ${{ steps.grype.outputs.cmd }}
+        run: |
+          set -euo pipefail
+          test -x "$GRYPE_COMMAND"
+          grype_version="$({ "$GRYPE_COMMAND" version; } 2>&1)"
+          python3 -c \
+            'import re,sys; versions = re.findall(r"(?im)^version:\s*v?([^\s]+)\s*$", sys.stdin.read()); raise SystemExit(0 if versions == ["0.118.0"] else "unexpected Grype version")' \
+            <<< "$grype_version"
+          handoff="$RUNNER_TEMP/task013-review-handoff"
+          python3 -m release.prepare_scan_roots \
+            --wheel "$handoff/omnilyzer_release_canary-0.14.3-py3-none-any.whl" \
+            --npm "$handoff/omnilyzer-release-canary-0.14.3.tgz" \
+            --output "$RUNNER_TEMP/task013-review-scan-roots"
+          syft scan "dir:$RUNNER_TEMP/task013-review-scan-roots/python" \
+            -o "cyclonedx-json@1.6=$handoff/python-sbom.cdx.json"
+          syft scan "dir:$RUNNER_TEMP/task013-review-scan-roots/npm" \
+            -o "cyclonedx-json@1.6=$handoff/npm-sbom.cdx.json"
+          syft scan "oci-archive:$handoff/task013-release-canary-0.14.3.oci.tar" \
+            -o "cyclonedx-json@1.6=$handoff/oci-sbom.cdx.json"
+          "$GRYPE_COMMAND" "sbom:$handoff/python-sbom.cdx.json" -o json > "$handoff/python-grype.json"
+          "$GRYPE_COMMAND" "sbom:$handoff/npm-sbom.cdx.json" -o json > "$handoff/npm-grype.json"
+          "$GRYPE_COMMAND" "sbom:$handoff/oci-sbom.cdx.json" -o json > "$handoff/oci-grype.json"
+          "$GRYPE_COMMAND" db status -o json > "$RUNNER_TEMP/task013-review-grype-db.raw.json"
+          python3 -m release.vulnerability_policy sanitize-db \
+            "$RUNNER_TEMP/task013-review-grype-db.raw.json" "$handoff/grype-db-status.json"
+          rm -f "$RUNNER_TEMP/task013-review-grype-db.raw.json"
+
+      # Section 7: Preserve bounded diagnostics before fail-closed policy review.
+      - name: Stage review-only security evidence
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 -m release.denial_evidence \
+            --handoff "$RUNNER_TEMP/task013-review-handoff" \
+            --policy release/vulnerability-policy.json \
+            --output "$RUNNER_TEMP/task013-review-evidence" \
+            --repository "$GITHUB_WORKSPACE" \
+            --expected-version 0.14.3 --expected-sha "$SOURCE_SHA"
+
+      - name: Apply unchanged fail-closed Critical/High policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/task013-review-evidence"
+          python3 -m release.vulnerability_policy \
+            --policy "$evidence/vulnerability-policy.json" \
+            --python "$evidence/python-grype.json" \
+            --npm "$evidence/npm-grype.json" \
+            --oci "$evidence/oci-grype.json" \
+            --evaluation-date "$(date -u +%F)" \
+            --output "$evidence/vulnerability-policy-result.json"
+
+      # Section 8: Make the review evidence inspectable without release rights.
+      - name: Upload review evidence only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        with:
+          name: task013-canary-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/task013-review-evidence/
+          if-no-files-found: warn
+          retention-days: 30
