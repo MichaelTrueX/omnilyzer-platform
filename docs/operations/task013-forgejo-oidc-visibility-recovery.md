@@ -1,13 +1,14 @@
 <!--
 File: docs/operations/task013-forgejo-oidc-visibility-recovery.md
-Purpose: Record the verified 0.14.4 partial-release authentication failure and
-         stage one narrowly scoped Forgejo OIDC Authorized Integration correction.
+Purpose: Record the verified 0.14.4 partial-release authentication failure,
+         the approved one-rule Forgejo OIDC repair and its guarded recovery tests.
 Related: .github/workflows/platform-release.yml, release/request_oidc.py,
          release/publish_forgejo.py, release/README.md,
          release/environments/dev.json, GitHub PR #192,
          GitHub Actions run 39010764876.
-Authority: DOCUMENTATION / REVIEW ONLY. This document neither changes a live
-           integration nor authorizes a release, merge, deployment or retry.
+Authority: This version documents a separately user-approved live single-rule
+           change. The draft PR itself remains documentation-only, and grants no
+           merge, release, publishing, DEV or PROD deployment authority.
 -->
 
 # Task 013 - Forgejo OIDC visibility claim reconciliation
@@ -73,14 +74,16 @@ Authorized Integration audience. The pipeline also already uses the documented
 changes to `release/request_oidc.py` or `release/publish_forgejo.py`
 are justified by current evidence.
 
-## Proposed one-field correction - **not applied**
+## Approved one-field correction - **applied 2026-10-17**
 
-After **separate explicit approval** to modify the live Forgejo Authorized
-Integration, edit only Integration ID `1`, owned by `gha-publisher`,
-keeping the same issuer, audience, ownership, capability scope, resource
-selection, and all other claim rules.
+The owner explicitly approved editing the live Forgejo Authorized Integration
+in this conversation on 2026-10-17. A guarded PostgreSQL transaction then
+changed **only one claim-rule JSON value** in Integration ID `1`, owned by
+`gha-publisher`, without recreating the integration. All other rules, issuer,
+audience, ownership, permission scope, resource selection and timestamps
+were compared inside the transaction and confirmed unchanged.
 
-| Claim | Before | Proposed |
+| Claim | Before | After |
 |---|---|---|
 | `repository_visibility`, operator `eq` | `private` | `public` |
 
@@ -101,56 +104,70 @@ and must be preserved. Do **not** make the GitHub repository private merely
 to satisfy this old rule; changing repository visibility is a separate
 product/security decision and would have broader consequences.
 
-The supported management path is **Forgejo > Settings > Authorized Integrations**
-while signed in as the integration owner. If an administrator cannot edit a
-different user's integration through the UI, do not reset credentials or create
-an all-scope admin token. A separate, explicitly authorized, backed-up,
-single-row update can be developed and tested only if the supported UI cannot
-make the change. This document does not authorize database writes.
+The standard supported management path is **Forgejo > Settings > Authorized
+Integrations**, signed in as `gha-publisher`. No interactive owner session was
+available through the authorized connected terminal. The owner separately
+approved changing the live rule, so a **single guarded direct database
+transaction** was used instead. This path is exceptional, not a general
+recommendation for routine integrations management. It did not create access
+tokens, alter application code or restart either container.
 
-## Guarded execution plan for the future approval
+### Executed transaction and preserved rollback evidence
 
-1. Reconfirm the protected-main GitHub repository is still public, compare
-   the six existing integration claim restrictions to the read-only baseline,
-   and confirm Integration ID `1` still matches its original owner/audience.
-   Stop if anything differs.
-2. Preserve the exact current `claim_rules` JSON in a root-only, temporary
-   operational evidence file before any change; no JWTs, passwords or
-   secrets need to be copied. Ensure rollback is possible.
-3. Make **only** the `repository_visibility: private` to `public` edit in
-   the same Authorized Integration using its supported management interface.
-   Do not delete/recreate the integration, because that would change `aud`.
-4. Re-read the stored integration **without changing it again**. Verify all
-   other rules, the issuer, audience, permission scope, owner and team
-   relationship are byte-for-byte or semantically unchanged.
-5. In a separately approved, non-publishing diagnostic, request a fresh
-   GitHub OIDC identity **from the exact approved main-branch workflow context**
-   and make one safe authenticated read to the restricted package API. Require
-   a success response before any new publication. Do not expose JWTs in
-   console, artifacts, URLs or screenshots. The diagnostic workflow must
-   avoid new registry write permissions and must not publish anything.
-6. If the read-only authorization check fails, restore the preserved original
-   rule and **stop**. Investigate additional issuer/audience/claim problems
-   separately. Do not relax additional claims speculatively.
-7. Once the auth probe passes, obtain **separate** approval for a completely
-   new release version (provisionally `0.14.5`) from its actual protected-main
-   commit. Verify all registry destinations are unused before dispatching
-   exactly once. Retain version `0.14.4` as partial historical evidence.
-8. Independently verify the final Forgejo package roundtrips, schema-v2
-   provenance/signature bundles, Sigstore OCI signature, exact digest and
-   all tamper-negative tests. Keep DEV and PROD activation **NO-GO** until
-   that downstream acceptance has passed and is separately approved.
+Preflight reconfirmed the GitHub source was public and validated the six-rule
+baseline, exact owner, issuer, audience, scope, and the record's pre-change
+rules hash. Owner-only rollback snapshots were stored on
+`truexdevelopment` with mode `0600`:
+
+- Before: `/home/trusthansen/omnilyzer-security-evidence/forgejo-authorized-integration-id1-before-20261017.json`;
+  SHA-256 `aa9c19f8a0e05116e0afc3bd2636c2c7526eb68c9d57e8f1b4717b3aa1a919b4`.
+- After: `/home/trusthansen/omnilyzer-security-evidence/forgejo-authorized-integration-id1-after-20261017.json`;
+  SHA-256 `ac9dbb26ad2035a4cecddf006bc6855814d25ce39292700ebc33d04ade20c6dd`.
+
+The transaction used serializable isolation, row-level locking, a 5-second
+lock timeout, exact preimage comparison and an enforced one-row update.
+The transaction also compared the old/new complete record except for
+`claim_rules` before committing. A fresh independent read compared both
+snapshot JSON objects and proved that **only rule array element 2**
+changed from `value=private` to `value=public`. Both Forgejo/DB
+containers remained running. An unauthenticated HEAD to the Generic evidence
+endpoint continued to return HTTP 401, so the registry was not accidentally
+opened to anonymous users. **No OIDC bearer token or credentials were read
+or copied.**
+
+## Remaining acceptance plan - no publication authorized
+
+1. **Outstanding live auth proof:** Request a fresh GitHub OIDC JWT in the
+   exact allowlisted main-branch release-workflow identity, then use it for a
+   **read-only** package API request without publishing. Neither an operator
+   shell nor a pull-request CI job can synthesize the valid, short-lived JWT
+   with the required `workflow_ref`. The current main workflow invokes
+   publishing on success, so it must **not** be dispatched as an auth probe.
+   A separately reviewed non-publishing diagnostic mechanism is necessary
+   before claiming end-to-end authorization success.
+2. If the eventual authorized read-only probe fails, restore the preserved
+   original rule and **stop**. Investigate any additional issuer, audience,
+   JWKS, claim or reverse-proxy problems separately. Do not speculate by
+   loosening other rules.
+3. Only after a successful authenticated non-publishing probe and **separate**
+   release approval, use a fresh release version (provisionally `0.14.5`)
+   from the protected-main commit. Check that every registry destination is
+   unused before one dispatch. Preserve the partial `0.14.4` history.
+4. Independently verify all package roundtrips, schema-v2 provenance and
+   Sigstore signatures, OCI digest, and negative tests. DEV and PROD
+   activation remain **NO-GO** unless separately accepted and authorized.
 
 ## Rollback criteria
 
-Before a controlled change, retain the original exact JSON object
-`{"claim":"repository_visibility","compare":"eq","value":"private"}`
-and the complete integration snapshot. On an unexpected permission, owner,
-issuer, audience, scope or workflow change, or a failed authenticated probe,
-restore the original complete claim rules via the supported interface,
-re-read them, and end the operation. Do not delete the integration,
-its publisher account, packages or zot image; do not revoke unrelated
-credentials. The original 401 state is safe because it fails closed.
+The full original configuration is preserved in the mode-0600 before-snapshot.
+On an unexpected permission, owner, issuer, audience, scope or workflow change,
+or failed future authenticated probe, restore the original complete claim
+rules through an approved, narrowly guarded mechanism, re-read and compare
+the entire integration, and end the operation. Never delete the integration,
+the publisher account, packages or the existing zot image. Do not revoke
+unrelated credentials or regenerate its audience. The original private-only
+rule will deny the current public repository and is the safe fail-closed
+rollback state.
 
 ## Source-of-truth references
 
@@ -167,6 +184,8 @@ credentials. The original 401 state is safe because it fails closed.
 - Earlier successful, unpublished PR security acceptance:
   https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/39009971055
 
-**Boundary: REVIEW-ONLY draft PR.** No server configuration changed, no
-registration/login altered, no static secrets created, no files published
-to Forgejo, no release retried, no deployment performed.
+**Boundary: draft PR remains DOCUMENTATION-ONLY.** Its separate, explicitly
+approved live one-rule Forgejo integration update is complete; no new
+registration/login configuration, static secret, Forgejo package publication,
+release rerun, PR merge, DEV activation or PROD deployment was performed.
+OIDC end-to-end authentication has **not yet been demonstrated**.
