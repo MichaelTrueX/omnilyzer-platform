@@ -1,9 +1,17 @@
+# File: release/tests/test_executable_canary.py
+# Purpose: Validate the Task 013 executable canary and immutable release security.
+# Related: release/executable_oci.py, .github/workflows/platform-release.yml,
+#          release/tests/test_workflow_policy.py.
+# Sections: runtime health and migration; OCI archive tamper checks;
+#           pinned builder and unmodified publisher protections.
+
 from __future__ import annotations
 
 import gzip
 import hashlib
 from http.server import ThreadingHTTPServer
 import io
+import json
 import json
 from pathlib import Path
 import socket
@@ -38,7 +46,7 @@ BASE_ENVIRONMENT = {
     "CANARY_SOURCE_SHA": SOURCE_SHA,
 }
 PROTECTED_HASHES = {
-    ".github/workflows/platform-release.yml": "8dbb6ceef9acbfdc301444b30e602138ccee38da47d16ea410bfb67a05f63c39",
+    ".github/workflows/platform-release.yml": "2e18ebaa5775ddcc18d0a69189c9ab471671a7b5dcfb9252011c91a5d62b4432",
     "release/vulnerability-policy.json": "475ad38ef4ae8d89dcf7d4e03eeb76701085fdcd4ebdb8ae9aa41a7bce2cde8f",
     "release/publish_forgejo.py": "a30497ac6af29c35c860f09342d8b3a5d34e0baf092ea1fec0aba818105b42bd",
     "release/publish_zot.py": "e6271f96d3eb7b66df06f2bea6e90addbad88d44b0e461de8bdcd26b085b8ea7",
@@ -46,6 +54,18 @@ PROTECTED_HASHES = {
     "deployment/environments/dev.json": "4b1cf03bdcd1fa7d8fd848862137a4dca7dc834b1cc45fa1d7cffd2756722ae8",
     "deployment/environments/staging.json": "7fde448d38022e4e435218c1fe6049c629ee091031845fce93156dcc787a7358",
     "deployment/environments/prod.json": "a08cd3d718ffa0531071ed7ad0aeafc19b4edeb0a82e74bd87a6044bbabebcce",
+}
+
+
+# These are hashes of the *semantic* existing release job dictionaries on
+# protected main at 05bd5dab1ca8b4c32cc6f30b082df20c911ac50f. The added
+# diagnostic-only condition on the gate is excluded; all other job bytes remain
+# contract-equivalent. They prevent accidental publisher rewrites during probing.
+LEGACY_RELEASE_JOB_SHA256 = {
+    "gate": "371251608da9b803edb782e65d59025456135f31eff6c7a823e1d2790b49350d",
+    "build": "6094e80081b13639dd0f929b160a2f7ae68a75707902667d3332f1275af09d8f",
+    "publish-zot": "f464a5314817c36563b96c95403e9911627e766d1a2503012b0deb5f823469a4",
+    "publish-forgejo": "0c0311ad7eed642abe708b9d37f421f092705a037ee084bec8a33f8e205fa543",
 }
 
 
@@ -410,7 +430,16 @@ class ImageAndPipelineTests(unittest.TestCase):
         workflow = yaml.safe_load((ROOT / ".github/workflows/platform-release.yml").read_text())
         capable = [name for name, job in workflow["jobs"].items()
                    if job.get("permissions", {}).get("id-token") == "write"]
-        self.assertEqual(capable, ["publish-zot", "publish-forgejo"])
+        self.assertEqual(capable, ["forgejo-auth-probe", "publish-zot", "publish-forgejo"])
+        # Existing package builders/publishers are semantically byte-unchanged.
+        for name, expected_hash in LEGACY_RELEASE_JOB_SHA256.items():
+            with self.subTest(legacy_job=name):
+                legacy = dict(workflow["jobs"][name])
+                if name == "gate":
+                    self.assertEqual(legacy.pop("if"),
+                                     "${{ inputs.auth_probe == false }}")
+                encoded = json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
+                self.assertEqual(hashlib.sha256(encoded).hexdigest(), expected_hash)
 
 
 if __name__ == "__main__":

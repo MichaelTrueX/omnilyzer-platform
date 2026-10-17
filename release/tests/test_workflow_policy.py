@@ -1,3 +1,10 @@
+# File: release/tests/test_workflow_policy.py
+# Purpose: Defend the Task 013 release and isolated read-only probe boundaries.
+# Related: .github/workflows/platform-release.yml,
+#          release/forgejo_oidc_probe.py, release/environments/dev.json.
+# Sections: baseline workflow assertions; OIDC and packaging policy;
+#           no-publish PR canary security checks.
+
 from __future__ import annotations
 
 import hashlib
@@ -37,15 +44,75 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("workflow_dispatch", self.raw)
         self.assertNotRegex(self.raw, r"(?m)^  (?:push|pull_request|schedule):")
 
+    def test_auth_probe_is_explicit_boolean_and_defaults_off(self) -> None:
+        """Preserve the original two required release inputs and default behavior."""
+        dispatched = self.workflow[True]["workflow_dispatch"]["inputs"]
+        self.assertEqual(set(dispatched), {"version", "source_sha", "auth_probe"})
+        self.assertIs(dispatched["version"]["required"], True)
+        self.assertIs(dispatched["source_sha"]["required"], True)
+        self.assertEqual(dispatched["auth_probe"],
+                         {"description": "Read-only Forgejo OIDC diagnostic, skips build and publication",
+                          "required": False, "type": "boolean", "default": False})
+
+    def test_probe_and_release_paths_are_mutually_exclusive(self) -> None:
+        """Prove diagnostic mode skips the gate, build, and both publishers."""
+        self.assertEqual(self.jobs["forgejo-auth-probe"]["if"],
+                         "${{ inputs.auth_probe == true }}")
+        self.assertEqual(self.jobs["gate"]["if"], "${{ inputs.auth_probe == false }}")
+        self.assertEqual(self.jobs["build"]["needs"], "gate")
+        self.assertEqual(self.jobs["publish-zot"]["needs"], ["gate", "build"])
+        self.assertEqual(self.jobs["publish-forgejo"]["needs"],
+                         ["gate", "build", "publish-zot"])
+        self.assertNotIn("needs", self.jobs["forgejo-auth-probe"])
+        self.assertEqual(self.jobs["forgejo-auth-probe"]["environment"],
+                         "task013-dev-release")
+        self.assertEqual(self.jobs["forgejo-auth-probe"]["timeout-minutes"], 5)
+
+    def test_probe_uses_exact_workflow_identity_and_no_writes(self) -> None:
+        """Keep the OIDC JWT confined to one read-only package GET."""
+        probe = self.jobs["forgejo-auth-probe"]
+        self.assertEqual(probe["permissions"], {"contents": "read", "id-token": "write"})
+        steps = probe["steps"]
+        self.assertEqual(len(steps), 3)
+        self.assertEqual(steps[0]["with"]["ref"], "${{ github.sha }}")
+        self.assertIs(steps[0]["with"]["persist-credentials"], False)
+        validation = steps[1]["run"]
+        for check in (
+            'test "$SOURCE_REPOSITORY" = "MichaelTrueX/omnilyzer-platform"',
+            'test "$SOURCE_REF" = "refs/heads/main"',
+            'test "$REQUESTED_SHA" = "$SOURCE_SHA"',
+            'test "$(git rev-parse HEAD)" = "$SOURCE_SHA"',
+            'test "$SOURCE_WORKFLOW_REF" = "MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main"',
+        ):
+            self.assertIn(check, validation)
+        diagnostic = steps[2]["run"]
+        self.assertIn('trap \'rm -f "$token_file"\' EXIT', diagnostic)
+        self.assertIn("python3 -m release.request_oidc", diagnostic)
+        self.assertIn("--audience u:2:316bec9a-53e4-4807-9557-7febdc979d0a",
+                      diagnostic)
+        self.assertIn("python3 -m release.forgejo_oidc_probe --token-file", diagnostic)
+        for forbidden in ("publish_forgejo", "publish_zot", "docker login", "cosign sign",
+                          "upload-artifact", "gh release", "curl -X", "http POST"):
+            self.assertNotIn(forbidden, str(steps))
+        source = (ROOT / "release/forgejo_oidc_probe.py").read_text(encoding="utf-8")
+        self.assertIn('method="GET"', source)
+        self.assertIn("https://registry-dev.omnilyzer.ai/api/v1/packages/omnilyzer?type=pypi&limit=1",
+                      source)
+        self.assertNotIn('method="POST"', source)
+        self.assertNotIn('method="PUT"', source)
+
     def test_build_has_read_only_contents_and_no_oidc(self) -> None:
         self.assertEqual(self.jobs["build"]["permissions"], {"contents": "read"})
         self.assertNotIn("id-token", self.jobs["build"]["permissions"])
 
-    def test_only_publishers_have_oidc(self) -> None:
-        capable = [name for name, job in self.jobs.items() if job.get("permissions", {}).get("id-token") == "write"]
-        self.assertEqual(capable, ["publish-zot", "publish-forgejo"])
+    def test_oidc_only_for_publishers_and_read_only_probe(self) -> None:
+        """Do not grant id-token permission to the ordinary gate or build."""
+        capable = [name for name, job in self.jobs.items()
+                   if job.get("permissions", {}).get("id-token") == "write"]
+        self.assertEqual(capable, ["forgejo-auth-probe", "publish-zot", "publish-forgejo"])
         for name in capable:
-            self.assertEqual(self.jobs[name]["permissions"], {"contents": "read", "id-token": "write"})
+            self.assertEqual(self.jobs[name]["permissions"],
+                             {"contents": "read", "id-token": "write"})
 
     def test_publishers_verify_before_oidc_and_do_not_build(self) -> None:
         for name in ("publish-zot", "publish-forgejo"):
