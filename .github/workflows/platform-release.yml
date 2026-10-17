@@ -1,6 +1,10 @@
 # File: .github/workflows/platform-release.yml
-# Purpose: Builds one verified platform release and publishes it with short-lived OIDC identities.
-# Phase 1 keeps publishing disabled in the reviewed DEV environment configuration.
+# Purpose: Builds a gated signed release or runs an isolated, non-publishing Forgejo
+#          OIDC read-only diagnostic under this exact allowlisted workflow identity.
+# Related: release/forgejo_oidc_probe.py, release/request_oidc.py,
+#          release/tests/test_workflow_policy.py, release/environments/dev.json.
+# Authority: Diagnostic mode skips the release gate and every publisher; normal
+#            release mode keeps its existing version/SHA/policy controls.
 
 name: Platform release
 
@@ -15,6 +19,11 @@ on:
         description: Exact 40-character commit SHA selected from main
         required: true
         type: string
+      auth_probe:
+        description: Read-only Forgejo OIDC diagnostic, skips build and publication
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -23,7 +32,51 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Section 1: A selected OIDC probe runs under THIS exact workflow_ref on main.
+  # No dependency path to gate, build, or a publisher exists in diagnostic mode.
+  forgejo-auth-probe:
+    if: ${{ inputs.auth_probe == true }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: task013-dev-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out exact dispatched source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate the approved source and workflow identity before requesting OIDC
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ github.event.inputs.source_sha }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE_REPOSITORY" = "MichaelTrueX/omnilyzer-platform"
+          test "$SOURCE_REF" = "refs/heads/main"
+          test "$REQUESTED_SHA" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$SOURCE_WORKFLOW_REF" = "MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main"
+      - name: Verify Forgejo OIDC through one fixed read-only package GET
+        shell: bash
+        run: |
+          set -euo pipefail
+          token_file="$RUNNER_TEMP/forgejo-readonly-oidc.jwt"
+          trap 'rm -f "$token_file"' EXIT
+          python3 -m release.request_oidc \
+            --audience u:2:316bec9a-53e4-4807-9557-7febdc979d0a \
+            --output "$token_file"
+          python3 -m release.forgejo_oidc_probe --token-file "$token_file"
+
+  # Section 2: Release gate runs only in the DEFAULT non-diagnostic mode.
   gate:
+    if: ${{ inputs.auth_probe == false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

@@ -1,3 +1,8 @@
+# File: deployment/tests/test_execution.py
+# Purpose: Test Task 014 execution boundary and protected source hashes.
+# Related: deployment/execution.py and .github/workflows/platform-release.yml.
+# Sections: existing closed Task 014 regression contracts and immutable source checks.
+
 """Closed executor request, privilege boundary, and non-live regression tests."""
 
 from __future__ import annotations
@@ -356,7 +361,7 @@ class NonLiveRegressionTests(unittest.TestCase):
         "deployment/environments/staging.json": "7fde448d38022e4e435218c1fe6049c629ee091031845fce93156dcc787a7358",
         "deployment/environments/prod.json": "a08cd3d718ffa0531071ed7ad0aeafc19b4edeb0a82e74bd87a6044bbabebcce",
         "release/vulnerability-policy.json": "475ad38ef4ae8d89dcf7d4e03eeb76701085fdcd4ebdb8ae9aa41a7bce2cde8f",
-        ".github/workflows/platform-release.yml": "8dbb6ceef9acbfdc301444b30e602138ccee38da47d16ea410bfb67a05f63c39",
+        ".github/workflows/platform-release.yml": "2e18ebaa5775ddcc18d0a69189c9ab471671a7b5dcfb9252011c91a5d62b4432",
     }
 
     def test_protected_live_files_are_byte_identical(self) -> None:
