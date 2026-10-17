@@ -27,7 +27,7 @@ INGRESS_HASHES = {
     "nginx/nginx.conf": "cbb696e51219bea9d6b337db0346cf93a807c5477143dad7f9baf23764fd476b",
 }
 PROTECTED = {
-    ".github/workflows/platform-release.yml": "2e18ebaa5775ddcc18d0a69189c9ab471671a7b5dcfb9252011c91a5d62b4432",
+    ".github/workflows/platform-release.yml": "9b90156c4ff4347651b4b3bf6c7e329c48de14c5510a25852c13d80b9a806b53",
     "deployment/environments/dev.json": "4b1cf03bdcd1fa7d8fd848862137a4dca7dc834b1cc45fa1d7cffd2756722ae8",
     "deployment/environments/staging.json": "7fde448d38022e4e435218c1fe6049c629ee091031845fce93156dcc787a7358",
     "deployment/environments/prod.json": "a08cd3d718ffa0531071ed7ad0aeafc19b4edeb0a82e74bd87a6044bbabebcce",

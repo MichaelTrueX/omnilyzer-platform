@@ -1,8 +1,10 @@
 # File: .github/workflows/platform-release.yml
-# Purpose: Builds a gated signed release or runs an isolated, non-publishing Forgejo
-#          OIDC read-only diagnostic under this exact allowlisted workflow identity.
-# Related: release/forgejo_oidc_probe.py, release/request_oidc.py,
-#          release/tests/test_workflow_policy.py, release/environments/dev.json.
+# Purpose: Gate an immutable release behind authenticated, read-only absence
+#          checks for all four remote destinations before any publication,
+#          or run the existing isolated Forgejo OIDC diagnostic.
+# Related: release/registry_absence_preflight.py, release/forgejo_oidc_probe.py,
+#          release/request_oidc.py, release/tests/test_workflow_policy.py,
+#          release/environments/dev.json.
 # Authority: Diagnostic mode skips the release gate and every publisher; normal
 #            release mode keeps its existing version/SHA/policy controls.
 
@@ -318,6 +320,28 @@ jobs:
             --handoff "$RUNNER_TEMP/platform-release-handoff" \
             --repository "$GITHUB_WORKSPACE" --expected-version "$RELEASE_VERSION" \
             --expected-sha "$SOURCE_SHA" --require-production-evidence
+      # Section: pre-publication absent-version proof. No writes until this
+      # job authenticates to BOTH registries and confirms all four are unused.
+      - name: Verify unused version on both registries before publication
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          umask 077
+          forgejo_token="$RUNNER_TEMP/task013-preflight-forgejo.jwt"
+          zot_token="$RUNNER_TEMP/task013-preflight-zot.jwt"
+          trap 'rm -f "$forgejo_token" "$zot_token"' EXIT
+          python3 -m release.request_oidc \
+            --audience u:2:316bec9a-53e4-4807-9557-7febdc979d0a \
+            --output "$forgejo_token"
+          python3 -m release.request_oidc \
+            --audience https://oci-dev.omnilyzer.ai \
+            --output "$zot_token"
+          python3 -m release.registry_absence_preflight \
+            --version "$RELEASE_VERSION" \
+            --forgejo-token-file "$forgejo_token" \
+            --zot-token-file "$zot_token"
       - name: Request short-lived zot OIDC and publish prebuilt OCI
         shell: bash
         env:

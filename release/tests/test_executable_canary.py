@@ -46,7 +46,7 @@ BASE_ENVIRONMENT = {
     "CANARY_SOURCE_SHA": SOURCE_SHA,
 }
 PROTECTED_HASHES = {
-    ".github/workflows/platform-release.yml": "2e18ebaa5775ddcc18d0a69189c9ab471671a7b5dcfb9252011c91a5d62b4432",
+    ".github/workflows/platform-release.yml": "9b90156c4ff4347651b4b3bf6c7e329c48de14c5510a25852c13d80b9a806b53",
     "release/vulnerability-policy.json": "475ad38ef4ae8d89dcf7d4e03eeb76701085fdcd4ebdb8ae9aa41a7bce2cde8f",
     "release/publish_forgejo.py": "a30497ac6af29c35c860f09342d8b3a5d34e0baf092ea1fec0aba818105b42bd",
     "release/publish_zot.py": "e6271f96d3eb7b66df06f2bea6e90addbad88d44b0e461de8bdcd26b085b8ea7",
@@ -64,7 +64,7 @@ PROTECTED_HASHES = {
 LEGACY_RELEASE_JOB_SHA256 = {
     "gate": "371251608da9b803edb782e65d59025456135f31eff6c7a823e1d2790b49350d",
     "build": "6094e80081b13639dd0f929b160a2f7ae68a75707902667d3332f1275af09d8f",
-    "publish-zot": "f464a5314817c36563b96c95403e9911627e766d1a2503012b0deb5f823469a4",
+    "publish-zot": "4080e507fb9fc3ed12df8e2efc3964d93e554436d60666eff47e932901d1cf6a",
     "publish-forgejo": "0c0311ad7eed642abe708b9d37f421f092705a037ee084bec8a33f8e205fa543",
 }
 
