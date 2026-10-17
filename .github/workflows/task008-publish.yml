@@ -239,7 +239,7 @@ jobs:
       - name: Install exact Grype for build-time SBOM vulnerability scanning
         id: grype
         # anchore/scan-action/download-grype pinned for Grype v0.118.0
-        uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2
+        uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439
         with:
           grype-version: v0.118.0
           cache-db: false
