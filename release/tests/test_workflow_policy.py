@@ -137,7 +137,8 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn('"publishing_enabled": true', (ROOT / "release/environments/dev.json").read_text())
         self.assertEqual(self.jobs["publish-zot"]["if"], "needs.gate.outputs.publishing_enabled == 'true'")
         self.assertEqual(self.jobs["publish-forgejo"]["if"], "needs.gate.outputs.publishing_enabled == 'true'")
-        dispatch = self.raw.split("permissions: {}", 1)[0]
+        # Inspect only YAML dispatch inputs, excluding introductory file comments.
+        dispatch = self.raw.split("\non:\n", 1)[1].split("permissions: {}", 1)[0]
         self.assertNotIn("registry", dispatch.lower())
         self.assertNotIn("origin", dispatch.lower())
         self.assertEqual(self.jobs["publish-zot"]["environment"], "task013-dev-release")
@@ -199,6 +200,43 @@ class WorkflowPolicyTests(unittest.TestCase):
             self.assertEqual(generate["env"][field], "${{ " + context + " }}")
         self.assertIn("python3 -m release.provenance", generate["run"])
         self.assertIn("cosign sign-blob", sign["run"])
+
+    def test_authenticated_absence_gate_precedes_any_external_write(self) -> None:
+        """Require read-only OIDC preflight before OCI and package publication."""
+        zot = self.jobs["publish-zot"]
+        steps = zot["steps"]
+        names = [step["name"] for step in steps]
+        preflight_index = names.index("Verify unused version on both registries before publication")
+        publish_index = names.index("Request short-lived zot OIDC and publish prebuilt OCI")
+        verify_index = names.index("Verify complete handoff before requesting OIDC")
+        self.assertLess(verify_index, preflight_index)
+        self.assertLess(preflight_index, publish_index)
+        self.assertEqual(zot["needs"], ["gate", "build"])
+        self.assertEqual(self.jobs["publish-forgejo"]["needs"], ["gate", "build", "publish-zot"])
+        self.assertEqual(zot["permissions"], {"contents": "read", "id-token": "write"})
+        self.assertEqual(zot["environment"], "task013-dev-release")
+        step = steps[preflight_index]
+        self.assertEqual(step["env"]["RELEASE_VERSION"], "${{ github.event.inputs.version }}")
+        shell = step["run"]
+        for required in (
+            'umask 077',
+            '--audience u:2:316bec9a-53e4-4807-9557-7febdc979d0a',
+            '--audience https://oci-dev.omnilyzer.ai',
+            'python3 -m release.registry_absence_preflight',
+            '--version "$RELEASE_VERSION"',
+            '--forgejo-token-file "$forgejo_token"',
+            '--zot-token-file "$zot_token"',
+            "trap 'rm -f",
+        ):
+            self.assertIn(required, shell)
+        for forbidden in ("publish_zot", "publish_forgejo", "curl -X POST",
+                          "http POST", "docker push", "npm publish"):
+            self.assertNotIn(forbidden, shell)
+        code = (ROOT / "release/registry_absence_preflight.py").read_text()
+        self.assertIn('method="HEAD"', code)
+        self.assertIn('method not in {"GET", "HEAD"}', code)
+        self.assertNotIn('method="PUT"', code)
+        self.assertNotIn('method="POST"', code)
 
     def test_forgejo_publisher_reads_back_each_prebuilt_output(self) -> None:
         code = (ROOT / "release/publish_forgejo.py").read_text()
