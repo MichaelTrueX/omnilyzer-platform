@@ -9,6 +9,9 @@
 from __future__ import annotations
 
 import io
+import base64
+import json
+import contextlib
 import tempfile
 import unittest
 import urllib.error
@@ -17,6 +20,7 @@ from unittest.mock import patch
 
 from release.forgejo_oidc_probe import (
     MAX_RESPONSE, PROBE_URL, NoRedirect, ProbeError, read_token, verify_read_only,
+    EXPECTED_STRING_CLAIMS, EXPECTED_AUDIENCE, compare_expected_claims, main,
 )
 
 # Section 1: A fake JWT proves validation and redaction without real credentials.
@@ -47,6 +51,58 @@ class _Response:
 
 class ForgejoOidcProbeTests(unittest.TestCase):
     """Check the fixed target, JWT privacy and strictly read-only behavior."""
+
+    def test_claims_match_exact_reviewed_fields(self) -> None:
+        """Check expected field comparisons without network access."""
+        header = {"alg": "RS256", "kid": "example"}
+        data = dict(EXPECTED_STRING_CLAIMS)
+        data["aud"] = EXPECTED_AUDIENCE
+        with patch("release.forgejo_oidc_probe._decode_jwt_json", side_effect=[header, data]):
+            self.assertEqual(compare_expected_claims(TOKEN), ())
+
+    def test_claim_mismatch_returns_only_safe_names(self) -> None:
+        """Do not expose actual values when one trusted field differs."""
+        header = {"alg": "RS256", "kid": "example"}
+        data = dict(EXPECTED_STRING_CLAIMS)
+        data["aud"] = EXPECTED_AUDIENCE
+        data["repository_visibility"] = "other"
+        with patch("release.forgejo_oidc_probe._decode_jwt_json", side_effect=[header, data]):
+            self.assertEqual(compare_expected_claims(TOKEN), ("repository_visibility",))
+
+    def test_cli_failure_reports_names_without_a_request(self) -> None:
+        """Mismatched JWT fields stop before the fixed GET request."""
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "probe.jwt"
+            path.write_text(TOKEN)
+            path.chmod(0o600)
+            out = io.StringIO()
+            with patch.object(sys, "argv", ["probe", "--token-file", str(path)]), \
+                    patch("release.forgejo_oidc_probe.verify_read_only") as request, \
+                    contextlib.redirect_stdout(out), \
+                    self.assertRaises(SystemExit) as caught:
+                main()
+            request.assert_not_called()
+            self.assertEqual(str(caught.exception), "FORGEJO_OIDC_PROBE_CLAIMS_MISMATCH")
+            self.assertIn("FORGEJO_OIDC_CLAIM_aud=MISMATCH", out.getvalue())
+            self.assertNotIn(TOKEN, out.getvalue())
+
+    def test_cli_match_continues_through_existing_get(self) -> None:
+        """All expected matches retain the original read-only behavior."""
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "probe.jwt"
+            path.write_text(TOKEN)
+            path.chmod(0o600)
+            out = io.StringIO()
+            with patch.object(sys, "argv", ["probe", "--token-file", str(path)]), \
+                    patch("release.forgejo_oidc_probe.compare_expected_claims", return_value=()), \
+                    patch("release.forgejo_oidc_probe.verify_read_only") as request, \
+                    contextlib.redirect_stdout(out):
+                self.assertEqual(main(), 0)
+            request.assert_called_once_with(TOKEN)
+            self.assertIn("FORGEJO_OIDC_READ_ONLY_AUTHENTICATION_ACCEPTED", out.getvalue())
+            self.assertNotIn(TOKEN, out.getvalue())
 
     def test_token_file_requires_regular_private_file(self) -> None:
         """Only a regular file with mode 0600 may hold the ephemeral bearer."""

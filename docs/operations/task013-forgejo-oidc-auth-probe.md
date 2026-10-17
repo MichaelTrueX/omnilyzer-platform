@@ -1,14 +1,14 @@
 <!--
 File: docs/operations/task013-forgejo-oidc-auth-probe.md
-Purpose: Explain the non-publishing OIDC authentication diagnostic proposed
-         after the approved Forgejo integration visibility correction.
+Purpose: Record the merged read-only OIDC diagnostic, its 401 result,
+         reviewed server-side findings and a claim-name-only follow-up proposal.
 Related: .github/workflows/platform-release.yml, release/request_oidc.py,
          release/forgejo_oidc_probe.py, release/tests/test_forgejo_oidc_probe.py,
          release/tests/test_workflow_policy.py,
          docs/operations/task013-forgejo-oidc-visibility-recovery.md,
          GitHub Actions release run 39010764876.
-Authority: REVIEW-ONLY. This document does not authorize a merge, diagnostic
-           workflow dispatch, release, registry publication or deployment.
+Authority: REVIEW-ONLY for the follow-up claim audit. No additional workflow
+           dispatch, rule change, release publication or deployment is authorized.
 -->
 
 # Task 013: Forgejo OIDC authentication diagnostic (non-publishing)
@@ -32,9 +32,9 @@ The existing Authorized Integration explicitly permits JWTs only from
 A new independent PR workflow or an operator terminal will **not** possess that
 `workflow_ref`, so running a probe there would not test the real publisher.
 
-## Proposed diagnostic mode (not yet merged or run)
+## Original diagnostic mode - merged and executed
 
-The existing `.github/workflows/platform-release.yml` receives one additional
+The merged `.github/workflows/platform-release.yml` has one additional
 manual boolean input:
 
 - `auth_probe`, default `false`: standard release path remains unchanged.
@@ -68,7 +68,7 @@ accept URLs, HTTP methods, package names, registry credentials, version
 selection or publication instructions. No OCI image, wheel, npm artifact,
 signed bundle or registry object is created.
 
-## Local review and acceptance, before any merge
+## Verified workflow isolation and original review
 
 - The release workflow is only `workflow_dispatch` triggered; repository
   `main` is protected. No pull-request job can request the publisher JWT.
@@ -90,34 +90,99 @@ signed bundle or registry object is created.
 - GitHub PR CI must pass at the exact reviewed commit. Draft PR review alone
   is not proof of the live OIDC integration.
 
-## Future authorized execution - **not part of this review**
+## Actual authorized diagnostic and observed limitation
 
-Only after a separate explicit merge and probe-dispatch approval:
+The owner explicitly approved merging PR #194 and executing exactly one
+nonpublishing diagnostic. Merge commit:
+`dc6b8cff55c435e1d8e9198da3b773e7136eee9c`.
 
-1. Merge the reviewed PR under protected-main rules. Record the new main SHA.
-2. Dispatch the existing `platform-release.yml` **once** from `main` with
-   `auth_probe=true`, `source_sha` equal to that exact new SHA and
-   `version=0.14.4` solely as the already-used harmless concurrency label.
-   The diagnostic job does not build or publish that version.
-3. Inspect GitHub run jobs, not merely the overall workflow conclusion.
-   Accept **only** `forgejo-auth-probe=SUCCESS`, and
-   `gate/build/publish-zot/publish-forgejo=SKIPPED`.
-4. Accept the fixed `FORGEJO_OIDC_READ_ONLY_AUTHENTICATION_ACCEPTED`
-   result and confirm no token, body or artifact leaked into workflow logs.
-5. If the probe is denied, stop; do not rerun publication, broaden existing
-   JWT claim rules, create a PAT or infer that the earlier visibility mismatch
-   was the only issue. Evaluate whether to restore the before snapshot under
-   a new narrowly scoped approval.
-6. If successful, seek **separate owner approval** for one new coordinated
-   release version (provisionally `0.14.5`). Preflight that every registry
-   destination is unused, and preserve the partial `0.14.4` record.
-7. Revalidate signed schema-v2 provenance, independent zot and Forgejo
-   retrieval, signatures, exact digests and fail-closed negative cases.
-   Live DEV/PROD activation remains outside this authorization.
+One approved run
+[39015221560](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/39015221560)
+ran on 2026-10-17 at this exact protected-main SHA. The source SHA, branch,
+repository and workflow identity prechecks passed, and GitHub supplied the
+fresh OIDC token without error. The sole fixed Forgejo package GET returned
+`FORGEJO_OIDC_PROBE_HTTP_401`.
+
+**Release gate, build and both publisher jobs were SKIPPED** and the run
+created no artifacts. No new packages, keys or release versions were
+created. The 401 does **not** establish which Forgejo authentication check
+failed. The corrected Forgejo integration still has six exact claim rules
+and the existing `write:package` capability.
+
+## Read-only root-cause investigation
+
+On 2026-10-17, additional nonmutating inspection verified:
+
+- Forgejo v16.0.3 reads Authorized Integration rules via its database model
+  `GetAuthorizedIntegration(ctx, issuer, audience)`, not a cached claim-rule
+  object. Its optional cache concerns external OIDC metadata and JWKS.
+  A service restart is not indicated to load the corrected database rule.
+- The integration still has `repository_visibility=public`, the original
+  issuer, audience, five other rules and publisher ownership; PostgreSQL
+  agrees with the live Forgejo container's configured `forgejo` database.
+- Forgejo's issuer allowlist explicitly permits
+  `token.actions.githubusercontent.com`.
+- From inside the Forgejo container, GitHub OIDC metadata and JWKS
+  endpoints both returned HTTP 200 with valid TLS verification; the
+  discovery issuer matched the configured one.
+- The reviewed Nginx virtual host proxies to the expected Forgejo
+  loopback service, and no separate Nginx authentication gate is present
+  in that vhost.
+- The Authorized Integration's database `updated_unix` (last-use tracking)
+  remained at 2026-09-07 15:48:25 UTC, consistent with no confirmed
+  successful authentication after the new diagnostic.
+
+The version-matched code and GitHub's documented OIDC claim schema show
+that Forgejo checks issuer/audience and claim rules **before** fetching
+signing metadata. All six configured GitHub claim names are documented
+by GitHub. These findings rule out some configuration hypotheses but
+cannot prove the exact contents of the JWT issued during run 39015221560.
+
+## Follow-up claim-name audit - DRAFT ONLY
+
+A narrow source-only revision to `release/forgejo_oidc_probe.py` first
+decodes only the JWT's JSON header and payload **in the existing GitHub
+Actions process** (without treating the decoded claims as signed or
+authenticated). It compares against the exact already-approved values:
+
+- Header signing algorithm `RS256` and presence of a key ID.
+- Issuer `https://token.actions.githubusercontent.com` and the existing
+  generated Forgejo audience.
+- Repository `MichaelTrueX/omnilyzer-platform`, owner `MichaelTrueX`,
+  repository visibility `public`, ref `refs/heads/main`, exact
+  release workflow ref on main, and `workflow_dispatch` event.
+
+Output consists **only of fixed claim names with `MATCH` or
+`MISMATCH`**. Actual values, signing headers, JWT bytes and response bodies
+are never printed or uploaded. If any comparison fails, the diagnostic
+stops before making any HTTP request. If they all match, it attempts the
+same single previously reviewed HTTPS GET; only the existing strict
+authentication outcome is reported. This is **not** a replacement for
+cryptographic verification by Forgejo.
+
+The workflow YAML, OIDC issuance module, registry endpoints, security
+scopes, release publishers, application code and DEV/PROD settings are
+unchanged. Existing offline network mocks and additional claim reporting
+regressions must pass along with independent PR CI.
+
+## Next separate authorization boundary
+
+Do not run the modified diagnostic from a draft pull request: the issuer
+identity is restricted to the exact merged `platform-release.yml` workflow
+on protected `main`. After all PR checks pass, obtain explicit approval
+to merge and execute at most one read-only probe. Accept only
+`forgejo-auth-probe=SUCCESS` with every original release/publisher job
+`SKIPPED`. If any rule does not match, investigate the named claim with
+the actual integration still fail-closed; do not log raw values or loosen
+the allowlist. If every claim matches but Forgejo still returns 401,
+investigate signature verification or package API permissions next, with
+a separate minimal non-publishing plan. Retain `0.14.4` as a historical
+partial release and do not publish `0.14.5` without separate approval.
 
 ## Explicit non-claims
 
-This proposed change does not prove production application compatibility or
-remediate the unrelated Task 014 deployment broker. It grants no merge, registry
-publication, service activation, rollback deletion, owner password reset, or
-additional registry entitlement. It requires no user-created PAT.
+This follow-up does not prove end-to-end authentication until an
+authorized real run succeeds. It does not authorize another merge,
+diagnostic dispatch, release, registry publication, restoration or
+modification of Forgejo rules, DEV/PROD activation or Task 014 broker
+replacement. It requires no permanent credential.
