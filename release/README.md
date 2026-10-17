@@ -93,9 +93,29 @@ This change updates only the Task 013 synthetic canary base and its exact-digest
 verification tests. It does not change the production application runtime,
 Sigstore issuer requirements, publication workflow, vulnerability exceptions,
 registry authorities, Task 014 broker, DEV environment or PROD environment.
-**Review status: HOLD until actual build, pinned vulnerability scan, complete OCI
-identity validation and readiness/rollback checks pass.** A draft PR is not an
-authorization to dispatch a release workflow or deploy an image.
+
+The unprivileged, no-publish PR review workflow
+`.github/workflows/task013-canary-security-review.yml` reuses the exact pinned
+Buildx/BuildKit, Syft 1.51.0 and Grype 0.118.0 toolchain, all three artifact scans
+and the unchanged Critical/High vulnerability policy. GitHub PR review run
+`39009640670` on candidate source
+`b8ed7f5080bf2628f0193e245b5ebfca8011dd19` succeeded:
+strict executable OCI verification passed; the Grype database
+`v6.1.10`, built `2026-10-16T06:29:51Z`, returned policy PASS with
+zero blocked findings and no vulnerability-policy exceptions.
+The resulting OCI SBOM enumerated 1,874 components. Earlier isolated runtime
+testing under Python 3.15 demonstrated fail-closed pre-migration readiness
+(503) and explicit post-migration readiness (200), non-root UID/GID 10001,
+a read-only root filesystem, the expected identity and metadata, and normal
+liveness (200). These checks cover only the synthetic canary; they do not
+establish production application Python 3.15 compatibility.
+
+**Review result: candidate technical acceptance PASS, publication still NO-GO.**
+The prior failed release 0.14.3 remains immutable incident history; a new
+production-tools release would require a fresh version, exact merged source
+SHA, explicit release authorization and real downstream Sigstore/registry
+verification. No PR merge, release dispatch, registry update or DEV/PROD
+deployment follows automatically from this review.
 
 ## Phase 1 non-claims
 
