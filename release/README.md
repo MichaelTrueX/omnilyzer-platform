@@ -73,6 +73,30 @@ python3 -m release.verify_handoff --handoff "$tmp_dir/handoff" \
 
 Publishers explicitly reject this local evidence mode. It uses a deterministic synthetic OCI layout and does not validate the Docker-built runtime image. A workflow handoff must contain the contract-checked executable OCI archive plus SBOM and vulnerability evidence produced by the reviewed pinned Syft and Grype versions.
 
+## October 2026 canary base-image remediation (draft, not release-approved)
+
+Release 0.14.3, run 39007166026, was denied by the unchanged Critical/High Grype policy
+on 17 October 2026 because the September 2026 pinned Python 3.14.7 OCI base contained
+13 blocking findings (one Critical and twelve High). Both registry-publisher jobs
+were skipped. These historical facts and the denial evidence remain authoritative.
+
+The isolated remediation pins the public Chainguard Python image by its exact
+multi-platform OCI index digest
+`sha256:d0a0ef8759e4da134c9848b9bba9aa9b7fec345427f093f1a37ca02434e685d8`.
+Its publisher signature was independently verified with Cosign 3.1.2 under the
+`chainguard-images/images` GitHub release workflow identity. The public `latest`
+stream moved from Python 3.14 to 3.15, so this is **not** an ordinary patch-level
+replacement. The canary uses only the Python standard library, but its executable
+image and full Grype policy must be retested before any publication approval.
+
+This change updates only the Task 013 synthetic canary base and its exact-digest
+verification tests. It does not change the production application runtime,
+Sigstore issuer requirements, publication workflow, vulnerability exceptions,
+registry authorities, Task 014 broker, DEV environment or PROD environment.
+**Review status: HOLD until actual build, pinned vulnerability scan, complete OCI
+identity validation and readiness/rollback checks pass.** A draft PR is not an
+authorization to dispatch a release workflow or deploy an image.
+
 ## Phase 1 non-claims
 
 Phase 1 did not prove live publishing. Phase 2 enables only the reviewed DEV canary path; until its live run succeeds, it establishes no live round-trip result. Neither phase proves actual production package boundaries, PROD registry deployment, product consumption, or DEV-to-STAGING-to-PROD promotion. Those remain later acceptance work.
