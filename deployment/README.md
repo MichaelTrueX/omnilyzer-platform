@@ -4312,3 +4312,35 @@ because it must be the final merged C33AE `main` commit. After merge, a
 root-controlled reviewed source and read-only live preflight must bind that
 exact merge SHA before broker shutdown, executor-socket shutdown, or any
 migration prefix is authorized. No automatic retry or rollback is permitted.
+
+## 2026-10-17 — broker /run lifecycle regression (Task 014 DEV; no activation)
+
+The root-journal-confirmed broker `226/NAMESPACE` startup failure on
+`omnilyzerdev` arose because `/run/omnilyzer/deployment/dev/blob-verifier`
+did not exist. The `dev` ancestor and the second `oci-verifier` leaf were
+also absent. The broker's installed `ReadWritePaths` correctly requires
+both leaves; changing either to an optional path or widening the sandbox
+would weaken the original reviewed contract and is **not authorized**.
+
+The static operator-reviewed
+[`docs/operations/task014-broker-runtime-tmpfiles.conf`](../docs/operations/task014-broker-runtime-tmpfiles.conf)
+provides a minimal systemd-tmpfiles lifecycle option. It recreates the
+**three root:root 0755 ancestor directories** and **two broker-owned
+0700 leaves** after `/run` is cleared, matching the existing C32U/C32Y
+directory contract. This is an installation asset, not an automatically
+enabled service or a hidden migration. Merely merging it does not
+install anything on `omnilyzerdev`.
+
+A separately owner-authorized root operator must verify the currently
+installed generation, fixed unit, broker UID/group, service inactivity,
+and the absence of conflicting paths before installing this root-owned
+configuration under `/etc/tmpfiles.d/`. Apply only that exact reviewed
+configuration using `systemd-tmpfiles --create`; never enable automatic
+cleanup of live verifier workspaces. Check all five exact results and
+ensure the operational setup will persist across a later reboot.
+
+The temporary cProfile drop-in must be separately reconciled under its
+existing operator controls. **Do not restart the broker, executor, or Nginx
+or dispatch another Task 014 promotion** as a side effect of directory
+repair. The historical October 13 HTTP 403 is unrelated to the
+subsequent namespace failure unless separately proven.
