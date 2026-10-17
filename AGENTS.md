@@ -1,3 +1,12 @@
+<!--
+File: AGENTS.md
+Purpose: Define durable development guidance and ownership boundaries for
+         changes to the Omnilyzer reusable SaaS platform repository.
+Related: README.md, CONTRIBUTING.md, SECURITY.md,
+         docs/architecture/platform-principles.md,
+         docs/architecture/technology-decisions.md.
+-->
+
 # Omnilyzer repository instructions
 
 ## Priority and existing requirements
@@ -12,6 +21,29 @@ Preserve existing architectural, security, authentication, authorization,
 Workspace/tenant-isolation, token/session, CSP/CORS, supply-chain, deployment,
 and validation requirements. Do not silently resolve conflicting requirements:
 preserve and report them unless precedence is explicit and unambiguous.
+
+## Product scope and delivery priority
+
+Omnilyzer is an owner-confirmed, reusable technical foundation for
+**independently operated SaaS products** (2026-10-17). It is not a
+mandatory CMS, nor one shared business-application monolith. Keep product
+business logic, UI, domain data and release schedules in their own
+approved boundaries. A CMS is optional product functionality, not the
+platform roadmap. Sharing PostgreSQL or authentication infrastructure
+does not authorize cross-product data access.
+
+Do not invent general-purpose SaaS frameworks, additional control planes,
+customer billing, CMS editors, plug-in systems or other abstractions
+without an evidenced product requirement. For a single operator,
+prefer the least complex implementation that preserves real security,
+tenant isolation, provenance, reproducibility, rollback and recovery.
+
+Near-term work is prioritized: (1) isolate and resolve the existing Task
+014 DEV promotion blocker; (2) independently verify one approved
+end-to-end DEV deployment; (3) integrate one real SaaS product workflow.
+The successful Task 013 release 0.14.5 is distribution acceptance,
+not production application acceptance. Never conflate successful CI,
+a signed package or a synthetic test with live deployment readiness.
 
 ## Development orchestration
 

@@ -1,6 +1,7 @@
 <!--
 File: docs/architecture/platform-principles.md
-Purpose: Defines durable engineering principles for the Omnilyzer Platform.
+Purpose: Defines durable engineering and independently deployed SaaS-product
+         boundary principles for the Omnilyzer technical foundation.
 Related:
 - docs/architecture/technology-decisions.md
 - docs/architecture/security-model.md
@@ -10,6 +11,24 @@ Related:
 # Platform Principles
 
 These principles constrain architecture and implementation across platform capabilities and consuming products.
+
+## Purpose and product responsibility
+
+- **Reusable SaaS foundation, not a CMS:** Omnilyzer supplies reusable
+  technical services to independent SaaS products. Content management is
+  optional product functionality, not the platform's defining capability.
+- **Product domain ownership:** each product owns its customer-facing
+  workflows, domain model, data access contracts, business logic, and
+  product-specific permissions. A shared PostgreSQL server or identity
+  service never implies shared unrestricted tenant data access.
+- **Demand-led reuse:** implement a shared capability only when at least
+  one actual consumer needs a stable contract. Avoid generic engines,
+  plugin marketplaces, broad billing abstractions, or administrative
+  interfaces built solely in anticipation of hypothetical products.
+- **Proportional one-operator operations:** retain non-negotiable security,
+  isolation, provenance, rollback and recovery controls while eliminating
+  unnecessary approval ceremony and infrastructure complexity that does
+  not mitigate a documented risk.
 
 ## Trust, safety, and inclusion
 
