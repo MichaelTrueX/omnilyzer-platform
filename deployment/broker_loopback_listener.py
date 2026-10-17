@@ -14,7 +14,7 @@ import time
 from typing import Callable
 
 from .broker_https_ingress import (
-    BROKER_LOOPBACK_HOST, BROKER_LOOPBACK_PORT, PROMOTION_PATH,
+    _AUTHORITY_LOG, BROKER_LOOPBACK_HOST, BROKER_LOOPBACK_PORT, PROMOTION_PATH,
     IngressResponse, dispatch_inert_dev_promotion_ingress,
 )
 from .broker_integration import MAX_PROMOTION_REQUEST_BYTES
@@ -316,6 +316,12 @@ class DevBrokerLoopbackListener:
                 )
             except _FramingRejected:
                 response = _REJECTED
+                # Review-only diagnostic, never alters the fixed public 403.
+                # Reuse C34E\'s shared allowlist, rate limit and journal logger.
+                try:
+                    _AUTHORITY_LOG.warning("task014_diag stage=listener_framing_rejected")
+                except Exception:
+                    pass  # Logging cannot become an authorization/availability dependency.
             except (TimeoutError, OSError):
                 response = _UNAVAILABLE
             _write_response(connection, response,

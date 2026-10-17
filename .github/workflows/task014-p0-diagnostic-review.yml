@@ -1,0 +1,53 @@
+# Task 014 P0 - Review-only isolated diagnostics.
+# This workflow never releases a source, bypasses the existing C34X/Y/Z
+# historical exact-source gates, changes an environment, or submits promotion.
+name: Task 014 P0 offline diagnostics
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  p0-diagnostic-review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out isolated PR source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up reviewed Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+
+      - name: Install hash-locked dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary=:all: --require-hashes \
+            -r deployment/requirements-linux-x86_64-py312.lock
+
+      - name: Verify isolated P0 diagnostic and recovery contract only
+        run: |
+          set -euo pipefail
+          export PYTHONDONTWRITEBYTECODE=1
+          python -B -m unittest -v \
+            deployment.tests.test_task014_p0_403_instrumentation \
+            deployment.tests.test_task014_p0_six_file_recovery_model \
+            deployment.tests.test_task014_p0_403_rejection_origin \
+            deployment.tests.test_c34e_diagnostic_events \
+            deployment.tests.test_broker_loopback_listener \
+            deployment.tests.test_broker_https_ingress
+
+      - name: Require exact blocked release status remains documented
+        run: |
+          set -euo pipefail
+          grep -Fq 'release NO-GO' docs/operations/task014-p0-draft-diagnostic-implementation.md
+          grep -Fq 'NOT a production-grade six-original recovery engine' docs/operations/task014-p0-draft-diagnostic-implementation.md
+          test -f deployment/ingress/dev-broker-tailscale-origin.status-only.review.conf
