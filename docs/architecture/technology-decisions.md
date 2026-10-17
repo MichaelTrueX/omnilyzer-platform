@@ -11,6 +11,35 @@ Related:
 
 Status labels in this document are deliberate: **ACCEPTED DIRECTION** constrains current planning, **TO VALIDATE** requires evidence before adoption, and **REJECTED / NOT CURRENTLY PLANNED** must not be introduced without reopening the decision through an ADR.
 
+## Owner-confirmed product boundary (2026-10-17)
+
+Omnilyzer is the **shared technical foundation for independently developed
+and released SaaS products (Option A)**; it is not itself one all-purpose
+CMS or a monolithic aggregation of those products. The platform owns
+versioned, reusable technical contracts; the products own business models,
+workflow behavior, user interfaces, product authorization and domain data.
+A product may include CMS features if its business requirements demand
+them, without turning the shared platform into a CMS.
+
+This clarifies the already accepted modular and independently deployable
+SaaS direction. It does **not** create a new infrastructure requirement,
+silently integrate an existing product, alter an ADR or authorize a
+deployment. Prefer demand-led reuse and minimize operational overhead for
+one operator. The next engineering priority is the existing Task 014 DEV
+promotion blocker; the next product milestone is one end-to-end consuming
+SaaS workflow, not a generic content editor.
+
+**Separate, unresolved authentication decision:** earlier owner guidance
+specified JSON-issued application tokens and browser `localStorage`
+persistence with memory-held sessions, while current accepted ADR 0003
+selects a Keycloak/BFF browser flow using HttpOnly cookies and
+PostgreSQL-persisted session state. This owner/product-requirement conflict
+is **not resolved by the SaaS-versus-CMS decision**. Preserve current
+working application/session behavior, avoid changes to JWT transport,
+CSP/CORS or routes, and conduct a separately authorized security/ADR
+review before changing these mechanisms. CI-to-registry OIDC is unrelated
+to application session storage.
+
 ## Decision matrix
 
 | Area | Candidate or direction | Status | Rationale | Validation needed |
