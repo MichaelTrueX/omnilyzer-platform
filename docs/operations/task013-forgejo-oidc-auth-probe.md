@@ -78,7 +78,10 @@ signed bundle or registry object is created.
 - Existing build and publisher job dictionaries are still validated against
   their original protected-main semantic SHA-256 fingerprints.
 - The entire updated workflow also has an explicitly pinned SHA-256 in the
-  executable canary regression suite.
+  executable canary regression suite **and** three original Task 014 source
+  boundary suites (`deployment/tests/test_policy.py`,
+  `test_runtime_assets.py`, `test_execution.py`). No Task 014 deployment
+  behavior or environment files changed.
 - The `release/forgejo_oidc_probe.py` regression suite tests single GET,
   exact destination, secret redaction, private token files, unauthorized
   responses, redirects, malformed JSON, unexpected content type, oversized

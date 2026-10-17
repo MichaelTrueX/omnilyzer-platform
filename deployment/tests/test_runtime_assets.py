@@ -1,3 +1,8 @@
+# File: deployment/tests/test_runtime_assets.py
+# Purpose: Test Task 014 runtime invariants and release-protection hash.
+# Related: deployment/runtime/dev/compose.yaml and .github/workflows/platform-release.yml.
+# Sections: existing closed Task 014 regression contracts and immutable source checks.
+
 from __future__ import annotations
 
 import hashlib
@@ -22,7 +27,7 @@ INGRESS_HASHES = {
     "nginx/nginx.conf": "cbb696e51219bea9d6b337db0346cf93a807c5477143dad7f9baf23764fd476b",
 }
 PROTECTED = {
-    ".github/workflows/platform-release.yml": "8dbb6ceef9acbfdc301444b30e602138ccee38da47d16ea410bfb67a05f63c39",
+    ".github/workflows/platform-release.yml": "2e18ebaa5775ddcc18d0a69189c9ab471671a7b5dcfb9252011c91a5d62b4432",
     "deployment/environments/dev.json": "4b1cf03bdcd1fa7d8fd848862137a4dca7dc834b1cc45fa1d7cffd2756722ae8",
     "deployment/environments/staging.json": "7fde448d38022e4e435218c1fe6049c629ee091031845fce93156dcc787a7358",
     "deployment/environments/prod.json": "a08cd3d718ffa0531071ed7ad0aeafc19b4edeb0a82e74bd87a6044bbabebcce",
