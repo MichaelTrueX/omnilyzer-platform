@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # File: release/forgejo_oidc_probe.py
-# Purpose: Validate the exact Forgejo package publishing OIDC identity with one
-#          bounded authenticated GET and no registry mutation.
+# Purpose: Compare token claim names with exact reviewed Forgejo trust rules
+#          without exposing values, then make one bounded authenticated GET.
+#          No registry mutation is allowed.
 # Related: release/request_oidc.py, release/publish_forgejo.py,
 #          .github/workflows/platform-release.yml,
 #          release/tests/test_forgejo_oidc_probe.py.
@@ -12,6 +13,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import os
 import re
@@ -25,6 +28,58 @@ from pathlib import Path
 PROBE_URL = "https://registry-dev.omnilyzer.ai/api/v1/packages/omnilyzer?type=pypi&limit=1"
 MAX_RESPONSE = 32 * 1024
 JWT_RE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\Z")
+
+
+# Section 2: Exact, source-reviewed Github OIDC claims for this Forgejo
+# Authorized Integration. This is a *diagnostic* unverified decode, not JWT
+# signature verification or an alternative authorization scheme.
+EXPECTED_STRING_CLAIMS = {
+    "iss": "https://token.actions.githubusercontent.com",
+    "repository": "MichaelTrueX/omnilyzer-platform",
+    "repository_owner": "MichaelTrueX",
+    "repository_visibility": "public",
+    "ref": "refs/heads/main",
+    "workflow_ref": "MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main",
+    "event_name": "workflow_dispatch",
+}
+EXPECTED_AUDIENCE = "u:2:316bec9a-53e4-4807-9557-7febdc979d0a"
+
+
+def _decode_jwt_json(segment: str) -> dict:
+    """Decode one bounded JWT JSON segment without ever including content in errors."""
+    if len(segment) > 8192:
+        raise ProbeError("FORGEJO_OIDC_PROBE_CLAIMS_INVALID")
+    try:
+        raw = base64.b64decode(segment + "=" * (-len(segment) % 4), altchars=b"-_", validate=True)
+        document = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeError, binascii.Error):
+        raise ProbeError("FORGEJO_OIDC_PROBE_CLAIMS_INVALID") from None
+    if not isinstance(document, dict):
+        raise ProbeError("FORGEJO_OIDC_PROBE_CLAIMS_INVALID")
+    return document
+
+
+def compare_expected_claims(token: str) -> tuple[str, ...]:
+    """Return only fixed claim names that do not match the reviewed trust contract."""
+    if JWT_RE.fullmatch(token) is None:
+        raise ProbeError("FORGEJO_OIDC_PROBE_TOKEN_FORMAT_INVALID")
+    header_raw, payload_raw, _signature = token.split(".")
+    header = _decode_jwt_json(header_raw)
+    claims = _decode_jwt_json(payload_raw)
+    mismatches: list[str] = []
+    if header.get("alg") != "RS256":
+        mismatches.append("jwt_header_alg")
+    if not isinstance(header.get("kid"), str) or not header["kid"]:
+        mismatches.append("jwt_header_kid")
+    for key, expected in EXPECTED_STRING_CLAIMS.items():
+        if claims.get(key) != expected:
+            mismatches.append(key)
+    actual_audience = claims.get("aud")
+    if isinstance(actual_audience, str):
+        actual_audience = [actual_audience]
+    if actual_audience != [EXPECTED_AUDIENCE]:
+        mismatches.append("aud")
+    return tuple(mismatches)
 
 
 class ProbeError(ValueError):
@@ -100,7 +155,16 @@ def main() -> int:
     parser.add_argument("--token-file", required=True, type=Path)
     args = parser.parse_args()
     try:
-        verify_read_only(read_token(args.token_file))
+        token = read_token(args.token_file)
+        # Only static claim names and boolean outcomes may reach Actions logs.
+        mismatches = compare_expected_claims(token)
+        for name in ("jwt_header_alg", "jwt_header_kid",
+                     *EXPECTED_STRING_CLAIMS.keys(), "aud"):
+            status = "MISMATCH" if name in mismatches else "MATCH"
+            print(f"FORGEJO_OIDC_CLAIM_{name}={status}", flush=True)
+        if mismatches:
+            raise ProbeError("FORGEJO_OIDC_PROBE_CLAIMS_MISMATCH")
+        verify_read_only(token)
     except ProbeError as error:
         raise SystemExit(str(error)) from None
     print("FORGEJO_OIDC_READ_ONLY_AUTHENTICATION_ACCEPTED")
