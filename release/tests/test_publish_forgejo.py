@@ -1,3 +1,9 @@
+# File: release/tests/test_publish_forgejo.py
+# Purpose: Validate immutable Forgejo package publication and one-use,
+#          explicitly typed credential input without live registry mutation.
+# Related: release/publish_forgejo.py, .github/workflows/platform-release.yml.
+# Sections: existing package integrity and readback; token-kind negative tests.
+
 from __future__ import annotations
 
 import hashlib
@@ -16,6 +22,7 @@ from release.publish_forgejo import (
     _request,
     _validated_pypi_download_url,
     publish,
+    _token,
 )
 
 
@@ -215,6 +222,72 @@ class PublishForgejoTests(unittest.TestCase):
     def test_request_still_rejects_fragment_bearing_urls(self) -> None:
         with self.assertRaisesRegex(ValueError, "escaped the reviewed origin"):
             _request(ORIGIN, "header.payload.signature", "GET", WHEEL_URL)
+
+
+class CredentialBoundaryTests(unittest.TestCase):
+    """Keep protected Forgejo bearer tokens private and explicitly typed."""
+
+    def test_scoped_package_token_one_use_and_strict_type(self) -> None:
+        """Accept only an opaque PAT and unlink its file after consumption."""
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory) / "pat"
+            value = "gitea_example_BEARER_token_123456789"
+            p.write_text(value, encoding="ascii")
+            p.chmod(0o600)
+            self.assertEqual(_token(p, "pat"), value)
+            self.assertFalse(p.exists())
+
+    def test_legacy_oidc_input_kept_explicit(self) -> None:
+        """Original OIDC parser remains valid only under the legacy mode."""
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory) / "jwt"
+            p.write_text("header.payload.signature", encoding="ascii")
+            p.chmod(0o600)
+            self.assertEqual(_token(p, "oidc"), "header.payload.signature")
+            self.assertFalse(p.exists())
+
+    def test_cross_type_and_malformed_values_rejected(self) -> None:
+        """Reject ambiguous token types, whitespace and directory traversal."""
+        for kind, value in (
+            ("pat", "header.payload.signature"),
+            ("oidc", "gitea_opaque_example_1234567890"),
+            ("pat", "bad\nvalue"),
+            ("pat", "short"),
+            ("pat", "a" * 4100),
+        ):
+            with self.subTest(kind=kind, length=len(value)), tempfile.TemporaryDirectory() as directory:
+                p = Path(directory) / "token"
+                p.write_text(value, encoding="ascii")
+                p.chmod(0o600)
+                with self.assertRaises(ValueError):
+                    _token(p, kind)
+                self.assertFalse(p.exists())
+
+    def test_symlink_and_excessive_permissions_rejected(self) -> None:
+        """Never follow a symlink or accept a readable credential file."""
+        with tempfile.TemporaryDirectory() as directory:
+            token = Path(directory) / "real"
+            token.write_text("gitea_safe_dummy_long_value_123456789")
+            token.chmod(0o600)
+            link = Path(directory) / "link"
+            link.symlink_to(token)
+            with self.assertRaises(ValueError):
+                _token(link, "pat")
+            self.assertTrue(token.exists())
+            token.chmod(0o644)
+            with self.assertRaises(ValueError):
+                _token(token, "pat")
+            self.assertFalse(token.exists())
+
+    def test_unknown_token_kind_fails_without_reading_file(self) -> None:
+        """A caller cannot silently switch to an unreviewed credential scheme."""
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory) / "token"
+            p.write_text("gitea_long_example_test_token_123456")
+            p.chmod(0o600)
+            with self.assertRaises(ValueError):
+                _token(p, "auto")
+            self.assertTrue(p.exists())
 
 
 if __name__ == "__main__":

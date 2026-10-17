@@ -1,6 +1,7 @@
 # File: .github/workflows/platform-release.yml
-# Purpose: Builds a gated signed release or runs an isolated, non-publishing Forgejo
-#          OIDC read-only diagnostic under this exact allowlisted workflow identity.
+# Purpose: Build and sign a gated release, with a protected scoped credential
+#          for Forgejo package publishing, or run isolated read-only OIDC checks.
+#          Preserve provenance, keyless Sigstore, and immutable OCI controls.
 # Related: release/forgejo_oidc_probe.py, release/request_oidc.py,
 #          release/tests/test_workflow_policy.py, release/environments/dev.json.
 # Authority: Diagnostic mode skips the release gate and every publisher; normal
@@ -434,19 +435,29 @@ jobs:
           cosign verify --certificate-identity "$CERTIFICATE_IDENTITY" \
             --certificate-oidc-issuer "$CERTIFICATE_ISSUER" \
             "oci-dev.omnilyzer.ai/$OCI_REPOSITORY@$digest"
-      - name: Request short-lived Forgejo OIDC and publish prebuilt packages/evidence
+      # Section: Forgejo package publishing only. Keyless signing above remains OIDC.
+      # This step is reachable exclusively after the exact gate/build/zot successes.
+      # The secret must be scoped write:package and set on task013-dev-release.
+      - name: Publish immutable packages with protected Forgejo package credential
         shell: bash
         env:
           RELEASE_VERSION: ${{ github.event.inputs.version }}
           SOURCE_SHA: ${{ github.sha }}
-          FORGEJO_AUDIENCE: u:2:316bec9a-53e4-4807-9557-7febdc979d0a
+          FORGEJO_PUBLISH_TOKEN: ${{ secrets.FORGEJO_PUBLISH_TOKEN }}
         run: |
           set -euo pipefail
-          token_file="$RUNNER_TEMP/task013-forgejo.jwt"
+          umask 077
+          token_file="$RUNNER_TEMP/task013-forgejo-publish.token"
           trap 'rm -f "$token_file"' EXIT
-          python3 -m release.request_oidc --audience "$FORGEJO_AUDIENCE" --output "$token_file"
+          if test -z "$FORGEJO_PUBLISH_TOKEN"; then
+            echo "FORGEJO_PACKAGE_CREDENTIAL_MISSING" >&2
+            exit 1
+          fi
+          printf '%s' "$FORGEJO_PUBLISH_TOKEN" > "$token_file"
+          unset FORGEJO_PUBLISH_TOKEN
           python3 -m release.publish_forgejo \
             --handoff "$RUNNER_TEMP/platform-release-handoff" \
             --evidence "$RUNNER_TEMP/platform-release-evidence" \
-            --token-file "$token_file" --repository "$GITHUB_WORKSPACE" \
+            --token-file "$token_file" --token-kind pat \
+            --repository "$GITHUB_WORKSPACE" \
             --version "$RELEASE_VERSION" --source-sha "$SOURCE_SHA"

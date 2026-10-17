@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+# File: release/publish_forgejo.py
+# Purpose: Publish only verified immutable Python/npm artifacts and previously
+#          signed evidence to the fixed Forgejo package origin.
+# Related: .github/workflows/platform-release.yml, release/verify_handoff.py,
+#          release/provenance.py, release/tests/test_publish_forgejo.py.
+# Sections: bounded private credential input; package URI validation; publish
+#           and exact-byte readback; secured CLI entry point.
+# Authentication: explicit OIDC (legacy) or reviewed scope-limited PAT,
+#                 provided through a private one-use file, never via cookies.
 """Publish prebuilt Python/npm artifacts and signed evidence to Forgejo."""
 
 from __future__ import annotations
@@ -32,15 +41,35 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise RuntimeError("Forgejo redirect refused")
 
 
-def _token(path: Path) -> str:
-    if path.is_symlink() or not path.is_file() or stat.S_IMODE(path.stat().st_mode) != 0o600:
-        raise ValueError("OIDC token file must be a regular mode-0600 file")
+def _token(path: Path, kind: str = "oidc") -> str:
+    """Consume one private credential file, rejecting links, whitespace and wrong type."""
+    if kind not in {"oidc", "pat"}:
+        raise ValueError("unsupported Forgejo token kind")
     try:
-        value = path.read_text(encoding="utf-8")
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "rb") as source:
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600:
+                raise ValueError("Forgejo credential file must be regular and mode-0600")
+            if info.st_size < 20 or info.st_size > 4096:
+                raise ValueError("Forgejo credential file length out of bounds")
+            raw = source.read(4097)
+    except OSError:
+        raise ValueError("Forgejo credential file is missing or unreadable") from None
     finally:
         path.unlink(missing_ok=True)
-    if value.count(".") != 2 or "\n" in value:
-        raise ValueError("OIDC token is malformed")
+    try:
+        value = raw.decode("ascii")
+    except UnicodeError:
+        raise ValueError("Forgejo credential file is not ASCII") from None
+    if kind == "oidc":
+        if re.fullmatch(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", value) is None:
+            raise ValueError("Forgejo OIDC token format invalid")
+    else:
+        # Forgejo-generated personal access tokens contain no whitespace and
+        # must never be confused with an OIDC JWT.
+        if re.fullmatch(r"[A-Za-z0-9_-]{20,512}", value) is None:
+            raise ValueError("Forgejo scoped access token format invalid")
     return value
 
 
@@ -162,11 +191,12 @@ def _evidence_archive(handoff: Path, evidence: Path, plan: dict) -> bytes:
 
 
 def publish(handoff: Path, evidence: Path, token_file: Path, repository: Path,
-            version: str, source_sha: str) -> None:
+            version: str, source_sha: str, token_kind: str = "oidc") -> None:
+    """Publish once with immutable evidence and an explicitly typed one-use credential."""
     checked = verify(handoff, repository, version, source_sha, require_production_evidence=True)
     plan = checked["plan"]
     origin = plan["registries"]["forgejo_origin"]
-    token = _token(token_file)
+    token = _token(token_file, token_kind)
     owner = urllib.parse.quote(plan["packages"]["python"]["owner"], safe="")
 
     wheel_path = handoff / plan["artifacts"]["python_wheel"]
@@ -247,11 +277,12 @@ def main() -> int:
     parser.add_argument("--handoff", type=Path, required=True)
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--token-file", type=Path, required=True)
+    parser.add_argument("--token-kind", choices=("oidc", "pat"), default="oidc")
     parser.add_argument("--repository", type=Path, default=Path.cwd())
     parser.add_argument("--version", required=True)
     parser.add_argument("--source-sha", required=True)
     args = parser.parse_args()
-    publish(args.handoff, args.evidence, args.token_file, args.repository, args.version, args.source_sha)
+    publish(args.handoff, args.evidence, args.token_file, args.repository, args.version, args.source_sha, args.token_kind)
     return 0
 
 

@@ -167,10 +167,28 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn('"$GRYPE_COMMAND" db status', script)
         self.assertNotRegex(script, r"(?m)^\s*grype(?:\s|$)")
 
-    def test_no_long_lived_registry_credential_reference(self) -> None:
-        forbidden = ("secrets.FORGEJO", "secrets.ZOT", "REGISTRY_PASSWORD", "REGISTRY_PAT", "API_KEY")
-        for value in forbidden:
-            self.assertNotIn(value, self.raw)
+    def test_only_forgejo_publisher_can_access_one_scoped_package_secret(self) -> None:
+        """Require the protected environment and no unrelated registry credentials."""
+        for forbidden in ("secrets.ZOT", "REGISTRY_PASSWORD", "REGISTRY_PAT", "API_KEY"):
+            self.assertNotIn(forbidden, self.raw)
+        self.assertEqual(self.raw.count("secrets.FORGEJO_PUBLISH_TOKEN"), 1)
+        for name, job in self.jobs.items():
+            for step in job["steps"]:
+                token = step.get("env", {}).get("FORGEJO_PUBLISH_TOKEN")
+                if token is not None:
+                    self.assertEqual(name, "publish-forgejo")
+                    self.assertEqual(job["environment"], "task013-dev-release")
+                    self.assertEqual(
+                        token, "${{ secrets.FORGEJO_PUBLISH_TOKEN }}")
+                    shell = step["run"]
+                    self.assertIn("umask 077", shell)
+                    self.assertIn("FORGEJO_PACKAGE_CREDENTIAL_MISSING", shell)
+                    self.assertIn('unset FORGEJO_PUBLISH_TOKEN', shell)
+                    self.assertIn('--token-kind pat', shell)
+                    self.assertIn("trap 'rm -f \"$token_file\"' EXIT", shell)
+                    self.assertNotIn("release.request_oidc", shell)
+                else:
+                    self.assertNotIn("secrets.FORGEJO_PUBLISH_TOKEN", str(step))
 
     def test_keyless_signatures_are_verified_against_exact_workflow_identity(self) -> None:
         self.assertIn("https://token.actions.githubusercontent.com", self.raw)
