@@ -73,6 +73,50 @@ python3 -m release.verify_handoff --handoff "$tmp_dir/handoff" \
 
 Publishers explicitly reject this local evidence mode. It uses a deterministic synthetic OCI layout and does not validate the Docker-built runtime image. A workflow handoff must contain the contract-checked executable OCI archive plus SBOM and vulnerability evidence produced by the reviewed pinned Syft and Grype versions.
 
+## October 2026 canary base-image remediation (draft, not release-approved)
+
+Release 0.14.3, run 39007166026, was denied by the unchanged Critical/High Grype policy
+on 17 October 2026 because the September 2026 pinned Python 3.14.7 OCI base contained
+13 blocking findings (one Critical and twelve High). Both registry-publisher jobs
+were skipped. These historical facts and the denial evidence remain authoritative.
+
+The isolated remediation pins the public Chainguard Python image by its exact
+multi-platform OCI index digest
+`sha256:d0a0ef8759e4da134c9848b9bba9aa9b7fec345427f093f1a37ca02434e685d8`.
+Its publisher signature was independently verified with Cosign 3.1.2 under the
+`chainguard-images/images` GitHub release workflow identity. The public `latest`
+stream moved from Python 3.14 to 3.15, so this is **not** an ordinary patch-level
+replacement. The canary uses only the Python standard library, but its executable
+image and full Grype policy must be retested before any publication approval.
+
+This change updates only the Task 013 synthetic canary base and its exact-digest
+verification tests. It does not change the production application runtime,
+Sigstore issuer requirements, publication workflow, vulnerability exceptions,
+registry authorities, Task 014 broker, DEV environment or PROD environment.
+
+The unprivileged, no-publish PR review workflow
+`.github/workflows/task013-canary-security-review.yml` reuses the exact pinned
+Buildx/BuildKit, Syft 1.51.0 and Grype 0.118.0 toolchain, all three artifact scans
+and the unchanged Critical/High vulnerability policy. GitHub PR review run
+`39009640670` on candidate source
+`b8ed7f5080bf2628f0193e245b5ebfca8011dd19` succeeded:
+strict executable OCI verification passed; the Grype database
+`v6.1.10`, built `2026-10-16T06:29:51Z`, returned policy PASS with
+zero blocked findings and no vulnerability-policy exceptions.
+The resulting OCI SBOM enumerated 1,874 components. Earlier isolated runtime
+testing under Python 3.15 demonstrated fail-closed pre-migration readiness
+(503) and explicit post-migration readiness (200), non-root UID/GID 10001,
+a read-only root filesystem, the expected identity and metadata, and normal
+liveness (200). These checks cover only the synthetic canary; they do not
+establish production application Python 3.15 compatibility.
+
+**Review result: candidate technical acceptance PASS, publication still NO-GO.**
+The prior failed release 0.14.3 remains immutable incident history; a new
+production-tools release would require a fresh version, exact merged source
+SHA, explicit release authorization and real downstream Sigstore/registry
+verification. No PR merge, release dispatch, registry update or DEV/PROD
+deployment follows automatically from this review.
+
 ## Phase 1 non-claims
 
 Phase 1 did not prove live publishing. Phase 2 enables only the reviewed DEV canary path; until its live run succeeds, it establishes no live round-trip result. Neither phase proves actual production package boundaries, PROD registry deployment, product consumption, or DEV-to-STAGING-to-PROD promotion. Those remain later acceptance work.

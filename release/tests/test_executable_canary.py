@@ -285,7 +285,7 @@ def _oci_archive(path: Path, mutate=None) -> str:
 class ImageAndPipelineTests(unittest.TestCase):
     def test_dockerfile_is_digest_pinned_and_has_non_root_runtime_contract(self) -> None:
         dockerfile = (CANARY / "Dockerfile").read_text()
-        self.assertEqual(BASE_IMAGE_DIGEST, "sha256:bbdc4d1e20995d9bb9f9935188844c824b40969de4bb1f0eaadacda4c8d4121e")
+        self.assertEqual(BASE_IMAGE_DIGEST, "sha256:d0a0ef8759e4da134c9848b9bba9aa9b7fec345427f093f1a37ca02434e685d8")
         self.assertEqual(dockerfile.splitlines()[0], f"FROM cgr.dev/chainguard/python@{BASE_IMAGE_DIGEST}")
         self.assertNotIn("cgr.dev/chainguard/python:", dockerfile)
         self.assertNotRegex(dockerfile, r"(?im)^\s*RUN\b")
@@ -296,6 +296,16 @@ class ImageAndPipelineTests(unittest.TestCase):
         self.assertIn('ENTRYPOINT ["/usr/bin/python", "/app/canary_runtime.py"]', dockerfile)
         self.assertIn("CMD []", dockerfile)
         self.assertNotRegex(dockerfile, r"(?m)^FROM\s+[^\s@]+:[^\s@]+\s*$")
+
+    def test_202609_base_with_blocking_202610_cves_is_not_active(self) -> None:
+        """Reject accidental return to the base that failed the 0.14.3 CI security gate."""
+        rejected = "sha256:bbdc4d1e20995d9bb9f9935188844c824b40969de4bb1f0eaadacda4c8d4121e"
+        for path in (
+            CANARY / "Dockerfile",
+            ROOT / "release/executable_oci.py",
+            ROOT / ".github/workflows/platform-release.yml",
+        ):
+            self.assertNotIn(rejected, path.read_text())
 
     def test_old_base_is_absent_only_from_active_configuration(self) -> None:
         old = "09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217"
