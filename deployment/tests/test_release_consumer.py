@@ -1,4 +1,13 @@
-"""Deterministic, no-network tests for the inert C32B consumer boundary."""
+"""File: deployment/tests/test_release_consumer.py
+
+Purpose: Deterministic no-network tests for Task014 registry/evidence
+    consumption, including Forgejo v16 Generic binary-response media type.
+Related: deployment/release_consumer.py, deployment/promotion.py,
+    deployment/tests/fixtures.py.
+
+Sections: synthetic registry responses and credentials; immutable release
+    fixtures; positive verification and fail-closed adversarial tests.
+"""
 
 from __future__ import annotations
 
@@ -176,7 +185,7 @@ def setup():
     })
     request = PromotionRequest.from_dict(value)
     zot_factory = Factory(Response(oci_body, OCI_MEDIA_TYPE, extra=[("Docker-Content-Digest", digest)]))
-    forgejo_factory = Factory(Response(archive_bytes(files), "application/gzip"))
+    forgejo_factory = Factory(Response(archive_bytes(files), "application/octet-stream"))
     return request, files, ZotCandidateConsumer(ZotProvider(), zot_factory), ForgejoEvidenceConsumer(ForgejoProvider(), forgejo_factory), zot_factory, forgejo_factory
 
 
@@ -311,6 +320,25 @@ class ConsumerTests(unittest.TestCase):
         with self.assertRaises(ReleaseConsumerError):
             forgejo.acquire(request, now=NOW)
 
+    def test_forgejo_generic_download_requires_octet_stream(self):
+        """Forgejo v16 serves Generic downloads as application/octet-stream.
+
+        The upload may be application/gzip, but download Content-Type is
+        always application/octet-stream; gzip+tar integrity is checked later.
+        https://forgejo.org/docs/v16.0/user/packages/generic/
+        """
+        request, files, _, forgejo, _, factory = setup()
+        archive = archive_bytes(files)
+        factory.response = Response(archive, "application/octet-stream")
+        actual = forgejo.acquire(request, now=NOW)
+        self.assertEqual(actual["release-manifest.json"], files["release-manifest.json"])
+        self.assertEqual(actual["release-provenance.json"], files["release-provenance.json"])
+        self.assertEqual(factory.calls[-1][3]["Accept"], "application/octet-stream")
+        for unsupported in ("application/gzip", "text/plain", "application/json"):
+            factory.response = Response(archive, unsupported)
+            with self.subTest(media=unsupported), self.assertRaises(ReleaseConsumerError):
+                forgejo.acquire(request, now=NOW)
+
     def test_forgejo_schema_and_hash_failures(self):
         request, files, _, forgejo, _, ff = setup()
         for name, change in (
@@ -324,10 +352,10 @@ class ConsumerTests(unittest.TestCase):
         ):
             changed = dict(files)
             changed["release-manifest.json"] = change
-            ff.response = Response(archive_bytes(changed), "application/gzip")
+            ff.response = Response(archive_bytes(changed), "application/octet-stream")
             with self.subTest(name=name), self.assertRaises(ReleaseConsumerError):
                 forgejo.acquire(request, now=NOW)
-        ff.response = Response(archive_bytes(files, omit={"release-provenance.json"}), "application/gzip")
+        ff.response = Response(archive_bytes(files, omit={"release-provenance.json"}), "application/octet-stream")
         with self.assertRaises(ReleaseConsumerError):
             forgejo.acquire(request, now=NOW)
         ff.response = Response(archive_bytes(files), "text/plain")

@@ -1,7 +1,15 @@
-"""Inert, read-only Task 013 evidence acquisition for Task 014 DEV.
+"""File: deployment/release_consumer.py
 
-Credential providers and signature verification are injected. This module never
-exchanges credentials, invokes a publisher, or starts a deployment.
+Purpose: Inert, read-only Task 013 evidence acquisition for Task 014 DEV.
+    Retrieve signed OCI and Forgejo Generic evidence using injected
+    credentials and verify fixed response contracts without deployment.
+Related: deployment/registry_oidc_credentials.py, deployment/oci_verifier.py,
+    deployment/blob_verifier.py, deployment/broker_integration.py,
+    deployment/tests/test_release_consumer.py.
+
+Sections: strict fixed registry endpoints/HTTP envelope, bounded archive
+    extraction and validation, signed evidence binding, executor request
+    construction. No publication or deployment side effects.
 """
 
 from __future__ import annotations
@@ -39,7 +47,11 @@ ZOT_HOST = "oci-dev.omnilyzer.ai"
 FORGEJO_HOST = "registry-dev.omnilyzer.ai"
 REPOSITORY = "omnilyzer/task013-release-canary"
 OCI_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
-ARCHIVE_MEDIA_TYPE = "application/gzip"
+# Forgejo v16 Generic package GET returns application/octet-stream even
+# when PUT uploaded a gzip archive. The gzip and tar bytes are parsed and
+# independently signature-checked after the exact HTTP header policy.
+# See https://forgejo.org/docs/v16.0/user/packages/generic/
+ARCHIVE_MEDIA_TYPE = "application/octet-stream"
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_ARCHIVE_BYTES = 16 * 1024 * 1024
 MAX_UNPACKED_BYTES = 64 * 1024 * 1024
