@@ -1,4 +1,10 @@
-"""C32O signed synthetic registry JWTs; no GitHub, registry or host I/O."""
+"""File: deployment/tests/test_registry_oidc_credentials.py
+
+Purpose: Exercise signed Zot/Forgejo OIDC credentials and cross-run binding,
+    including the optional GitHub JOSE x5t header on all three JWT audiences.
+Related: deployment/registry_oidc_credentials.py,
+    deployment/oidc_verifier.py, deployment/tests/test_oidc_verifier.py.
+"""
 
 import ast
 from dataclasses import asdict
@@ -113,6 +119,26 @@ class RegistryCredentialTests(unittest.TestCase):
         self.assertNotEqual(self.deployment.jti, self.claims(ZOT_AUDIENCE)['jti'])
         self.assertNotEqual(self.claims(ZOT_AUDIENCE)['jti'],
                             self.claims(FORGEJO_AUDIENCE, jti='registry-jti-2')['jti'])
+
+    def test_github_x5t_thumbprint_on_all_three_signed_oidc_audiences(self):
+        """One valid GitHub JOSE thumbprint must not block signed credentials."""
+        thumbprint = 'ykNaY4qM_ta4k2TgZOCEYLkcYlA'
+        deployment = oidc_verifier.GitHubOIDCVerifier(
+            expected_workflow_sha=WORKFLOW_SHA, jwks_cache=self.cache
+        ).verify(self.token(valid_claims(), headers={'x5t': thumbprint}), received_at=NOW)
+        self.cache.kids.clear()
+        zot = self.token(self.claims(ZOT_AUDIENCE), headers={'x5t': thumbprint})
+        forgejo = self.token(
+            self.claims(FORGEJO_AUDIENCE, jti='registry-jti-2',
+                        iat=NOW - 5, nbf=NOW - 8, exp=NOW + 200),
+            headers={'x5t': thumbprint},
+        )
+        result = self.verify(zot=zot, forgejo=forgejo, deployment=deployment)
+        self.assertIs(type(result), registry.VerifiedRegistryCredentials)
+        self.assertEqual(self.cache.kids, ['key-1', 'key-1'])
+        self.assertEqual(result.zot_read_credential(), ZotReadCredential(zot, NOW + 290))
+        self.assertEqual(result.forgejo_read_credential(),
+                         ForgejoReadCredential(forgejo, NOW + 200))
 
     def test_deployment_verifier_remains_closed_no_audience_override(self):
         self.assertEqual(tuple(inspect.signature(oidc_verifier.GitHubOIDCVerifier).parameters),
