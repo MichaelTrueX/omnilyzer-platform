@@ -1,4 +1,11 @@
-"""Strict non-live GitHub OIDC JWT verification boundary."""
+"""File: deployment/oidc_verifier.py
+
+Purpose: Strictly validate signed GitHub Actions OIDC JWTs, including safe
+    JOSE x5t thumbprints, without changing RS256/issuer/audience authority.
+Related: deployment/jwks.py, deployment/identity.py,
+    deployment/registry_oidc_credentials.py,
+    deployment/tests/test_oidc_verifier.py.
+"""
 
 from __future__ import annotations
 
@@ -41,7 +48,11 @@ MAX_JSON_STRING = 4096
 MAX_JSON_NODES = 512
 
 _BASE64URL = re.compile(r"[A-Za-z0-9_-]+\Z")
-_HEADER_FIELDS = frozenset({"alg", "kid", "typ"})
+# GitHub's RS256 JWTs may include the RFC 7515 x5t certificate thumbprint.
+# This is syntax metadata only: the validated kid remains the key selector,
+# and PyJWT still verifies the exact signed JOSE header and claims.
+_HEADER_FIELDS = frozenset({"alg", "kid", "typ", "x5t"})
+_THUMBPRINT_SIZE_BYTES = 20  # JOSE x5t is a SHA-1 certificate thumbprint.
 
 
 def _segment(value: str, *, maximum_decoded: int) -> bytes:
@@ -89,12 +100,18 @@ def _parse_compact_token(compact_token: Any) -> tuple[dict[str, Any], dict[str, 
         maximum_nodes=MAX_JSON_NODES, maximum_array=MAX_JSON_ARRAY,
         maximum_string=MAX_JSON_STRING,
     )
-    if set(header) not in ({"alg", "kid"}, {"alg", "kid", "typ"}):
-        raise OIDCVerificationError("OIDC token header is invalid")
-    if not set(header) <= _HEADER_FIELDS or header.get("alg") != "RS256":
+    keys = set(header)
+    if (not {"alg", "kid"} <= keys or not keys <= _HEADER_FIELDS
+            or header.get("alg") != "RS256"):
         raise OIDCVerificationError("OIDC token header is invalid")
     if "typ" in header and header["typ"] != "JWT":
         raise OIDCVerificationError("OIDC token header is invalid")
+    if "x5t" in header:
+        thumbprint = header["x5t"]
+        if (type(thumbprint) is not str or len(thumbprint) != 27
+                or len(_segment(thumbprint, maximum_decoded=_THUMBPRINT_SIZE_BYTES))
+                != _THUMBPRINT_SIZE_BYTES):
+            raise OIDCVerificationError("OIDC token header is invalid")
     validate_kid(header.get("kid"))
     return header, claims
 

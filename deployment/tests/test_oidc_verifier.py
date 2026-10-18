@@ -1,3 +1,11 @@
+"""File: deployment/tests/test_oidc_verifier.py
+
+Purpose: Verify strict GitHub OIDC JWT signatures, trusted claims and the
+    optional JOSE x5t compatibility boundary under synthetic signing keys.
+Related: deployment/oidc_verifier.py, deployment/jwks.py,
+    deployment/tests/test_registry_oidc_credentials.py.
+"""
+
 from __future__ import annotations
 
 import base64
@@ -88,6 +96,35 @@ class OIDCVerifierTests(unittest.TestCase):
         self.assertEqual(identity.audience, DEV_AUDIENCE)
         self.assertEqual(identity.repository_id, 1350104356)
         self.assertEqual(self.cache.kids, ["key-1"])
+
+    def test_github_x5t_header_verifies_with_exact_rs256_signature(self) -> None:
+        """GitHub-issued JWTs may include an RFC 7515 SHA-1 cert thumbprint."""
+        x5t = "ykNaY4qM_ta4k2TgZOCEYLkcYlA"  # Public GitHub example.
+        signed = self.token(headers={"x5t": x5t})
+        identity = self.verifier.verify(signed, received_at=NOW)
+        self.assertEqual(identity.workflow_sha, WORKFLOW_SHA)
+        self.assertEqual(self.cache.kids, ["key-1"])
+
+        # The JOSE header itself remains covered by RS256: a changed but
+        # well-formed thumbprint invalidates the actual signature.
+        pieces = signed.split(".")
+        header = json.loads(base64.urlsafe_b64decode(pieces[0] + "=="))
+        header["x5t"] = "AkNaY4qM_ta4k2TgZOCEYLkcYlA"
+        pieces[0] = b64url(json.dumps(header, separators=(",", ":")).encode())
+        self.reject(".".join(pieces))
+
+    def test_reject_noncanonical_x5t_thumbprints(self) -> None:
+        """Keep only the canonical 20-byte base64url thumbprint syntax."""
+        for thumbprint in (
+            None, True, 0, "", "short", "A" * 26, "A" * 28,
+            "A" * 26 + "=", "!" * 27, "A" * 26 + "B",
+            "A" * 27 + "=", [1, 2, 3],
+        ):
+            with self.subTest(x5t=thumbprint):
+                self.reject(self.signed_raw(
+                    {"alg": "RS256", "kid": "key-1", "typ": "JWT",
+                     "x5t": thumbprint}, valid_claims()
+                ))
 
     def test_reviewed_revision_is_captured_and_cannot_be_replaced(self) -> None:
         with self.assertRaises(TypeError):
