@@ -1,4 +1,13 @@
-"""Repository-only adversarial checks for the inert C32ZF host boundary."""
+"""File: deployment/tests/test_rootless_docker_authority.py
+
+Purpose: Repository-only adversarial checks for the C32ZF rootless host
+    authority and successor Task014 Docker runtime contract.
+Related: deployment/rootless_docker_authority.py,
+    deployment/docker_runtime.py,
+    deployment/systemd/rootless/rootless-docker-launcher.py.
+Sections: exact Docker provenance/identity, sticky daemon socket 01660,
+    secure mount and launcher contracts, and fail-closed host prerequisites.
+"""
 
 from __future__ import annotations
 
@@ -86,7 +95,8 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
         self.assertEqual(
             (docker_runtime.DOCKER_SOCKET_UID, docker_runtime.DOCKER_SOCKET_GID,
              docker_runtime.DOCKER_SOCKET_MODE),
-            (AUTHORITY.executor_uid, AUTHORITY.executor_gid, 0o660),
+            (AUTHORITY.executor_uid, AUTHORITY.executor_gid,
+             AUTHORITY.daemon_socket_mode),
         )
 
     def test_exact_seven_package_authorities_and_provenance(self) -> None:
