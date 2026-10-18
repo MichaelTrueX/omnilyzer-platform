@@ -1,8 +1,15 @@
-"""Inert bounded client transport for the future privileged executor.
+"""File: deployment/unix_transport.py
 
-This module implements no listener, installation, service management, or
-deployment operation.  Import and construction do not inspect or open the
-production socket.
+Purpose: Strict one-request broker to privileged executor Unix-socket transport.
+    Handle Linux systemd's PID 1 listener credentials without weakening exact
+    executor socket path/ownership, framing or response verification.
+Related: deployment/broker.py, deployment/systemd/dev/
+    omnilyzer-deployment-executor.socket, deployment/executor_listener.py,
+    deployment/tests/test_unix_transport.py.
+
+Sections: immutable transport configuration; socket file and Linux peer
+    identity checks; bounded request framing and verified response handling.
+No listener, service management or deployment action at import/construction.
 """
 
 from __future__ import annotations
@@ -26,6 +33,12 @@ MAX_TIMEOUT_MS = 3000
 RESPONSE_TIMEOUT_MS = 600_000
 MAX_UNIX_PATH_BYTES = 107
 _PEER_CREDENTIALS = struct.Struct("=iII")
+# Systemd PID 1 creates and listens on the executor socket before passing FD3
+# to UID991's service. SO_PEERCRED reflects the credentials at listen(2),
+# not the later accepting service identity (Linux unix(7)).
+_SYSTEMD_LISTENER_CREDENTIALS = (1, 0, 0)
+_SYSTEMD_EXECUTOR_EXPECTED_IDS = (991, 991, 993)
+_SYSTEMD_EXECUTOR_PATH = PRODUCTION_EXECUTOR_SOCKET_PATH
 
 
 class ExecutorTransportUnavailableError(Exception):
@@ -222,8 +235,17 @@ class UnixExecutorTransport:
             if type(credentials) is not bytes or len(credentials) != peer_size:
                 raise OSError("invalid peer credentials")
             peer_pid, peer_uid, peer_gid = peer_unpack(credentials)
-            if (peer_pid <= 0 or peer_uid != expected_uid
-                    or peer_gid != expected_gid):
+            direct_executor_peer = (
+                peer_pid > 0 and peer_uid == expected_uid
+                and peer_gid == expected_gid
+            )
+            systemd_listener_peer = (
+                (peer_pid, peer_uid, peer_gid) == _SYSTEMD_LISTENER_CREDENTIALS
+                and (expected_uid, expected_gid, socket_group_gid)
+                == _SYSTEMD_EXECUTOR_EXPECTED_IDS
+                and path == _SYSTEMD_EXECUTOR_PATH
+            )
+            if not (direct_executor_peer or systemd_listener_peer):
                 raise OSError("unexpected peer credentials")
 
             after = lstat(path)

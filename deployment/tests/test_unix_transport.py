@@ -1,4 +1,13 @@
-"""Hostile public tests for the inert bounded Unix executor transport."""
+"""File: deployment/tests/test_unix_transport.py
+
+Purpose: Adversarial broker/executor Unix socket contract tests, including
+    Linux systemd listener PID1 peer credentials and strict socket validation.
+Related: deployment/unix_transport.py, deployment/executor_listener.py,
+    deployment/systemd/dev/omnilyzer-deployment-executor.socket.
+
+Sections: synthetic socket transport and timing fixtures, real local socket
+    tests, peer identity and inode attack cases, and fixed error boundaries.
+"""
 
 from __future__ import annotations
 
@@ -488,6 +497,75 @@ class UnixTransportPeerTests(unittest.TestCase):
         fake = FakeSocket(peer=PEER.pack(os.getpid(), os.getuid(), os.getgid()))
         transport, _ = fake_transport(fake)
         self.assertEqual(transport.send(REQUEST), RESPONSE)
+
+    def test_systemd_pid1_root_listener_peer_at_exact_dev_socket(self) -> None:
+        """Kernel SO_PEERCRED identifies systemd's listen(2) identity (PID 1).
+
+        Only the exact reviewed production socket and executor ownership may
+        accept PID1 UID0 GID0; this does not trust arbitrary root peers.
+        """
+        fake = FakeSocket(peer=PEER.pack(1, 0, 0))
+        with (
+            patch.object(unix_transport.os, "lstat", side_effect=[
+                metadata(uid=991, gid=993), metadata(uid=991, gid=993),
+            ]),
+            patch.object(unix_transport.socket, "socket", return_value=fake),
+            patch.object(unix_transport.time, "monotonic", Clock()),
+        ):
+            transport = UnixExecutorTransport(
+                expected_executor_uid=991, expected_executor_gid=991,
+                expected_socket_group_gid=993, timeout_ms=1000,
+            )
+            self.assertEqual(transport.send(REQUEST), RESPONSE)
+        self.assertEqual(fake.connected, [PRODUCTION_EXECUTOR_SOCKET_PATH])
+        self.assertEqual(fake.sent, [len(REQUEST).to_bytes(4, "big"), REQUEST])
+
+    def test_systemd_peer_identity_cannot_expand_to_other_root_processes(self) -> None:
+        """Reject PID2/root, partial-root values, and wrong socket metadata."""
+        for peer in (
+            PEER.pack(2, 0, 0),
+            PEER.pack(0, 0, 0),
+            PEER.pack(1, 0, 1),
+            PEER.pack(1, 1, 0),
+            PEER.pack(1, 991, 0),
+        ):
+            with self.subTest(peer=peer):
+                fake = FakeSocket(peer=peer)
+                with (
+                    patch.object(unix_transport.os, "lstat", side_effect=[
+                        metadata(uid=991, gid=993), metadata(uid=991, gid=993),
+                    ]),
+                    patch.object(unix_transport.socket, "socket", return_value=fake),
+                    patch.object(unix_transport.time, "monotonic", Clock()),
+                ):
+                    transport = UnixExecutorTransport(
+                        expected_executor_uid=991, expected_executor_gid=991,
+                        expected_socket_group_gid=993, timeout_ms=1000,
+                    )
+                    with self.assertRaises(ExecutorTransportUnavailableError):
+                        transport.send(REQUEST)
+                self.assertEqual(fake.sent, [])
+
+    def test_systemd_peer_rejects_wrong_socket_owner_or_group(self) -> None:
+        """PID 1 alone cannot bypass the existing exact socket metadata."""
+        for meta in (
+            metadata(uid=992, gid=993), metadata(uid=991, gid=992),
+            metadata(uid=991, gid=993, mode=stat.S_IFSOCK | 0o666),
+        ):
+            with self.subTest(meta=tuple(meta[:6])):
+                fake = FakeSocket(peer=PEER.pack(1, 0, 0))
+                with (
+                    patch.object(unix_transport.os, "lstat", return_value=meta),
+                    patch.object(unix_transport.socket, "socket", return_value=fake),
+                    patch.object(unix_transport.time, "monotonic", Clock()),
+                ):
+                    transport = UnixExecutorTransport(
+                        expected_executor_uid=991, expected_executor_gid=991,
+                        expected_socket_group_gid=993, timeout_ms=1000,
+                    )
+                    with self.assertRaises(ExecutorTransportUnavailableError):
+                        transport.send(REQUEST)
+                self.assertEqual(fake.sent, [])
 
     def test_peer_check_occurs_before_second_lstat_and_send(self) -> None:
         fake = self.assert_peer_rejected(PEER.pack(0, os.getuid(), os.getgid()))
