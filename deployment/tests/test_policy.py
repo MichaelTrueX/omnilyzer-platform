@@ -83,14 +83,32 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("schedule:", self.raw)
 
     def test_gate_remains_non_oidc_and_dev_job_is_only_deployment_job(self) -> None:
-        self.assertEqual(set(self.workflow["jobs"]), {"gate", "deploy_dev"})
+        self.assertEqual(set(self.workflow["jobs"]), {
+            "private_zot_readonly_probe", "gate", "deploy_dev",
+        })
+        probe = self.workflow["jobs"]["private_zot_readonly_probe"]
+        self.assertEqual(probe["if"], "${{ inputs.auth_probe == true }}")
+        self.assertEqual(probe["environment"], "task014-dev")
+        self.assertEqual(probe["permissions"], {
+            "contents": "read", "id-token": "write",
+        })
+        self.assertNotIn("needs", probe)
+        self.assertNotIn("continue-on-error", probe)
+        self.assertNotIn("deployment.promotion", str(probe))
+        self.assertNotIn("deployment.controller", str(probe))
+        self.assertNotIn("tailscale", str(probe).lower())
+        self.assertNotIn("secrets.", str(probe))
         gate = self.workflow["jobs"]["gate"]
+        self.assertEqual(gate["if"], "${{ inputs.auth_probe != true }}")
         self.assertEqual(gate["permissions"], {"contents": "read"})
         self.assertNotIn("id-token", gate["permissions"])
         self.assertNotIn("environment", gate)
         self.assertNotIn("continue-on-error", gate)
         dev = self.workflow["jobs"]["deploy_dev"]
-        self.assertEqual(dev["if"], "${{ inputs.target_stage == 'dev' }}")
+        self.assertEqual(
+            dev["if"],
+            "${{ inputs.auth_probe != true && inputs.target_stage == 'dev' }}",
+        )
         self.assertEqual(dev["needs"], "gate")
         self.assertEqual(dev["runs-on"], "ubuntu-24.04")
         self.assertEqual(dev["environment"], "task014-dev")
@@ -102,10 +120,11 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(uses, [
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         ])
         for value in uses:
             self.assertRegex(value, r"^[^@]+@[0-9a-f]{40}$")
-        self.assertEqual(self.raw.count("persist-credentials: false"), 2)
+        self.assertEqual(self.raw.count("persist-credentials: false"), 3)
 
     def test_workflow_has_no_other_deployment_authority(self) -> None:
         forbidden = (
