@@ -140,13 +140,17 @@ def _reviewed_target() -> tuple[c26.DevApplicationManifest, tuple[tuple[str, byt
             != c32w.TARGET_MANIFEST_SHA256
         ):
             raise OSError
+        # A historical, SHA-pinned C32ZG generation must not silently change
+        # when the independently reviewed current application grows new files.
+        # Its paths come from the exact independently hash-verified C32W
+        # predecessor, not the mutable current-generation selection.
         selection = DevApplicationSourceSet()
-        paths = tuple(item.repository_path for item in selection.files)
+        current_paths = tuple(item.repository_path for item in selection.files)
+        paths = tuple(path for path, _raw in predecessor_blobs)
         if (
             type(selection) is not DevApplicationSourceSet
             or len(paths) != TARGET_PATH_COUNT
-            or paths != c26._current_paths()
-            or paths != tuple(path for path, _raw in predecessor_blobs)
+            or not set(paths).issubset(current_paths)
             or hashlib.sha256(("\n".join(paths) + "\n").encode()).hexdigest()
             != TARGET_PATHS_SHA256
         ):
