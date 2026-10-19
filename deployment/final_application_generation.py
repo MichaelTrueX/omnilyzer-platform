@@ -89,11 +89,19 @@ def _reviewed_target() -> tuple[c26.DevApplicationManifest, tuple[tuple[str, byt
     try:
         _commit_parents()
         selection = DevApplicationSourceSet()
-        paths = tuple(item.repository_path for item in selection.files)
-        if (type(selection) is not DevApplicationSourceSet or len(paths) != TARGET_PATH_COUNT
-                or paths != c26._current_paths()
-                or sum(item.kind == "python-module" for item in selection.files) != 38
-                or sum(item.kind == "runtime-data" for item in selection.files) != 3
+        # C32V's pinned 41-file identity must remain historically verifiable
+        # after the independently reviewed current source set adds two
+        # private-Zot runtime modules. These are NOT in historical C32V.
+        additions = frozenset((
+            "deployment/private_registry_fd.py",
+            "deployment/private_registry_pull.py",
+        ))
+        current = tuple(item.repository_path for item in selection.files)
+        paths = tuple(path for path in current if path not in additions)
+        if (type(selection) is not DevApplicationSourceSet
+                or not additions.issubset(current)
+                or len(paths) != TARGET_PATH_COUNT
+                or len(paths) + len(additions) != len(current)
                 or hashlib.sha256(("\n".join(paths) + "\n").encode()).hexdigest()
                 != TARGET_PATHS_SHA256):
             raise OSError

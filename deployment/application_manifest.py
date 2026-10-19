@@ -142,8 +142,29 @@ def _paths() -> tuple[str, ...]:
 
 
 def _current_paths() -> tuple[str, ...]:
-    """Return current C32V selection; never use this for C32D history."""
+    """Return the complete, explicitly reviewed current source selection."""
     return tuple(item.repository_path for item in _DevApplicationSourceSet().files)
+
+
+def _historic_c32v_paths() -> tuple[str, ...]:
+    """Recognize only the exact pinned historical 41-file C32V manifest.
+
+    The private Zot deployment modules are not present in the historical
+    Git generation. Both the original count and original path SHA-256 are
+    required; no arbitrary subset may satisfy the manifest model.
+    """
+    additions = frozenset((
+        "deployment/private_registry_fd.py",
+        "deployment/private_registry_pull.py",
+    ))
+    current = _current_paths()
+    paths = tuple(path for path in current if path not in additions)
+    digest = _hashlib.sha256(("\n".join(paths) + "\n").encode()).hexdigest()
+    if (len(paths) != 41 or len(current) != 43
+            or not additions.issubset(current)
+            or digest != "c846e3d863f8c651ffc2de4d3671c9b8c0631c72366a360637d9cc45f98b60ab"):
+        raise ValueError(_MODEL_ERROR)
+    return paths
 
 
 @_dataclass(frozen=True, slots=True)
@@ -180,6 +201,7 @@ class DevApplicationManifest:
                     or type(self.digest_algorithm) is not str or self.digest_algorithm != "sha256"
                     or type(self.entries) is not tuple
                     or len(self.entries) not in (len(_C31_PATHS), len(_C32D_PATHS),
+                                                 len(_historic_c32v_paths()),
                                                  len(_current_paths()))):
                 raise ValueError(_MODEL_ERROR)
             for entry in self.entries:
@@ -188,7 +210,8 @@ class DevApplicationManifest:
                 # Call validation directly: do not manufacture additional evidence entries.
                 ApplicationManifestEntry.__post_init__(entry)
             paths = tuple(entry.path for entry in self.entries)
-            if paths not in (_predecessor_paths(), _paths(), _current_paths()):
+            if paths not in (_predecessor_paths(), _paths(),
+                              _historic_c32v_paths(), _current_paths()):
                 raise ValueError(_MODEL_ERROR)
         except Exception:
             raise ValueError(_MODEL_ERROR) from None
