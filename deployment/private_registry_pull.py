@@ -15,6 +15,7 @@ during import or construction.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from contextlib import contextmanager
@@ -99,10 +100,17 @@ def _command(workspace: Path, image: str, operation: str) -> tuple[str, ...]:
 
 
 def _write_config(workspace: Path, token: str) -> None:
-    """Create a single exclusive, no-follow 0600 Zot registrytoken config."""
+    """Create one exclusive 0600 Docker OIDC Basic-exchange configuration."""
+    # Docker's verified GitHub-OIDC registry flow uses username 'oidc'
+    # and the signed JWT as password (see platform-release.yml). Docker
+    # exchanges that Basic credential for its registry-scoped Bearer token.
+    # Setting 'registrytoken' directly does not perform that exchange.
+    # Base64 is Docker config encoding, NOT encryption; file/dir perms and
+    # bounded lifetime provide the confidentiality boundary.
+    encoded = base64.b64encode(("oidc:" + token).encode("ascii")).decode("ascii")
     raw = (
         json.dumps(
-            {"auths": {ZOT_HOST: {"registrytoken": token}}},
+            {"auths": {ZOT_HOST: {"auth": encoded}}},
             separators=(",", ":"), sort_keys=True, ensure_ascii=True,
         ) + "\n"
     ).encode("ascii")

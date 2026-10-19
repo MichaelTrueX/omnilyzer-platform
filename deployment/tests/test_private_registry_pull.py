@@ -10,6 +10,7 @@ Sections: authorization gates, exact subprocess boundary, cleanup on error.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from pathlib import Path
@@ -58,9 +59,14 @@ class MemoryCommandRunner:
         parent = self.config_path.parent.stat()
         assert stat.S_IMODE(parent.st_mode) == 0o700
         data = json.loads(self.config_path.read_text())
-        assert data == {
-            "auths": {"oci-dev.omnilyzer.ai": {"registrytoken": TOKEN}}
-        }
+        assert set(data) == {"auths"}
+        assert set(data["auths"]) == {"oci-dev.omnilyzer.ai"}
+        assert set(data["auths"]["oci-dev.omnilyzer.ai"]) == {"auth"}
+        decoded = base64.b64decode(
+            data["auths"]["oci-dev.omnilyzer.ai"]["auth"],
+            validate=True,
+        ).decode("ascii")
+        assert decoded == "oidc:" + TOKEN
         return CommandResult(self.status, "", "")
 
 
