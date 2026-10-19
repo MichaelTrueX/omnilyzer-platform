@@ -1,3 +1,12 @@
+"""File: deployment/tests/test_docker_runtime.py
+
+Purpose: Deterministic Task014 Docker runtime integration/attack tests.
+Related: deployment/docker_runtime.py, deployment/rootless_docker_authority.py,
+    deployment/systemd/rootless/rootless-docker-executor-socket.conf.
+Sections: inert subprocess and HTTP fakes; strict image/socket checks;
+    candidate deployment and rollback invariants; request validation.
+"""
+
 from __future__ import annotations
 
 import ast
@@ -380,8 +389,10 @@ class DockerRuntimeTests(unittest.TestCase):
         self.assertNotIn("DOCKER_CONTEXT", EXPECTED_ENVIRONMENT)
 
     def test_rootless_socket_guard_requires_exact_projected_socket(self) -> None:
+        # The rootless authority requires a sticky, group-private 01660
+        # daemon socket. BindReadOnlyPaths preserves that underlying mode.
         safe = SimpleNamespace(
-            st_mode=stat.S_IFSOCK | 0o660, st_nlink=1, st_uid=991, st_gid=991,
+            st_mode=stat.S_IFSOCK | 0o1660, st_nlink=1, st_uid=991, st_gid=991,
         )
         with patch.object(runtime_module.os, "lstat", return_value=safe):
             REAL_REQUIRE_ROOTLESS_SOCKET()
@@ -394,6 +405,8 @@ class DockerRuntimeTests(unittest.TestCase):
             SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660, st_nlink=1, st_uid=0, st_gid=991),
             SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660, st_nlink=1, st_uid=991, st_gid=0),
             SimpleNamespace(st_mode=stat.S_IFSOCK | 0o600, st_nlink=1, st_uid=991, st_gid=991),
+            SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660, st_nlink=1, st_uid=991, st_gid=991),
+            SimpleNamespace(st_mode=stat.S_IFSOCK | 0o1760, st_nlink=1, st_uid=991, st_gid=991),
         )
         for opened in unsafe:
             with self.subTest(opened=opened), patch.object(

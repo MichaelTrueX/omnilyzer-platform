@@ -1,11 +1,18 @@
-"""Closed Docker/Compose implementation of the Task 014 DEV runtime boundary.
+"""File: deployment/docker_runtime.py
 
-This module contains the closed runtime and concrete Docker Compose candidate
-loopback probe. Nothing executes at import or construction time. Candidate
-probing occurs only through explicit ``get()`` calls against exact Compose
-services and ``127.0.0.1:8080`` inside the selected container, so candidate host
-ports are neither required nor used. Other command argv, paths, service names,
-and HTTP targets are likewise generated only from closed allowlists.
+Purpose: Closed Docker/Compose implementation of the Task 014 DEV runtime
+    boundary, including the rootless engine's exact sticky socket mode 01660.
+Related: deployment/rootless_docker_authority.py,
+    deployment/systemd/rootless/rootless-docker-executor-socket.conf,
+    deployment/deployment_operation.py,
+    deployment/tests/test_docker_runtime.py.
+
+Sections: fixed image/runtime and rootless socket authority, bounded
+    subprocess execution, deterministic candidate/blue-green Compose
+    operations, and exact in-container health/metadata probes.
+Nothing executes at import or construction. Candidate probing occurs only
+through explicit get() calls against exact Compose services and
+127.0.0.1:8080 inside the selected container, not host-published ports.
 """
 
 from __future__ import annotations
@@ -39,7 +46,11 @@ DOCKER_PREFIX = (
 )
 DOCKER_SOCKET_UID = 991
 DOCKER_SOCKET_GID = 991
-DOCKER_SOCKET_MODE = 0o660
+# The rootless Docker daemon's authoritative socket is deliberately sticky
+# (01660). systemd BindReadOnlyPaths preserves the underlying socket inode
+# and its mode inside the executor's protected mount namespace.
+# See deployment/rootless_docker_authority.py and its fixed launcher.
+DOCKER_SOCKET_MODE = 0o1660
 RUNTIME_CONFIG_FILE = WORKING_DIRECTORY / "canary-runtime.json"
 RUNTIME_CONFIG_BYTES = b'{"CANARY_DEPENDENCY_REQUIRED":"false","CANARY_RUNTIME_CONFIG_ID":"task014-dev","schema_version":1}\n'
 IMAGE_PREFIX = "oci-dev.omnilyzer.ai/omnilyzer/task013-release-canary@"
