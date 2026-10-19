@@ -75,6 +75,8 @@ jobs:
             deployment.tests.test_oci_verifier \
             deployment.tests.test_blob_verifier \
             deployment.tests.test_unix_transport \
+            deployment.tests.test_executor_listener \
+            deployment.tests.test_executor_listener_procfs \
             deployment.tests.test_rootless_docker_fresh_manager_preflight \
             deployment.tests.test_rootless_docker_restart_preflight \
             deployment.tests.test_systemd_socket_activation \
