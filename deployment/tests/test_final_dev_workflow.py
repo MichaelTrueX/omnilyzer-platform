@@ -87,6 +87,7 @@ class FinalDevWorkflowTests(unittest.TestCase):
             self.assertEqual(inputs[key]["required"], "false")
             self.assertEqual(inputs[key]["default"], "")
         self.assertEqual(inputs["target_stage"]["options"], ["dev", "staging", "prod"])
+        self.assertEqual(inputs["target_stage"]["default"], "dev")
         self.assertEqual(self.workflow["permissions"], {})
         self.assertEqual(set(self.workflow["jobs"]), {
             "gate", "deploy_dev", "private_zot_readonly_probe",
@@ -99,6 +100,12 @@ class FinalDevWorkflowTests(unittest.TestCase):
         })
         self.assertEqual(len(diagnostic["steps"]), 2)
         self.assertIn("release.private_zot_auth_probe", diagnostic["steps"][1]["run"])
+        self.assertEqual(
+            diagnostic["steps"][1]["env"],
+            {"DIAGNOSTIC_TARGET_STAGE": "${{ inputs.target_stage }}"},
+        )
+        self.assertIn('test "$DIAGNOSTIC_TARGET_STAGE" = dev',
+                      diagnostic["steps"][1]["run"])
         self.assertNotIn("deployment.promotion", str(diagnostic))
         self.assertNotIn("deployment.controller", str(diagnostic))
         self.assertNotIn("secrets.", str(diagnostic))

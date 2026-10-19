@@ -14,6 +14,7 @@ on:
         required: true
         type: choice
         options: [dev, staging, prod]
+        default: dev
       release_version:
         description: Strict accepted release version
         required: false
@@ -66,9 +67,12 @@ jobs:
           persist-credentials: false
       - name: Probe private Zot Docker authentication without deployment
         shell: bash
+        env:
+          DIAGNOSTIC_TARGET_STAGE: ${{ inputs.target_stage }}
         run: |
           set -euo pipefail
           umask 077
+          test "$DIAGNOSTIC_TARGET_STAGE" = dev
           python3 -m release.private_zot_auth_probe
 
   # Section 1: no promotion policy or replay inspection during diagnostic.
