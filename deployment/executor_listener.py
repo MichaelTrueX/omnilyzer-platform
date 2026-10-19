@@ -22,6 +22,7 @@ EXECUTOR_LISTENER_UNAVAILABLE_MESSAGE = "executor listener is unavailable"
 MAX_ACCEPT_TIMEOUT_MS = 3000
 MAX_IDENTITY_VALUE = 2**32 - 2
 _MAX_PROC_UNIX_BYTES = 1024 * 1024
+_MAX_PROC_UNIX_READ_CALLS = 512
 
 
 class ExecutorListenerUnavailableError(Exception):
@@ -214,11 +215,28 @@ def _read_proc_unix(
     path: str, opener: Callable[..., Any] = open,
     maximum: int = _MAX_PROC_UNIX_BYTES,
 ) -> bytes:
+    """Read a complete bounded procfs inventory, even across short reads.
+
+    Linux seq_file can return only a partial block in one unbuffered read.
+    EOF, not a short read, establishes completeness. Enforce byte and syscall
+    ceilings so a malformed or perpetually short stream fails closed.
+    """
+
+    pieces: list[bytes] = []
+    total = 0
     with opener(path, "rb", buffering=0) as stream:
-        value = stream.read(maximum + 1)
-    if type(value) is not bytes or len(value) > maximum:
-        raise OSError("invalid Unix socket inventory")
-    return value
+        for _ in range(_MAX_PROC_UNIX_READ_CALLS):
+            remaining = maximum + 1 - total
+            value = stream.read(remaining)
+            if type(value) is not bytes or len(value) > remaining:
+                raise OSError("invalid Unix socket inventory")
+            if not value:
+                return b"".join(pieces)
+            total += len(value)
+            if total > maximum:
+                raise OSError("invalid Unix socket inventory")
+            pieces.append(value)
+    raise OSError("invalid Unix socket inventory")
 
 
 def _require_proc_binding(value: object, descriptor_inode: int, path: str) -> None:
