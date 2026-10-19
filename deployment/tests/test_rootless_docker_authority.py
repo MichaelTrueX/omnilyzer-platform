@@ -58,12 +58,19 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
         self.assertIn("deployment/docker_runtime.py", selected)
         self.assertEqual(frozen.TARGET_REVIEWED_COMMIT,
                          "e4f0030c7a028beb834618254781c2fbff5d6b0d")
+        # This historic comparison must exclude files added after C32V.
+        historical = tuple(path for path in selected if path not in {
+            "deployment/private_registry_fd.py",
+            "deployment/private_registry_pull.py",
+        })
+        self.assertEqual(len(historical), frozen.TARGET_PATH_COUNT)
         self.assertEqual(subprocess.run(
-            ("git", "diff", "--quiet", BASE, frozen.TARGET_REVIEWED_COMMIT, "--", *selected),
+            ("git", "diff", "--quiet", BASE, frozen.TARGET_REVIEWED_COMMIT, "--", *historical),
             cwd=ROOT, check=False,
         ).returncode, 0)
+        # C32W's generation *identity* stays SHA-pinned, while its model
+        # now recognizes both the historic 41-file and current 43-file lists.
         historical_freeze = (
-            "deployment/final_application_generation.py",
             "deployment/final_configuration_authority.py",
             "deployment/dev_final_application_update.py",
             "deployment/broker_edge_contract.py",
@@ -72,6 +79,10 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
             ("git", "diff", "--quiet", BASE, "--", *historical_freeze),
             cwd=ROOT, check=False,
         ).returncode, 0)
+        self.assertEqual(
+            frozen.review_final_application_generation().manifest_sha256,
+            frozen.TARGET_MANIFEST_SHA256,
+        )
         self.assertIn("frozen-c32w-application-authority-unchanged",
                       (ROOT / "deployment/broker_edge_contract.py").read_text())
         for source, *_ in AUTHORITY.installed_assets:

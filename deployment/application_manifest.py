@@ -150,8 +150,9 @@ def _historic_c32v_paths() -> tuple[str, ...]:
     """Recognize only the exact pinned historical 41-file C32V manifest.
 
     The private Zot deployment modules are not present in the historical
-    Git generation. Both the original count and original path SHA-256 are
-    required; no arbitrary subset may satisfy the manifest model.
+    Git generation. Both the original count and path SHA-256 are required;
+    no arbitrary same-size subset can satisfy the historical model. Current
+    manifest construction only invokes this check for 41-file evidence.
     """
     additions = frozenset((
         "deployment/private_registry_fd.py",
@@ -196,13 +197,20 @@ class DevApplicationManifest:
         """Revalidate nested exact-type entries, including partially forged values."""
         try:
             _commit(self.reviewed_commit)
+            # Only historical 41-file manifests need the SHA-pinned C32V
+            # validation. Current model construction must remain inert even
+            # when hashing and I/O are prohibited by the caller.
+            if type(self.entries) is not tuple:
+                raise ValueError(_MODEL_ERROR)
+            historic_paths = (
+                _historic_c32v_paths() if len(self.entries) == 41 else ()
+            )
+            current_paths = _current_paths()
             if (type(self.manifest_kind) is not str
                     or self.manifest_kind != "canonical-relative-file-set-v1"
                     or type(self.digest_algorithm) is not str or self.digest_algorithm != "sha256"
-                    or type(self.entries) is not tuple
                     or len(self.entries) not in (len(_C31_PATHS), len(_C32D_PATHS),
-                                                 len(_historic_c32v_paths()),
-                                                 len(_current_paths()))):
+                                                 len(historic_paths), len(current_paths))):
                 raise ValueError(_MODEL_ERROR)
             for entry in self.entries:
                 if type(entry) is not ApplicationManifestEntry:
@@ -211,7 +219,7 @@ class DevApplicationManifest:
                 ApplicationManifestEntry.__post_init__(entry)
             paths = tuple(entry.path for entry in self.entries)
             if paths not in (_predecessor_paths(), _paths(),
-                              _historic_c32v_paths(), _current_paths()):
+                              historic_paths, current_paths):
                 raise ValueError(_MODEL_ERROR)
         except Exception:
             raise ValueError(_MODEL_ERROR) from None

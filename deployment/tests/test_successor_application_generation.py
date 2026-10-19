@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from deployment import final_application_generation as c32w
 from deployment import successor_application_generation as module
+from deployment import application_manifest as c26
 from deployment.application_source_set import DevApplicationSourceSet
 from deployment.execution import INGRESS_PATHS
 
@@ -69,8 +70,10 @@ class SuccessorApplicationGenerationTests(unittest.TestCase):
         )
 
     def test_exact_single_application_delta_and_blob_hashes(self) -> None:
-        paths = tuple(item.repository_path for item in DevApplicationSourceSet().files)
-        self.assertEqual(len(paths), 43)
+        # Compare exact historical generations, excluding only the two
+        # private-Zot modules introduced after both pinned commits.
+        paths = c26._historic_c32v_paths()
+        self.assertEqual(len(paths), module.TARGET_PATH_COUNT)
         changed = tuple(
             path
             for path in paths
