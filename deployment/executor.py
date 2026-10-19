@@ -208,9 +208,12 @@ def parse_canonical_response(raw: bytes) -> ExecutorResponse:
 class RestrictedPrivilegedExecutor:
     """Reparse, transition replay, and invoke one fixed deployment operation."""
 
-    __slots__ = ("_operations",)
+    __slots__ = ("_operations", "_private_registry_preflight")
 
-    def __init__(self, *, replay_guard: object, operation: object) -> None:
+    def __init__(
+        self, *, replay_guard: object, operation: object,
+        private_registry_preflight: object | None = None,
+    ) -> None:
         operations = (
             _ordinary_bound_method(
                 replay_guard, "begin_execution", positional=("jti",),
@@ -224,11 +227,47 @@ class RestrictedPrivilegedExecutor:
             _build_success_response,
         )
         object.__setattr__(self, "_operations", operations)
+        private_check = (
+            None if private_registry_preflight is None else _ordinary_bound_method(
+                private_registry_preflight, "preflight_private_registry",
+                positional=("canonical_request", "credential_fd"),
+            )
+        )
+        object.__setattr__(self, "_private_registry_preflight", private_check)
 
     def __setattr__(self, name: str, value: object) -> None:
         raise AttributeError("executor collaborators are immutable")
 
+    def execute_private(self, canonical_request: bytes, *, credential_fd: int) -> bytes:
+        """Preflight private Zot read BEFORE replay; scope FD to exact pull."""
+        from .private_registry_fd import read_sealed_credential
+        from .private_registry_pull import scoped_private_zot_request
+
+        preflight = object.__getattribute__(self, "_private_registry_preflight")
+        if preflight is None:
+            raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+        try:
+            request = parse_canonical_request(canonical_request)
+            read_sealed_credential(
+                credential_fd, canonical_request=canonical_request,
+                image=request.exact_image_reference,
+            )
+            # Preflight uses only Docker manifest inspect, and never mutates
+            # replay, Docker images, candidate state or audit records.
+            if preflight(canonical_request, credential_fd) is not None:
+                raise ValueError("private registry preflight returned a result")
+            with scoped_private_zot_request(credential_fd, canonical_request):
+                return RestrictedPrivilegedExecutor.execute(self, canonical_request)
+        except (KeyboardInterrupt, SystemExit, GeneratorExit):
+            raise
+        except Exception:
+            raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+
     def execute(self, canonical_request: bytes) -> bytes:
+        if object.__getattribute__(self, "_private_registry_preflight") is not None:
+            from .private_registry_pull import current_private_zot_request
+            if current_private_zot_request() is None:
+                raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE) from None
         if (
             type(canonical_request) is not bytes
             or not canonical_request

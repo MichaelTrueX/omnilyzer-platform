@@ -399,9 +399,31 @@ class DockerRuntimeAdapter:
     def _compose(*parts: str) -> tuple[str, ...]:
         return _docker("compose", "--project-name", PROJECT, "--file", str(COMPOSE_FILE), *parts)
 
+    def preflight_private_registry(self, canonical_request: bytes, credential_fd: int) -> None:
+        """Authenticate one exact manifest before replay/state is touched."""
+        from .private_registry_pull import execute_private_zot_read
+        execute_private_zot_read(
+            self._runner, credential_fd=credential_fd,
+            canonical_request=canonical_request, image=self._canary_image,
+            operation="manifest",
+        )
+
     def pull_exact_image(self, image: str) -> None:
+        """Pull only the reviewed digest, with ephemeral request credentials."""
         image = self._require_bound_image(image)
-        self._run(_docker("pull", image))
+        from .private_registry_pull import (
+            current_private_zot_request, execute_private_zot_read,
+        )
+        authority = current_private_zot_request()
+        if authority is not None:
+            fd, canonical_request = authority
+            execute_private_zot_read(
+                self._runner, credential_fd=fd,
+                canonical_request=canonical_request, image=image,
+                operation="pull",
+            )
+        else:
+            self._run(_docker("pull", image))
 
     def verify_local_repo_digest(self, image: str) -> None:
         image = self._require_bound_image(image)

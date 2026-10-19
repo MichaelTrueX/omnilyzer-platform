@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 import stat
 import tempfile
@@ -39,6 +41,28 @@ COMMANDS = frozenset((PROBE, PULL))
 # The Docker CLI can run for 30 seconds; a larger threshold avoids starting
 # a command with a credential likely to expire during that bounded call.
 MIN_VALIDITY_SECONDS = 45
+# Thread/task-local nonsecret binding; JWT bytes remain only in the sealed fd.
+_PRIVATE_REQUEST: ContextVar[tuple[int, bytes] | None] = ContextVar(
+    "omnilyzer_private_zot_request", default=None,
+)
+
+
+@contextmanager
+def scoped_private_zot_request(credential_fd: int, canonical_request: bytes):
+    """Bind a verified descriptor to this single executor request and reset."""
+    if type(credential_fd) is not int or credential_fd < 0 \
+            or type(canonical_request) is not bytes or not canonical_request:
+        raise PrivateRegistryPullError("private Zot pull is unavailable")
+    token = _PRIVATE_REQUEST.set((credential_fd, canonical_request))
+    try:
+        yield
+    finally:
+        _PRIVATE_REQUEST.reset(token)
+
+
+def current_private_zot_request() -> tuple[int, bytes] | None:
+    """Return only this task's descriptor binding, never a token string."""
+    return _PRIVATE_REQUEST.get()
 
 
 class PrivateRegistryPullError(Exception):
@@ -154,4 +178,5 @@ def execute_private_zot_read(
 
 __all__ = (
     "PrivateRegistryPullError", "execute_private_zot_read",
+    "scoped_private_zot_request", "current_private_zot_request",
 )

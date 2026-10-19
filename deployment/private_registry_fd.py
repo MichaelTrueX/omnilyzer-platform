@@ -218,6 +218,11 @@ def receive_sealed_header(sock: socket.socket) -> tuple[bytes, int]:
                 pass
 
 
+def _close_received_credential(fd: int) -> None:
+    """Close one executor-owned received descriptor without inspecting secrets."""
+    os.close(fd)
+
+
 __all__ = (
     "PrivateRegistryTransferError", "ScopedReadCredential",
     "create_sealed_credential", "read_sealed_credential",

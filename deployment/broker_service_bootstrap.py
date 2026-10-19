@@ -70,6 +70,7 @@ def run_dev_broker_service(*, stop_controller: BrokerStopController) -> None:
             configuration=configuration, verifier=verifier,
             replay_guard=replay, transport=transport, blob_signatures=blob,
             jwks_cache=cache,
+            private_registry_transport=True,
         )
         listener = _DevBrokerLoopbackListener(handler)
         if listener.serve_until_stopped(stop_controller) is not None:
