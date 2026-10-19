@@ -4,6 +4,11 @@ name: Platform promotion request
 on:
   workflow_dispatch:
     inputs:
+      auth_probe:
+        description: Read-only private Zot Docker authentication check; NEVER promote
+        required: false
+        type: boolean
+        default: false
       target_stage:
         description: Ordered target stage
         required: true
@@ -11,33 +16,64 @@ on:
         options: [dev, staging, prod]
       release_version:
         description: Strict accepted release version
-        required: true
+        required: false
         type: string
+        default: ""
       source_sha:
         description: Exact accepted release source SHA
-        required: true
+        required: false
         type: string
+        default: ""
       manifest_digest:
         description: Exact accepted OCI manifest digest
-        required: true
+        required: false
         type: string
+        default: ""
       release_manifest_sha256:
         description: Exact release-manifest.json SHA-256
-        required: true
+        required: false
         type: string
+        default: ""
       provenance_sha256:
         description: Exact release-provenance.json SHA-256
-        required: true
+        required: false
         type: string
+        default: ""
       originating_release_run_id:
         description: Successful Task 013 release run ID
-        required: true
+        required: false
         type: string
+        default: ""
 
 permissions: {}
 
 jobs:
+  # Section 0: the only operation permitted for diagnostic-only dispatch.
+  # This job cannot reach the broker, Tailscale, deployment gate or PROD.
+  private_zot_readonly_probe:
+    if: ${{ inputs.auth_probe == true }}
+    runs-on: ubuntu-24.04
+    environment: task014-dev
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Read protected main workflow source without stored credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Probe private Zot Docker authentication without deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 -m release.private_zot_auth_probe
+
+  # Section 1: no promotion policy or replay inspection during diagnostic.
   gate:
+    if: ${{ inputs.auth_probe != true }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -62,6 +98,14 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "MichaelTrueX/omnilyzer-platform"
+          # Input fields can be empty only when the isolated diagnostic job
+          # is selected; a real promotion still requires every exact field.
+          test -n "$RELEASE_VERSION"
+          test -n "$SOURCE_SHA"
+          test -n "$MANIFEST_DIGEST"
+          test -n "$RELEASE_MANIFEST_SHA256"
+          test -n "$PROVENANCE_SHA256"
+          test -n "$ORIGINATING_RELEASE_RUN_ID"
           test "$GITHUB_REF" = "refs/heads/main"
           request="$RUNNER_TEMP/task014-promotion-request.json"
           python3 -m deployment.promotion \
@@ -85,7 +129,8 @@ jobs:
           fi
 
   deploy_dev:
-    if: ${{ inputs.target_stage == 'dev' }}
+    # Defense in depth: never enter the DEV executor on a diagnostic run.
+    if: ${{ inputs.auth_probe != true && inputs.target_stage == 'dev' }}
     needs: gate
     runs-on: ubuntu-24.04
     environment: task014-dev

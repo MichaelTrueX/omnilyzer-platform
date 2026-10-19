@@ -20,10 +20,11 @@ from deployment.broker_integration import MAX_PROMOTION_REQUEST_BYTES
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/platform-promote.yml"
-INPUTS = {
+PROMOTION_INPUTS = {
     "target_stage", "release_version", "source_sha", "manifest_digest",
     "release_manifest_sha256", "provenance_sha256", "originating_release_run_id",
 }
+INPUTS = PROMOTION_INPUTS | {"auth_probe"}
 AUDIENCES = (
     "https://deploy-dev.omnilyzer.ai/task014-dev",
     "https://oci-dev.omnilyzer.ai",
@@ -78,14 +79,38 @@ class FinalDevWorkflowTests(unittest.TestCase):
         self.assertEqual(set(self.workflow["on"]), {"workflow_dispatch"})
         inputs = self.workflow["on"]["workflow_dispatch"]["inputs"]
         self.assertEqual(set(inputs), INPUTS)
-        self.assertTrue(all(value["required"] == "true" for value in inputs.values()))
+        self.assertEqual(inputs["target_stage"]["required"], "true")
+        self.assertEqual(inputs["auth_probe"]["required"], "false")
+        self.assertEqual(inputs["auth_probe"]["type"], "boolean")
+        self.assertEqual(inputs["auth_probe"]["default"], "false")
+        for key in PROMOTION_INPUTS - {"target_stage"}:
+            self.assertEqual(inputs[key]["required"], "false")
+            self.assertEqual(inputs[key]["default"], "")
         self.assertEqual(inputs["target_stage"]["options"], ["dev", "staging", "prod"])
         self.assertEqual(self.workflow["permissions"], {})
-        self.assertEqual(set(self.workflow["jobs"]), {"gate", "deploy_dev"})
+        self.assertEqual(set(self.workflow["jobs"]), {
+            "gate", "deploy_dev", "private_zot_readonly_probe",
+        })
+        diagnostic = self.workflow["jobs"]["private_zot_readonly_probe"]
+        self.assertEqual(diagnostic["if"], "${{ inputs.auth_probe == true }}")
+        self.assertEqual(diagnostic["environment"], "task014-dev")
+        self.assertEqual(diagnostic["permissions"], {
+            "contents": "read", "id-token": "write",
+        })
+        self.assertEqual(len(diagnostic["steps"]), 2)
+        self.assertIn("release.private_zot_auth_probe", diagnostic["steps"][1]["run"])
+        self.assertNotIn("deployment.promotion", str(diagnostic))
+        self.assertNotIn("deployment.controller", str(diagnostic))
+        self.assertNotIn("secrets.", str(diagnostic))
+        self.assertNotIn("tailscale", str(diagnostic).lower())
+        self.assertEqual(self.gate["if"], "${{ inputs.auth_probe != true }}")
         self.assertEqual(self.gate["permissions"], {"contents": "read"})
         self.assertNotIn("environment", self.gate)
         self.assertNotIn("ACTIONS_ID_TOKEN_REQUEST", str(self.gate))
-        self.assertEqual(self.dev["if"], "${{ inputs.target_stage == 'dev' }}")
+        self.assertEqual(
+            self.dev["if"],
+            "${{ inputs.auth_probe != true && inputs.target_stage == 'dev' }}",
+        )
         self.assertEqual(self.dev["needs"], "gate")
         self.assertEqual(self.dev["runs-on"], "ubuntu-24.04")
         self.assertEqual(self.dev["environment"], "task014-dev")
@@ -174,7 +199,7 @@ class FinalDevWorkflowTests(unittest.TestCase):
         })
         self.assertEqual(create["env"]["REQUESTED_BY"], "github:${{ github.actor }}")
         self.assertEqual(create["env"]["TARGET_STAGE"], "${{ inputs.target_stage }}")
-        for name in INPUTS - {"target_stage"}:
+        for name in PROMOTION_INPUTS - {"target_stage"}:
             self.assertEqual(create["env"][name.upper()], "${{ inputs." + name + " }}")
         self.assertIn("umask 077", create["run"])
         self.assertIn("test \"$TARGET_STAGE\" = dev", create["run"])
@@ -185,7 +210,7 @@ class FinalDevWorkflowTests(unittest.TestCase):
         self.assertNotIn("upload-artifact", self.raw)
         self.assertEqual(self.raw.count("secrets."), 2)
         self.assertNotIn("set -x", self.raw)
-        self.assertNotIn("docker ", self.raw.lower())
+        self.assertNotIn("docker ", str((self.gate, self.dev)).lower())
         self.assertNotIn("http://", self.raw)
         self.assertNotIn("retry", self.script.lower())
         self.assertNotIn("tailscale/github-action", self.raw)
