@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import os
+import time
 import types
 from typing import Any, Callable
 
@@ -30,6 +32,7 @@ from .identity import (
     validate_expected_workflow_sha,
 )
 from .jwks import OIDCVerificationError, OIDCVerificationUnavailable
+from .private_registry_fd import create_sealed_credential
 
 
 MAX_EXECUTOR_RESPONSE_BYTES = 64 * 1024
@@ -139,7 +142,13 @@ class RestrictedDeploymentBroker:
         self, *, expected_workflow_sha: str, verifier: object, replay_guard: ReplayGuard,
         transport: ExecutorTransport, request_builder: object | None = None,
         promotion_context_verifier: object | None = None,
+        private_registry_transport: bool = False,
     ) -> None:
+        if type(private_registry_transport) is not bool or (
+            private_registry_transport
+            and (request_builder is None or promotion_context_verifier is None)
+        ):
+            raise TypeError("private registry transport requires verified authority")
         object.__setattr__(self, "_expected_workflow_sha",
                            validate_expected_workflow_sha(expected_workflow_sha))
         object.__setattr__(self, "_operations", (
@@ -149,6 +158,8 @@ class RestrictedDeploymentBroker:
             None if request_builder is None else _bound_operation(request_builder, "build"),
             None if promotion_context_verifier is None else _bound_operation(
                 promotion_context_verifier, "verify"),
+            (_bound_operation(transport, "_send_private")
+             if private_registry_transport else None),
         ))
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -193,10 +204,14 @@ class RestrictedDeploymentBroker:
                     or len(canonical_request) > MAX_CANONICAL_REQUEST_BYTES))):
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
 
-        verify, consume, send, build, verify_context = object.__getattribute__(self, "_operations")
+        verify, consume, send, build, verify_context, send_private = (
+            object.__getattribute__(self, "_operations")
+        )
         expected_workflow_sha = object.__getattribute__(self, "_expected_workflow_sha")
         if canonical_request is None and (build is None or verify_context is None
                                           or promotion is None or promotion_context is None):
+            raise BrokerRejectedError(REJECTED_MESSAGE) from None
+        if send_private is not None and canonical_request is not None:
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         normalize_identity = _normalize_identity
         authorization = authorize_verified_github_oidc
@@ -261,30 +276,59 @@ class RestrictedDeploymentBroker:
         if (type(request_hash) is not str or len(request_hash) != 64
                 or any(character not in "0123456789abcdef" for character in request_hash)):
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        # The private credential is checked and sealed BEFORE consuming broker
+        # replay. It stays outside canonical request bytes, hashes and audit.
+        descriptor: int | None = None
         try:
-            consume_result = consume(
-                identity.jti,
-                expires_at=identity.expires_at,
-                request_hash=request_hash,
-                run_id=identity.run_id,
-                run_attempt=identity.run_attempt,
-            )
-        except ReplayUnavailableError:
-            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
-        except ReplayError:
-            raise BrokerRejectedError(REJECTED_MESSAGE) from None
-        except Exception:
-            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
-        if consume_result is not None:
-            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+            if send_private is not None:
+                try:
+                    credential_provider = _bound_operation(
+                        verified_context, "zot_read_credential",
+                    )
+                    credential = credential_provider()
+                    token = credential.token
+                    expiry = credential.expires_at
+                    descriptor = create_sealed_credential(
+                        token, expires_at=expiry,
+                        image=request.exact_image_reference,
+                        canonical_request=canonical_request,
+                        now=int(time.time()),
+                    )
+                except (KeyboardInterrupt, SystemExit, GeneratorExit):
+                    raise
+                except Exception:
+                    raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
-        try:
-            response = send(canonical_request)
-        except Exception:
-            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
-        if type(response) is not bytes or len(response) > MAX_EXECUTOR_RESPONSE_BYTES:
-            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
-        return response
+            try:
+                consume_result = consume(
+                    identity.jti,
+                    expires_at=identity.expires_at,
+                    request_hash=request_hash,
+                    run_id=identity.run_id,
+                    run_attempt=identity.run_attempt,
+                )
+            except ReplayUnavailableError:
+                raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+            except ReplayError:
+                raise BrokerRejectedError(REJECTED_MESSAGE) from None
+            except Exception:
+                raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+            if consume_result is not None:
+                raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+
+            try:
+                response = (
+                    send_private(canonical_request, credential_fd=descriptor)
+                    if send_private is not None else send(canonical_request)
+                )
+            except Exception:
+                raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+            if type(response) is not bytes or len(response) > MAX_EXECUTOR_RESPONSE_BYTES:
+                raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+            return response
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
 
 
 __all__ = (
