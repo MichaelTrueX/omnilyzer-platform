@@ -362,7 +362,7 @@ class BrokerResourcesTests(unittest.TestCase):
         for forbidden in ("systemctl", "daemon-reload", "update_final_application(",
                           "socket.bind", "subprocess.run", "deployment_enabled = True"):
             self.assertNotIn(forbidden, source)
-        self.assertEqual(len(selected), 41)
+        self.assertEqual(len(selected), 43)
 
 
 if __name__ == "__main__":

@@ -226,7 +226,7 @@ class ResourceContractTests(unittest.TestCase):
         from deployment import application_manifest as manifest
         from deployment import dev_post_c31_application_update as history
         paths = tuple(item.repository_path for item in DevApplicationSourceSet().files)
-        self.assertEqual(len(paths), 41)
+        self.assertEqual(len(paths), 43)
         self.assertNotIn('deployment/sigstore_resource_contract.py', paths)
         self.assertIn('deployment/blob_verifier.py', paths)
         self.assertEqual((len(manifest._predecessor_paths()), len(manifest._paths())), (28, 31))

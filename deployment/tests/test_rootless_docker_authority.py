@@ -54,7 +54,7 @@ class RootlessDockerAuthorityTests(unittest.TestCase):
 
     def test_complete_c32w_application_and_freeze_tests_remain_historical(self) -> None:
         selected = tuple(item.repository_path for item in DevApplicationSourceSet().files)
-        self.assertEqual(len(selected), 41)
+        self.assertEqual(len(selected), 43)
         self.assertIn("deployment/docker_runtime.py", selected)
         self.assertEqual(frozen.TARGET_REVIEWED_COMMIT,
                          "e4f0030c7a028beb834618254781c2fbff5d6b0d")

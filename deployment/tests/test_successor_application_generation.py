@@ -70,7 +70,7 @@ class SuccessorApplicationGenerationTests(unittest.TestCase):
 
     def test_exact_single_application_delta_and_blob_hashes(self) -> None:
         paths = tuple(item.repository_path for item in DevApplicationSourceSet().files)
-        self.assertEqual(len(paths), 41)
+        self.assertEqual(len(paths), 43)
         changed = tuple(
             path
             for path in paths

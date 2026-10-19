@@ -443,7 +443,7 @@ class RequestContextTests(unittest.TestCase):
         from deployment.application_source_set import DevApplicationSourceSet
         from deployment import application_manifest, dev_post_c31_application_update as c32d
         paths = tuple(item.repository_path for item in DevApplicationSourceSet().files)
-        self.assertEqual(len(paths), 41)
+        self.assertEqual(len(paths), 43)
         self.assertIn("deployment/broker_integration.py", paths)
         self.assertIn("deployment/registry_promotion_composition.py", paths)
         self.assertEqual((len(application_manifest._predecessor_paths()),

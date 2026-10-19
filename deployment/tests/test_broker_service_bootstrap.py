@@ -236,7 +236,7 @@ class EntrypointTests(unittest.TestCase):
         from deployment.application_source_set import DevApplicationSourceSet
         from deployment import application_manifest, dev_post_c31_application_update as c32d
         paths = tuple(item.repository_path for item in DevApplicationSourceSet().files)
-        self.assertEqual(len(paths), 41)
+        self.assertEqual(len(paths), 43)
         for path in ("deployment/broker_service_bootstrap.py",
                      "deployment/broker_service_entrypoint.py",
                      "deployment/broker_loopback_listener.py"):

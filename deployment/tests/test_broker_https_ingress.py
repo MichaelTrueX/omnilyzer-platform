@@ -226,7 +226,7 @@ class BrokerHTTPSIngressTests(unittest.TestCase):
         self.assertIs(environment["activation"]["deployment_enabled"], False)
         self.assertEqual(len(inspect.signature(parse_dev_promotion_ingress).parameters), 5)
         selected = tuple(item.repository_path for item in DevApplicationSourceSet().files)
-        self.assertEqual(len(selected), 41)
+        self.assertEqual(len(selected), 43)
         self.assertIn("deployment/broker_https_ingress.py", selected)
 
 
