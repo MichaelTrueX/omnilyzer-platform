@@ -22,7 +22,7 @@ RUNTIME = ROOT / "deployment/runtime/dev"
 TEST_IMAGE = "oci-dev.omnilyzer.ai/omnilyzer/task013-release-canary@sha256:" + "a" * 64
 NGINX_IMAGE = "cgr.dev/chainguard/nginx@sha256:af16298b4fd38b12be52aa913c158b530b83d85d567752f611508593d542b20a"
 INGRESS_HASHES = {
-    "compose.yaml": "ac12c1958d5e65ab64a69ea58ca053d11cd664732edb20fb7dce39aabde6b3bc",
+    "compose.yaml": "c878123f77a74fba2e11e08b1d13b7cd40e8232f51471d656e927229f94dfdc9",
     "host-nginx.conf": "bfed4b9e0be612723ed545362bb80262d18dbf9f1895d974b5c295d35d4e08bb",
     "nginx/nginx.conf": "38175eb6439964037a691c562e9652cebe1a446965d7c59d70eda5db1b6b489a",
 }
@@ -113,7 +113,10 @@ class RuntimeAssetTests(unittest.TestCase):
             self.assertNotIn("/readyz", " ".join(service["healthcheck"]["test"]))
 
     def test_network_and_nginx_boundary(self) -> None:
-        self.assertEqual(self.compose["networks"], {"task014_frontend": {"internal": True}})
+        self.assertEqual(self.compose["networks"], {
+            "task014_frontend": {"internal": True},
+            "task014_edge": {},
+        })
         self.assertNotIn("backend", self.raw)
         nginx = self.compose["services"]["deployment-nginx"]
         self.assertEqual(nginx["image"], NGINX_IMAGE)
@@ -121,6 +124,11 @@ class RuntimeAssetTests(unittest.TestCase):
         self.assertIs(nginx["read_only"], True)
         self.assertEqual(nginx["cap_drop"], ["ALL"])
         self.assertEqual(nginx["ports"], ["127.0.0.1:3020:8080"])
+        self.assertEqual(nginx["networks"], ["task014_edge", "task014_frontend"])
+        for canary in ("canary-blue", "canary-green"):
+            service = self.compose["services"][canary]
+            self.assertEqual(service["networks"], ["task014_frontend"])
+            self.assertNotIn("ports", service)
         self.assertIn("/nginx-runtime:/etc/nginx/runtime:ro", nginx["volumes"][1])
         self.assertNotIn("docker.sock", self.raw)
 
