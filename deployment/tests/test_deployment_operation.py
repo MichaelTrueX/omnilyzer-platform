@@ -466,6 +466,82 @@ class RequestAndStateValidationTests(unittest.TestCase):
         self.assertEqual((runtime.calls, store.saved, sink.events, clock.calls), ([], [], [], 0))
 
 
+class FailedCandidateRecoveryTests(unittest.TestCase):
+    """Preserve evidence while recovering one definitely unrouted DEV candidate."""
+
+    @staticmethod
+    def abandoned() -> DeploymentState:
+        request = executor_request()
+        values = state(previous=False).to_dict()
+        for prefix in ("active", "previous"):
+            for suffix in ("release", "source_sha", "digest", "slot"):
+                values[f"{prefix}_{suffix}"] = None
+        values.update({
+            "candidate_release": request.release_version,
+            "candidate_source_sha": request.source_sha,
+            "candidate_digest": request.manifest_digest,
+            "candidate_slot": "blue",
+            "migration_state": {
+                "status": "pending", "identity": MIGRATION_IDENTITY,
+                "checksum": MIGRATION_CHECKSUM, "serialized_lock_required": True,
+            },
+            "event_id": "c8:" + "b" * 64 + ":promotion-started",
+        })
+        return DeploymentState.from_dict(values)
+
+    def test_matching_abandoned_first_promotion_recovers_and_completes(self) -> None:
+        class PersistentStore(StateStore):
+            def save(self, value: DeploymentState) -> None:
+                super().save(value)
+                self.initial = value
+
+        original = self.abandoned()
+        store = PersistentStore(original)
+        deployment, runtime, store, sink, _ = operation(store=store)
+        self.assertIsNone(deployment.deploy(executor_request()))
+        self.assertEqual(store.load_calls, 2)
+        cleaned = store.saved[0]
+        self.assertEqual(cleaned.candidate_slot, None)
+        self.assertEqual(cleaned.candidate_digest, None)
+        self.assertEqual(cleaned.migration_state.status, "none")
+        self.assertEqual(cleaned.event_id, original.event_id)
+        self.assertEqual(cleaned.updated_at, original.updated_at)
+        self.assertEqual(store.saved[-1].active_slot, "blue")
+        self.assertEqual(store.saved[-1].active_digest, executor_request().manifest_digest)
+        self.assertEqual(sink.events[-1].event_type, "promotion_succeeded")
+        self.assertEqual([call[0] for call in runtime.calls][:3], ["pull", "verify", "start"])
+
+    def test_unrelated_or_migrating_candidate_remains_untouched(self) -> None:
+        initial = self.abandoned()
+        cases = (
+            replace(initial, candidate_digest="sha256:" + "7" * 64),
+            replace(initial, migration_state=replace(initial.migration_state,
+                                                     status="running")),
+            replace(initial, active_release="1.0.0", active_source_sha="b" * 40,
+                    active_digest="sha256:" + "a" * 64, active_slot="green"),
+        )
+        for case in cases:
+            deployment, runtime, store, sink, _ = operation(store=StateStore(case))
+            with self.subTest(case=case), self.assertRaises(DeploymentOperationError):
+                deployment.deploy(executor_request())
+            self.assertEqual(store.saved, [])
+            self.assertEqual(runtime.calls, [])
+            self.assertEqual(sink.events, [])
+
+    def test_cold_pull_failure_compensates_candidate_before_switch(self) -> None:
+        original = state()
+        runtime = Runtime()
+        runtime.fail = "pull"
+        store = StateStore(original)
+        deployment, _, store, sink, _ = operation(runtime=runtime, store=store)
+        with self.assertRaises(DeploymentOperationError):
+            deployment.deploy(executor_request())
+        self.assertEqual(store.saved[0].candidate_slot, "green")
+        self.assertEqual(store.saved[-1], original)
+        self.assertEqual([c for c in runtime.calls if c[0] == "restore"], [])
+        self.assertEqual(sink.events[-1].event_type, "promotion_failed")
+
+
 class ActiveIdentityRejectionTests(unittest.TestCase):
     @staticmethod
     def active_state(
