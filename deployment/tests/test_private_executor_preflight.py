@@ -70,7 +70,7 @@ class Deployment:
 class PrivateExecutorPreflightTests(unittest.TestCase):
     """Fail closed without replay writes when registry authorization fails."""
 
-    def fd(self, *, lifetime: int = 100) -> int:
+    def fd(self, *, lifetime: int = 270) -> int:
         """Create and register one test-only sealed fd."""
         now = int(time.time())
         descriptor = create_sealed_credential(

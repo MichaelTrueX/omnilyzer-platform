@@ -43,11 +43,14 @@ COMMANDS = frozenset((PROBE, PULL))
 # The Docker CLI can run for 30 seconds; a larger threshold avoids starting
 # a command with a credential likely to expire during that bounded call.
 MIN_VALIDITY_SECONDS = 45
-# A successful manifest preflight cannot consume replay if a subsequent
-# authenticated Docker pull could start with <45s remaining. Reserve the
-# full 30s bounded CLI pull before allowing executor replay transition.
+# Pulling an uncached immutable canary can exceed the 30-second manifest /
+# local-operation bound. Keep a separate capped pull window and reduce
+# Docker progress output; do not extend unrelated runtime operations.
+PRIVATE_PULL_TIMEOUT_SECONDS = 180.0
+# Verify the short-lived GitHub OIDC read credential has enough lifetime for
+# one entire 180s pull plus the 45s safety margin BEFORE consuming replay.
 MIN_POST_PREFLIGHT_VALIDITY_SECONDS = (
-    MIN_VALIDITY_SECONDS + int(COMMAND_TIMEOUT_SECONDS)
+    MIN_VALIDITY_SECONDS + int(PRIVATE_PULL_TIMEOUT_SECONDS)
 )
 # Thread/task-local nonsecret binding; JWT bytes remain only in the sealed fd.
 _PRIVATE_REQUEST: ContextVar[tuple[int, bytes] | None] = ContextVar(
@@ -98,7 +101,7 @@ def _command(workspace: Path, image: str, operation: str) -> tuple[str, ...]:
     if operation == PROBE:
         suffix = ("manifest", "inspect", image)
     elif operation == PULL:
-        suffix = ("pull", image)
+        suffix = ("pull", "--quiet", image)
     else:
         raise PrivateRegistryPullError("private Zot pull is unavailable")
     return (
@@ -211,7 +214,8 @@ def execute_private_zot_read(
                     "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
                     "CANARY_IMAGE": image, "HOME": str(workspace),
                 },
-                timeout=COMMAND_TIMEOUT_SECONDS,
+                timeout=(PRIVATE_PULL_TIMEOUT_SECONDS if operation == PULL
+                         else COMMAND_TIMEOUT_SECONDS),
             )
             phase = "docker_command_result"
             if type(output) is not CommandResult:
