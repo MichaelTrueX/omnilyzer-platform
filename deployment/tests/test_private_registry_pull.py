@@ -23,7 +23,9 @@ from deployment.docker_runtime import CommandResult, DOCKER_CLI, DOCKER_HOST
 from deployment.execution import ExecutorRequest
 from deployment.private_registry_fd import create_sealed_credential
 from deployment.private_registry_pull import (
-    PrivateRegistryPullError, execute_private_zot_read,
+    PrivateRegistryPullError, PRIVATE_PULL_TIMEOUT_SECONDS,
+    MIN_POST_PREFLIGHT_VALIDITY_SECONDS, execute_private_zot_read,
+    require_private_zot_pull_budget,
 )
 from deployment.tests.test_execution import valid_request
 
@@ -92,7 +94,7 @@ class PrivateRegistryPullTests(unittest.TestCase):
         self.addCleanup(self.mock_socket.stop)
         self.addCleanup(self.mock_clock.stop)
 
-    def sealed(self, *, expires_at: int = NOW + 60,
+    def sealed(self, *, expires_at: int = NOW + 270,
                request: bytes = REQUEST, image: str = IMAGE) -> int:
         """Create an offline sealed memfd; cleanup is always registered."""
         descriptor = create_sealed_credential(
@@ -122,9 +124,19 @@ class PrivateRegistryPullTests(unittest.TestCase):
             runner, credential_fd=self.sealed(),
             canonical_request=REQUEST, image=IMAGE, operation="pull",
         )
-        self.assertEqual(runner.calls[0][1][-2:], ("pull", IMAGE))
+        self.assertEqual(runner.calls[0][1][-3:], ("pull", "--quiet", IMAGE))
         self.assertFalse(runner.config_path.exists())
         self.assertEqual(list(self.location.iterdir()), [])
+
+    def test_pull_lifetime_reserves_exact_bounded_window(self) -> None:
+        """A 180s pull is allowed only with its full expiry safety reserve."""
+        self.assertEqual(PRIVATE_PULL_TIMEOUT_SECONDS, 180.0)
+        self.assertEqual(MIN_POST_PREFLIGHT_VALIDITY_SECONDS, 225)
+        live = self.sealed(expires_at=NOW + 270)
+        require_private_zot_pull_budget(live, REQUEST, IMAGE)
+        too_short = self.sealed(expires_at=NOW + 224)
+        with self.assertRaises(PrivateRegistryPullError):
+            require_private_zot_pull_budget(too_short, REQUEST, IMAGE)
 
     def test_failed_subprocess_removes_token_config(self) -> None:
         """A denied/failed Docker pull does not retain token bytes on disk."""
