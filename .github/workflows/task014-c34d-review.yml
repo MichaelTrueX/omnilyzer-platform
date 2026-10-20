@@ -103,13 +103,22 @@ jobs:
             deployment.tests.test_private_registry_pull
       # Section 8: offline complete application and config cutover tests.
       # Never accesses /opt, /etc, systemd, Zot, network or DEV host.
-      - name: Test atomic DEV source and canonical config rollback offline
+      - name: Test historical 41-to-43 source/config cutover at its installed baseline
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m unittest -q \
-            release.tests.test_task014_source_cutover \
-            release.tests.test_task014_config_cutover
+          # This suite verifies the *completed* historical 41-to-43 migration.
+          # Run against the immutable installed source generation, not unrelated
+          # future commits with legitimate 43-to-43 application changes.
+          baseline="$RUNNER_TEMP/task014-installed-baseline"
+          git worktree add --detach "$baseline" 4c4ae86832b7f77b663c25c4dea62152af324b58
+          (
+            cd "$baseline"
+            python3 -m unittest -q \
+              release.tests.test_task014_source_cutover \
+              release.tests.test_task014_config_cutover
+          )
+          git worktree remove "$baseline"
       # Section 9: offline privileged-boundary review uses synthetic configs.
       # No sudo/root, live host config, OIDC, Docker or service changes.
       - name: Test root-only DEV read-only attestation with synthetic config
