@@ -110,3 +110,11 @@ jobs:
           python3 -m unittest -q \
             release.tests.test_task014_source_cutover \
             release.tests.test_task014_config_cutover
+      # Section 9: offline privileged-boundary review uses synthetic configs.
+      # No sudo/root, live host config, OIDC, Docker or service changes.
+      - name: Test root-only DEV read-only attestation with synthetic config
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -q \
+            release.tests.test_task014_dev_readonly_attestation
