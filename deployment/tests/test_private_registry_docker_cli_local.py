@@ -25,7 +25,10 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlsplit
+
+from deployment.private_registry_pull import _command, _write_config
 
 _TEST_IDENTITY = "synthetic-gh-oidc-jwt-for-local-test"
 _TEST_REGISTRY_TOKEN = "synthetic-oci-registry-bearer-from-local-test"
@@ -57,12 +60,20 @@ class _LocalOCI(BaseHTTPRequestHandler):
 
     def _challenge(self, *, scope: str = "") -> None:
         """Require OCI Bearer and give Docker a local synthetic token service."""
-        host = self.headers.get("Host")
-        assert isinstance(host, str) and host.startswith("127.0.0.1:")
-        realm = f"https://{host}/token"
-        header = f'Bearer realm="{realm}",service="test-local-oci"'
-        if scope:
-            header += f',scope="{scope}"'
+        # The challenge must never echo a peer-controlled HTTP Host header.
+        # Only this test's kernel-assigned loopback socket determines realm.
+        host, port = self.server.server_address
+        assert host == "127.0.0.1" and type(port) is int and 1 <= port <= 65535
+        realm = f"https://127.0.0.1:{port}/token"
+        if scope == "":
+            header = f'Bearer realm="{realm}",service="test-local-oci"'
+        elif scope == "repository:test/private-canary:pull":
+            header = (
+                f'Bearer realm="{realm}",service="test-local-oci",'
+                'scope="repository:test/private-canary:pull"'
+            )
+        else:
+            raise AssertionError("unsupported local registry scope")
         self.send_response(401)
         self.send_header("WWW-Authenticate", header)
         self.send_header("Content-Length", "0")
@@ -171,6 +182,8 @@ class DockerCLIPrivateAuthAcceptance(unittest.TestCase):
             server = ThreadingHTTPServer(("127.0.0.1", 0), _LocalOCI)
             server.events = []
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            # The disposable server must not allow obsolete TLSv1/1.1 either.
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.load_cert_chain(str(cert), str(key))
             server.socket = context.wrap_socket(server.socket, server_side=True)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -178,16 +191,27 @@ class DockerCLIPrivateAuthAcceptance(unittest.TestCase):
             try:
                 host = f"127.0.0.1:{server.server_address[1]}"
                 image = host + "/test/private-canary@" + _DIGEST
+                # Exercise the exact production Docker auth/command builders.
+                # Only the local host and Docker executable are substituted.
+                with (
+                    patch("deployment.private_registry_pull.ZOT_HOST", host),
+                    patch("deployment.private_registry_pull.DOCKER_CLI", docker),
+                ):
+                    _write_config(parent, _TEST_IDENTITY)
+                    argv = _command(parent, image, "manifest")
                 config = parent / "config.json"
-                # The existing platform-release.yml authenticates as 'oidc'
-                # with the GitHub JWT as password. Mimic resulting Docker auths.
-                config.write_text(json.dumps({
-                    "auths": {host: {"auth": _TEST_BASIC.split(" ", 1)[1]}},
-                }, separators=(",", ":")))
-                config.chmod(0o600)
+                self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(
+                    json.loads(config.read_text())["auths"][host]["auth"],
+                    _TEST_BASIC.split(" ", 1)[1],
+                )
+                # Only this disposable self-signed loopback cert needs
+                # --insecure; the *production* command lacks the flag.
+                self.assertNotIn("--insecure", argv)
+                self.assertEqual(argv[-3:], ("manifest", "inspect", image))
+                local_args = (*argv[:-1], "--insecure", image)
                 r = subprocess.run(
-                    [docker, "--config", str(parent),
-                     "manifest", "inspect", "--insecure", image],
+                    local_args,
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE, timeout=15, check=False,
                     env={"HOME": str(parent), "PATH": "/usr/bin:/bin",

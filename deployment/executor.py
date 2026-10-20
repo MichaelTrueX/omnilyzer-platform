@@ -241,7 +241,9 @@ class RestrictedPrivilegedExecutor:
     def execute_private(self, canonical_request: bytes, *, credential_fd: int) -> bytes:
         """Preflight private Zot read BEFORE replay; scope FD to exact pull."""
         from .private_registry_fd import read_sealed_credential
-        from .private_registry_pull import scoped_private_zot_request
+        from .private_registry_pull import (
+            scoped_private_zot_request, require_private_zot_pull_budget,
+        )
 
         preflight = object.__getattribute__(self, "_private_registry_preflight")
         if preflight is None:
@@ -256,6 +258,12 @@ class RestrictedPrivilegedExecutor:
             # replay, Docker images, candidate state or audit records.
             if preflight(canonical_request, credential_fd) is not None:
                 raise ValueError("private registry preflight returned a result")
+            # A slow but successful manifest check must not consume replay
+            # when the same JWT can no longer support the bounded image pull.
+            require_private_zot_pull_budget(
+                credential_fd, canonical_request,
+                request.exact_image_reference,
+            )
             with scoped_private_zot_request(credential_fd, canonical_request):
                 return RestrictedPrivilegedExecutor.execute(self, canonical_request)
         except (KeyboardInterrupt, SystemExit, GeneratorExit):

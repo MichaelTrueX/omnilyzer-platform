@@ -42,6 +42,12 @@ COMMANDS = frozenset((PROBE, PULL))
 # The Docker CLI can run for 30 seconds; a larger threshold avoids starting
 # a command with a credential likely to expire during that bounded call.
 MIN_VALIDITY_SECONDS = 45
+# A successful manifest preflight cannot consume replay if a subsequent
+# authenticated Docker pull could start with <45s remaining. Reserve the
+# full 30s bounded CLI pull before allowing executor replay transition.
+MIN_POST_PREFLIGHT_VALIDITY_SECONDS = (
+    MIN_VALIDITY_SECONDS + int(COMMAND_TIMEOUT_SECONDS)
+)
 # Thread/task-local nonsecret binding; JWT bytes remain only in the sealed fd.
 _PRIVATE_REQUEST: ContextVar[tuple[int, bytes] | None] = ContextVar(
     "omnilyzer_private_zot_request", default=None,
@@ -129,7 +135,31 @@ def _write_config(workspace: Path, token: str) -> None:
         os.close(descriptor)
 
 
-# Section 3: one time-bound operation with automatic cleanup on all paths.
+# Section 3: enforce a fresh post-preflight credential budget before replay.
+def require_private_zot_pull_budget(
+    credential_fd: int, canonical_request: bytes, image: str,
+) -> None:
+    """Ensure one full bounded Docker pull still fits before replay mutation.
+
+    Manifest inspection may have consumed much of a short-lived OIDC JWT.
+    The caller must invoke this check immediately after manifest success and
+    before advancing the executor's immutable single-use replay record.
+    """
+    try:
+        current = int(time.time())
+        verified = read_sealed_credential(
+            credential_fd, canonical_request=canonical_request,
+            image=image, now=current,
+        )
+        if verified.expires_at - current < MIN_POST_PREFLIGHT_VALIDITY_SECONDS:
+            raise ValueError("short private registry credential budget")
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except Exception:
+        raise PrivateRegistryPullError("private Zot pull is unavailable") from None
+
+
+# Section 4: one time-bound operation with automatic cleanup on all paths.
 def execute_private_zot_read(
     runner: CommandRunner, *, credential_fd: int, canonical_request: bytes,
     image: str, operation: str,
@@ -186,5 +216,6 @@ def execute_private_zot_read(
 
 __all__ = (
     "PrivateRegistryPullError", "execute_private_zot_read",
+    "require_private_zot_pull_budget",
     "scoped_private_zot_request", "current_private_zot_request",
 )

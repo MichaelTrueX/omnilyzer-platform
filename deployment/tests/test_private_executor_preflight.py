@@ -114,6 +114,54 @@ class PrivateExecutorPreflightTests(unittest.TestCase):
         self.assertEqual(deploy.calls, 0)
         self.assertIsNone(current_private_zot_request())
 
+    def test_insufficient_post_preflight_pull_budget_preserves_replay(self) -> None:
+        """A valid manifest result alone cannot consume an expiring JWT.
+
+        The token is valid for the manifest check, but lacks the full Docker
+        pull timeout plus its minimum 45-second operating margin.
+        """
+        events: list[str] = []
+        replay = Replay(events)
+        deployment = Deployment(events)
+        executor = RestrictedPrivilegedExecutor(
+            replay_guard=replay, operation=deployment,
+            private_registry_preflight=Preflight(events),
+        )
+        with self.assertRaises(ExecutorUnavailableError):
+            executor.execute_private(REQUEST, credential_fd=self.fd(lifetime=70))
+        self.assertEqual(events, ["preflight"])
+        self.assertEqual(replay.begin_calls, [])
+        self.assertEqual(deployment.calls, 0)
+        self.assertIsNone(current_private_zot_request())
+
+    def test_expiry_budget_is_rechecked_after_manifest(self) -> None:
+        """A slow successful manifest probe cannot advance executor replay."""
+        from unittest.mock import patch
+
+        events: list[str] = []
+        replay = Replay(events)
+        deployment = Deployment(events)
+        executor = RestrictedPrivilegedExecutor(
+            replay_guard=replay, operation=deployment,
+            private_registry_preflight=Preflight(events),
+        )
+        issued = int(time.time())
+        # Construct with full lifetime, but simulate 45 seconds consumed by
+        # the manifest request before the post-preflight budget check.
+        fd = create_sealed_credential(
+            TOKEN, expires_at=issued + 110, image=IMAGE,
+            canonical_request=REQUEST, now=issued,
+        )
+        self.addCleanup(os.close, fd)
+        with patch("deployment.private_registry_pull.time.time",
+                   return_value=float(issued + 45)):
+            with self.assertRaises(ExecutorUnavailableError):
+                executor.execute_private(REQUEST, credential_fd=fd)
+        self.assertEqual(events, ["preflight"])
+        self.assertEqual(replay.begin_calls, [])
+        self.assertEqual(deployment.calls, 0)
+        self.assertIsNone(current_private_zot_request())
+
     def test_legacy_uncredentialed_method_rejected_before_replay(self) -> None:
         """Enabling private mode removes the old unauthenticated execution path."""
         events: list[str] = []

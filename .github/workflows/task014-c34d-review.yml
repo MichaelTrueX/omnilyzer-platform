@@ -83,12 +83,21 @@ jobs:
             deployment.tests.test_rootless_docker_daemon_preflight \
             deployment.tests.test_dev_live_activation_policy \
             deployment.tests.test_dev_live_activation_contract
-      # Section 6: Real daemonless Docker CLI against loopback TLS only.
-      # No GitHub OIDC, external Zot, Docker daemon, image pull or deployment.
-      - name: Test private OCI OIDC credential exchange with local Docker CLI
+      # Section 6: Review-only private OCI OIDC diagnostic tests.
+      # No id-token:write, workflow dispatch, registry or deployment access.
+      - name: Test private Zot diagnostic isolation without issuing credentials
         shell: bash
         run: |
           set -euo pipefail
-          python -m unittest -q \
+          python3 -m unittest -q \
+            release.tests.test_private_zot_auth_probe \
+            deployment.tests.test_final_dev_workflow
+      # Section 7: isolated Docker CLI authentication regression.
+      # Mock HTTPS listener on loopback with synthetic credentials only.
+      - name: Test private OCI OIDC exchange through real Docker CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -q \
             deployment.tests.test_private_registry_docker_cli_local \
             deployment.tests.test_private_registry_pull
