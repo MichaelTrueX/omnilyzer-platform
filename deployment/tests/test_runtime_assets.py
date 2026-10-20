@@ -24,7 +24,7 @@ NGINX_IMAGE = "cgr.dev/chainguard/nginx@sha256:af16298b4fd38b12be52aa913c158b530
 INGRESS_HASHES = {
     "compose.yaml": "ac12c1958d5e65ab64a69ea58ca053d11cd664732edb20fb7dce39aabde6b3bc",
     "host-nginx.conf": "bfed4b9e0be612723ed545362bb80262d18dbf9f1895d974b5c295d35d4e08bb",
-    "nginx/nginx.conf": "cbb696e51219bea9d6b337db0346cf93a807c5477143dad7f9baf23764fd476b",
+    "nginx/nginx.conf": "38175eb6439964037a691c562e9652cebe1a446965d7c59d70eda5db1b6b489a",
 }
 PROTECTED = {
     ".github/workflows/platform-release.yml": "9b90156c4ff4347651b4b3bf6c7e329c48de14c5510a25852c13d80b9a806b53",
@@ -130,6 +130,15 @@ class RuntimeAssetTests(unittest.TestCase):
         self.assertIn("include /etc/nginx/runtime/*.conf", config)
         self.assertNotIn("canary-blue", config)
         self.assertNotIn("canary-green", config)
+        for directive in (
+            "client_body_temp_path /tmp/client_body;",
+            "proxy_temp_path /tmp/proxy;",
+            "fastcgi_temp_path /tmp/fastcgi;",
+            "uwsgi_temp_path /tmp/uwsgi;",
+            "scgi_temp_path /tmp/scgi;",
+        ):
+            self.assertIn(directive, config)
+        self.assertNotIn("/var/lib/nginx/tmp", config)
 
     def test_runtime_configuration_is_exact_canonical_and_secret_free(self) -> None:
         path = RUNTIME / "canary-runtime.json"
