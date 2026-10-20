@@ -103,6 +103,72 @@ class SourceCutoverTests(unittest.TestCase):
         self.assertEqual(cutover._observed_tree(self.old), self.plan.prior_entries)
         self.assertEqual(cutover._observed_tree(stage), self.plan.target_entries)
 
+    def test_existing_root_owned_python_cache_does_not_block_source_staging(self) -> None:
+        """Real Python 3.12 .pyc files are derived caches, not source drift."""
+        cache = self.old / "deployment/__pycache__"
+        cache.mkdir(mode=0o755)
+        cache.chmod(0o755)
+        for module in ("broker", "executor", "__init__", "replay_sqlite"):
+            artifact = cache / (module + ".cpython-312.pyc")
+            artifact.write_bytes(b"\x42\x0d\x0d\x0a" + b"synthetic cached bytes")
+            artifact.chmod(0o644)
+        cutover.readonly_preflight(self.plan)
+        stage = cutover.prepare_staging(self.plan, ROOT)
+        cutover.activate_staging(self.plan, stage)
+        self.assertEqual(cutover._observed_tree(self.old), self.plan.target_entries)
+        self.assertEqual(cutover._observed_tree(stage), self.plan.prior_entries)
+        self.assertTrue((stage / "deployment/__pycache__/broker.cpython-312.pyc").exists())
+        # A post-activation Python import can legitimately regenerate caches.
+        live_cache = self.old / "deployment/__pycache__"
+        live_cache.mkdir(mode=0o755)
+        live_cache.chmod(0o755)
+        artifact = live_cache / "broker.cpython-312.pyc"
+        artifact.write_bytes(b"synthetic new cached bytes")
+        artifact.chmod(0o644)
+        cutover.rollback_staging(self.plan, stage)
+        self.assertEqual(cutover._observed_tree(self.old), self.plan.prior_entries)
+        self.assertEqual(cutover._observed_tree(stage), self.plan.target_entries)
+
+    def test_python_cache_is_strictly_limited_to_approved_modules(self) -> None:
+        """A fake module, nested directory, or symlink remains untrusted."""
+        cache = self.old / "deployment/__pycache__"
+        cache.mkdir(mode=0o755)
+        cache.chmod(0o755)
+        bad = cache / "backdoor.cpython-312.pyc"
+        bad.write_bytes(b"invalid")
+        bad.chmod(0o644)
+        with self.assertRaises(cutover.CutoverHold):
+            cutover.readonly_preflight(self.plan)
+        bad.unlink()
+        symlink = cache / "broker.cpython-312.pyc"
+        symlink.symlink_to("/etc/passwd")
+        with self.assertRaises(cutover.CutoverHold):
+            cutover.readonly_preflight(self.plan)
+        symlink.unlink()
+        nested = cache / "evil"
+        nested.mkdir(mode=0o755)
+        with self.assertRaises(cutover.CutoverHold):
+            cutover.readonly_preflight(self.plan)
+        nested.rmdir()
+        cutover.readonly_preflight(self.plan)
+
+    def test_python_cache_permissions_still_enforced(self) -> None:
+        """World-writable cached files or cache directories are prohibited."""
+        cache = self.old / "deployment/__pycache__"
+        cache.mkdir(mode=0o755)
+        cache.chmod(0o755)
+        bytecode = cache / "broker.cpython-312.pyc"
+        bytecode.write_bytes(b"normal")
+        bytecode.chmod(0o666)
+        with self.assertRaises(cutover.CutoverHold):
+            cutover.readonly_preflight(self.plan)
+        bytecode.chmod(0o644)
+        cache.chmod(0o777)
+        with self.assertRaises(cutover.CutoverHold):
+            cutover.readonly_preflight(self.plan)
+        cache.chmod(0o755)
+        cutover.readonly_preflight(self.plan)
+
     def test_unlisted_file_and_symlink_are_rejected(self) -> None:
         """No extra files, symlinks, or replacement with unapproved source."""
         extra = self.old / "deployment" / "backdoor.py"

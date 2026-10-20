@@ -45,8 +45,10 @@ It contains only an independently callable read-only attestation function.
 It checks, without updating any live file:
 
 - All 41 exact old application source paths and SHA256 values against the
-  previously reviewed old generation. Every regular file must be root:root
-  0644, each allowed directory root:root 0755, with no symlinks or extras.
+  previously reviewed old generation. The source allowlist is strict;
+  only root:root 0644 bytecode caches for allowlisted CPython module names
+  under the optional `deployment/__pycache__` are ignored as derived files.
+  Other unexpected paths or untrusted permissions are rejected.
 - Broker config at `/etc/omnilyzer/deployment/broker/dev.json`, requiring
   directory root:990 mode 0750 and file root:990 mode 0640.
 - Executor config at `/etc/omnilyzer/deployment/dev/executor.json`,

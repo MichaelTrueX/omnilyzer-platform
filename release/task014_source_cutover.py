@@ -19,6 +19,7 @@ from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 import tempfile
@@ -178,11 +179,25 @@ def _checked_directory(path: Path, *, mode: int = _ROOT_MODE) -> None:
 
 
 def _observed_tree(root: Path) -> tuple[tuple[str, str], ...]:
-    """Verify the complete deployed closed set without following any symlink."""
+    """Verify the complete source set, allowing only safe Python bytecode cache.
+
+    The active Python interpreter may create deployment/__pycache__ with
+    root-owned .pyc files. Those are derived artifacts, not application source
+    authority. Verify their types, owner, permissions, file size and direct
+    allowlisted module names, but exclude them from the source SHA set.
+    """
     _checked_directory(root)
+    fileset = DevApplicationSourceSet().files
     allowed_dirs = {""}
-    for path in tuple(item.repository_path for item in DevApplicationSourceSet().files):
-        rel = Path(path).parent
+    cache_dir = "deployment/__pycache__"
+    bytecode_modules = {
+        Path(item.repository_path).stem
+        for item in fileset
+        if Path(item.repository_path).parent == Path("deployment")
+        and Path(item.repository_path).suffix == ".py"
+    }
+    for item in fileset:
+        rel = Path(item.repository_path).parent
         while str(rel) not in ("", "."):
             allowed_dirs.add(rel.as_posix())
             rel = rel.parent
@@ -191,14 +206,14 @@ def _observed_tree(root: Path) -> tuple[tuple[str, str], ...]:
     for directory, directories, names in os.walk(root, topdown=True, followlinks=False):
         relative = Path(directory).relative_to(root)
         relative_text = "" if str(relative) == "." else relative.as_posix()
-        if relative_text not in allowed_dirs:
+        if relative_text not in allowed_dirs and relative_text != cache_dir:
             raise CutoverHold("unlisted application directory")
         _checked_directory(Path(directory))
         seen_directories.add(relative_text)
         for name in directories:
             child = Path(directory) / name
             key = child.relative_to(root).as_posix()
-            if key not in allowed_dirs:
+            if key not in allowed_dirs and key != cache_dir:
                 raise CutoverHold("unlisted application directory")
             _checked_directory(child)
         for name in names:
@@ -210,9 +225,17 @@ def _observed_tree(root: Path) -> tuple[tuple[str, str], ...]:
                     or metadata.st_nlink != 1
                     or metadata.st_size > _SOURCE_LIMIT):
                 raise CutoverHold("untrusted application file")
+            if relative_text == cache_dir:
+                match = re.fullmatch(
+                    r"([A-Za-z_][A-Za-z_0-9]*)\.cpython-[0-9]+(?:\.opt-[12])?\.pyc",
+                    name,
+                )
+                if match is None or match.group(1) not in bytecode_modules:
+                    raise CutoverHold("unlisted Python cache file")
+                continue
             file_hash = hashlib.sha256(child.read_bytes()).hexdigest()
             files.append((child.relative_to(root).as_posix(), file_hash))
-    if seen_directories != allowed_dirs:
+    if seen_directories - {cache_dir} != allowed_dirs:
         raise CutoverHold("incomplete application directories")
     return tuple(sorted(files))
 

@@ -47,9 +47,16 @@ replacement modules and two reviewed additions. The exact file modes must be
 0644, and the allowed path set must be sorted, unique and complete.
 
 Its `readonly_preflight(plan)` checks the existing application root for
-**all 41 old files** and all expected parent directories, rejecting symlinks,
-unlisted objects, other owners/modes, changed bytes, oversized files or
-unexpected extra content.
+**all 41 old source files** and their expected parent directories, rejecting
+symlinks, unknown code, untrusted owners/modes, changed source bytes, oversized
+files or unexpected extra content. It also tolerates one optional
+`deployment/__pycache__` directory containing only strictly verified
+root:root 0644 CPython bytecode caches named for the approved top-level Python
+modules. The cache is a transient derived artifact, never counted as an
+approved source file, and is retained in the preserved old directory for
+rollback. Unexpected cached module names, nested directories, symlinks or
+untrusted bytecode still cause HOLD. This fixes the real DEV staging blocker
+reported on 2026-10-20 without deleting live Python files.
 
 **Privileged operations, not authorized now:**
 `prepare_staging(plan, repository)` creates a complete 43-file root-owned
