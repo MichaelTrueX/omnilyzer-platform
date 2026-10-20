@@ -524,8 +524,19 @@ class DockerRuntimeAdapter:
         ).encode("ascii")
 
     def validate_nginx(self, stage: str) -> bool:
+        """Bring up the fixed DEV proxy before running the in-container check.
+
+        The canary candidate is started separately. This proxy has no
+        dependencies and uses only the reviewed digest-pinned Compose asset.
+        An already-running unchanged proxy is left running by Compose up.
+        The longer bound is only for a possible first-time proxy image pull.
+        """
         if stage != "dev":
             raise RuntimeOperationError("runtime adapter supports DEV only")
+        self._run(
+            self._compose("up", "--detach", "--no-deps", "deployment-nginx"),
+            timeout=180.0,
+        )
         self._run(self._compose("exec", "--no-TTY", "deployment-nginx", "nginx", "-t", "-c", "/etc/nginx/nginx.conf"))
         return True
 
