@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import os
+import sys
 import time
 import types
 from typing import Any, Callable
@@ -220,15 +221,19 @@ class RestrictedDeploymentBroker:
         bind_identity = bind_request_to_identity
         sha256 = hashlib.sha256
 
+        phase = "oidc_verify"
         try:
             returned_identity = verify(compact_token, received_at=received_at)
         except OIDCVerificationUnavailable:
+            sys.stderr.write("TASK014_BROKER_UNAVAILABLE phase=" + phase + "\n")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         except OIDCVerificationError:
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
+            sys.stderr.write("TASK014_BROKER_UNAVAILABLE phase=" + phase + "\n")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
+        phase = "oidc_identity"
         try:
             identity = normalize_identity(
                 returned_identity, received_at=received_at,
@@ -238,9 +243,11 @@ class RestrictedDeploymentBroker:
         except OIDCAuthorizationError:
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
+            sys.stderr.write("TASK014_BROKER_UNAVAILABLE phase=" + phase + "\n")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
         if canonical_request is None:
+            phase = "registry_credentials"
             try:
                 verified_context = verify_context(
                     identity, promotion_context, received_at=received_at,
@@ -248,10 +255,13 @@ class RestrictedDeploymentBroker:
             except BrokerRejectedError:
                 raise BrokerRejectedError(REJECTED_MESSAGE) from None
             except BrokerUnavailableError:
+                sys.stderr.write("TASK014_BROKER_UNAVAILABLE phase=" + phase + "\n")
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
             except Exception:
+                sys.stderr.write("TASK014_BROKER_UNAVAILABLE phase=" + phase + "\n")
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
+        phase = "release_evidence"
         try:
             if canonical_request is None:
                 constructed = build(promotion, identity, verified_context,
@@ -267,20 +277,25 @@ class RestrictedDeploymentBroker:
         except (OIDCAuthorizationError, ExecutorRequestError):
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
+            sys.stderr.write("TASK014_BROKER_UNAVAILABLE phase=" + phase + "\n")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
+        phase = "request_hash"
         try:
             request_hash = sha256(canonical_request).hexdigest()
         except Exception:
+            sys.stderr.write("TASK014_BROKER_UNAVAILABLE phase=" + phase + "\n")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         if (type(request_hash) is not str or len(request_hash) != 64
                 or any(character not in "0123456789abcdef" for character in request_hash)):
+            sys.stderr.write("TASK014_BROKER_UNAVAILABLE phase=" + phase + "\n")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         # The private credential is checked and sealed BEFORE consuming broker
         # replay. It stays outside canonical request bytes, hashes and audit.
         descriptor: int | None = None
         try:
             if send_private is not None:
+                phase = "sealed_zot_credential"
                 try:
                     credential_provider = _bound_operation(
                         verified_context, "zot_read_credential",
@@ -297,8 +312,10 @@ class RestrictedDeploymentBroker:
                 except (KeyboardInterrupt, SystemExit, GeneratorExit):
                     raise
                 except Exception:
+                    sys.stderr.write("TASK014_BROKER_UNAVAILABLE phase=" + phase + "\n")
                     raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
+            phase = "broker_replay"
             try:
                 consume_result = consume(
                     identity.jti,
@@ -308,22 +325,28 @@ class RestrictedDeploymentBroker:
                     run_attempt=identity.run_attempt,
                 )
             except ReplayUnavailableError:
+                sys.stderr.write("TASK014_BROKER_UNAVAILABLE phase=" + phase + "\n")
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
             except ReplayError:
                 raise BrokerRejectedError(REJECTED_MESSAGE) from None
             except Exception:
+                sys.stderr.write("TASK014_BROKER_UNAVAILABLE phase=" + phase + "\n")
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
             if consume_result is not None:
+                sys.stderr.write("TASK014_BROKER_UNAVAILABLE phase=" + phase + "\n")
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
+            phase = "executor_transport"
             try:
                 response = (
                     send_private(canonical_request, credential_fd=descriptor)
                     if send_private is not None else send(canonical_request)
                 )
             except Exception:
+                sys.stderr.write("TASK014_BROKER_UNAVAILABLE phase=" + phase + "\n")
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
             if type(response) is not bytes or len(response) > MAX_EXECUTOR_RESPONSE_BYTES:
+                sys.stderr.write("TASK014_BROKER_UNAVAILABLE phase=" + phase + "\n")
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
             return response
         finally:
