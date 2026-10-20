@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import os
 import socket
+import sys
 import stat
 import threading
 import time
@@ -398,6 +399,7 @@ class UnixExecutorListener:
         failed = False
         control: tuple[BaseException, object] | None = None
         deadline: _Deadline | None = None
+        phase = "listener_validation"
 
         try:
             entered = enter_serving(self)
@@ -422,6 +424,7 @@ class UnixExecutorListener:
             if settimeout(deadline.remaining()) is not None:
                 raise OSError("listener timeout update failed")
             deadline.remaining()
+            phase = "socket_accept"
             accepted = accept()
             accepted_length = -1
             if isinstance(accepted, tuple):
@@ -443,6 +446,7 @@ class UnixExecutorListener:
             address = tuple.__getitem__(accepted, 1)
             if type(address) is not str or str.__ne__(address, ""):
                 raise OSError("invalid accepted address")
+            phase = "accepted_validation"
             after = validate_listener(
                 deadline=deadline, checked_call=checked_call,
                 get_inheritable=get_inheritable, getsockopt=getsockopt,
@@ -465,6 +469,7 @@ class UnixExecutorListener:
             if restored != original_timeout:
                 raise OSError("listener timeout restoration failed")
             timeout_attempted = False
+            phase = "connection_handler"
             dispatched = True
             if handle(connection) is not None:
                 raise OSError("executor handler returned invalid result")
@@ -472,6 +477,8 @@ class UnixExecutorListener:
         except (KeyboardInterrupt, SystemExit, GeneratorExit) as exc:
             control = (exc, exc.__traceback__)
         except BaseException:
+            # Redacted static phase, never socket payload or exception details.
+            sys.stderr.write(f"TASK014_EXECUTOR_FAILURE boundary=listener phase={phase}\n")
             failed = True
         finally:
             if connection is not None and not dispatched and close_connection is not None:

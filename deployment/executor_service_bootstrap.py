@@ -12,6 +12,7 @@ automatically activated.
 from __future__ import annotations
 
 import datetime as _datetime
+import sys as _sys
 
 from .executor_composition import DevExecutorComposition as _DevExecutorComposition
 from .executor_service_config import (
@@ -65,10 +66,12 @@ def run_dev_executor_service_once() -> None:
 
     listener: object | None = None
     owns_listener = False
+    phase = "configuration"
     try:
         configuration = _load_configuration()
         if type(configuration) is not _DevExecutorServiceConfiguration:
             raise TypeError
+        phase = "composition_projection"
         projection = configuration.executor_composition_kwargs()
         if (
             type(projection) is not dict
@@ -76,13 +79,16 @@ def run_dev_executor_service_once() -> None:
             or "clock" in projection
         ):
             raise TypeError
+        phase = "socket_activation"
         listener = _acquire_listener()
         owns_listener = True
+        phase = "composition_build"
         composition = _DevExecutorComposition(
             listener=listener,
             clock=_utc_audit_clock,
             **projection,
         )
+        phase = "listener_service"
         if composition.serve_once() is not None:
             raise TypeError
     except _CONTROL_EXCEPTIONS:
@@ -90,6 +96,8 @@ def run_dev_executor_service_once() -> None:
             _close_listener(listener)
         raise
     except Exception:
+        # Stable phase only; do not log request bodies, tokens or exception text.
+        _sys.stderr.write(f"TASK014_EXECUTOR_FAILURE boundary=bootstrap phase={phase}\n")
         cleanup_control: BaseException | None = None
         if owns_listener:
             _cleanup_failed, cleanup_control = _close_listener(listener)
