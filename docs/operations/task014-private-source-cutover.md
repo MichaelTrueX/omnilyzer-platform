@@ -2,7 +2,9 @@
 
 # Task 014 — Private Zot source generation cutover and rollback
 
-**Status:** Draft, review-only. No DEV host installation or service action is authorized.
+**Status:** Draft, review-only. Source-only PR #207 is merged to protected main
+at `12d849bb0b87361bc1e6e8b05fa9e1e72942011c`, but no DEV host
+installation or service action is authorized.
 
 **Related files:** `release/task014_source_cutover.py`,
 `release/tests/test_task014_source_cutover.py`,
@@ -97,9 +99,12 @@ the offline library and Linux exchange semantics.
 
 ## Release gates — ALL must be separately authorized
 
-**Gate A — source-only merge:** The owner must separately approve merging
-security-corrected PR #207. Its current status is DRAFT, and it is still
-unmerged. Any stacked source-cutover PR also requires its own review before use.
+**Gate A — source-only merge:** COMPLETED with owner approval. PR #207 was
+merged source-only at protected-main commit
+`12d849bb0b87361bc1e6e8b05fa9e1e72942011c`. No DEV installation
+was authorized by that merge. PR #209 remains a separate draft that now
+targets `main` and requires independent full security review and owner
+approval before any merge or use.
 
 **Gate B — exact-source bundle:** Record the actual protected-main final merge
 SHA, regenerate the 43-file manifest from that exact Git checkout, review

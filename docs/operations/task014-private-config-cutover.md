@@ -11,11 +11,14 @@ private registry ACLs, GitHub protected main, replay data, or PROD.
 `docs/operations/task014-private-source-cutover.md`,
 `deployment/broker_service_config.py`,
 `deployment/executor_service_config.py`,
-draft PR #209 and Task 014 issue #182.
+draft PR #209 (now targeting main after source-only PR #207 merged) and Task 014 issue #182.
 
 ## Scope: reuse exactly two existing canonical configuration files
 
-The DEV deployment uses two existing, independently permission-protected files:
+The DEV deployment uses two existing, independently permission-protected files.
+The source-only PR #207 was merged at protected-main commit
+`12d849bb0b87361bc1e6e8b05fa9e1e72942011c`; no host installation
+was performed as part of that merge:
 
 | Path | Schema | Proposed updates | Must stay unchanged |
 |---|---|---|---|
