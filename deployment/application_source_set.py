@@ -89,6 +89,10 @@ _PYTHON_PATHS = (
     "deployment/oci_verifier.py",
     "deployment/oidc_verifier.py",
     "deployment/policy.py",
+    # Task014 private registry read authority: both modules are required by
+    # the broker/executor import closure, never selected dynamically.
+    "deployment/private_registry_fd.py",
+    "deployment/private_registry_pull.py",
     "deployment/promotion.py",
     "deployment/registry_oidc_credentials.py",
     "deployment/registry_promotion_composition.py",

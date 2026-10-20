@@ -1333,8 +1333,13 @@ class UnixTransportStaticAuthorityTests(unittest.TestCase):
             and isinstance(node.func, ast.Attribute)
             and node.func.attr in {"connect", "sendall", "shutdown"}
         ]
+        # ast.walk is breadth-first: a guarded ancillary-header send can
+        # appear after shutdown in traversal order despite occurring first
+        # in source. Preserve the actual lexical one-shot call sequence.
         self.assertEqual(
-            [node.func.attr for node in send_calls],
+            [node.func.attr for node in sorted(
+                send_calls, key=lambda entry: (entry.lineno, entry.col_offset)
+            )],
             ["connect", "sendall", "sendall", "shutdown"],
         )
 

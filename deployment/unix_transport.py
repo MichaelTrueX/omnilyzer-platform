@@ -23,7 +23,8 @@ import time
 from typing import Callable
 
 from .broker import MAX_EXECUTOR_RESPONSE_BYTES
-from .execution import MAX_CANONICAL_REQUEST_BYTES
+from .execution import MAX_CANONICAL_REQUEST_BYTES, parse_canonical_request
+from .private_registry_fd import read_sealed_credential, send_sealed_header
 
 
 PRODUCTION_EXECUTOR_SOCKET_PATH = "/run/omnilyzer/deployment/executor.sock"
@@ -185,6 +186,28 @@ class UnixExecutorTransport:
         raise AttributeError("executor transport configuration is immutable")
 
     def send(self, canonical_request: bytes) -> bytes:
+        """Preserve the existing unmodified canonical-request transport."""
+        return self._send(canonical_request, credential_fd=None)
+
+    def _send_private(self, canonical_request: bytes, *, credential_fd: int) -> bytes:
+        """Send a bound, sealed Zot-read FD without changing canonical bytes."""
+        try:
+            request = parse_canonical_request(canonical_request)
+            read_sealed_credential(
+                credential_fd,
+                canonical_request=canonical_request,
+                image=request.exact_image_reference,
+            )
+        except (KeyboardInterrupt, SystemExit, GeneratorExit):
+            raise
+        except Exception:
+            raise ExecutorTransportUnavailableError(
+                TRANSPORT_UNAVAILABLE_MESSAGE
+            ) from None
+        return self._send(canonical_request, credential_fd=credential_fd)
+
+    def _send(self, canonical_request: bytes, *, credential_fd: int | None) -> bytes:
+        """Reuse exact socket/peer/response checks for both framing options."""
         (
             expected_uid, expected_gid, socket_group_gid, timeout_ms,
             response_timeout_ms, path, _encoded_path, lstat, socket_factory,
@@ -257,7 +280,10 @@ class UnixExecutorTransport:
 
             request_header = len(canonical_request).to_bytes(4, "big", signed=False)
             client.settimeout(request_deadline.remaining())
-            client.sendall(request_header)
+            if credential_fd is None:
+                client.sendall(request_header)
+            else:
+                send_sealed_header(client, request_header, credential_fd)
             client.settimeout(request_deadline.remaining())
             client.sendall(canonical_request)
             client.settimeout(request_deadline.remaining())

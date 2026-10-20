@@ -200,7 +200,7 @@ class DevBrokerEdgeContractTests(unittest.TestCase):
 
     def test_frozen_application_and_historical_tls_asset(self):
         selected = tuple(item.repository_path for item in DevApplicationSourceSet().files)
-        self.assertEqual(len(selected), 41)
+        self.assertEqual(len(selected), 43)
         for new in ("deployment/broker_edge_contract.py",
                     "deployment/dev_final_broker_resources.py",
                     "deployment/ingress/dev-broker-tailscale-origin.nginx.conf"):

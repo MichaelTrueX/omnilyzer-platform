@@ -289,7 +289,7 @@ class IntegrationTests(unittest.TestCase):
             "deployment.application_source_set", fromlist=["DevApplicationSourceSet"]
         ).DevApplicationSourceSet().files]
         self.assertIn("deployment/broker_integration.py", selection)
-        self.assertEqual(len(selection), 41)
+        self.assertEqual(len(selection), 43)
         self.assertIn("deployment/blob_verifier.py", selection)
 
 

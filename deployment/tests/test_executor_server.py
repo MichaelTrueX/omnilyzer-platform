@@ -160,7 +160,8 @@ class ConstructorTests(unittest.TestCase):
     def test_public_api_is_closed_and_construction_is_inert(self) -> None:
         self.assertEqual(
             tuple(inspect.signature(UnixExecutorConnectionHandler).parameters),
-            ("executor", "expected_broker_uid", "expected_broker_gid", "timeout_ms"),
+            ("executor", "expected_broker_uid", "expected_broker_gid", "timeout_ms",
+             "private_registry_transfer"),
         )
         self.assertEqual(
             tuple(inspect.signature(UnixExecutorConnectionHandler.handle).parameters),

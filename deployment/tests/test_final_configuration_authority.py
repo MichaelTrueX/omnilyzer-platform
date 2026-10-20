@@ -252,7 +252,7 @@ assert integrity.python_environment_requirement().implementation == "CPython"
 
     def test_repository_freeze_and_non_live_scope(self):
         selected = tuple(item.repository_path for item in DevApplicationSourceSet().files)
-        self.assertEqual(len(selected), 41)
+        self.assertEqual(len(selected), 43)
         self.assertEqual(selected, manifest._current_paths())
         self.assertNotIn("deployment/final_configuration_authority.py", selected)
         successor_deltas = []

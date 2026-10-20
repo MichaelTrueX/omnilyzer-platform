@@ -240,7 +240,7 @@ class ExecutorCoreTests(unittest.TestCase):
     def test_public_api_has_only_constructor_bound_collaborators_and_request_bytes(self) -> None:
         self.assertEqual(
             tuple(inspect.signature(RestrictedPrivilegedExecutor).parameters),
-            ("replay_guard", "operation"),
+            ("replay_guard", "operation", "private_registry_preflight"),
         )
         self.assertTrue(all(
             parameter.kind is inspect.Parameter.KEYWORD_ONLY
@@ -254,7 +254,7 @@ class ExecutorCoreTests(unittest.TestCase):
             name for name in dir(RestrictedPrivilegedExecutor)
             if not name.startswith("_")
         }
-        self.assertEqual(public, {"execute"})
+        self.assertEqual(public, {"execute", "execute_private"})
 
     def test_input_boundary_rejects_before_collaborators(self) -> None:
         executor, replay, operation, events = self.make()

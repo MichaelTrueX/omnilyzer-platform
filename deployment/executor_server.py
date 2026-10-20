@@ -17,8 +17,12 @@ import types
 from typing import Any, Callable
 
 from .broker import MAX_EXECUTOR_RESPONSE_BYTES
-from .execution import MAX_CANONICAL_REQUEST_BYTES
+from .execution import MAX_CANONICAL_REQUEST_BYTES, parse_canonical_request
 from .executor import ExecutorResponse, parse_canonical_response
+from .private_registry_fd import (
+    receive_sealed_header, read_sealed_credential,
+    _close_received_credential,
+)
 from .unix_transport import MAX_TIMEOUT_MS
 
 
@@ -147,6 +151,30 @@ def _ordinary_execute(executor: object) -> Callable[[bytes], object]:
     return types.MethodType(descriptor, executor)
 
 
+def _ordinary_private_execute(executor: object) -> Callable[..., object]:
+    """Bind only an explicit ordinary method for private registry authority."""
+    if executor is None:
+        raise TypeError("private executor is unavailable")
+    descriptor = None
+    for base in type.__getattribute__(type(executor), "__mro__"):
+        namespace = type.__getattribute__(base, "__dict__")
+        if "execute_private" in namespace:
+            descriptor = namespace["execute_private"]
+            break
+    if type(descriptor) is not types.FunctionType:
+        raise TypeError("private executor is unavailable")
+    code = descriptor.__code__
+    if (
+        code.co_argcount != 2 or code.co_kwonlyargcount != 1
+        or code.co_varnames[1:3] != ("canonical_request", "credential_fd")
+        or descriptor.__defaults__ is not None
+        or descriptor.__kwdefaults__ is not None
+        or code.co_flags & (0x04 | 0x08 | 0x20 | 0x80 | 0x100 | 0x200)
+    ):
+        raise TypeError("private executor is unavailable")
+    return types.MethodType(descriptor, executor)
+
+
 def _connection_operations(connection: object) -> tuple[Callable[..., Any], ...]:
     try:
         operations = tuple(
@@ -214,8 +242,14 @@ class UnixExecutorConnectionHandler:
     def __init__(
         self, *, executor: object, expected_broker_uid: int,
         expected_broker_gid: int, timeout_ms: int = 3000,
+        private_registry_transfer: bool = False,
     ) -> None:
-        execute = _ordinary_execute(executor)
+        if type(private_registry_transfer) is not bool:
+            raise TypeError("invalid private executor configuration")
+        execute = (
+            _ordinary_private_execute(executor)
+            if private_registry_transfer else _ordinary_execute(executor)
+        )
         uid = _configuration_integer(expected_broker_uid)
         gid = _configuration_integer(expected_broker_gid)
         if type(timeout_ms) is not int or not 1 <= timeout_ms <= MAX_TIMEOUT_MS:
@@ -232,6 +266,8 @@ class UnixExecutorConnectionHandler:
             _ENTER_HANDLING, _LEAVE_HANDLING,
             ExecutorConnectionUnavailableError,
             EXECUTOR_CONNECTION_UNAVAILABLE_MESSAGE,
+            private_registry_transfer, receive_sealed_header,
+            read_sealed_credential, parse_canonical_request,
         ))
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -245,6 +281,8 @@ class UnixExecutorConnectionHandler:
             monotonic_validator, deadline_factory, connection_operations,
             timed_call, receive_exact, send_exact, parse_response, response_type,
             enter_handling, leave_handling, error_type, error_message,
+            private_transfer, receive_private_header, read_private_credential,
+            parse_request,
         ) = object.__getattribute__(self, "_configuration")
 
         close: Callable[[], object] | None = None
@@ -255,6 +293,7 @@ class UnixExecutorConnectionHandler:
         completed = False
         failed = False
         control: tuple[BaseException, object] | None = None
+        credential_fd: int | None = None
 
         try:
             close_candidate = object.__getattribute__(connection, "close")
@@ -303,7 +342,13 @@ class UnixExecutorConnectionHandler:
             ):
                 raise OSError("unexpected broker peer credentials")
 
-            header = receive_exact(recv, settimeout, 4, request_deadline)
+            if private_transfer:
+                # SO_PEERCRED must pass before accepting ancillary descriptors.
+                settimeout(request_deadline.remaining())
+                header, credential_fd = receive_private_header(connection)
+                request_deadline.remaining()
+            else:
+                header = receive_exact(recv, settimeout, 4, request_deadline)
             request_length = int.from_bytes(header, "big", signed=False)
             if request_length == 0 or request_length > request_bound:
                 raise OSError("invalid executor request length")
@@ -315,7 +360,16 @@ class UnixExecutorConnectionHandler:
                 raise OSError("executor request contains trailing data")
             request_complete = True
 
-            response = execute(canonical_request)
+            if private_transfer:
+                request = parse_request(canonical_request)
+                # Bound, sealed credential is checked before any replay write.
+                read_private_credential(
+                    credential_fd, canonical_request=canonical_request,
+                    image=request.exact_image_reference,
+                )
+                response = execute(canonical_request, credential_fd=credential_fd)
+            else:
+                response = execute(canonical_request)
             response_deadline = deadline_factory(validated_monotonic, timeout_ms)
             if type(response) is not bytes or not response or len(response) > response_bound:
                 raise OSError("invalid executor response")
@@ -333,6 +387,11 @@ class UnixExecutorConnectionHandler:
         except Exception:
             failed = True
         finally:
+            if credential_fd is not None:
+                try:
+                    _close_received_credential(credential_fd)
+                except Exception:
+                    failed = True
             cleanup_deadline = response_deadline
             if not request_complete and cleanup_deadline is None:
                 cleanup_deadline = request_deadline

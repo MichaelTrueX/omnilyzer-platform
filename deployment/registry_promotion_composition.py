@@ -120,6 +120,7 @@ def compose_inert_dev_promotion_handler(
     zot_connection_factory: object = _connection,
     forgejo_connection_factory: object = _connection,
     oci_runner: object | None = None,
+    private_registry_transport: bool = False,
 ) -> InertDevPromotionHandler:
     """Revalidate schema-2 broker authority; bind only nonsecret collaborators."""
 
@@ -145,6 +146,7 @@ def compose_inert_dev_promotion_handler(
         replay_guard=replay_guard, transport=transport,
         request_builder=builder,
         promotion_context_verifier=_RegistryContextVerifier(registry),
+        private_registry_transport=private_registry_transport,
     )
 
 

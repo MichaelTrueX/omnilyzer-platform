@@ -162,13 +162,15 @@ def _reviewed_target(
         ):
             raise OSError
 
+        # C33AC historical source identity is pinned by its independently
+        # verified C32ZH predecessor, not the current 43-file DEV selection.
         selection = DevApplicationSourceSet()
-        paths = tuple(item.repository_path for item in selection.files)
+        current_paths = tuple(item.repository_path for item in selection.files)
+        paths = tuple(path for path, _raw in predecessor_blobs)
         if (
             type(selection) is not DevApplicationSourceSet
             or len(paths) != TARGET_PATH_COUNT
-            or paths != c26._current_paths()
-            or paths != tuple(path for path, _raw in predecessor_blobs)
+            or not set(paths).issubset(current_paths)
             or hashlib.sha256(("\n".join(paths) + "\n").encode()).hexdigest()
             != TARGET_PATHS_SHA256
         ):

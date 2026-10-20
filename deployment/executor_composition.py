@@ -81,11 +81,13 @@ class DevExecutorComposition:
         )
         executor = _RestrictedPrivilegedExecutor(
             replay_guard=replay_guard, operation=operation,
+            private_registry_preflight=runtime,
         )
         handler = _UnixExecutorConnectionHandler(
             executor=executor,
             expected_broker_uid=expected_broker_uid,
             expected_broker_gid=expected_broker_gid,
+            private_registry_transfer=True,
         )
         executor_listener = _UnixExecutorListener(
             listener=listener,

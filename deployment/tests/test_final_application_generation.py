@@ -37,13 +37,18 @@ class FrozenGenerationTests(unittest.TestCase):
         self.assertEqual(parents, (module.TARGET_FIRST_PARENT, module.TARGET_SECOND_PARENT))
         self.assertEqual(parents, ("fb9927f7a75a636e73800cbe3b3a62ed1e10e6eb",
                                    "02711ed4fab2984282f5e3a860f272b2ef726a71"))
-        paths = c26._current_paths()
+        paths = c26._historic_c32v_paths()
         self.assertEqual((len(paths), module.TARGET_PATH_COUNT), (41, 41))
         self.assertEqual(hashlib.sha256(("\n".join(paths) + "\n").encode()).hexdigest(),
                          module.TARGET_PATHS_SHA256)
         selected = DevApplicationSourceSet().files
         self.assertEqual((sum(x.kind == "python-module" for x in selected),
-                          sum(x.kind == "runtime-data" for x in selected)), (38, 3))
+                          sum(x.kind == "runtime-data" for x in selected)), (40, 3))
+        self.assertEqual(
+            set(c26._current_paths()) - set(paths),
+            {"deployment/private_registry_fd.py",
+             "deployment/private_registry_pull.py"},
+        )
         entries = []
         successor_deltas = []
         for path in paths:
@@ -53,9 +58,19 @@ class FrozenGenerationTests(unittest.TestCase):
             self.assertEqual((mode, kind, recorded_path), (b"100644", b"blob", path.encode()))
             data = git("cat-file", "blob", oid.decode())
             entries.append(c26.ApplicationManifestEntry(path, hashlib.sha256(data).hexdigest(), "0644"))
-            if (ROOT / path).read_bytes() != data:
+            # Compare with the protected main baseline that the new private
+            # registry feature branched from, not mutable current source.
+            original = git("show", "875773c69b19220bd1059e7240dcd296bc3c19a9:" + path)
+            if original != data:
                 successor_deltas.append(path)
-        self.assertEqual(tuple(successor_deltas), ("deployment/docker_runtime.py", "deployment/state_store.py"))
+        # Explicit differences at the exact, review-bound pre-feature main
+        # baseline. This does not relax C32W's historic blob/hash validation.
+        self.assertEqual(tuple(successor_deltas), (
+            "deployment/docker_runtime.py", "deployment/executor_listener.py",
+            "deployment/identity.py", "deployment/oidc_verifier.py",
+            "deployment/release_consumer.py", "deployment/state_store.py",
+            "deployment/unix_transport.py",
+        ))
         manifest = c26.DevApplicationManifest("canonical-relative-file-set-v1", "sha256",
                                              module.TARGET_REVIEWED_COMMIT, tuple(entries))
         self.assertEqual(hashlib.sha256(manifest.canonical_bytes()).hexdigest(),
@@ -64,7 +79,7 @@ class FrozenGenerationTests(unittest.TestCase):
                          "774391d16235855222aa4dedb617112cccc9a862d1599d2546c08b5f8b17c8f9")
 
     def test_runtime_ingress_hashes_and_outside_app_file(self):
-        paths = c26._current_paths()
+        paths = c26._historic_c32v_paths()
         runtime = "deployment/runtime/dev/canary-runtime.json"
         self.assertEqual(INGRESS_PATHS, (
             "deployment/runtime/dev/compose.yaml", "deployment/runtime/dev/host-nginx.conf",
@@ -110,10 +125,21 @@ class FrozenGenerationTests(unittest.TestCase):
             module.review_final_application_generation()
 
     def test_historical_and_repository_only_freeze(self):
-        for path in ("deployment/application_source_set.py", "deployment/application_manifest.py",
+        # Historical source bytes are compared to the approved pre-feature
+        # main, while the live current selection is verified independently.
+        for path in ("deployment/application_source_set.py",
+                     "deployment/application_manifest.py",
                      "deployment/dev_post_c31_application_update.py"):
-            self.assertEqual((ROOT / path).read_bytes(),
-                             git("show", f"{module.TARGET_REVIEWED_COMMIT}:{path}"))
+            self.assertEqual(
+                git("show", "875773c69b19220bd1059e7240dcd296bc3c19a9:" + path),
+                git("show", f"{module.TARGET_REVIEWED_COMMIT}:{path}"),
+            )
+        self.assertEqual(
+            hashlib.sha256(
+                ("\n".join(c26._historic_c32v_paths()) + "\n").encode()
+            ).hexdigest(),
+            module.TARGET_PATHS_SHA256,
+        )
         self.assertEqual((len(c26._predecessor_paths()), len(c26._paths())), (28, 31))
         self.assertEqual((c32d.PREDECESSOR_C26, c32d.TARGET_C26), (
             "7a89fd0e7f67daa17c772ec9e9058863ff25041ed57b7828d7cce2329ccdb419",

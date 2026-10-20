@@ -146,11 +146,11 @@ class ApplicationSourceSetTests(unittest.TestCase):
 
     def test_counts_order_uniqueness_and_mapping(self):
         self.assertIs(type(self.selection.files), tuple)
-        self.assertEqual(len(self.paths), 41)
+        self.assertEqual(len(self.paths), 43)
         self.assertEqual(self.paths, tuple(sorted(self.paths)))
-        self.assertEqual(len(set(self.paths)), 41)
-        self.assertEqual(len({f.target_relative_path for f in self.selection.files}), 41)
-        self.assertEqual(sum(f.kind == "python-module" for f in self.selection.files), 38)
+        self.assertEqual(len(set(self.paths)), 43)
+        self.assertEqual(len({f.target_relative_path for f in self.selection.files}), 43)
+        self.assertEqual(sum(f.kind == "python-module" for f in self.selection.files), 40)
         self.assertEqual(sum(f.kind == "runtime-data" for f in self.selection.files), 3)
         self.assertEqual(self.selection, module.DevApplicationSourceSet())
         for item in self.selection.files:
@@ -219,7 +219,7 @@ class ApplicationSourceSetTests(unittest.TestCase):
         declared = {f.repository_path for f in self.selection.files if f.kind == "python-module"}
         discovered = import_closure()
         self.assertIn("deployment/__init__.py", declared)
-        self.assertEqual(len(discovered), 38)
+        self.assertEqual(len(discovered), 40)
         self.assertEqual(discovered, declared)
 
     def test_import_resolver_forms(self):
@@ -347,7 +347,7 @@ class ApplicationSourceSetTests(unittest.TestCase):
             stack.enter_context(patch.dict(os.environ, {}, clear=True))
             exec(code, isolated.__dict__)
             selection = isolated.DevApplicationSourceSet()
-            self.assertEqual(len(selection.files), 41)
+            self.assertEqual(len(selection.files), 43)
 
 
 if __name__ == "__main__":

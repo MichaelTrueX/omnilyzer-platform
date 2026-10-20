@@ -121,12 +121,14 @@ class InertDevPromotionHandler:
         self, *, expected_workflow_sha: str, verifier: object, replay_guard: object,
         transport: object, request_builder: object,
         promotion_context_verifier: object,
+        private_registry_transport: bool = False,
     ) -> None:
         broker = RestrictedDeploymentBroker(
             expected_workflow_sha=expected_workflow_sha,
             verifier=verifier, replay_guard=replay_guard, transport=transport,
             request_builder=request_builder,
             promotion_context_verifier=promotion_context_verifier,
+            private_registry_transport=private_registry_transport,
         )
         object.__setattr__(self, "_forward", broker.authorize_promotion_and_forward)
 
