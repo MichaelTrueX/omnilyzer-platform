@@ -586,7 +586,9 @@ class DevDeploymentOperation:
             phase = "deployment_state_load"
             load, save = store_methods
             save_state = save
-            original_state = snapshot_state(load(), fresh=True)
+            loaded_state = load()
+            phase = "candidate_state_freshness"
+            original_state = snapshot_state(loaded_state, fresh=True)
             same_active_identity = (
                 original_state.active_release is not None
                 and original_state.active_source_sha is not None
