@@ -155,8 +155,12 @@ def _validated_pair() -> tuple[bytes, bytes, object, object]:
         broker = parse_canonical_broker_service_configuration(broker_bytes)
         executor = parse_canonical_executor_service_configuration(executor_bytes)
         if (
-            broker.broker_gid != 990
-            or executor.executor_gid != 991
+            broker.broker_uid != 990 or broker.broker_gid != 990
+            or broker.executor_uid != 991 or broker.executor_gid != 991
+            or broker.replay_group_gid != 992 or broker.socket_group_gid != 993
+            or executor.broker_uid != 990 or executor.broker_gid != 990
+            or executor.executor_uid != 991 or executor.executor_gid != 991
+            or executor.replay_group_gid != 992 or executor.socket_group_gid != 993
             or broker.installation_contract() != executor.installation_contract()
             or broker.reviewed_commit != executor.reviewed_commit
             or broker.runtime_configuration_sha256
@@ -184,6 +188,7 @@ def _systemctl_properties(
             if item not in (
                 "User", "Group", "RuntimeDirectory", "RuntimeDirectoryMode",
                 "ProtectSystem", "UMask", "BindReadOnlyPaths",
+                "SocketUser", "SocketGroup", "SocketMode", "Listen",
             ):
                 raise ValueError
             arguments.extend(("-p", item))
@@ -212,9 +217,29 @@ def _systemd_evidence() -> tuple[bool, tuple[tuple[str, str], ...]]:
         "User", "Group", "RuntimeDirectory", "RuntimeDirectoryMode",
         "ProtectSystem", "UMask", "BindReadOnlyPaths",
     ))
+    broker = _systemctl_properties(
+        "omnilyzer-deployment-broker.service",
+        ("User", "Group", "ProtectSystem", "UMask"),
+    )
+    socket_unit = _systemctl_properties(
+        "omnilyzer-deployment-executor.socket",
+        ("SocketUser", "SocketGroup", "SocketMode", "Listen"),
+    )
     socket = "/run/user/991/docker.sock:/run/omnilyzer/deployment/rootless-docker/docker.sock"
     expected = (
-        properties["User"] == "omnilyzer-executor"
+        broker == {
+            "User": "omnilyzer-broker",
+            "Group": "omnilyzer-broker",
+            "ProtectSystem": "strict",
+            "UMask": "0077",
+        }
+        and socket_unit == {
+            "SocketUser": "omnilyzer-executor",
+            "SocketGroup": "omnilyzer-deployment",
+            "SocketMode": "0660",
+            "Listen": "/run/omnilyzer/deployment/executor.sock (Stream)",
+        }
+        and properties["User"] == "omnilyzer-executor"
         and properties["Group"] == "omnilyzer-executor"
         and properties["RuntimeDirectory"] == "omnilyzer/deployment/rootless-docker"
         and properties["RuntimeDirectoryMode"] == "0700"

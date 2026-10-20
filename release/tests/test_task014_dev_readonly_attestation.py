@@ -48,6 +48,16 @@ GOOD_SYSTEMD = {
     "UMask": "0077",
     "BindReadOnlyPaths": EXPECTED_SOCK_BIND + ":rbind",
 }
+GOOD_BROKER = {
+    "User": "omnilyzer-broker", "Group": "omnilyzer-broker",
+    "ProtectSystem": "strict", "UMask": "0077",
+}
+GOOD_SOCKET = {
+    "SocketUser": "omnilyzer-executor",
+    "SocketGroup": "omnilyzer-deployment",
+    "SocketMode": "0660",
+    "Listen": "/run/omnilyzer/deployment/executor.sock (Stream)",
+}
 GOOD_STATES = (
     ("omnilyzer-deployment-broker.service", "active"),
     ("omnilyzer-deployment-executor.socket", "active"),
@@ -115,11 +125,23 @@ class AttestationTests(unittest.TestCase):
         ))
         patches.enter_context(patch.object(
             audit, "_systemctl_properties",
-            return_value=dict(GOOD_SYSTEMD),
+            side_effect=self._property_command,
         ))
         self.systemctl_process = patches.enter_context(patch.object(
             audit.subprocess, "run", side_effect=self._state_command,
         ))
+
+    @staticmethod
+    def _property_command(unit: str, properties: tuple[str, ...]) -> dict[str, str]:
+        """Return only approved synthetic read-only unit metadata."""
+        allowed = {
+            "omnilyzer-deployment-executor.service": GOOD_SYSTEMD,
+            "omnilyzer-deployment-broker.service": GOOD_BROKER,
+            "omnilyzer-deployment-executor.socket": GOOD_SOCKET,
+        }
+        assert unit in allowed
+        assert set(properties) == set(allowed[unit])
+        return dict(allowed[unit])
 
     @staticmethod
     def _state_command(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess:
@@ -214,9 +236,45 @@ class AttestationTests(unittest.TestCase):
     def test_rootless_sandbox_drift_not_reported_as_success(self) -> None:
         """If the read-only rootless bind is removed, host preflight HOLDS."""
         altered = dict(GOOD_SYSTEMD, BindReadOnlyPaths="")
-        with patch.object(audit, "_systemctl_properties", return_value=altered):
+        def altered_properties(unit: str, keys: tuple[str, ...]) -> dict[str, str]:
+            """Drift only the executor sandbox and preserve broker/socket evidence."""
+            original = self._property_command(unit, keys)
+            return altered if unit == "omnilyzer-deployment-executor.service" else original
+
+        with patch.object(audit, "_systemctl_properties",
+                          side_effect=altered_properties):
             with self.assertRaisesRegex(audit.DevAttestationHold, "HOLD"):
                 audit.attest_dev_host(self.plan)
+
+    def test_socket_permissions_or_broker_sandbox_drift_fail_closed(self) -> None:
+        """Enforce the reviewed socket group and strict broker sandbox."""
+        for unit, changed in (
+            ("omnilyzer-deployment-executor.socket", {"SocketMode": "0666"}),
+            ("omnilyzer-deployment-broker.service", {"ProtectSystem": "false"}),
+        ):
+            def changed_properties(name: str, keys: tuple[str, ...]) -> dict[str, str]:
+                """Change exactly one fixed systemd property in a synthetic unit."""
+                props = self._property_command(name, keys)
+                if name == unit:
+                    props.update(changed)
+                return props
+
+            with self.subTest(unit=unit):
+                with patch.object(audit, "_systemctl_properties",
+                                  side_effect=changed_properties):
+                    with self.assertRaises(audit.DevAttestationHold):
+                        audit.attest_dev_host(self.plan)
+
+    def test_cross_service_replay_gid_drift_rejected(self) -> None:
+        """A valid but foreign replay group cannot masquerade as installed UID/GID."""
+        from deployment.broker_service_config import parse_canonical_broker_service_configuration
+        from deployment.executor_service_config import parse_canonical_executor_service_configuration
+        broker = parse_canonical_broker_service_configuration(self.broker_bytes)
+        executor = parse_canonical_executor_service_configuration(self.executor_bytes)
+        self.b.write_bytes(replace(broker, replay_group_gid=998).canonical_bytes())
+        self.e.write_bytes(replace(executor, replay_group_gid=998).canonical_bytes())
+        with self.assertRaises(audit.DevAttestationHold):
+            audit.attest_dev_host(self.plan)
 
     def test_old_source_mismatch_detected_without_configuration_access(self) -> None:
         """Unreviewed installed source bytes fail before touching private JSON."""

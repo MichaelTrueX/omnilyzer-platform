@@ -71,6 +71,17 @@ variables, Docker auth, private contents, journal, replay or certificate.
 An attestation failure yields a generic HOLD rather than leaking file
 contents or attempting a correction.
 
+## Additional reviewed systemd guardrails
+
+The latest preflight additionally requires **all six installed UID/GID
+identities** to match the actual host topology (broker 990/990, executor
+991/991, replay group 992, deployment socket group 993), not merely to
+agree with each other. Its read-only systemd inspection also requires the
+broker's strict filesystem sandbox and umask, the executor socket's exact
+owner/group, 0660 access mode and fixed listener path. These checks ensure
+the same canonical configuration cannot falsely pass on a foreign or
+permissively configured host.
+
 ## Execution prerequisites (future, NOT currently approved)
 
 1. Obtain **separate owner authorization for a root-controlled read-only
