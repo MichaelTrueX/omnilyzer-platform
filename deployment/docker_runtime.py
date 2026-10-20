@@ -22,6 +22,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import selectors
 import stat
 import subprocess
@@ -533,11 +534,30 @@ class DockerRuntimeAdapter:
         """
         if stage != "dev":
             raise RuntimeOperationError("runtime adapter supports DEV only")
-        self._run(
-            self._compose("up", "--detach", "--no-deps", "deployment-nginx"),
-            timeout=180.0,
-        )
-        self._run(self._compose("exec", "--no-TTY", "deployment-nginx", "nginx", "-t", "-c", "/etc/nginx/nginx.conf"))
+        # Docker Compose v5's default pull progress can exceed our bounded
+        # 16-KiB command output when the proxy image is not yet cached.
+        # Suppress progress without weakening the bounded process runner.
+        try:
+            self._run(
+                self._compose(
+                    "up", "--quiet-pull", "--detach", "--no-deps",
+                    "deployment-nginx",
+                ),
+                timeout=180.0,
+            )
+        except Exception:
+            sys.stderr.write("TASK014_NGINX_FAILURE phase=proxy_compose_up\n")
+            raise
+        try:
+            self._run(
+                self._compose(
+                    "exec", "--no-TTY", "deployment-nginx",
+                    "nginx", "-t", "-c", "/etc/nginx/nginx.conf",
+                ),
+            )
+        except Exception:
+            sys.stderr.write("TASK014_NGINX_FAILURE phase=proxy_syntax_check\n")
+            raise
         return True
 
     def _write_active_atomic(self, payload: bytes | None) -> None:
