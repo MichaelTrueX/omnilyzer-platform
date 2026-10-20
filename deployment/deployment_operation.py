@@ -519,6 +519,7 @@ class DevDeploymentOperation:
         if not enter(self):
             raise DeploymentOperationError(DEPLOYMENT_OPERATION_UNAVAILABLE_MESSAGE)
         started = False
+        candidate_written = False
         switch_attempted = False
         original_state: DeploymentState | None = None
         prepared: DeploymentState | None = None
@@ -534,10 +535,16 @@ class DevDeploymentOperation:
                 or prepared is None or emit_event is None
             ):
                 return
-            if switch_attempted and restore_route is not None and save_state is not None:
+            # A failed pre-traffic promotion must also clear the persisted
+            # candidate. Previously only a traffic-switch failure restored
+            # state, leaving every failed cold pull permanently blocking DEV.
+            if candidate_written and save_state is not None:
                 try:
-                    if restore_route("dev", original_state.active_slot) is not None:
-                        raise TypeError("invalid runtime restoration result")
+                    if switch_attempted:
+                        if restore_route is None or restore_route(
+                            "dev", original_state.active_slot,
+                        ) is not None:
+                            raise TypeError("invalid runtime restoration result")
                     if save_state(snapshot_state(original_state)) is not None:
                         raise TypeError("invalid state restoration result")
                 except BaseException:
@@ -588,6 +595,49 @@ class DevDeploymentOperation:
             save_state = save
             loaded_state = load()
             phase = "candidate_state_freshness"
+            # One-time, strictly bounded recovery of a prior failed cold pull:
+            # the same signed canary was staged, no release/route ever became
+            # active, migration never started, and the prior state checkpoint
+            # was linked to an appended promotion-started audit event.
+            # Preserve that audit/replay history and unrelated state exactly.
+            if (
+                type(loaded_state) is DeploymentState
+                and loaded_state.active_slot is None
+                and loaded_state.active_release is None
+                and loaded_state.active_source_sha is None
+                and loaded_state.active_digest is None
+                and loaded_state.previous_slot is None
+                and loaded_state.previous_release is None
+                and loaded_state.previous_source_sha is None
+                and loaded_state.previous_digest is None
+                and loaded_state.candidate_slot == "blue"
+                and loaded_state.candidate_release == snapshot.release_version
+                and loaded_state.candidate_source_sha == snapshot.source_sha
+                and loaded_state.candidate_digest == snapshot.manifest_digest
+                and loaded_state.migration_state.status == "pending"
+                and loaded_state.migration_state.identity == migration_identity_value
+                and loaded_state.migration_state.checksum == migration_checksum_value
+                and type(loaded_state.event_id) is str
+                and len(loaded_state.event_id) == len("c8:") + 64 + len(":promotion-started")
+                and loaded_state.event_id.startswith("c8:")
+                and loaded_state.event_id.endswith(":promotion-started")
+                and all(ch in "0123456789abcdef"
+                        for ch in loaded_state.event_id[3:67])
+            ):
+                cleared = loaded_state.to_dict()
+                for field in (
+                    "candidate_release", "candidate_source_sha",
+                    "candidate_digest", "candidate_slot",
+                ):
+                    cleared[field] = None
+                cleared["migration_state"] = {
+                    "status": "none", "identity": None, "checksum": None,
+                    "serialized_lock_required": True,
+                }
+                cleaned = snapshot_state(DeploymentState.from_dict(cleared), fresh=True)
+                if save(cleaned) is not None:
+                    raise TypeError("abandoned DEV candidate recovery failed")
+                loaded_state = load()
             original_state = snapshot_state(loaded_state, fresh=True)
             same_active_identity = (
                 original_state.active_release is not None
@@ -720,6 +770,7 @@ class DevDeploymentOperation:
             )
             if save(snapshot_state(prepared)) is not None:
                 raise TypeError("invalid state save result")
+            candidate_written = True
 
             (
                 pull_exact_image, verify_local_repo_digest, start_candidate,
