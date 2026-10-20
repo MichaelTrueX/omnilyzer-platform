@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 import stat
+import sys
 import tempfile
 import time
 
@@ -171,6 +172,7 @@ def execute_private_zot_read(
     directory or command environment. The verifier must have authorized the
     broker-supplied credential before the FD reaches this method.
     """
+    phase = "request_validation"
     try:
         if operation not in COMMANDS or type(operation) is not str:
             raise ValueError("invalid operation")
@@ -179,13 +181,16 @@ def execute_private_zot_read(
         if type(request) is not ExecutorRequest or request.exact_image_reference != image:
             raise ValueError("request/image mismatch")
         now = int(time.time())
+        phase = "credential_scope"
         authority = read_sealed_credential(
             credential_fd, canonical_request=canonical_request,
             image=image, now=now,
         )
         if authority.expires_at - now < MIN_VALIDITY_SECONDS:
             raise ValueError("credential expires before bounded operation")
+        phase = "runtime_directory"
         directory = _private_runtime_directory()
+        phase = "rootless_socket"
         _require_rootless_socket()
 
         # The only registry credential exists briefly as a rootless-executor
@@ -196,21 +201,42 @@ def execute_private_zot_read(
         ) as temporary:
             workspace = Path(temporary)
             os.chmod(workspace, 0o700)
+            phase = "scoped_auth_config"
             _write_config(workspace, authority.token)
             argv = _command(workspace, image, operation)
+            phase = "docker_command"
             output = runner.run(
                 argv, cwd=WORKING_DIRECTORY,
                 environment={
                     "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
-                    "CANARY_IMAGE": image,
+                    "CANARY_IMAGE": image, "HOME": str(workspace),
                 },
                 timeout=COMMAND_TIMEOUT_SECONDS,
             )
-            if type(output) is not CommandResult or output.returncode != 0:
+            phase = "docker_command_result"
+            if type(output) is not CommandResult:
+                raise ValueError("Docker operation returned an invalid result")
+            if output.returncode != 0:
+                # Classify without ever logging Docker output or credentials.
+                # These labels are fixed, nonsecret diagnostic categories.
+                stderr = output.stderr.lower()
+                if any(word in stderr for word in ("unauthorized", "denied", "authentication", "401", "403")):
+                    phase = "registry_auth_denied"
+                elif any(word in stderr for word in ("x509", "certificate", "tls")):
+                    phase = "registry_tls"
+                elif any(word in stderr for word in ("no such host", "lookup", "name resolution")):
+                    phase = "registry_dns"
+                elif any(word in stderr for word in ("network is unreachable", "connection refused", "dial tcp", "timeout")):
+                    phase = "registry_connectivity"
+                else:
+                    phase = "docker_command_nonzero"
                 raise ValueError("Docker operation returned failure")
     except (KeyboardInterrupt, SystemExit, GeneratorExit):
         raise
     except Exception:
+        sys.stderr.write(
+            f"TASK014_PRIVATE_ZOT_FAILURE operation={operation if type(operation) is str and operation in COMMANDS else 'invalid'} phase={phase}\n"
+        )
         raise PrivateRegistryPullError("private Zot pull is unavailable") from None
 
 
