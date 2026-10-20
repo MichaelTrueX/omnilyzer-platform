@@ -101,11 +101,12 @@ jobs:
           python3 -m unittest -q \
             deployment.tests.test_private_registry_docker_cli_local \
             deployment.tests.test_private_registry_pull
-      # Section 8: review source-only atomic cutover with nonprivileged fixtures.
-      # Never accesses /opt/omnilyzer, systemd, Zot, the network or DEV host.
-      - name: Test atomic DEV source generation in disposable fixtures
+      # Section 8: offline complete application and config cutover tests.
+      # Never accesses /opt, /etc, systemd, Zot, network or DEV host.
+      - name: Test atomic DEV source and canonical config rollback offline
         shell: bash
         run: |
           set -euo pipefail
           python3 -m unittest -q \
-            release.tests.test_task014_source_cutover
+            release.tests.test_task014_source_cutover \
+            release.tests.test_task014_config_cutover

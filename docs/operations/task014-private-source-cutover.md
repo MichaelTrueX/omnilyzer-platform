@@ -111,11 +111,14 @@ interactive user copying files into the running application.
 **Gate C — configuration migration:** The existing root-owned broker and
 executor configurations pin a reviewed source and, for the broker, the exact
 `expected_workflow_sha`. They remain outside the 43-file application tree.
-Review and separately authorize atomic configuration updates bound to the
-new exact GitHub protected-main SHA, preserving identities and immutable
-runtime/ingress digests. **The source-cutover library intentionally does not
-modify those files**. Do not loosen the workflow SHA verifier. Prepare exact
-config rollback bytes and directory permissions before any service stop.
+The separately reviewable `release/task014_config_cutover.py` and
+`docs/operations/task014-private-config-cutover.md` cover root-only
+canonical config staging, SHA-pinned changes, sequential atomic individual
+file replacements and fail-closed rollback. **The source-cutover library
+intentionally does not modify those files**. The two config directories
+prevent a truly atomic cross-file operation; services must remain quiesced.
+Actual DEV configuration bytes remain protected/unreadable to the current
+unprivileged account. Do not invent pins or loosen the workflow SHA verifier.
 
 **Gate D — controlled DEV service acceptance:** Explicitly authorize
 quiescing broker/executor/socket; then stage, validate and atomically exchange
