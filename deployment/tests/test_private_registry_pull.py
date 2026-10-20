@@ -49,8 +49,9 @@ class MemoryCommandRunner:
         assert argv[3:5] == ("--host", DOCKER_HOST)
         assert all(TOKEN not in argument for argument in argv)
         assert all(TOKEN not in str(x) for x in environment.values())
-        assert set(environment) == {"PATH", "LANG", "CANARY_IMAGE"}
+        assert set(environment) == {"PATH", "LANG", "CANARY_IMAGE", "HOME"}
         assert environment["CANARY_IMAGE"] == IMAGE
+        assert environment["HOME"] == str(Path(argv[2]))
         assert timeout > 0
         self.config_path = Path(argv[2]) / "config.json"
         info = self.config_path.stat()
