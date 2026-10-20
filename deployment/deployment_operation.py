@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import threading
 import types
 from typing import Any, Callable
@@ -557,6 +558,7 @@ class DevDeploymentOperation:
             except BaseException:
                 pass
 
+        phase = "request_assets"
         try:
             snapshot = snapshot_request(request)
             runtime_reference = snapshot.runtime_configuration_reference
@@ -581,6 +583,7 @@ class DevDeploymentOperation:
                 canonical_bytes(_request_mapping(snapshot)),
             ).hexdigest()
 
+            phase = "deployment_state_load"
             load, save = store_methods
             save_state = save
             original_state = snapshot_state(load(), fresh=True)
@@ -616,6 +619,7 @@ class DevDeploymentOperation:
             )
             if same_active_identity or same_active_digest or active_version_conflict:
                 raise TypeError("requested deployment identity is already active or conflicting")
+            phase = "deployment_plan"
             promotion = promotion_request(snapshot)
             plan = validate_plan(
                 make_plan(original_state, promotion), original_state, promotion,
@@ -702,6 +706,7 @@ class DevDeploymentOperation:
 
             emit_event = emit
 
+            phase = "audit_and_candidate_state"
             started_event = make_event(
                 "promotion-started", "promotion_started", "started",
             )
@@ -721,13 +726,17 @@ class DevDeploymentOperation:
                 restore_traffic,
             ) = runtime_methods
             restore_route = restore_traffic
+            phase = "private_image_pull"
             if pull_exact_image(snapshot.exact_image_reference) is not None:
                 raise TypeError("invalid runtime result")
+            phase = "local_image_digest"
             if verify_local_repo_digest(snapshot.exact_image_reference) is not None:
                 raise TypeError("invalid runtime result")
+            phase = "candidate_start"
             if start_candidate(start_plan) is not None:
                 raise TypeError("invalid runtime result")
 
+            phase = "migration_setup"
             _, migration_started_id, migration_started_timestamp = emit(
                 "migration-started", "migration_started", "started",
                 migration_identity=migration_identity_value,
@@ -740,6 +749,7 @@ class DevDeploymentOperation:
             if save(snapshot_state(running)) is not None:
                 raise TypeError("invalid state save result")
             try:
+                phase = "migration_execution"
                 migration_result = execute_migration(
                     stage="dev", exact_image_reference=snapshot.exact_image_reference,
                     identity=migration_identity_value,
@@ -750,6 +760,7 @@ class DevDeploymentOperation:
             except Exception:
                 failure_event = "migration_failed"
                 raise
+            phase = "migration_audit"
             migration_succeeded = make_event(
                 "migration-succeeded", "migration_succeeded", "succeeded",
                 migration_identity=migration_identity_value,
@@ -772,6 +783,7 @@ class DevDeploymentOperation:
             append_event(migration_succeeded)
 
             try:
+                phase = "liveness"
                 liveness = check_liveness("dev", prepared.candidate_slot)
             except Exception:
                 failure_event = "liveness_failed"
@@ -782,6 +794,7 @@ class DevDeploymentOperation:
             failure_event = None
             emit("liveness-passed", "liveness_passed", "succeeded")
             try:
+                phase = "readiness"
                 readiness = check_readiness("dev", prepared.candidate_slot)
             except Exception:
                 failure_event = "readiness_failed"
@@ -791,15 +804,19 @@ class DevDeploymentOperation:
                 raise TypeError("readiness failed")
             failure_event = None
             emit("readiness-passed", "readiness_passed", "succeeded")
+            phase = "application_metadata"
             if validate_application(application_plan) is not True:
                 raise TypeError("application validation failed")
+            phase = "nginx_validation"
             if validate_nginx("dev") is not True:
                 raise TypeError("Nginx validation failed")
+            phase = "traffic_gate"
             authorize_switch(succeeded, passing_gates)
             emit("traffic-switch-started", "traffic_switch_started", "started")
             failure_event = "traffic_switch_failed"
             switch_attempted = True
             try:
+                phase = "traffic_switch"
                 switch_result = switch_traffic("dev", prepared.candidate_slot)
                 if switch_result is not None:
                     raise TypeError("invalid runtime result")
@@ -810,6 +827,7 @@ class DevDeploymentOperation:
                 "traffic-switch-succeeded", "traffic_switch_succeeded", "succeeded",
                 success=True,
             )
+            phase = "completion_audit"
             promotion_success = make_event(
                 "promotion-succeeded", "promotion_succeeded", "succeeded",
                 success=True,
@@ -839,6 +857,8 @@ class DevDeploymentOperation:
             recover()
             raise
         except Exception:
+            # Fixed stage names only; no error details, tokens or request bytes.
+            sys.stderr.write("TASK014_DEPLOYMENT_FAILURE phase=" + phase + "\n")
             recover()
             raise DeploymentOperationError(
                 DEPLOYMENT_OPERATION_UNAVAILABLE_MESSAGE,
