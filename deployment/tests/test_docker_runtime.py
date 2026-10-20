@@ -555,15 +555,20 @@ class DockerRuntimeTests(unittest.TestCase):
 
     def test_validate_nginx_and_normal_switch_bind_every_compose_call(self) -> None:
         self.assertTrue(self.adapter.validate_nginx("dev"))
-        self.assertEqual(len(self.runner.calls), 1)
-        self.assertIn("-t", self.runner.calls[0][0])
-        self.assertEqual(self.runner.calls[0][2], EXPECTED_ENVIRONMENT)
+        self.assertEqual(len(self.runner.calls), 2)
+        self.assertEqual(self.runner.calls[0][0][-4:],
+                         ("up", "--detach", "--no-deps", "deployment-nginx"))
+        self.assertEqual(self.runner.calls[0][3], 180.0)
+        self.assertIn("-t", self.runner.calls[1][0])
+        self.assertEqual(self.runner.calls[1][2], EXPECTED_ENVIRONMENT)
 
         self.runner.calls.clear()
         self.adapter.switch_traffic("dev", "green")
-        self.assertEqual(len(self.runner.calls), 2)
-        self.assertIn("-t", self.runner.calls[0][0])
-        self.assertEqual(self.runner.calls[1][0][-3:], ("nginx", "-s", "reload"))
+        self.assertEqual(len(self.runner.calls), 3)
+        self.assertEqual(self.runner.calls[0][0][-4:],
+                         ("up", "--detach", "--no-deps", "deployment-nginx"))
+        self.assertIn("-t", self.runner.calls[1][0])
+        self.assertEqual(self.runner.calls[2][0][-3:], ("nginx", "-s", "reload"))
         for _, _, environment, _ in self.runner.calls:
             self.assertEqual(environment, EXPECTED_ENVIRONMENT)
 
@@ -588,14 +593,22 @@ class DockerRuntimeTests(unittest.TestCase):
         target = Path(self.temp.name) / "active.conf"
         old = self.adapter._active_fragment("blue")
         target.write_bytes(old)
-        self.runner.results = [CommandResult(1, "", "syntax"), CommandResult(0, "", ""), CommandResult(0, "", "")]
+        self.runner.results = [
+            CommandResult(0, "", ""), CommandResult(1, "", "syntax"),
+            CommandResult(0, "", ""), CommandResult(0, "", ""),
+            CommandResult(0, "", ""),
+        ]
         with self.assertRaises(RuntimeOperationError):
             self.adapter.switch_traffic("dev", "green")
         self.assertEqual(target.read_bytes(), old)
-        self.assertEqual(len(self.runner.calls), 3)
-        self.assertIn("-t", self.runner.calls[0][0])
+        self.assertEqual(len(self.runner.calls), 5)
+        self.assertEqual(self.runner.calls[0][0][-4:],
+                         ("up", "--detach", "--no-deps", "deployment-nginx"))
         self.assertIn("-t", self.runner.calls[1][0])
-        self.assertEqual(self.runner.calls[2][0][-3:], ("nginx", "-s", "reload"))
+        self.assertEqual(self.runner.calls[2][0][-4:],
+                         ("up", "--detach", "--no-deps", "deployment-nginx"))
+        self.assertIn("-t", self.runner.calls[3][0])
+        self.assertEqual(self.runner.calls[4][0][-3:], ("nginx", "-s", "reload"))
         for _, _, environment, _ in self.runner.calls:
             self.assertEqual(environment, EXPECTED_ENVIRONMENT)
 
@@ -604,17 +617,22 @@ class DockerRuntimeTests(unittest.TestCase):
         old = self.adapter._active_fragment("blue")
         target.write_bytes(old)
         self.runner.results = [
-            CommandResult(0, "", ""), CommandResult(1, "", "reload"),
+            CommandResult(0, "", ""), CommandResult(0, "", ""),
+            CommandResult(1, "", "reload"), CommandResult(0, "", ""),
             CommandResult(0, "", ""), CommandResult(0, "", ""),
         ]
         with self.assertRaises(RuntimeOperationError):
             self.adapter.switch_traffic("dev", "green")
         self.assertEqual(target.read_bytes(), old)
-        self.assertEqual(len(self.runner.calls), 4)
-        self.assertIn("-t", self.runner.calls[0][0])
-        self.assertEqual(self.runner.calls[1][0][-3:], ("nginx", "-s", "reload"))
-        self.assertIn("-t", self.runner.calls[2][0])
-        self.assertEqual(self.runner.calls[3][0][-3:], ("nginx", "-s", "reload"))
+        self.assertEqual(len(self.runner.calls), 6)
+        self.assertEqual(self.runner.calls[0][0][-4:],
+                         ("up", "--detach", "--no-deps", "deployment-nginx"))
+        self.assertIn("-t", self.runner.calls[1][0])
+        self.assertEqual(self.runner.calls[2][0][-3:], ("nginx", "-s", "reload"))
+        self.assertEqual(self.runner.calls[3][0][-4:],
+                         ("up", "--detach", "--no-deps", "deployment-nginx"))
+        self.assertIn("-t", self.runner.calls[4][0])
+        self.assertEqual(self.runner.calls[5][0][-3:], ("nginx", "-s", "reload"))
         for _, _, environment, _ in self.runner.calls:
             self.assertEqual(environment, EXPECTED_ENVIRONMENT)
         self.assertNotIn("host-nginx", " ".join(" ".join(call[0]) for call in self.runner.calls))
