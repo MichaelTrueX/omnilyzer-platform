@@ -20,6 +20,7 @@ import hashlib
 import http.client
 import io
 import ssl
+import sys
 import tarfile
 import time
 from typing import Any, Callable, Protocol
@@ -533,25 +534,33 @@ def acquire_and_construct_dev_request(
     if blob_signatures is oci_signatures:
         raise ReleaseConsumerError(ERROR)
     failed = False
+    phase = "zot_manifest"
     try:
         zot.acquire(promotion, now=received_at)
+        phase = "forgejo_evidence"
         evidence = forgejo.acquire(promotion, now=received_at)
+        phase = "evidence_hashes"
         manifest = evidence["release-manifest.json"]
         provenance = evidence["release-provenance.json"]
         if (hashlib.sha256(manifest).hexdigest() != promotion.release_manifest_sha256
                 or hashlib.sha256(provenance).hexdigest() != promotion.provenance_sha256):
             raise ReleaseConsumerError(ERROR)
+        phase = "sigstore_bundles"
         sigstore = blob_signatures.verify(
             manifest, provenance, evidence["release-manifest.sigstore.json"],
             evidence["release-provenance.sigstore.json"],
         )
+        phase = "oci_signature"
         oci = oci_signatures.verify(promotion.exact_image_reference, received_at)
+        phase = "release_policy"
         trusted = verify_release_evidence(promotion, manifest, provenance, sigstore, oci)
+        phase = "executor_request"
         result = _construct_dev_request(
             promotion, trusted, identity, runtime, ingress, received_at=received_at,
             expected_workflow_sha=expected_workflow_sha,
         )
     except Exception:
+        sys.stderr.write("TASK014_EVIDENCE_FAILURE phase=" + phase + "\n")
         failed = True
     if failed:
         raise ReleaseConsumerError(ERROR)
