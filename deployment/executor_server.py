@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import socket
+import sys
 import struct
 import threading
 import time
@@ -294,6 +295,7 @@ class UnixExecutorConnectionHandler:
         failed = False
         control: tuple[BaseException, object] | None = None
         credential_fd: int | None = None
+        phase = "connection_authentication"
 
         try:
             close_candidate = object.__getattribute__(connection, "close")
@@ -344,6 +346,7 @@ class UnixExecutorConnectionHandler:
 
             if private_transfer:
                 # SO_PEERCRED must pass before accepting ancillary descriptors.
+                phase = "sealed_fd_receive"
                 settimeout(request_deadline.remaining())
                 header, credential_fd = receive_private_header(connection)
                 request_deadline.remaining()
@@ -359,6 +362,7 @@ class UnixExecutorConnectionHandler:
             if type(trailing) is not bytes or trailing != b"":
                 raise OSError("executor request contains trailing data")
             request_complete = True
+            phase = "request_execution"
 
             if private_transfer:
                 request = parse_request(canonical_request)
@@ -370,6 +374,7 @@ class UnixExecutorConnectionHandler:
                 response = execute(canonical_request, credential_fd=credential_fd)
             else:
                 response = execute(canonical_request)
+            phase = "response_transport"
             response_deadline = deadline_factory(validated_monotonic, timeout_ms)
             if type(response) is not bytes or not response or len(response) > response_bound:
                 raise OSError("invalid executor response")
@@ -385,6 +390,8 @@ class UnixExecutorConnectionHandler:
         except (KeyboardInterrupt, SystemExit, GeneratorExit) as exc:
             control = (exc, exc.__traceback__)
         except Exception:
+            # Redacted static phase only; never credential values or exceptions.
+            sys.stderr.write(f"TASK014_EXECUTOR_FAILURE boundary=handler phase={phase}\n")
             failed = True
         finally:
             if credential_fd is not None:

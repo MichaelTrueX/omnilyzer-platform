@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import re
+import sys
 import threading
 import types
 from typing import Any, Callable, Protocol
@@ -245,30 +246,37 @@ class RestrictedPrivilegedExecutor:
             scoped_private_zot_request, require_private_zot_pull_budget,
         )
 
+        phase = "private_preflight_setup"
         preflight = object.__getattribute__(self, "_private_registry_preflight")
         if preflight is None:
             raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
         try:
             request = parse_canonical_request(canonical_request)
+            phase = "credential_validation"
             read_sealed_credential(
                 credential_fd, canonical_request=canonical_request,
                 image=request.exact_image_reference,
             )
             # Preflight uses only Docker manifest inspect, and never mutates
             # replay, Docker images, candidate state or audit records.
+            phase = "registry_manifest_preflight"
             if preflight(canonical_request, credential_fd) is not None:
                 raise ValueError("private registry preflight returned a result")
             # A slow but successful manifest check must not consume replay
             # when the same JWT can no longer support the bounded image pull.
+            phase = "credential_pull_budget"
             require_private_zot_pull_budget(
                 credential_fd, canonical_request,
                 request.exact_image_reference,
             )
+            phase = "deployment_execution"
             with scoped_private_zot_request(credential_fd, canonical_request):
                 return RestrictedPrivilegedExecutor.execute(self, canonical_request)
         except (KeyboardInterrupt, SystemExit, GeneratorExit):
             raise
         except Exception:
+            # Redacted static phase, without the short-lived credential or error.
+            sys.stderr.write(f"TASK014_EXECUTOR_FAILURE boundary=private phase={phase}\n")
             raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
 
     def execute(self, canonical_request: bytes) -> bytes:
