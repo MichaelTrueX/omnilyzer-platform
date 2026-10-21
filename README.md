@@ -6,6 +6,7 @@ Related:
 - docs/architecture/platform-principles.md
 - docs/architecture/technology-decisions.md
 - docs/operations/task013-release-0145-acceptance.md
+- docs/operations/task014-dev-0146-acceptance.md
 - deployment/README.md
 - AGENTS.md
 - spikes/README.md
@@ -51,14 +52,17 @@ If an implementation request requires a technology, service, dependency, persist
   coordinated version `0.14.5` was successfully published to zot and Forgejo
   and its retained handoff/OCI receipt independently verified on two hosts.
   See [the acceptance record](docs/operations/task013-release-0145-acceptance.md).
-- **Task 014 — live DEV promotion remains blocked:** repository automation and
-  security models exist, but a successful end-to-end DEV promotion has not
-  been demonstrated. See [deployment status](deployment/README.md) and the
-  [open incident](https://github.com/MichaelTrueX/omnilyzer-platform/issues/182).
-- **Next business milestone:** once DEV deployment is demonstrably functional,
-  integrate one actual SaaS product workflow (identity, Workspace isolation,
-  product API, persisted business data, and tested customer authorization).
-  Do not substitute an arbitrary CMS page-editing flow for that milestone.
+- **Task 014 — signed DEV canary accepted (20 October 2026):** coordinated
+  signed release **0.14.6** passed the actual DEV promotion. Protected `main`
+  and installed source match at `8d321e12ff85d25bf1ea4b8ff4dd0adc7bb8dbf4`.
+  Host-local Nginx returned HTTP 200 for `/livez`, `/readyz`, and `/metadata`
+  under the correct canary Host header. See [accepted DEV evidence](docs/operations/task014-dev-0146-acceptance.md).
+  This is a **synthetic canary**, not a user-facing SaaS application or public DNS route.
+- **Next business milestone:** implement one actual consuming SaaS product
+  workflow (identity, Workspace isolation, product API, persisted business
+  data, and tested customer authorization) using this working deployment path.
+  Reconcile the application's repository/data boundaries and do not
+  alter separately hosted products or invent a CMS as the first integration.
 
 Prioritize resolving demonstrated delivery blockers and the first consuming
 product over speculative shared frameworks, additional approval bureaucracy,
