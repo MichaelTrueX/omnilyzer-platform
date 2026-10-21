@@ -1,5 +1,30 @@
 # Task 014: exact-digest promotion and deployment control plane
 
+## Current runtime outcome (20–21 October 2026)
+
+**DEV SIGNED CANARY ACCEPTED.** The historical sections below remain
+engineering records; earlier statements that services were inactive
+are superseded by the live [Task 014 acceptance](../docs/operations/task014-dev-0146-acceptance.md).
+
+- Protected `main` and installed DEV generation:
+  `8d321e12ff85d25bf1ea4b8ff4dd0adc7bb8dbf4`.
+- [Signed 0.14.6 release](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/39448200369)
+  and [successful DEV promotion](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/39449223284).
+- Actual host-local Nginx at `127.0.0.1:3020` serves canary live,
+  readiness and metadata endpoints with HTTP 200 under the exact
+  `Host: canary-dev.omnilyzer.ai` header. Canaries remain on an
+  internal Docker network; only the proxy bridges to a separate edge
+  network for loopback port publishing.
+- `sudo -n /usr/local/sbin/omnilyzer-dev-ops status` works over SSH
+  and reports broker, executor socket and host Nginx active.
+  The legacy `omnilyzer-task014 status` returns `TASK014_HOLD ValueError`;
+  this separate defect is not the authoritative health check.
+- Public DNS/browser access, STAGING, PROD and separately owned SaaS
+  applications were **not** activated. This is a synthetic signed canary.
+- Next milestone: one **actual SaaS product workflow** using the
+  existing delivery path, not more synthetic canary infrastructure.
+
+
 Task 014 consumes accepted Task 013 release outputs and controls their ordered deployment. The release system builds, scans, signs, and publishes artifacts. This package does not build or publish anything; it accepts only a trusted release already identified as `repository@sha256:...`.
 
 ## Phase 1 boundary and final DEV workflow slice
