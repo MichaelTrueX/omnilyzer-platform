@@ -1,0 +1,132 @@
+# File: .github/workflows/control-plane-regressions.yml
+# Purpose: Run existing, non-live Task 014 deployment and Task 013 release
+#   Python regression suites automatically before merging and after main changes.
+# Related: deployment/tests/, release/tests/, deployment/pyproject.toml,
+#   release/pyproject.toml, .github/workflows/repository-quality.yml,
+#   .github/workflows/design-system-browser.yml.
+#
+# Security: Hosted ephemeral runner only. Read-only repository permissions,
+# no long-lived tokens, no environment secrets, no access to DEV services,
+# no root-owned host changes, and no deployment actions.
+#
+# Coverage: Explicit security-critical Task 014 baseline plus all Task 013 release tests.
+# The broader historical deployment suite is not currently CI-green and needs
+# separate fixture/generation repair before it can become a required gate.
+# The separate design-system browser workflow already runs Chromium tests.
+# Do not path-filter this workflow: it must remain available as a PR gate.
+
+name: Control-plane Python regression
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Task 014: validate security-critical identity, OIDC, broker, executor,
+  # migration, rootless-Docker and fail-closed policy contracts.
+  deployment-regressions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # Retrieve pull-request code without persisting any GitHub credentials.
+      - name: Check out repository without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # Historical migration tests require every reviewed Git commit
+
+      # Match deployment/pyproject.toml's Python 3.12-only requirement.
+      - name: Set up accepted Python interpreter
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+
+      # Use the existing exact-hash lock, including transitive versions
+      # required by the C17 dependency-boundary tests.
+      - name: Install hash-verified deployment dependencies
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary=:all: --require-hashes \
+            -r deployment/requirements-linux-x86_64-py312.lock
+
+      # Workflow-policy and JSON schema tests use two reviewed test-only
+      # libraries (already version-pinned in spikes/api/requirements-lock.txt).
+      - name: Install non-live test libraries
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary=:all: 'PyYAML==6.0.3' 'jsonschema==4.26.0'
+
+      # Run an explicit stable contract baseline. Historical generation/freeze
+      # tests currently fail in unmodified main and are tracked separately;
+      # do not skip or weaken them inside the full suite to obtain green CI.
+      # unittest rejects failures and import errors in any listed module.
+      - name: Run deployment security and migration contract baseline
+        run: |
+          python -m unittest \
+            deployment.tests.test_identity \
+            deployment.tests.test_oidc_verifier \
+            deployment.tests.test_broker_service_config \
+            deployment.tests.test_broker_service_config_loader \
+            deployment.tests.test_executor_service_config \
+            deployment.tests.test_executor_service_config_loader \
+            deployment.tests.test_broker_integration \
+            deployment.tests.test_broker_workflow_rotation \
+            deployment.tests.test_state_store_successor_host_migration_runtime \
+            deployment.tests.test_state_store_successor_live_authority \
+            deployment.tests.test_state_store_successor_configuration_authority \
+            deployment.tests.test_registry_oidc_credentials \
+            deployment.tests.test_request_scoped_registry_integration \
+            deployment.tests.test_release_consumer \
+            deployment.tests.test_promotion \
+            deployment.tests.test_policy \
+            deployment.tests.test_oci_verifier \
+            deployment.tests.test_blob_verifier \
+            deployment.tests.test_unix_transport \
+            deployment.tests.test_rootless_docker_fresh_manager_preflight \
+            deployment.tests.test_rootless_docker_restart_preflight \
+            deployment.tests.test_systemd_socket_activation \
+            deployment.tests.test_rootless_docker_daemon_preflight \
+            deployment.tests.test_dev_live_activation_policy \
+            deployment.tests.test_dev_live_activation_contract
+
+  # Task 013: validate immutable release, manifest, provenance and
+  # supply-chain contracts with the Python standard-library test suite.
+  release-regressions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # Use an ephemeral checkout without stored authentication credentials.
+      - name: Check out repository without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # Historical migration tests require every reviewed Git commit
+
+      # The release package supports Python 3.12 and declares no runtime deps.
+      - name: Set up accepted Python interpreter
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+
+      # Existing release policy tests parse YAML workflows. This test-only
+      # dependency is already pinned in spikes/api/requirements-lock.txt.
+      - name: Install workflow-test YAML parser
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary=:all: 'PyYAML==6.0.3'
+
+      # Run the full existing non-live release contract regression suite.
+      - name: Run release regression suite
+        run: |
+          python -m unittest discover \
+            --start-directory release/tests \
+            --top-level-directory . \
+            --pattern 'test_*.py'
