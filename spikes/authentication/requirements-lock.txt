@@ -1,7 +1,7 @@
 Authlib==1.7.2
 cffi==2.1.1
 cryptography==50.0.1
-Django==6.1
+Django==6.1.1
 joserfc==1.7.4
 psycopg==3.3.4
 psycopg-binary==3.3.4
