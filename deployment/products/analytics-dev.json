@@ -3,7 +3,7 @@
   "product_id": "analytics",
   "source": {
     "repository": "MichaelTrueX/omnilyzer",
-    "commit": "4dcf621d94dd6751a26f4123ccc8019cb4fed306"
+    "commit": "fad21c3cb63c3befe719298137455f0b86b92c0b"
   },
   "artifact": {
     "registry": "https://oci-dev.omnilyzer.ai",
@@ -15,6 +15,7 @@
     "readiness_path": "/api/v1/readyz",
     "database": "postgresql-private",
     "secret_names": [
+      "COLLECTOR_DATABASE_URL",
       "DATABASE_URL",
       "JWT_REFRESH_SECRET",
       "JWT_SECRET"
