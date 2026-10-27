@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "product_id": "analytics",
+  "stage": "dev",
+  "oci_repository": "omnilyzer/analytics",
+  "container_port": 3000,
+  "database": "postgresql-separate-auth-and-collector-roles",
+  "health": {
+    "live": "/livez",
+    "ready": "/readyz"
+  },
+  "runtime_secret_names": [
+    "COLLECTOR_DATABASE_URL",
+    "DATABASE_URL",
+    "JWT_REFRESH_SECRET",
+    "JWT_SECRET"
+  ],
+  "ingress": "private-task014-only",
+  "rollback": "task014-immutable-digest-preserve-database-writes"
+}
