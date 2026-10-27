@@ -24,7 +24,7 @@ from deployment.saas_product_contract import (
 
 ROOT = Path(__file__).resolve().parents[2]
 PROFILE = ROOT / "deployment/products/analytics-dev.json"
-SOURCE_SHA = "3743d9fd72de0b6dd62388782e10e07da0d77837"
+SOURCE_SHA = "4dcf621d94dd6751a26f4123ccc8019cb4fed306"
 DIGEST = "sha256:" + "a" * 64
 
 
