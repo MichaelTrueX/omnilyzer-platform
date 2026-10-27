@@ -145,3 +145,36 @@ an end-to-end release.
 * Production remains NO-GO until M04 signed acceptance and separate owner
   deployment authorization. Historical accepted Task014 canary evidence is
   reused, not rerun as another isolated simulation.
+
+## 28 October 2026: source-admission reconciled with consolidated PR #42
+
+NEW EXACT REVIEWED INPUT is `MichaelTrueX/omnilyzer` PR #42,
+commit `597a3415dfee76cc63f6ba70d3660f287a09b0c8`.
+PR #42 is STACKED on PR #40, itself on PR #36. M02's exact five
+source files from PR #39 and M03's exact five from PR #41 have been
+incorporated without modifications. The new product acceptance checks
+real `/livez`, `/readyz`, actual signed auth and PostgreSQL
+reporting against disposable PG16: 1/1 comprehensive E2E PASS.
+Broad Node tests: 237 PASS, 0 FAIL, one skip, eight historical TODO.
+TypeScript and fresh Next14 build PASS.
+
+The updated `release/products/analytics-source.json` now binds this
+full PR42 HEAD, the unchanged historical PR36 29-file verified source
+manifest and **19 additional critical complete source blobs** spanning
+auth, sessions, Prisma schema, dashboard, Website isolation, explicit
+tenant RLS app role, /livez, /readyz and real acceptance source. The
+read-only verifier tests all 48 SHA256+size identities; this is still
+**source admission only** with explicitly false release/deploy authority,
+NOT a signed Task013 package or a broker ExecutorRequest.
+
+This newer section supersedes earlier passages naming PR36 as the
+latest ready source commit; that commit remains the immutable R3/R4
+security baseline and historical manifest. Never switch the platform
+to an unreviewed mutable Analytics branch or package a .next working
+copy as signed source.
+
+The actual platform signed-product release blocker remains open:
+Task013 protected-main OIDC + original released source identity,
+product OCI build, Task014 executor canary-only OCI allowlist and
+product-secret/ingress/readiness contract require separately reviewed
+changes and owner authority to merge and activate.

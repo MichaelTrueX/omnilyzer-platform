@@ -49,6 +49,20 @@ RUNTIME = {
 CRITICAL_PATHS = frozenset((
     "package-lock.json", "prisma/schema.prisma", "lib/server-api-auth.ts",
     "app/api/v1/auth/login/route.ts", "app/dashboard/workspaces/page.tsx",
+    "lib/website-management.ts",
+    "components/websites/WebsiteOverview.tsx",
+    "components/websites/WebsiteDetail.tsx",
+    "__tests__/m03-website-overview-isolation.test.cjs",
+    "__tests__/m03-website-refresh-isolation.test.cjs",
+    "app/livez/route.ts",
+    "app/readyz/route.ts",
+    "__tests__/m03-platform-product-health.test.cjs",
+    "scripts/accept-m03-product-health-pg16.py",
+    "docs/qa/m03-platform-first-consumer-20261027.md",
+    "prisma/rls/analytics-app-events.install.sql",
+    "prisma/rls/analytics-app-events.rollback.sql",
+    "scripts/accept-platform-integration-dev.py",
+    "__tests__/secure-analytics-postgres.e2e.cjs",
 ))
 SHA_RE = re.compile(r"[0-9a-f]{64}\Z")
 
