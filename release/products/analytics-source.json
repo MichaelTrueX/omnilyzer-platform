@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "product": "analytics",
+  "source_repository": "MichaelTrueX/omnilyzer",
+  "source_commit": "3743d9fd72de0b6dd62388782e10e07da0d77837",
+  "source_manifest_path": "docs/qa/m01-integrated-release-20261027.manifest.json",
+  "source_manifest_sha256": "d5a8b056581e4f30d4e352d04492b0bf8f8b2560b3b01eda1c679a8b1a0d9a3e",
+  "source_critical_files": {
+    "package-lock.json": "a1a6d6b615536de9804ae6a05a168e6c7112838e275b57c06ac0f532c695d3ce",
+    "prisma/schema.prisma": "bf84817b0416fcfc4f75c36a21aba145984e370e21304cdb76155972b9eb8b31",
+    "lib/server-api-auth.ts": "76d93b3dc6dd499af9fab1ac56d6cbbf8f5099c7e84b1d1f52d0d8fd30c5c316",
+    "app/api/v1/auth/login/route.ts": "5aae431490ce021684edc7fa554eaac3426b31913a9d5a5b59d911eb6df6827a",
+    "app/dashboard/workspaces/page.tsx": "4276a26bc7b6dfccd218f8e525eaf589dd81388ab50a40e9c222faac2bfb3d9e"
+  },
+  "runtime": {
+    "framework": "nextjs-14",
+    "auth": "json-bearer-localstorage",
+    "session": "postgresql-revocable",
+    "tenant_isolation": "postgresql-force-rls",
+    "database": "dedicated-analytics-postgresql",
+    "http_ready_path": "/",
+    "authenticated_api_path": "/api/v1/workspaces",
+    "dashboard_path": "/dashboard/workspaces"
+  },
+  "authorization": "review-only-not-a-signed-release"
+}
