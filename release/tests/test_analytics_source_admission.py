@@ -30,6 +30,7 @@ class AnalyticsSourceAdmissionTests(unittest.TestCase):
                          'review-only-not-a-signed-release')
         self.assertEqual(self.binding['runtime']['auth'],
                          'json-bearer-localstorage')
+        self.assertEqual(self.binding['runtime']['http_ready_path'], '/readyz')
 
     def test_task014_still_rejects_unreleased_analytics_image(self):
         """Preserve existing canary-only promotion policy as a required gate."""
@@ -97,6 +98,13 @@ class AnalyticsSourceAdmissionTests(unittest.TestCase):
         del bad['source_critical_files']['.dockerignore']
         with self.assertRaises(AnalyticsAdmissionError):
             verify_source(self.checkout,bad)
+
+    def test_reject_marketing_root_as_operational_readiness(self):
+        """Task014 readiness must use dual-DB /readyz, never public root /."""
+        bad = copy.deepcopy(self.binding)
+        bad["runtime"]["http_ready_path"] = "/"
+        with self.assertRaisesRegex(AnalyticsAdmissionError, "runtime contract"):
+            verify_source(self.checkout or Path.cwd(), bad)
 
     def test_reject_cookie_or_keycloak_contract(self):
         """Refuse silent token-transport, session or infrastructure migration."""

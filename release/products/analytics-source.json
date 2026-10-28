@@ -35,7 +35,7 @@
     "session": "postgresql-revocable",
     "tenant_isolation": "postgresql-force-rls",
     "database": "dedicated-analytics-postgresql",
-    "http_ready_path": "/",
+    "http_ready_path": "/readyz",
     "authenticated_api_path": "/api/v1/workspaces",
     "dashboard_path": "/dashboard/workspaces"
   },
