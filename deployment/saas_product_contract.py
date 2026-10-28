@@ -42,7 +42,7 @@ APPROVED_PRODUCTS: dict[str, tuple[str, str]] = {
     "analytics": ("MichaelTrueX/omnilyzer", "omnilyzer/analytics"),
 }
 APPROVED_DEV_PORTS = frozenset({3000})
-ALLOWED_PROBE_PATHS = frozenset({"/api/v1/readyz"})
+ALLOWED_PROBE_PATHS = frozenset({"/readyz"})
 REQUIRED_ANALYTICS_SECRET_NAMES = ("COLLECTOR_DATABASE_URL", "DATABASE_URL", "JWT_REFRESH_SECRET", "JWT_SECRET")
 _SOURCE = frozenset({"repository", "commit"})
 _ARTIFACT = frozenset({"registry", "repository"})

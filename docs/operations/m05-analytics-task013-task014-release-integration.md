@@ -61,3 +61,42 @@ Authority: review-only source, no signed product release, live broker change,
 A future product adds a reviewed descriptor, its own signed source+OCI identity, independent secrets/DB and runtime/ingress profile. Task013 signing/evidence transport and Task014 broker/executor/replay/audit/blue-green machinery remain the **shared SaaS foundation**. Websites may have separate static hosting while consuming shared identity/security; no CMS/page builder or separate product deployment platform is added.
 
 **Product DEV release STATUS:** open until the original signed OCI publication, protected DEV installer/source-generation and broker-authorized promotion/rollback are actually observed.
+
+
+## 28 October 2026: M03 source/readiness contract reconciliation
+
+**Review-only profile correction (M03).** The canonical Analytics PR #42 source is
+`597a3415dfee76cc63f6ba70d3660f287a09b0c8`. M05 packaged that
+same source without changing existing Analytics routes on child branch
+`feature/m05-analytics-oci-on-canonical-pr42-20261028`, exact HEAD
+`8648adba2db884cc78274080b9836ca46bafd630`. Its complete
+`Dockerfile.analytics`, `.dockerignore` and private isolated OCI
+acceptance script are additional files that MUST remain part of the
+reviewed final source identity; an OCI image cannot be represented as
+having the older PR42 SHA when its Docker build recipe was added later.
+
+This revision pins `deployment/products/analytics-dev.json` to exact
+`8648adba...` and the actual Next14 `/readyz` endpoint. The
+`deployment/saas_product_contract.py` review-only closed readiness
+allowlist is similarly updated to `/readyz`, with explicit tests
+rejecting the absent legacy `/api/v1/readyz` path. Root `/livez`
+remains process-only; `/readyz` checks required PostgreSQL credentials,
+column privileges and auth config. The product profile contains only
+secret **names**, never secret values.
+
+**Unresolved cross-repository source authority:** M01's separate
+`omnilyzer-platform` PR #225 `release/products/analytics-source.json`
+still pins original PR42 `597a341...` and its exact critical source
+hashes. M01 must independently reconcile and authorize the packaged
+source's new exact HEAD and source/input manifest before Task013 can
+sign anything. Do not silently update an already signed source
+receipt or claim this isolated descriptor change authorizes a
+`TrustedRelease`. `validate_existing_signed_release` continues to
+reject unsigned external-source mappings. Existing Task014 canary
+source allowlist, broker and executor remain untouched.
+
+Source provenance is fixed at a published Git SHA for reproducible review.
+Any later change to the product source, OCI recipe, runtime contract or
+signed input requires a new explicit reviewed pin. This branch makes no
+network, OCI registry, Task013 signer, Task014 broker, live DEV, database
+or production change.
