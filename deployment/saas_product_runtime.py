@@ -156,7 +156,9 @@ class SaaSRuntimeProfile:
 
 def load_review_profile(path: Path) -> SaaSRuntimeProfile:
     """Read only a local regular review file without following a path symlink."""
-    if type(path) is not Path or path.is_symlink() or not path.is_file():
+    # pathlib.Path() creates PosixPath/WindowsPath, not type(Path) itself.
+    # Keep the caller contract explicit but accept its concrete native subtype.
+    if not isinstance(path, Path) or path.is_symlink() or not path.is_file():
         raise DeploymentPolicyError(ERROR)
     if path.stat().st_size > LIMIT:
         raise DeploymentPolicyError(ERROR)
