@@ -178,3 +178,30 @@ Task013 protected-main OIDC + original released source identity,
 product OCI build, Task014 executor canary-only OCI allowlist and
 product-secret/ingress/readiness contract require separately reviewed
 changes and owner authority to merge and activate.
+
+## 28 October 2026: final packaged Analytics source PR45 accepted for review
+
+The FINAL exact review-only Analytics package input is PR45 HEAD
+`8648adba2db884cc78274080b9836ca46bafd630`, stacked directly
+on canonical PR42 HEAD `597a3415dfee76cc63f6ba70d3660f287a09b0c8`.
+M05's three complete new files (`Dockerfile.analytics`, `.dockerignore`,
+`scripts/accept-m05-analytics-oci-dev.py`) are now **mandatory** in the
+same source SHA and Git blob-hash identity check, plus the previous 29
+manifest and 19 critical source files = **51 SHA-256 file identities**.
+Package recipe and exact anti-secret build ignore policy cannot drift or
+be removed without a new reviewed source binding. The original PR36
+security source manifest remains pinned unchanged, with PR42 and PR45
+newer code independently checked in its exact final Git tree.
+
+M05's original platform PR226 provides the separate fail-closed product
+runtime profile stacked directly on this PR225 branch. Do not copy or
+compete with it: the profile validates runtime identity, secrets NAMES,
+private ingress, health routes and event-preserving rollback. It neither
+authorizes nor executes a Task013/014 release. The Analytics OCI was
+built and tested locally (M05 PR45) but is **not** a signed, published OCI
+digest or an authorized Task014 promotion.
+
+Task013 signer source workflow and Task014 protected deployment are
+STILL canary-only. Real owner-authorized protected-main signer expansion,
+signed multi-repository provenance and product-scoped executor contract
+remain explicit external gates.

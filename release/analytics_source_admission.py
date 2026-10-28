@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # File: release/analytics_source_admission.py
-# Purpose: Bind the real Analytics PR36 source to the existing Task 013/014
+# Purpose: Bind the pinned PR45 Analytics OCI source to original Task 013/014
 #          release boundary, without changing the signed-canary permit list.
 # Links: release/products/analytics-source.json;
 #        release/release_plan.py; deployment/promotion.py;
@@ -63,6 +63,9 @@ CRITICAL_PATHS = frozenset((
     "prisma/rls/analytics-app-events.rollback.sql",
     "scripts/accept-platform-integration-dev.py",
     "__tests__/secure-analytics-postgres.e2e.cjs",
+    "Dockerfile.analytics",
+    ".dockerignore",
+    "scripts/accept-m05-analytics-oci-dev.py",
 ))
 SHA_RE = re.compile(r"[0-9a-f]{64}\Z")
 

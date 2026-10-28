@@ -49,7 +49,7 @@ class AnalyticsSourceAdmissionTests(unittest.TestCase):
             self.skipTest('requires explicit separately checked out Analytics PR36')
         receipt = verify_source(self.checkout, self.binding)
         self.assertEqual(receipt['source_commit'], self.binding['source_commit'])
-        self.assertEqual(receipt['source_files_verified'], 48)
+        self.assertEqual(receipt['source_files_verified'], 51)
         self.assertFalse(receipt['release_authorized'])
         self.assertFalse(receipt['deployment_authorized'])
 
@@ -78,6 +78,24 @@ class AnalyticsSourceAdmissionTests(unittest.TestCase):
         bad = copy.deepcopy(self.binding)
         bad['source_critical_files']['lib/server-api-auth.ts'] = 'a' * 64
         with self.assertRaisesRegex(AnalyticsAdmissionError,'critical source hash'):
+            verify_source(self.checkout,bad)
+
+    def test_reject_changed_oci_build_recipe(self):
+        """OCI package contents cannot be revised behind a pinned signed source."""
+        if self.checkout is None:
+            self.skipTest('requires explicit Analytics OCI source checkout')
+        bad = copy.deepcopy(self.binding)
+        bad['source_critical_files']['Dockerfile.analytics'] = 'b' * 64
+        with self.assertRaisesRegex(AnalyticsAdmissionError,'critical source hash'):
+            verify_source(self.checkout,bad)
+
+    def test_reject_missing_oci_build_recipe(self):
+        """Both runtime Docker build and ignore policy are required."""
+        if self.checkout is None:
+            self.skipTest('requires explicit Analytics OCI source checkout')
+        bad = copy.deepcopy(self.binding)
+        del bad['source_critical_files']['.dockerignore']
+        with self.assertRaises(AnalyticsAdmissionError):
             verify_source(self.checkout,bad)
 
     def test_reject_cookie_or_keycloak_contract(self):

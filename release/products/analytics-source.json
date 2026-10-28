@@ -2,7 +2,7 @@
   "schema_version": 1,
   "product": "analytics",
   "source_repository": "MichaelTrueX/omnilyzer",
-  "source_commit": "597a3415dfee76cc63f6ba70d3660f287a09b0c8",
+  "source_commit": "8648adba2db884cc78274080b9836ca46bafd630",
   "source_manifest_path": "docs/qa/m01-integrated-release-20261027.manifest.json",
   "source_manifest_sha256": "d5a8b056581e4f30d4e352d04492b0bf8f8b2560b3b01eda1c679a8b1a0d9a3e",
   "source_critical_files": {
@@ -24,7 +24,10 @@
     "prisma/rls/analytics-app-events.install.sql": "87b6e44917ccf716421cbe3e4df3fd46ee1ff08cfa30a7ea3476956ecbf85328",
     "prisma/rls/analytics-app-events.rollback.sql": "baf90ae46c0cec7a8c06fe9c311193ec814059db4dd640a5534e104299044544",
     "scripts/accept-platform-integration-dev.py": "8b60d86be246c07eed0a2351d52ea5f1e5dc75c7de0c3c82951cdd61cb24aafd",
-    "__tests__/secure-analytics-postgres.e2e.cjs": "8f1ee5ce0d0995ae04a27ba7a7242ac16646f1972081b9f75c93a4834e1b04f1"
+    "__tests__/secure-analytics-postgres.e2e.cjs": "8f1ee5ce0d0995ae04a27ba7a7242ac16646f1972081b9f75c93a4834e1b04f1",
+    "Dockerfile.analytics": "59c1437d2699c5696540697c3b369d4915b59ed10fb5ed013e71a46dc507156e",
+    ".dockerignore": "10e66496d6ecef461d5d5af6250f92ec1096e467cf313ea68fc2cc70d2c41dd3",
+    "scripts/accept-m05-analytics-oci-dev.py": "b0e517f14a1c08e12ffb719c41893ffdfd67edf7848746de6fe8aa4e809989ff"
   },
   "runtime": {
     "framework": "nextjs-14",
