@@ -24,7 +24,7 @@ from deployment.saas_product_contract import (
 
 ROOT = Path(__file__).resolve().parents[2]
 PROFILE = ROOT / "deployment/products/analytics-dev.json"
-SOURCE_SHA = "fad21c3cb63c3befe719298137455f0b86b92c0b"
+SOURCE_SHA = "8648adba2db884cc78274080b9836ca46bafd630"
 DIGEST = "sha256:" + "a" * 64
 
 
@@ -47,6 +47,7 @@ class SaaSProductContractTest(unittest.TestCase):
         """Accept only the expected cross-repository source and runtime."""
         self.assertEqual(self.profile.product_id, "analytics")
         self.assertEqual(self.profile.source_commit, SOURCE_SHA)
+        self.assertEqual(self.profile.readiness_path, "/readyz")
         self.assertEqual(self.profile.oci_repository, "omnilyzer/analytics")
         self.assertEqual(self.profile.to_dict(), self.base)
         self.assertRegex(self.profile.sha256(), r"^[0-9a-f]{64}$")
@@ -90,6 +91,19 @@ class SaaSProductContractTest(unittest.TestCase):
     def test_wrong_probe_rejected(self) -> None:
         """Do not use an admin or unsafe path as an anonymous health probe."""
         self.malformed(lambda x: x["runtime"].update(readiness_path="/api/v1/admin/system-health"))
+
+    def test_legacy_api_readiness_endpoint_rejected(self) -> None:
+        """Reject the superseded endpoint absent from the canonical product image."""
+        self.malformed(
+            lambda value: value["runtime"].update(readiness_path="/api/v1/readyz")
+        )
+
+    def test_deprecated_analytics_source_is_not_pinned(self) -> None:
+        """Ensure the reviewed descriptor names the OCI-packaged PR42 child."""
+        self.assertNotEqual(
+            self.profile.source_commit,
+            "fad21c3cb63c3befe719298137455f0b86b92c0b",
+        )
 
     def test_database_namespace_rejected(self) -> None:
         """Other products' databases cannot silently replace Analytics PG."""

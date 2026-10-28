@@ -3,7 +3,7 @@
   "product_id": "analytics",
   "source": {
     "repository": "MichaelTrueX/omnilyzer",
-    "commit": "fad21c3cb63c3befe719298137455f0b86b92c0b"
+    "commit": "8648adba2db884cc78274080b9836ca46bafd630"
   },
   "artifact": {
     "registry": "https://oci-dev.omnilyzer.ai",
@@ -12,7 +12,7 @@
   "runtime": {
     "stage": "dev",
     "app_port": 3000,
-    "readiness_path": "/api/v1/readyz",
+    "readiness_path": "/readyz",
     "database": "postgresql-private",
     "secret_names": [
       "COLLECTOR_DATABASE_URL",
