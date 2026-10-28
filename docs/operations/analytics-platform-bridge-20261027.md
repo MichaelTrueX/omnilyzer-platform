@@ -178,3 +178,54 @@ Task013 protected-main OIDC + original released source identity,
 product OCI build, Task014 executor canary-only OCI allowlist and
 product-secret/ingress/readiness contract require separately reviewed
 changes and owner authority to merge and activate.
+
+
+## 28 October 2026: package source and readiness gate aligned with M05
+
+**Review-only M03 follow-up to the existing M01 source-admission PR #225.**
+The canonical Analytics source PR #42, `597a3415dfee76cc63f6ba70d3660f287a09b0c8`,
+is the verified base of the M05 OCI child `8648adba2db884cc78274080b9836ca46bafd630`.
+M05's child adds only three complete source files:
+`Dockerfile.analytics`, `.dockerignore`, and
+`scripts/accept-m05-analytics-oci-dev.py`. These are material
+build/runtime inputs: treating the earlier PR #42 SHA as the complete
+OCI source would omit the actual Dockerfile from the signed identity.
+
+The updated `release/products/analytics-source.json` binds to the
+**complete OCI child SHA** and additionally pins SHA256 of those
+three source files. All 29 original PR36 security-manifest records
+and 19 previously pinned product-critical files remain unchanged.
+`release/analytics_source_admission.py` now requires the 22-file
+critical set and the real two-database `/readyz` route, in addition
+to the 29-entry R3/R4 manifest. Root `/` is NOT the readiness probe.
+Negative tests reject modified OCI recipe hashes and root-page
+substitution. The receipt remains `release_authorized:false` and
+`deployment_authorized:false`.
+
+The companion M05 platform profile correction is
+`MichaelTrueX/omnilyzer-platform` PR #227. It pins the same OCI source
+and `/readyz`, but these two unmerged review branches must be
+**deliberately reconciled into a single platform source candidate**
+by M01/M05 before signing or deployment. A correctly pinned source
+manifest is NOT a signed OCI artifact, release workflow, installed
+Task014 authorization, or active DEV Analytics product.
+
+Preserve the original canary repository and replay protection,
+JSON Bearer/localStorage, session revocation, dedicated Analytics
+PostgreSQL, tenant FORCE RLS and existing CSP/CORS/consent behavior.
+No approved merge or live DEV/production mutation is implied.
+
+
+For the source-only DEV preflight, use module execution from the
+`omnilyzer-platform` repository root and an **exact, clean** Analytics OCI
+checkout. Example (reviewed developer machine only):
+
+```bash
+python3 -m release.analytics_source_admission \
+  --analytics-checkout /home/trusthansen/workspaces/omnilyzer-m03-m05-oci-source-20261028
+```
+
+The receipt must report `source_files_verified:51` and both
+`release_authorized:false` and `deployment_authorized:false`.
+The checkout path is a local DEV example, not a production path or
+installation instruction.

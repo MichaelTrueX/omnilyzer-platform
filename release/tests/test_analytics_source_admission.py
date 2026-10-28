@@ -1,5 +1,5 @@
 # File: release/tests/test_analytics_source_admission.py
-# Purpose: Verify pinned PR36 source admission, security denials, and explicit
+# Purpose: Verify exact OCI-packaged Analytics source and security denials, and
 #          refusal to reinterpret untrusted Analytics as Task 014 canary release.
 # Links: release/analytics_source_admission.py;
 #        release/products/analytics-source.json; deployment/policy.py.
@@ -30,6 +30,7 @@ class AnalyticsSourceAdmissionTests(unittest.TestCase):
                          'review-only-not-a-signed-release')
         self.assertEqual(self.binding['runtime']['auth'],
                          'json-bearer-localstorage')
+        self.assertEqual(self.binding['runtime']['http_ready_path'], '/readyz')
 
     def test_task014_still_rejects_unreleased_analytics_image(self):
         """Preserve existing canary-only promotion policy as a required gate."""
@@ -43,13 +44,13 @@ class AnalyticsSourceAdmissionTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(AnalyticsAdmissionError):
                 _safe_path(value)
 
-    def test_source_is_exact_verified_pr36(self):
-        """On DEV, check all pinned committed blobs, including M05 exact sources."""
+    def test_source_is_exact_verified_packaged_analytics(self):
+        """Check the exact OCI-packaged child plus all original R3/R4 blobs."""
         if self.checkout is None:
-            self.skipTest('requires explicit separately checked out Analytics PR36')
+            self.skipTest('requires exact checked out Analytics OCI source')
         receipt = verify_source(self.checkout, self.binding)
         self.assertEqual(receipt['source_commit'], self.binding['source_commit'])
-        self.assertEqual(receipt['source_files_verified'], 48)
+        self.assertEqual(receipt['source_files_verified'], 51)
         self.assertFalse(receipt['release_authorized'])
         self.assertFalse(receipt['deployment_authorized'])
 
@@ -61,6 +62,15 @@ class AnalyticsSourceAdmissionTests(unittest.TestCase):
         bad['source_commit'] = '0' * 40
         with self.assertRaises(AnalyticsAdmissionError):
             verify_source(self.checkout,bad)
+
+    def test_reject_old_pr42_source_without_oci_recipe(self):
+        """Do not approve the UI-only source SHA as the final OCI build input."""
+        if self.checkout is None:
+            self.skipTest('requires exact Analytics OCI source checkout')
+        bad = copy.deepcopy(self.binding)
+        bad['source_commit'] = '597a3415dfee76cc63f6ba70d3660f287a09b0c8'
+        with self.assertRaisesRegex(AnalyticsAdmissionError, 'unreviewed HEAD'):
+            verify_source(self.checkout, bad)
 
     def test_reject_changed_manifest_hash(self):
         """A valid-looking but unreviewed manifest is rejected before source admission."""
@@ -79,6 +89,22 @@ class AnalyticsSourceAdmissionTests(unittest.TestCase):
         bad['source_critical_files']['lib/server-api-auth.ts'] = 'a' * 64
         with self.assertRaisesRegex(AnalyticsAdmissionError,'critical source hash'):
             verify_source(self.checkout,bad)
+
+    def test_reject_changed_oci_recipe_hash(self):
+        """A changed Dockerfile cannot be admitted under prior reviewed source."""
+        if self.checkout is None:
+            self.skipTest('requires exact Analytics OCI source checkout')
+        bad = copy.deepcopy(self.binding)
+        bad['source_critical_files']['Dockerfile.analytics'] = 'a' * 64
+        with self.assertRaisesRegex(AnalyticsAdmissionError, 'critical source hash'):
+            verify_source(self.checkout, bad)
+
+    def test_old_root_liveness_is_not_readiness(self):
+        """Reject silently replacing both-DB readiness with marketing root."""
+        bad = copy.deepcopy(self.binding)
+        bad['runtime']['http_ready_path'] = '/'
+        with self.assertRaisesRegex(AnalyticsAdmissionError, 'runtime contract'):
+            verify_source(self.checkout or Path.cwd(), bad)
 
     def test_reject_cookie_or_keycloak_contract(self):
         """Refuse silent token-transport, session or infrastructure migration."""

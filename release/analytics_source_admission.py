@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # File: release/analytics_source_admission.py
-# Purpose: Bind the real Analytics PR36 source to the existing Task 013/014
+# Purpose: Bind the canonical OCI-packaged Analytics source to Task 013/014
 #          release boundary, without changing the signed-canary permit list.
 # Links: release/products/analytics-source.json;
 #        release/release_plan.py; deployment/promotion.py;
@@ -42,7 +42,7 @@ RUNTIME = {
     "session": "postgresql-revocable",
     "tenant_isolation": "postgresql-force-rls",
     "database": "dedicated-analytics-postgresql",
-    "http_ready_path": "/",
+    "http_ready_path": "/readyz",
     "authenticated_api_path": "/api/v1/workspaces",
     "dashboard_path": "/dashboard/workspaces",
 }
@@ -63,6 +63,9 @@ CRITICAL_PATHS = frozenset((
     "prisma/rls/analytics-app-events.rollback.sql",
     "scripts/accept-platform-integration-dev.py",
     "__tests__/secure-analytics-postgres.e2e.cjs",
+    # Additional signed-build inputs on the canonical PR42 child OCI source.
+    "Dockerfile.analytics", ".dockerignore",
+    "scripts/accept-m05-analytics-oci-dev.py",
 ))
 SHA_RE = re.compile(r"[0-9a-f]{64}\Z")
 
