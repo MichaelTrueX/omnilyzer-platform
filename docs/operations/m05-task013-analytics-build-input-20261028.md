@@ -4,6 +4,8 @@ PURPOSE: Executable handover for an immutable UNSIGNED Analytics OCI input to th
          ORIGINAL Task013 protected-main signing and Task014 broker/executor.
 LINKED FILES: release/analytics_task013_build_input.py;
               release/tests/test_analytics_task013_build_input.py;
+              release/analytics_oci_archive.py;
+              release/tests/test_analytics_oci_archive.py;
               release/analytics_source_admission.py;
               release/products/analytics-source.json;
               deployment/saas_product_contract.py;
@@ -88,3 +90,60 @@ architecture/consumer compatibility decision.
 
 **Current verdict:** source-verified unsigned candidate only; signed original
 Task013 Analytics release and Task014 broker-controlled promotion not yet done.
+
+## 4. Original Task013 OCI archive execution, not signing
+
+The additive `release/analytics_oci_archive.py` validates an actual OCI
+archive produced from the exact 51-source-file-approved Analytics PR45 checkout.
+It uses the existing Task013 CLI/source identity and requires a normal OCI
+single-image index, all referenced blob SHA-256 and byte lengths, no unreferenced
+blob or unsafe tar path, linux/amd64, reviewed Node20 entrypoint, rootless
+`10001:10001`, only container TCP 3000, exact Next startup command and no
+runtime PostgreSQL/JWT secret environment names. The same open archive file
+descriptor is used for content verification and archive hashing.
+
+The standard Docker driver cannot export OCI archives. An isolated Buildx
+`docker-container` builder was therefore created with the original Task013
+pinned BuildKit `v0.24.0` image; it was removed automatically after build.
+Neither the existing default Buildx builder nor installed DEV runtime was
+changed. From the exact Analytics checkout:
+
+```bash
+docker buildx build --builder <isolated-builder-name> \
+  --platform linux/amd64 --file Dockerfile.analytics \
+  --provenance=false --sbom=false \
+  --output type=oci,dest=<private-disposable-test-path>.oci.tar .
+```
+
+Run original-platform candidate validation:
+
+```bash
+python3 -m release.analytics_oci_archive \
+  --analytics-checkout "$OMNILYZER_ANALYTICS_CHECKOUT" \
+  --archive "$OMNILYZER_ANALYTICS_OCI_ARCHIVE"
+python3 -m unittest -q \
+  release.tests.test_analytics_task013_build_input \
+  release.tests.test_analytics_oci_archive
+```
+
+**Actually executed 28 October 2026:** real Buildx export PASS, 600 MB OCI
+archive produced with the exact PR45 source and pinned Node20 base digest.
+Validated local OCI manifest digest:
+`sha256:99a13f1026ba7dd187986efcd46522f7c4c9235e769c49230848b7cd2fca656c`.
+Whole local OCI archive SHA-256:
+`f4987da1b76caf4b5d4523c271e0d3efeaea50f5633a0076a731f115909fc79a`.
+**21/21 focused tests PASS** including real source and actual OCI archive
+integration. All tests use disposable synthetic data only and no live credentials.
+Builder and OCI archive are removed after verification.
+
+Neither a local manifest digest nor a local archive hash asserts that the
+original protected-main GitHub workflow built the same bytes. The reviewed
+Analytics Dockerfile does not itself embed signed Git source provenance.
+A future authorized Task013 release must cryptographically bind the exact
+external Git SHA/source input and its built OCI digest in the ORIGINAL signed
+release provenance, then obtain signed Cosign/Forgejo/Zot evidence through
+protected main. The original Task014 consumer, authenticated broker, executor,
+private runtime secret references and persisted-event-preserving rollback must
+accept the genuine signer output. No test script or local archive is a substitute.
+**Release remains NO-GO until those ORIGINAL Task013/014 paths are implemented,
+independently tested, reviewed and separately authorized for activation.**
