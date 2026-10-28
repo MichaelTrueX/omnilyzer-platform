@@ -6,14 +6,20 @@ Purpose: One ORIGINAL Task013 candidate build path: checked external Analytics
          verified local OCI archive. Reuses M01's and M05's existing tools.
 Related: release/analytics_task013_build_input.py, analytics_oci_context.py,
          analytics_oci_archive.py, builder_versions.py, PR45 Dockerfile.analytics,
-         .github/workflows/platform-release.yml (NOT changed here).
+         release/analytics_release_source_binding.py (original Task013
+         signer-preparation input), .github/workflows/platform-release.yml
+         (protected workflow NOT changed by this module).
 Security: no publishing, signing, secrets, registry or Task014 deployment.
          An OCI manifest SHA from this command is always LOCAL and UNSIGNED.
+         Retained files are an explicitly requested, protected pre-sign handoff.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 import re
 import subprocess
@@ -21,7 +27,7 @@ import sys
 import tempfile
 from typing import Any
 
-from deployment.policy import DeploymentPolicyError
+from deployment.policy import DeploymentPolicyError, canonical_bytes
 from release.analytics_task013_build_input import build_input
 from release.analytics_oci_context import snapshot_committed_tree
 from release.analytics_oci_archive import verify_archive
@@ -67,10 +73,41 @@ def _preflight_builder(builder: str) -> None:
         raise DeploymentPolicyError(ERROR) from exc
 
 
+def _private_handoff_destination(path: Path) -> Path:
+    """Permit output only under a caller-owned private parent directory.
+
+    Reject shared /tmp directly, symlinks, existing output and relative paths.
+    No secret file is ever copied into this handoff. Original Task013 signing
+    must still independently verify the retained bytes before publication.
+    """
+    if (not isinstance(path, Path) or not path.is_absolute()
+            or path.exists() or path.is_symlink()
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", path.name) is None):
+        raise DeploymentPolicyError(ERROR)
+    parent = path.parent
+    if parent.is_symlink() or not parent.is_dir() or parent.resolve(strict=True) != parent:
+        raise DeploymentPolicyError(ERROR)
+    info = parent.stat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+            or info.st_mode & 0o077):
+        raise DeploymentPolicyError(ERROR)
+    return path
+
+
+def _sha(path: Path) -> str:
+    """Verify retained exact bytes without reading large OCI images into RAM."""
+    digest = hashlib.sha256()
+    with path.open("rb") as reader:
+        for data in iter(lambda: reader.read(1024 * 1024), b""):
+            digest.update(data)
+    return digest.hexdigest()
+
+
 def build_candidate(
     analytics_checkout: Path, builder: str,
     *,
     execute: bool = False,
+    retain_verified_artifacts: Path | None = None,
 ) -> dict[str, Any]:
     """Compile and validate a LOCAL OCI artifact using original platform tools.
 
@@ -82,6 +119,14 @@ def build_candidate(
     """
     if type(execute) is not bool or not isinstance(analytics_checkout, Path):
         raise DeploymentPolicyError(ERROR)
+    # Section: explicitly requested handoff is only meaningful after a real
+    # pinned builder execution. Never persist review-only or failed artifacts.
+    if retain_verified_artifacts is not None:
+        if not execute:
+            raise DeploymentPolicyError(ERROR)
+        retained = _private_handoff_destination(retain_verified_artifacts)
+    else:
+        retained = None
     receipt = build_input(analytics_checkout)
     if (
         receipt.get("analytics_source_commit") != EXPECTED_SOURCE
@@ -99,7 +144,10 @@ def build_candidate(
             "release_authorized": False,
             "deployment_authorized": False,
         }
-    with tempfile.TemporaryDirectory(prefix="task013-analytics-build-") as dirname:
+    with tempfile.TemporaryDirectory(
+        prefix=".task013-analytics-build-",
+        dir=str(retained.parent) if retained is not None else None,
+    ) as dirname:
         tmp = Path(dirname)
         tar = tmp / "source.tar"
         oci = tmp / "analytics.oci.tar"
@@ -140,14 +188,15 @@ def build_candidate(
             or validated["oci_repository"] != OCI_REPOSITORY
         ):
             raise DeploymentPolicyError(ERROR)
-        # Section 4: transient OCI archive and Git TAR are deleted when the
-        # context manager exits. Manifest digest is evidence of local bytes,
-        # NOT signed/released provenance or an active registry OCI reference.
-        return {
+        # Section 4: the existing behavior deletes the context and OCI on
+        # successful verification. Optional explicit handoff retains exactly
+        # the already-validated files, without a second Docker build.
+        result: dict[str, Any] = {
             "schema_version": 1,
             "status": "verified-local-oci-unsigned",
             "source_commit": EXPECTED_SOURCE,
             "source_tree": receipt["analytics_tree"],
+            "platform_source_commit": receipt.get("platform_source_commit"),
             "source_context_sha256": context["context_sha256"],
             "local_oci_manifest_digest": validated["local_manifest_digest"],
             "local_oci_archive_sha256": validated["archive_sha256"],
@@ -155,6 +204,29 @@ def build_candidate(
             "release_authorized": False,
             "deployment_authorized": False,
         }
+        if retained is not None:
+            # Check again after BuildKit finishes, under one private parent.
+            _private_handoff_destination(retained)
+            if (_sha(tar) != context["context_sha256"]
+                    or _sha(oci) != validated["archive_sha256"]):
+                raise DeploymentPolicyError("verified OCI handoff bytes changed")
+            os.chmod(tar, 0o600)
+            os.chmod(oci, 0o600)
+            result["status"] = "verified-local-oci-unsigned-retained"
+            result["retained_filenames"] = {
+                "source_context": "source.tar",
+                "oci_archive": "analytics.oci.tar",
+                "receipt": "unsigned-handoff.json",
+            }
+            # Receipt and the two artifacts become visible together ONLY
+            # after all verification succeeds. Output is never auto-signed.
+            metadata = tmp / "unsigned-handoff.json"
+            fd = os.open(metadata, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(canonical_bytes(result))
+            os.chmod(tmp, 0o700)
+            os.replace(tmp, retained)
+        return result
 
 
 def main() -> int:
@@ -163,9 +235,14 @@ def main() -> int:
     parser.add_argument("--analytics-checkout", type=Path, required=True)
     parser.add_argument("--builder", required=True)
     parser.add_argument("--build", action="store_true")
+    parser.add_argument("--retain-verified-artifacts", type=Path,
+                        help="New path beneath private 0700 parent for UNSIGNED Task013 handoff")
     args = parser.parse_args()
     try:
-        value = build_candidate(args.analytics_checkout, args.builder, execute=args.build)
+        value = build_candidate(
+            args.analytics_checkout, args.builder, execute=args.build,
+            retain_verified_artifacts=args.retain_verified_artifacts,
+        )
     except (DeploymentPolicyError, OSError, ValueError) as exc:
         print(f"{ERROR}: {type(exc).__name__}", file=sys.stderr)
         return 1
