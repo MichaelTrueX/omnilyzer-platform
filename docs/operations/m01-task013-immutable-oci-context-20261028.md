@@ -61,8 +61,18 @@ Do not include real JWT or PostgreSQL credentials as Docker build arguments.
   written to registry, live Docker service or existing deployed host.
 - The build helper returns `release_authorized:false`,
   `deployment_authorized:false`; it does not produce a signed OCI digest.
-- Docker build result, if tested, is local image compilation evidence ONLY.
-  It is never a signed OCI registry digest or authorized Task014 deployment.
+- **Actual Docker build from the produced TAR succeeded** using
+  `docker build -f Dockerfile.analytics -t
+  omnilyzer-analytics-immutable-source-test:20261028 - <
+  /tmp/omni-analytics-exact-context-image-20261028.tar`, against the
+  exact packaged PR45 source. Local image ID
+  `sha256:78d4771a06e77d8e107dc5414d8e74088123423c87d86cbb2439ba8bd0fb8b2e`.
+  Image runs as UID/GID `10001:10001`; `Config.Env` contains only
+  the Node/Yarn PATH/version, NODE_ENV and NEXT_TELEMETRY_DISABLED,
+  **no JWT/DB secret values**. Both test image tag and TAR were removed
+  by the test trap. This is **local build compilation evidence only**;
+  no signed OCI registry manifest, Task013 signature/provenance,
+  Task014 broker deployment or protected-main mutation was performed.
 
 ## Important limits before a Task013 workflow uses this
 
