@@ -114,6 +114,17 @@ class TestSaaSRuntimeProfile(unittest.TestCase):
         with self.assertRaises(DeploymentPolicyError):
             SaaSRuntimeProfile.from_json_bytes(b"x" * 4097)
 
+    def test_committed_runtime_profile_loads(self) -> None:
+        """Real pathlib PosixPath profile must parse, not just the mocked dict."""
+        loaded = load_review_profile(PROFILE)
+        self.assertEqual(loaded, self.profile)
+        self.assertEqual(loaded.sha256(), self.profile.sha256())
+
+    def test_non_path_caller_denied(self) -> None:
+        """Do not implicitly resolve str paths supplied from untrusted JSON."""
+        with self.assertRaises(DeploymentPolicyError):
+            load_review_profile(str(PROFILE))
+
     def test_symlink_rejected(self) -> None:
         """No mutable symlink to another runtime profile is accepted."""
         with tempfile.TemporaryDirectory(prefix="m05-runtime-") as td:
