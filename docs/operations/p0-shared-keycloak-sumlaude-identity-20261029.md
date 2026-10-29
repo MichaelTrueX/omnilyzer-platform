@@ -5,6 +5,8 @@
 ## Why it exists
 
 Original Omnilyzer ADR-0003 and Task004 real Keycloak reference are reused.
+The original Authlib 1.7.2 dependency is intentionally upgraded to the
+security-fixed Authlib 1.9.1 (October 2026 GitHub vulnerability findings).
 The original Task004 code remained an isolated spike. This is the smallest
 persistent Django/Authlib service candidate for mounting under
 `https://app.sumlaude.com/auth/*`, using ONE shared Keycloak issuer.
