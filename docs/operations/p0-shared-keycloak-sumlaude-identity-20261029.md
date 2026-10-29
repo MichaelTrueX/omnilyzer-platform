@@ -463,3 +463,78 @@ intentional until the owner confirms HTTPS for the relevant subdomains;
 HSTS preload/includeSubDomains must NOT be switched on speculatively.
 The staging package is not live and must be repinned to the NEW exact Git
 SHA before any future service source is installed or approved.
+
+## Single root-only inactive BFF preparation on truexmainserver (P0, 29 Oct)
+
+**Complete new file:** `services/identity/prepare-identity-only.sh`,
+linked to the existing `services/identity/omnilyzer-identity.service`,
+`requirements.txt`, `config/settings.py` and the inactive
+`nginx-auth-location.conf.review`. The script has ONLY two modes:
+`--preflight` (read-only, works without sudo) and `--prepare-only`
+(admin, stage ONLY). This is not a new release framework or another BFF.
+
+The operator must use the exact currently reviewed PR243 SHA and
+**existing separately staged 0700 source** directory
+`/home/trusthansen/omnilyzer-identity-prep-20261029/`, with matching
+`repo` HEAD, clean Git tree, canonical Git `source.tar`, and extracted
+`source/`. The script compares the entire source TAR to an independently
+recomputed canonical Git archive and checks all relevant source files.
+It refuses a wrong host, bad digest, modified Git checkout, existing
+service/install, existing approval marker, occupied port 18740, or another
+identity account. It refuses to replace other operators' files.
+
+**Read-only dry run (no sudo):**
+
+```sh
+bash /home/trusthansen/omnilyzer-identity-prep-20261029/source/services/identity/prepare-identity-only.sh \
+  --preflight --source-sha <exact-reviewed-40-hex-PR243-HEAD>
+```
+
+**Only after reviewing that output, root operator may stage the isolated
+service (still NO public activation):**
+
+```sh
+sudo bash /home/trusthansen/omnilyzer-identity-prep-20261029/source/services/identity/prepare-identity-only.sh \
+  --prepare-only --source-sha <same-reviewed-40-hex-PR243-HEAD>
+```
+
+That action installs **only** the immutable source at
+`/opt/omnilyzer/identity/releases/<sha>`, a fresh venv under that exact
+root-owned release using official SHA-pinned temporary pip.zipapp,
+fixed `services/identity/requirements.txt`, a non-login service account
+`omnilyzer-identity`, an empty root-only
+`/etc/omnilyzer/identity/`, and the existing systemd unit in
+**disabled/inactive** state. It does **not** create
+`/etc/omnilyzer/identity/identity.env` or `owner-approved-go` and
+never starts or enables the service. It does not create/edit the Django
+session database, real credentials, Keycloak realm/client, Nginx, DNS,
+S03 Native service, backup config or real learner data. Existing S01
+single-owner app vhost remains authoritative: future `/auth/*`
+127.0.0.1:18740, S03 `/api/*` 18741. Never install S03 fallback vhost.
+
+The strict marker and missing real `identity.env` make an unapproved
+service start fail closed even after staging. The script deliberately
+refuses a second run instead of overwriting the installed unit. Only
+after actual confidential Keycloak production credentials, private
+Django PostgreSQL session database, legally sourced S03 adult/guardian
+admission, valid HTTPS/DNS, independent rollback/backup, private LC1
+rights and explicit owner activation approval may the operator provision
+secrets and enable the identity service. Owner approval for preparation
+does NOT imply owner approval to activate.
+
+**Observed package prerequisites (not yet production installer result):**
+truexmainserver Ubuntu24 has Python3.12 but no distro
+`python3.12-venv`/pip; standard `python -m venv` fails with ensurepip.
+The script intentionally avoids modifying apt/system Python by creating
+a venv with `--without-pip` and using an official temporary pip
+zipapp whose SHA256 was verified as
+`e5ef64ef63ff89a746014ad81658b76c1940385fdcdbc4fcbfa6e3ef1887352d`.
+If upstream zipapp bytes change, it fails closed until explicitly
+reviewed and repinned; never disable the digest check. The pinned
+Django BFF user-scoped staging venv is not simply relocated into /opt
+because Python console-script shebangs would refer to the old path.
+
+**Do not execute sudo merely because this runbook exists.** It remains
+an operator action requiring explicit permission. If the prepared
+service shows non-inactive status or an unexpected running BFF listener,
+stop and investigate rather than treating source QA as production GO.
