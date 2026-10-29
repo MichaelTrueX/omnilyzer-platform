@@ -457,6 +457,15 @@ jobs:
             --evidence "$RUNNER_TEMP/analytics-release-evidence" \
             --token-file "$token_file" --oci-digest "$digest" --version "$RELEASE_VERSION"
 
+      - name: Warn about immutable partial Analytics release on downstream failure
+        if: failure()
+        shell: bash
+        run: |
+          # This is a warning, NOT cleanup, waiver, a retry, or Task014 admission.
+          # The prior Zot job might already have committed an immutable tag.
+          echo '::warning title=Analytics Task013 partial-release HOLD::Zot may contain an occupied immutable OCI tag without verified Cosign and Forgejo evidence. Do not deploy, retry the same version, delete automatically, or bypass the preflight. Follow docs/operations/m05-13-analytics-partial-release-recovery-20261029.md.'
+          echo 'Analytics Task013 HOLD: independently verify Zot tag/digest, signed bundles and Forgejo evidence before any Task014 admission.' >> "$GITHUB_STEP_SUMMARY"
+
   # Section 2: Release gate runs only in the DEFAULT non-diagnostic mode.
   gate:
     if: ${{ inputs.auth_probe == false && inputs.product == 'canary' }}

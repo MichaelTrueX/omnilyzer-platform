@@ -422,6 +422,20 @@ class AnalyticsProtectedPublicationTests(unittest.TestCase):
         self.assertLess(next(i for i,s in enumerate(steps) if s['name'].startswith('Sign and cryptographically')),
                         next(i for i,s in enumerate(steps) if s['name'].startswith('Publish signed Analytics')))
 
+    def test_downstream_failure_explicitly_holds_partial_zot_publish(self):
+        """Section: never treat a signed-evidence failure as authorized Task014."""
+        steps = self.jobs['analytics-publish-forgejo']['steps']
+        warning = next(s for s in steps if s['name'].startswith('Warn about immutable partial'))
+        self.assertEqual(warning['if'], 'failure()')
+        run = warning['run']
+        self.assertIn('partial-release HOLD', run)
+        self.assertIn('Do not deploy', run)
+        self.assertIn('Do not deploy', run)
+        self.assertIn('Follow docs/operations/m05-13-analytics-partial-release-recovery', run)
+        self.assertNotIn('DELETE ', run)
+        self.assertNotIn('docker push', run)
+        self.assertNotIn('cosign sign', run)
+
     def test_no_canary_rewire_and_provenance_is_oci_only(self):
         """Keep legacy canary flow and prohibit fake Python/npm artifacts."""
         self.assertEqual(self.jobs['gate']['if'],
