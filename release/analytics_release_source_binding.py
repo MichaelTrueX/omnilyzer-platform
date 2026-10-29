@@ -251,6 +251,34 @@ def prepare_original_signed_evidence_inputs(
             )):
         raise DeploymentPolicyError("published OCI manifest is not the reviewed source subject")
 
+    # Section: Reject a forged pre-sign package/evidence ledger. The original
+    # signer must not attest a conflicting wheel, npm, SBOM, policy or OCI
+    # signature reference when extending provenance for Analytics.
+    if (type(subjects.get("sbom_sha256")) is not dict
+            or subjects["sbom_sha256"] != manifest.get("sbom_sha256")
+            or subjects.get("vulnerability_policy_sha256") !=
+                manifest.get("vulnerability_policy_sha256")
+            or subjects.get("vulnerability_policy_result_sha256") !=
+                manifest.get("vulnerability_policy_result_sha256")
+            or type(manifest.get("python")) is not dict
+            or type(manifest.get("npm")) is not dict
+            or type(manifest["python"].get("artifact")) is not dict
+            or type(manifest["npm"].get("artifact")) is not dict
+            or manifest["python"]["artifact"].get("sha256") !=
+                subjects.get("python_wheel_sha256")
+            or manifest["npm"]["artifact"].get("sha256") !=
+                subjects.get("npm_tarball_sha256")
+            or manifest.get("signing") != {
+                "method": "keyless Sigstore/Fulcio/Rekor with GitHub OIDC",
+                "release_manifest_bundle": "release-manifest.sigstore.json",
+                "provenance_bundle": "release-provenance.sigstore.json",
+                "oci_signature": (
+                    verified_source_claim["oci_repository"] + "@" +
+                    verified_source_claim["oci_manifest_digest"]
+                ),
+            }):
+        raise DeploymentPolicyError("original Task013 evidence ledger is inconsistent")
+
     # The same immutable external-source claim is embedded in the ORIGINAL
     # provenance and manifest. The existing provenance-hash chain is renewed
     # BEFORE the existing Cosign sign-blob. No signing is performed here.

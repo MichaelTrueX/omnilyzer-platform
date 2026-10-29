@@ -49,6 +49,29 @@ def _original_unsigned_evidence_for_claim(claim: dict) -> tuple[bytes, bytes]:
     manifest["oci"]["deployment_identity"] = (
         "omnilyzer/analytics@" + claim["oci_manifest_digest"]
     )
+    # Populate the COMPLETE original Task013 evidence ledger. The generic
+    # Task014 fixture deliberately contains only the OCI subset.
+    digest = "a" * 64
+    provenance["subjects"].update({
+        "python_wheel_sha256": digest,
+        "npm_tarball_sha256": digest,
+        "sbom_sha256": {"oci": digest},
+        "vulnerability_policy_sha256": digest,
+        "vulnerability_policy_result_sha256": digest,
+    })
+    manifest.update({
+        "python": {"artifact": {"sha256": digest}},
+        "npm": {"artifact": {"sha256": digest}},
+        "sbom_sha256": {"oci": digest},
+        "vulnerability_policy_sha256": digest,
+        "vulnerability_policy_result_sha256": digest,
+        "signing": {
+            "method": "keyless Sigstore/Fulcio/Rekor with GitHub OIDC",
+            "release_manifest_bundle": "release-manifest.sigstore.json",
+            "provenance_bundle": "release-provenance.sigstore.json",
+            "oci_signature": "omnilyzer/analytics@" + claim["oci_manifest_digest"],
+        },
+    })
     provenance_raw = canonical_bytes(provenance)
     manifest["provenance"]["sha256"] = hashlib.sha256(provenance_raw).hexdigest()
     return canonical_bytes(manifest), provenance_raw
@@ -143,6 +166,28 @@ class AnalyticsSignedSourceBindingTests(unittest.TestCase):
             self.assertEqual((prepared_dir / "release-manifest.json").stat().st_mode & 0o777, 0o600)
             self.assertNotEqual(subprocess.run(cmd, cwd=ROOT, capture_output=True,
                                                timeout=60).returncode, 0)
+
+            # A pre-sign source claim must not launder mismatched package,
+            # policy or Cosign subject references into trusted evidence.
+            for mutation in ("python", "npm", "policy", "sbom", "signing"):
+                bad = json.loads(unsigned_manifest)
+                if mutation == "python":
+                    bad["python"]["artifact"]["sha256"] = "f" * 64
+                elif mutation == "npm":
+                    bad["npm"]["artifact"]["sha256"] = "f" * 64
+                elif mutation == "policy":
+                    bad["vulnerability_policy_sha256"] = "f" * 64
+                elif mutation == "sbom":
+                    key = next(iter(bad["sbom_sha256"]))
+                    bad["sbom_sha256"][key] = "f" * 64
+                else:
+                    bad["signing"]["oci_signature"] = "omnilyzer/analytics@sha256:" + "f" * 64
+                with self.subTest(mutation=mutation):
+                    with self.assertRaises(DeploymentPolicyError):
+                        prepare_original_signed_evidence_inputs(
+                            canonical_bytes(bad), unsigned_provenance,
+                            source, context, oci, platform_root=ROOT,
+                        )
 
             # Exact source context content is mandatory, not just a matching
             # Git SHA or a caller supplied approval flag.
