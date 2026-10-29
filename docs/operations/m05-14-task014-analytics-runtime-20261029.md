@@ -962,3 +962,41 @@ four Analytics secret source files are available, and ports 3141/3142 have
 no listener. Exact root-controlled activation, signed registry identity,
 separate restricted PostgreSQL roles/RLS, real private readiness and stop
 rollback remain explicit conditions for DEV installation. **NO-GO unchanged.**
+
+### 2026-10-30 — Fixed mutually exclusive secret-directory GID policy
+
+A full source-and-host preflight independently reproduced a real **P0 first
+installation blocker**: the preceding Analytics first-install preflight
+required the secret source directory to be root:GID991 mode0710, but the
+following legacy `_require_mapped_secret_groups` helper also required this
+**same directory** to be GID503216. No host permissions could satisfy both.
+The owning helper now validates ONLY the four actual file GIDs against the
+mapped container UID10001/GID503216. The previously reviewed metadata guard
+still requires **directory root:991 mode0710** and four exact **regular files
+UID503216:GID503216 mode0600**. Any wrong file group remains hard NO-GO.
+No secret content is read by this preflight.
+
+The complete first-install pipeline was exercised with disposable one-byte
+file inodes and projected rootless UID/GID metadata (real application code,
+real metadata guard, real mapped GID guard, synthetic Docker runner).
+Correct directory GID991 and four mapped source file GIDs503216 reach the
+private blue health/proof stage; changing one file group fails **before any
+Docker command**. The original rollback, replay, original Unix transport and
+signed-source constraints are unchanged. This is not a privileged host test.
+
+Independent read-only DEV host inspection confirms **40 original Python
+modules** under `/opt/omnilyzer/deployment/app/deployment`, and **none of the
+20 Analytics-only modules are installed**. Therefore the presently installed
+original Task014 application manifest and original installer do NOT themselves
+supply Analytics files. The explicit M05-14 root-owned source admission code
+will reject missing modules; a newly approved original Task014 installation
+handoff must first provision the exact 20 Analytics modules plus three
+product/runtime/Compose data files and two protected product configs without
+weakening the original canary source closure or losing rollback capability.
+Merely enabling the proposed systemd drop-in cannot succeed and is forbidden.
+
+Two parallel regression groups after this fix: **142 Analytics tests (139 PASS,
+3 expected SKIP, zero failures)** and **177 original core Task014 tests PASS**.
+DEV broker and executor socket remain active, original canary maintenance
+port returns HTTP503 (no active canary slot), Analytics port3141 still has
+no listener. This remains **NO-GO for real installation, merger or promotion**.

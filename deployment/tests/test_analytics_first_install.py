@@ -33,6 +33,9 @@ from deployment.analytics_first_install import (
     AnalyticsFirstInstallError, AnalyticsFirstInstallOperation,
     _require_mapped_secret_groups,
 )
+from deployment.analytics_dev_release_review import (
+    REQUIRED_SECRET_NAMES, review_private_secret_paths,
+)
 from deployment.analytics_execution import AnalyticsExecutorRequest
 from deployment.analytics_private_registry import AnalyticsPrivateZotPullAdapter
 from deployment.analytics_signed_release_consumer import PINNED_IMAGE
@@ -232,6 +235,114 @@ class ExactFirstInstallTests(unittest.TestCase):
             directory_owner_uid=0,
             directory_group_gid=authority.executor_gid,
         )
+
+    def test_root_991_directory_and_mapped_503216_files_no_conflicting_gid(self):
+        """Original rootless host UID maps require DIFFERENT directory/file GIDs.
+
+        Test real Path.stat calls on a disposable four-file hierarchy, with
+        fake inode owner/GID only; never touch root-owned host files or secrets.
+        Exact group mismatch must fail before any Docker runner invocation.
+        """
+        from deployment.rootless_docker_authority import RootlessDockerAuthority
+        import stat
+
+        authority = RootlessDockerAuthority()
+        directory = Path(self.workspace.name) / "sources"
+        directory.mkdir(mode=0o700)
+        for name in REQUIRED_SECRET_NAMES:
+            (directory / name).write_bytes(b"X")
+
+        native_stat = Path.stat
+        bad_file = None
+
+        def mapped_stat(path, *args, **kwargs):
+            """Project host-mapped source file GIDs and the distinct daemon GID."""
+            real = native_stat(path, *args, **kwargs)
+            attributes = list(real)
+            if path == directory:
+                attributes[5] = authority.executor_gid
+            elif path.parent == directory and path.name in REQUIRED_SECRET_NAMES:
+                attributes[5] = (
+                    authority.executor_gid if bad_file == path.name
+                    else authority.subgid_start + 10001 - 1
+                )
+            return os.stat_result(attributes)
+
+        with patch("deployment.analytics_first_install.SECRET_DIRECTORY", directory), \
+             patch.object(Path, "stat", mapped_stat):
+            self.assertIsNone(_require_mapped_secret_groups(
+                authority.subgid_start + 10001 - 1,
+            ))
+            bad_file = REQUIRED_SECRET_NAMES[0]
+            with self.assertRaises(AnalyticsFirstInstallError):
+                _require_mapped_secret_groups(
+                    authority.subgid_start + 10001 - 1,
+                )
+            bad_file = None
+            with self.assertRaises(AnalyticsFirstInstallError):
+                _require_mapped_secret_groups(authority.executor_gid)
+        with self.assertRaises(AnalyticsFirstInstallError):
+            _require_mapped_secret_groups(True)
+
+    def test_complete_first_install_preflight_uses_distinct_rootless_source_gids(self):
+        """Exercise BOTH real metadata guards through the first-install path.
+
+        Only UID/GID/mode are virtualized for disposable one-byte files;
+        actual reviewed source, exact four names, Docker command construction,
+        private readiness and rollback controls remain exercised as before.
+        """
+        import stat
+        from deployment.rootless_docker_authority import RootlessDockerAuthority
+
+        authority = RootlessDockerAuthority()
+        directory = Path(self.workspace.name) / "verified-secrets"
+        directory.mkdir(mode=0o700)
+        for name in REQUIRED_SECRET_NAMES:
+            file = directory / name
+            file.write_bytes(b"X")
+            file.chmod(0o600)
+        real_stat = Path.stat
+        incorrect_file = None
+
+        def mapped_metadata(path, *args, **kwargs):
+            """Project original UID991 rootless source file ownership."""
+            native = real_stat(path, *args, **kwargs)
+            values = list(native)
+            if path == directory:
+                values[0] = (values[0] & ~0o7777) | 0o710
+                values[4], values[5] = 0, authority.executor_gid
+            elif path.parent == directory and path.name in REQUIRED_SECRET_NAMES:
+                values[0] = (values[0] & ~0o7777) | 0o600
+                values[4] = authority.canary_host_uid
+                values[5] = (
+                    authority.executor_gid if path.name == incorrect_file
+                    else authority.canary_host_gid
+                )
+            return os.stat_result(values)
+
+        with (
+            patch("deployment.analytics_first_install.SECRET_DIRECTORY", directory),
+            patch("deployment.analytics_dev_release_review.SECRET_DIRECTORY", directory),
+            patch("deployment.analytics_first_install.review_private_secret_paths",
+                  side_effect=review_private_secret_paths),
+            patch("deployment.analytics_first_install._require_mapped_secret_groups",
+                  side_effect=_require_mapped_secret_groups),
+            patch.object(Path, "stat", mapped_metadata),
+        ):
+            self.assertIsNone(self.deploy())
+            self.assertEqual(self.runner.state, "running")
+            incorrect_file = REQUIRED_SECRET_NAMES[-1]
+            self.runner = SyntheticRootlessDocker()
+            self.registry = AnalyticsPrivateZotPullAdapter(
+                self.runner, reviewed_installed_source=EXPECTED,
+            )
+            self.operation = AnalyticsFirstInstallOperation(
+                runner=self.runner, private_registry=self.registry,
+                reviewed_installed_source=EXPECTED,
+            )
+            with self.assertRaises(AnalyticsFirstInstallError):
+                self.deploy()
+            self.assertEqual(self.runner.calls, [])
 
     def test_missing_secret_mapping_or_changed_compose_fails_before_docker(self):
         """Rootless mapped UID requirement is non-optional and exact."""

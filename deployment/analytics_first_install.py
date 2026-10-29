@@ -111,12 +111,22 @@ def _strict_json(raw: str) -> object:
 
 
 def _require_mapped_secret_groups(mapped_gid: int) -> None:
-    """Confirm only metadata; each UID10001-mapped secret uses exact group."""
-    if SECRET_DIRECTORY.stat(follow_symlinks=False).st_gid != mapped_gid:
+    """Check ONLY secret-file mapped GID, not the root-owned source directory.
+
+    The existing review_private_secret_paths() independently enforces a
+    root:991, mode0710 source DIRECTORY and UID503216/mode0600 files. Requiring
+    the directory itself to have container-mapped GID503216 contradicts that
+    rootless Docker traversal contract and would block every real install.
+    These four regular FILES, not their parent, require mapped container GID.
+    """
+    if type(mapped_gid) is not int or mapped_gid < 1:
         raise AnalyticsFirstInstallError(_ERROR)
-    for name in REQUIRED_SECRET_NAMES:
-        if (SECRET_DIRECTORY / name).stat(follow_symlinks=False).st_gid != mapped_gid:
-            raise AnalyticsFirstInstallError(_ERROR)
+    try:
+        for name in REQUIRED_SECRET_NAMES:
+            if (SECRET_DIRECTORY / name).stat(follow_symlinks=False).st_gid != mapped_gid:
+                raise AnalyticsFirstInstallError(_ERROR)
+    except (OSError, ValueError) as exc:
+        raise AnalyticsFirstInstallError(_ERROR) from exc
 
 
 class AnalyticsFirstInstallOperation:
