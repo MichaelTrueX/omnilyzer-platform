@@ -47,7 +47,9 @@ class WorkflowPolicyTests(unittest.TestCase):
     def test_auth_probe_is_explicit_boolean_and_defaults_off(self) -> None:
         """Preserve the original two required release inputs and default behavior."""
         dispatched = self.workflow[True]["workflow_dispatch"]["inputs"]
-        self.assertEqual(set(dispatched), {"version", "source_sha", "auth_probe"})
+        self.assertEqual(set(dispatched), {"version", "source_sha", "auth_probe", "product"})
+        self.assertEqual(dispatched["product"]["options"], ["canary", "analytics"])
+        self.assertEqual(dispatched["product"]["default"], "canary")
         self.assertIs(dispatched["version"]["required"], True)
         self.assertIs(dispatched["source_sha"]["required"], True)
         self.assertEqual(dispatched["auth_probe"],
@@ -57,8 +59,8 @@ class WorkflowPolicyTests(unittest.TestCase):
     def test_probe_and_release_paths_are_mutually_exclusive(self) -> None:
         """Prove diagnostic mode skips the gate, build, and both publishers."""
         self.assertEqual(self.jobs["forgejo-auth-probe"]["if"],
-                         "${{ inputs.auth_probe == true }}")
-        self.assertEqual(self.jobs["gate"]["if"], "${{ inputs.auth_probe == false }}")
+                         "${{ inputs.auth_probe == true && inputs.product == 'canary' }}")
+        self.assertEqual(self.jobs["gate"]["if"], "${{ inputs.auth_probe == false && inputs.product == 'canary' }}")
         self.assertEqual(self.jobs["build"]["needs"], "gate")
         self.assertEqual(self.jobs["publish-zot"]["needs"], ["gate", "build"])
         self.assertEqual(self.jobs["publish-forgejo"]["needs"],
@@ -143,6 +145,55 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("origin", dispatch.lower())
         self.assertEqual(self.jobs["publish-zot"]["environment"], "task013-dev-release")
         self.assertEqual(self.jobs["publish-forgejo"]["environment"], "task013-dev-release")
+
+    def test_analytics_source_only_path_is_protected_and_cannot_publish(self) -> None:
+        """The exact-PR52 source probe cannot reuse canary signing/Task014 authority.
+
+        Until the original Task013 product publisher and original Task014
+        broker/executor are both product-aware, deny Analytics publication.
+        """
+        rejected = self.jobs["deny-unsupported-dispatch"]
+        self.assertEqual(rejected["permissions"], {"contents": "read"})
+        self.assertNotIn("environment", rejected)
+        self.assertNotIn("needs", rejected)
+        self.assertIn("inputs.product != 'analytics'", rejected["if"])
+        self.assertIn("inputs.auth_probe == true", rejected["if"])
+        self.assertIn("exit 1", rejected["steps"][0]["run"])
+        source_job = self.jobs["analytics-source-admission"]
+        self.assertEqual(source_job["permissions"], {"contents": "read"})
+        self.assertNotIn("environment", source_job)
+        self.assertNotIn("needs", source_job)
+        self.assertEqual(source_job["if"],
+                         "${{ inputs.product == 'analytics' && inputs.auth_probe == false }}")
+        self.assertEqual(self.jobs["gate"]["if"],
+                         "${{ inputs.auth_probe == false && inputs.product == 'canary' }}")
+        self.assertEqual(self.jobs["forgejo-auth-probe"]["if"],
+                         "${{ inputs.auth_probe == true && inputs.product == 'canary' }}")
+        steps = source_job["steps"]
+        checkouts = [step for step in steps if "uses" in step]
+        self.assertEqual(len(checkouts), 2)
+        self.assertEqual(checkouts[1]["with"]["repository"], "MichaelTrueX/omnilyzer")
+        self.assertEqual(checkouts[1]["with"]["ref"],
+                         "4cdda7faeba57abb3388f9be5c450fe6afb1140d")
+        self.assertEqual(checkouts[1]["with"]["fetch-depth"], 0)
+        self.assertTrue(all(step["with"]["persist-credentials"] is False
+                            for step in checkouts))
+        run = steps[-1]["run"]
+        for required in (
+            'test "$DISPATCH_REF" = "refs/heads/main"',
+            'test "$REQUESTED_SHA" = "$DISPATCH_SHA"',
+            'test "$(git rev-parse HEAD)" = "$DISPATCH_SHA"',
+            "python3 -m release.analytics_source_admission",
+            "python3 -m release.analytics_task013_build_input",
+            "NO SIGNATURE, NO REGISTRY, NO EXECUTOR",
+        ):
+            self.assertIn(required, run)
+        for forbidden in ("id-token", "cosign", "publish_zot", "publish_forgejo",
+                          "docker login", "docker push", "Task014", "secrets."):
+            self.assertNotIn(forbidden, str(source_job))
+        self.assertEqual(self.jobs["publish-zot"]["needs"], ["gate", "build"])
+        self.assertEqual(self.jobs["publish-forgejo"]["needs"],
+                         ["gate", "build", "publish-zot"])
 
     def test_all_actions_are_full_sha_pinned_and_checkout_drops_credentials(self) -> None:
         uses = re.findall(r"uses:\s*([^\s#]+)", self.raw)

@@ -26,18 +26,41 @@ on:
         required: false
         type: boolean
         default: false
+      product:
+        description: Canary release or exact source-only Analytics admission (not a release)
+        required: false
+        type: choice
+        options:
+          - canary
+          - analytics
+        default: canary
 
 permissions: {}
 
 concurrency:
-  group: platform-release-${{ github.event.inputs.version }}
+  group: platform-release-${{ github.event.inputs.product }}-${{ github.event.inputs.version }}
   cancel-in-progress: false
 
 jobs:
+  # Section 0: an API-dispatched unknown product or Analytics auth-probe mode
+  # must produce a FAILED run, not a deceptively green all-skipped workflow.
+  deny-unsupported-dispatch:
+    if: ${{ (inputs.product != 'canary' && inputs.product != 'analytics') || (inputs.product == 'analytics' && inputs.auth_probe == true) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - name: Fail closed on unsupported release dispatch
+        shell: bash
+        run: |
+          echo "Unsupported product or incompatible diagnostic mode" >&2
+          exit 1
+
   # Section 1: A selected OIDC probe runs under THIS exact workflow_ref on main.
   # No dependency path to gate, build, or a publisher exists in diagnostic mode.
   forgejo-auth-probe:
-    if: ${{ inputs.auth_probe == true }}
+    if: ${{ inputs.auth_probe == true && inputs.product == 'canary' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: task013-dev-release
@@ -76,9 +99,54 @@ jobs:
             --output "$token_file"
           python3 -m release.forgejo_oidc_probe --token-file "$token_file"
 
+  # Section 1b: independently verify the exact Analytics source INSIDE the
+  # existing protected workflow, without granting publication or promotion.
+  # This read-only path is intentionally NOT the signed product release job:
+  # existing publish-zot/publish-forgejo continue to require the canary gate.
+  analytics-source-admission:
+    if: ${{ inputs.product == 'analytics' && inputs.auth_probe == false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact protected original platform source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check out exact reviewed Analytics PR52 Git objects
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: MichaelTrueX/omnilyzer
+          ref: 4cdda7faeba57abb3388f9be5c450fe6afb1140d
+          fetch-depth: 0
+          path: analytics-review-source
+          persist-credentials: false
+      - name: Enforce protected main, immutable Git revision, and strict source binding
+        shell: bash
+        env:
+          DISPATCH_REPOSITORY: ${{ github.repository }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          REQUESTED_SHA: ${{ github.event.inputs.source_sha }}
+          RELEASE_WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+          test "$DISPATCH_REPOSITORY" = "MichaelTrueX/omnilyzer-platform"
+          test "$DISPATCH_REF" = "refs/heads/main"
+          test "$REQUESTED_SHA" = "$DISPATCH_SHA"
+          test "$(git rev-parse HEAD)" = "$DISPATCH_SHA"
+          test "$RELEASE_WORKFLOW_REF" = "MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main"
+          test "$(git -C analytics-review-source rev-parse HEAD)" = "4cdda7faeba57abb3388f9be5c450fe6afb1140d"
+          git -C analytics-review-source remote set-url origin https://github.com/MichaelTrueX/omnilyzer.git
+          python3 -m release.analytics_source_admission --analytics-checkout analytics-review-source
+          python3 -m release.analytics_task013_build_input --analytics-checkout analytics-review-source
+          echo "ANALYTICS_SOURCE_ONLY_ACCEPTED: NO SIGNATURE, NO REGISTRY, NO EXECUTOR"
+
   # Section 2: Release gate runs only in the DEFAULT non-diagnostic mode.
   gate:
-    if: ${{ inputs.auth_probe == false }}
+    if: ${{ inputs.auth_probe == false && inputs.product == 'canary' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
