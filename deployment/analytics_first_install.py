@@ -236,10 +236,13 @@ class AnalyticsFirstInstallOperation:
             or request.secrets_reference.get("rootless_required") is not True
             or tuple(review_private_secret_paths(
                 directory=SECRET_DIRECTORY, owner_uid=mapped_uid,
+                directory_owner_uid=0,
+                directory_group_gid=authority.executor_gid,
             )) != REQUIRED_SECRET_NAMES
         ):
             raise AnalyticsFirstInstallError(_ERROR)
-        # Same mapped group for all sources. No secret content opened here.
+        # The root-owned private directory itself is group-traversable only
+        # by the rootless executor. Each file uses mapped container GID.
         _require_mapped_secret_groups(mapped_gid)
 
         _require_rootless_socket()

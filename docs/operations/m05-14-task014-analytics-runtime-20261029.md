@@ -256,9 +256,12 @@ Analytics schema-v2 request bytes. NO live installation authority was added.
   executor services not active under the checked names. Expected Task014
   rootless socket and Analytics secrets directory absent. Zot configuration
   is root-protected and its Analytics *promoter* read ACL was not inspected.
-- `omnilyzerdev`: checked standard Task014 rootless socket absent and default
-  Docker CLI cannot reach a daemon in the authorized unprivileged session.
-  This does not prove that no other user's rootless daemon exists.
+- `omnilyzerdev` (initial 2026-10-29 unprivileged check): the Task014
+  executor bind-mount target rootless socket was absent outside its systemd
+  namespace and ordinary `omnigpt` could not open Docker. **Superseded by the
+  verified 2026-10-30 host preflight below**: the actual, original rootless
+  Docker service and source socket are running under protected UID991; no
+  new rootless daemon or installation is required.
 
 Actual production registry is `truexmainserver`, which also hosts production.
 No sudo, registry ACL modification, systemd, Docker host installation, secrets
@@ -548,9 +551,11 @@ sealed Zot FD, durable replay and root-owned source manifest, the new
    original rootless socket and the **existing four private secret names**.
    Checks the reviewed Compose bytes and refuses symlinks or source drift.
    Calls existing `review_private_secret_paths` for four 0600, non-symlink,
-   nonempty files and private directory, owned by rootless-mapped host UID
-   **503216** (container UID10001). Also checks exact mapped GID 503216.
-   **No real secret contents are opened or logged.**
+   nonempty files owned by mapped host UID/GID **503216** (container UID10001).
+   The private host source directory must be **root:991 mode0710**, so the
+   rootless UID991 Docker daemon can traverse source paths through its group,
+   but cannot replace or read file contents. It cannot be writable by UID991
+   or UID503216. **No real secret contents are opened or logged.**
 2. Verifies the already provisioned, separate external Docker backend network
    name `omnilyzer-analytics-backend-dev` and actual Compose parser with the
    exact immutable image references. Denies first install if an Analytics-blue
@@ -602,10 +607,91 @@ These checks do not prove the original installed Task014 broker/executor source
 selection, actual rootless UID mapping/Compose file-secret bind reads, active
 Zot/Forgejo promoter ACL + real signed consumer, private PostgreSQL auth and
 collector roles/RLS or a durable installed first-install state/audit/rollback.
-The unprivileged DEV checks did not locate the approved Task014 rootless
-Docker socket or the four real secret files. Actual `/readyz`/persisted
+The unprivileged DEV session can neither open the private UID991 Docker
+source socket nor see the four Analytics secret files. The original rootless
+service is now independently observed running (see below); an isolated
+privileged Task014 service context still has to prove source socket
+bind-mount and real mapped-file reads. Actual Analytics `/readyz`, persisted
 PostgreSQL data and rollback are **not demonstrated**. M04's last security
 review was on older PR HEAD; a complete changed privileged boundary still
 requires one independent final review and explicit owner approval for live
 host promotion. No merge, systemd, Docker write, PG change, or public traffic
 activation is performed by this coding delivery.
+
+
+### 2026-10-30 corrective host preflight and root-controlled secret traversal
+
+**Read-only host evidence** from the isolated `omnigpt@omnilyzerdev` user,
+without sudo, registry credentials, systemd mutations or Docker changes:
+
+| Original Task014 component | Observed host fact | Interpretation |
+|---|---|---|
+| Rootless Docker user manager | `user@991.service` active since 2026-10-15 | Rootless engine already exists |
+| Rootless Docker process | UID991 `rootlesskit`, `slirp4netns`, `dockerd` active | Do NOT install another daemon |
+| Real source socket | `/run/user/991/docker.sock` LISTEN in kernel | Protected UID991 path, not readable by `omnigpt` |
+| Executor bind-mount target | `/run/omnilyzer/deployment/rootless-docker/docker.sock` absent outside service | Expected: systemd `BindReadOnlyPaths` creates mount in executor service namespace when activated; not proof of daemon failure |
+| Original broker | `omnilyzer-deployment-broker.service` active | Existing broker is running, canary-only |
+| Executor | `.socket` active at `/run/omnilyzer/deployment/executor.sock`, service inactive | Normal socket activation; do not wake privileged executor during read-only review |
+| Canary at `127.0.0.1:3020` | Nginx returns HTTP 503 body `{"status":"maintenance","active_slot":null}` | Controlled maintenance with no promoted canary slot, not a crashed daemon |
+| Analytics 3141/3142 | No listeners | Analytics is NOT installed |
+| Analytics four secret files | `/var/lib/omnilyzer/deployment/analytics/dev/secrets` absent | Real host provisioning still required |
+| Analytics PG16 | A separate legacy unprivileged PG process exists under user `trust` | NOT approved Task014 product DB; do not reuse its credentials/data without independent identity/role qualification |
+
+**Important security correction discovered during this live-host review:**
+Original `review_private_secret_paths` required the private *directory* and
+four *files* all be owned by mapped host UID503216 with directory mode0700.
+This would deny UID991 Docker daemon traversal of bind-mount source paths.
+Simply changing directory ownership to UID991 would let the daemon replace
+secret source files; that is unnecessary and weakens source integrity.
+
+For the Analytics rootless staging source only, the reviewed contract now
+requires the directory **root:991, mode0710**, with the exact four regular
+files **503216:503216, mode0600**, no symlinks and bounded sizes. The root
+keeps exclusive ability to create/replace entries; the daemon obtains only
+execute/traverse permission via its own group, not list or write. Existing
+review-only callers of `review_private_secret_paths` retain their default
+0700 same-owner behavior. This is a metadata gate, not a substitute for
+**real positive+negative container UID10001 secret-read tests** under the
+approved Task014 rootless daemon before a real deployment.
+
+**Activation remains HOLD:** no owner-approved root host mutation or M04 final
+privileged-source review has been performed. Existing rootless service is an
+asset to reuse, not a missing installation step. The remaining concrete
+requirements are product-specific source-set/entrypoint admission, verified
+Zot/Forgejo promoter reader ACL and genuine Sigstore/Cosign, the four approved
+secret sources under the mapped UID, PostgreSQL nonowner app/collector roles
+and RLS with actual DB access, real private blue health, durable state and
+stop-only rollback. Do not promote 0.15.0 through unapproved generic Docker
+commands or any canary route.
+
+### M05-14 final corrective verification, 2026-10-30
+
+After the actual `user@991.service` rootless host inspection, the review-only
+secret source metadata checks were corrected for **root:991 mode0710 private
+source directory** and exact **503216:503216 mode0600** four regular secret
+files. The root-owned directory avoids granting the rootless Docker daemon
+permission to create, remove, swap or list source entries. The daemon's
+UID991/GID991 has traverse-only access; the mapped container UID10001 can
+read only its four file sources. Earlier inert same-owner mode0700 callers
+retain their unchanged default contract. The actual rootless Compose
+positive/negative secret mount check remains REQUIRED before installation.
+
+- Complete source files: `deployment/analytics_dev_release_review.py`,
+  `deployment/analytics_first_install.py` (existing first-install code),
+  `deployment/tests/test_analytics_dev_release_review.py`,
+  `deployment/tests/test_analytics_first_install.py`.
+- Synthetic stat-UID/GID tests simulate root:991 directory and mapped file
+  owner; explicitly reject daemon-owned directories, wrong group, world/group
+  access, wrong mode, missing files, symlinks, or relaxed file modes.
+  No privileged `chown`, Docker, genuine JWT, database or filesystem secret
+  content is accessed in these tests.
+- Broad relevant Task014/Analytics regression: **604 tests, 601 PASS,
+  3 expected SKIP, 0 FAIL**, including existing canary broker/executor,
+  rootless authority, original OIDC/JWT/Cosign boundaries, Analytics Unix
+  receiver and blue/rollback safety controls.
+- **NO-GO remains** for active Analytics DEV installation: installed source
+  admission, approved signed Zot/Forgejo reader ACL, real UID10001 rootless
+  secret-read + deny proof, actual PostgreSQL nonowner role/RLS separation,
+  actual OCI runtime `/readyz`, state/rollback and final independent M04
+  review are all still unconfirmed. A running UID991 Docker daemon and
+  green unit tests do not supersede the owner's installation approval.

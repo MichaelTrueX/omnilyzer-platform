@@ -218,6 +218,21 @@ class ExactFirstInstallTests(unittest.TestCase):
         ))
         self.assertEqual(self.runner.state, "running")
 
+    def test_preflight_requires_uid991_directory_and_uid503216_secret_files(self):
+        """Require root:991 mode0710 parent and mapped-UID0600 source files."""
+        from deployment.rootless_docker_authority import RootlessDockerAuthority
+        with patch("deployment.analytics_first_install.review_private_secret_paths",
+                   return_value=("COLLECTOR_DATABASE_URL","DATABASE_URL",
+                                 "JWT_REFRESH_SECRET","JWT_SECRET")) as reviewer:
+            self.assertIsNone(self.deploy())
+        authority = RootlessDockerAuthority()
+        reviewer.assert_called_once_with(
+            directory=Path("/var/lib/omnilyzer/deployment/analytics/dev/secrets"),
+            owner_uid=authority.subuid_start + 10001 - 1,
+            directory_owner_uid=0,
+            directory_group_gid=authority.executor_gid,
+        )
+
     def test_missing_secret_mapping_or_changed_compose_fails_before_docker(self):
         """Rootless mapped UID requirement is non-optional and exact."""
         with patch(
