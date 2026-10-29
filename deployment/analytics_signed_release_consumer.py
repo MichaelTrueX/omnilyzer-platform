@@ -95,7 +95,7 @@ class AnalyticsSignedEvidenceReview:
     manifest_sha256: str
     provenance_sha256: str
     source: AnalyticsSourceReviewReceipt
-    signature_verified: bool = True
+    # A public dataclass cannot serve as a signature or deployment grant.
     deployment_authorized: bool = False
 
 

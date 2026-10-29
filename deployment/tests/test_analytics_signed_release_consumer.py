@@ -229,7 +229,6 @@ class AnalyticsSignedReleaseConsumerTests(unittest.TestCase):
         self.assertEqual(result.release_version, PINNED_VERSION)
         self.assertEqual(result.release_run_id, PINNED_RUN_ID)
         self.assertEqual(result.source.source_commit, SOURCE_COMMIT)
-        self.assertTrue(result.signature_verified)
         self.assertFalse(result.deployment_authorized)
         self.assertFalse(result.source.release_authorized)
         self.assertFalse(result.source.deployment_authorized)

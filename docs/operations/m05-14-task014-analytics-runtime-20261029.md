@@ -194,3 +194,18 @@ its actual installed, original Task014 Cosign/Sigstore implementations.
 Synthetic mocks establish negative test coverage, not live sigstore
 cryptographic acceptance. Release 0.15.0 is immutable and must NOT be
 rerun or overwritten during Task014 testing.
+
+### Independent genuine Task013 Zot receipt artifact check
+
+Downloaded ONLY the original small, nonsecret GitHub Actions artifact
+`analytics-task013-zot-40881693662-1` from protected successful run
+https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/40881693662.
+The actual `analytics-oci-publication.json` is 205 bytes, SHA256:
+`6c64d2248ce4ce081742ad4a57bbf8abbe40b2bdb9dfe432f72894d3a3dffd46`.
+Its exact five fields are `schema_version=1`, original Zot origin,
+`repository=omnilyzer/analytics`, `tag=0.15.0` and original digest
+`sha256:6dbdc6319218b19257311d2885e9f697a75fc6066b4eef34068cc8ae6a51c1f1`.
+All five values match the read-only Task014 consumer's reviewed pin.
+This is a genuine Task013 publication *receipt*, not the signed Forgejo
+manifest/provenance, actual registry readback, or Cosign verification
+by Task014. The private source archive was neither accessed nor disclosed.
