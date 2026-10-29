@@ -27,7 +27,7 @@ from deployment.tests.fixtures import evidence
 from release.analytics_oci_context import snapshot_committed_tree
 from release.analytics_release_source_binding import (
     _canonical_json, _hash_existing_regular, prepare_original_signed_evidence_inputs,
-    prepare_source_claim,
+    prepare_source_claim, verify_analytics_zot_receipt,
 )
 from release.tests.test_analytics_oci_archive import build_test_archive
 
@@ -79,6 +79,23 @@ def _original_unsigned_evidence_for_claim(claim: dict) -> tuple[bytes, bytes]:
 
 class AnalyticsSignedSourceBindingTests(unittest.TestCase):
     """Guard the source and original provenance chain without any signing."""
+
+    def test_zot_receipt_exact_digest_and_destination(self) -> None:
+        """Section: reject forged receipt destination, tag or digest."""
+        claim = {"oci_repository": "omnilyzer/analytics", "oci_manifest_digest": "sha256:" + "a" * 64}
+        good = {"schema_version": 1, "registry": "https://oci-dev.omnilyzer.ai",
+                "repository": "omnilyzer/analytics", "tag": "1.2.3",
+                "manifest_digest": claim["oci_manifest_digest"]}
+        self.assertEqual(verify_analytics_zot_receipt(canonical_bytes(good), claim), good)
+        for field, value in (("registry", "https://example.org"),
+                             ("repository", "omnilyzer/task013-release-canary"),
+                             ("tag", "latest"), ("manifest_digest", "sha256:" + "b" * 64),
+                             ("schema_version", True)):
+            with self.subTest(field=field):
+                bad = dict(good)
+                bad[field] = value
+                with self.assertRaises(DeploymentPolicyError):
+                    verify_analytics_zot_receipt(canonical_bytes(bad), claim)
 
     def test_duplicate_provenance_json_rejected(self) -> None:
         """No ambiguous repeated source or signature identity in signed input."""

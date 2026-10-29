@@ -166,6 +166,29 @@ def prepare_source_claim(
     }
 
 
+def verify_analytics_zot_receipt(receipt_raw: bytes, source_claim: dict[str, Any]) -> dict[str, Any]:
+    """Section: Verify exact original Zot receipt against source-bound OCI digest.
+
+    This is a pure pre-sign check, not proof of a remote registry GET or a
+    signature. The original Zot publisher must perform the authenticated
+    digest readback before generating this receipt.
+    """
+    receipt = _canonical_json(receipt_raw, "Zot publication receipt")
+    if (set(receipt) != {"schema_version", "registry", "repository", "tag", "manifest_digest"}
+            or type(receipt["schema_version"]) is not int or receipt["schema_version"] != 1
+            or receipt["registry"] != "https://oci-dev.omnilyzer.ai"
+            or receipt["repository"] != "omnilyzer/analytics"
+            or type(receipt["tag"]) is not str
+            or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", receipt["tag"]) is None
+            or type(receipt["manifest_digest"]) is not str
+            or DIGEST.fullmatch(receipt["manifest_digest"]) is None
+            or type(source_claim) is not dict
+            or source_claim.get("oci_repository") != receipt["repository"]
+            or source_claim.get("oci_manifest_digest") != receipt["manifest_digest"]):
+        raise DeploymentPolicyError("Zot receipt differs from exact Analytics OCI subject")
+    return receipt
+
+
 def prepare_original_signed_evidence_inputs(
     original_manifest: bytes, original_provenance: bytes,
     analytics_checkout: Path, immutable_context: Path, oci_archive: Path,
