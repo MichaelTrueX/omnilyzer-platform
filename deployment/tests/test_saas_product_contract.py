@@ -185,7 +185,7 @@ class SaaSProductContractTest(unittest.TestCase):
             certificate_identity=EXPECTED_CERTIFICATE_IDENTITY,
             certificate_issuer=EXPECTED_CERTIFICATE_ISSUER,
         )
-        with self.assertRaisesRegex(DeploymentPolicyError, "signed external-source provenance"):
+        with self.assertRaisesRegex(DeploymentPolicyError, "Analytics signed product source binding mismatch"):
             validate_existing_signed_release(
                 self.profile,
                 forged,
