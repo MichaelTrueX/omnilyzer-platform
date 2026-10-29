@@ -166,6 +166,29 @@ def prepare_source_claim(
     }
 
 
+def verify_analytics_zot_receipt(receipt_raw: bytes, source_claim: dict[str, Any]) -> dict[str, Any]:
+    """Section: Verify exact original Zot receipt against source-bound OCI digest.
+
+    This is a pure pre-sign check, not proof of a remote registry GET or a
+    signature. The original Zot publisher must perform the authenticated
+    digest readback before generating this receipt.
+    """
+    receipt = _canonical_json(receipt_raw, "Zot publication receipt")
+    if (set(receipt) != {"schema_version", "registry", "repository", "tag", "manifest_digest"}
+            or type(receipt["schema_version"]) is not int or receipt["schema_version"] != 1
+            or receipt["registry"] != "https://oci-dev.omnilyzer.ai"
+            or receipt["repository"] != "omnilyzer/analytics"
+            or type(receipt["tag"]) is not str
+            or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", receipt["tag"]) is None
+            or type(receipt["manifest_digest"]) is not str
+            or DIGEST.fullmatch(receipt["manifest_digest"]) is None
+            or type(source_claim) is not dict
+            or source_claim.get("oci_repository") != receipt["repository"]
+            or source_claim.get("oci_manifest_digest") != receipt["manifest_digest"]):
+        raise DeploymentPolicyError("Zot receipt differs from exact Analytics OCI subject")
+    return receipt
+
+
 def prepare_original_signed_evidence_inputs(
     original_manifest: bytes, original_provenance: bytes,
     analytics_checkout: Path, immutable_context: Path, oci_archive: Path,
@@ -250,6 +273,34 @@ def prepare_original_signed_evidence_inputs(
                 f'{verified_source_claim["oci_manifest_digest"]}'
             )):
         raise DeploymentPolicyError("published OCI manifest is not the reviewed source subject")
+
+    # Section: Reject a forged pre-sign package/evidence ledger. The original
+    # signer must not attest a conflicting wheel, npm, SBOM, policy or OCI
+    # signature reference when extending provenance for Analytics.
+    if (type(subjects.get("sbom_sha256")) is not dict
+            or subjects["sbom_sha256"] != manifest.get("sbom_sha256")
+            or subjects.get("vulnerability_policy_sha256") !=
+                manifest.get("vulnerability_policy_sha256")
+            or subjects.get("vulnerability_policy_result_sha256") !=
+                manifest.get("vulnerability_policy_result_sha256")
+            or type(manifest.get("python")) is not dict
+            or type(manifest.get("npm")) is not dict
+            or type(manifest["python"].get("artifact")) is not dict
+            or type(manifest["npm"].get("artifact")) is not dict
+            or manifest["python"]["artifact"].get("sha256") !=
+                subjects.get("python_wheel_sha256")
+            or manifest["npm"]["artifact"].get("sha256") !=
+                subjects.get("npm_tarball_sha256")
+            or manifest.get("signing") != {
+                "method": "keyless Sigstore/Fulcio/Rekor with GitHub OIDC",
+                "release_manifest_bundle": "release-manifest.sigstore.json",
+                "provenance_bundle": "release-provenance.sigstore.json",
+                "oci_signature": (
+                    verified_source_claim["oci_repository"] + "@" +
+                    verified_source_claim["oci_manifest_digest"]
+                ),
+            }):
+        raise DeploymentPolicyError("original Task013 evidence ledger is inconsistent")
 
     # The same immutable external-source claim is embedded in the ORIGINAL
     # provenance and manifest. The existing provenance-hash chain is renewed
