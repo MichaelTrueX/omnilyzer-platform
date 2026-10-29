@@ -146,11 +146,11 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(self.jobs["publish-zot"]["environment"], "task013-dev-release")
         self.assertEqual(self.jobs["publish-forgejo"]["environment"], "task013-dev-release")
 
-    def test_analytics_source_only_path_is_protected_and_cannot_publish(self) -> None:
-        """The exact-PR52 source probe cannot reuse canary signing/Task014 authority.
+    def test_analytics_original_unsigned_build_scan_cannot_publish(self) -> None:
+        """Exact PR52 built OCI and Grype evidence do not confer signer authority.
 
-        Until the original Task013 product publisher and original Task014
-        broker/executor are both product-aware, deny Analytics publication.
+        Preserve canary publication isolation even when the Analytics job
+        actually builds and scans an unsigned image with original tools.
         """
         rejected = self.jobs["deny-unsupported-dispatch"]
         self.assertEqual(rejected["permissions"], {"contents": "read"})
@@ -161,6 +161,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("exit 1", rejected["steps"][0]["run"])
         source_job = self.jobs["analytics-source-admission"]
         self.assertEqual(source_job["permissions"], {"contents": "read"})
+        self.assertEqual(source_job["timeout-minutes"], 45)
         self.assertNotIn("environment", source_job)
         self.assertNotIn("needs", source_job)
         self.assertEqual(source_job["if"],
@@ -170,7 +171,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(self.jobs["forgejo-auth-probe"]["if"],
                          "${{ inputs.auth_probe == true && inputs.product == 'canary' }}")
         steps = source_job["steps"]
-        checkouts = [step for step in steps if "uses" in step]
+        checkouts = [step for step in steps if step.get("uses", "").startswith("actions/checkout@")]
         self.assertEqual(len(checkouts), 2)
         self.assertEqual(checkouts[1]["with"]["repository"], "MichaelTrueX/omnilyzer")
         self.assertEqual(checkouts[1]["with"]["ref"],
@@ -178,7 +179,9 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(checkouts[1]["with"]["fetch-depth"], 0)
         self.assertTrue(all(step["with"]["persist-credentials"] is False
                             for step in checkouts))
-        run = steps[-1]["run"]
+        admission = next(step for step in steps if step["name"] ==
+                         "Enforce protected main, immutable Git revision, and strict source binding")
+        run = admission["run"]
         for required in (
             'test "$DISPATCH_REF" = "refs/heads/main"',
             'test "$REQUESTED_SHA" = "$DISPATCH_SHA"',
@@ -189,8 +192,37 @@ class WorkflowPolicyTests(unittest.TestCase):
         ):
             self.assertIn(required, run)
         for forbidden in ("id-token", "cosign", "publish_zot", "publish_forgejo",
-                          "docker login", "docker push", "Task014", "secrets."):
+                          "docker login", "docker push", "secrets."):
             self.assertNotIn(forbidden, str(source_job))
+        names = [step["name"] for step in steps]
+        self.assertLess(names.index("Build and verify immutable original Analytics OCI archive"),
+                        names.index("Scan exact Analytics OCI and enforce original Critical High policy"))
+        builder = next(step for step in steps if step["name"] ==
+                       "Set up original pinned Analytics Buildx and BuildKit")
+        self.assertEqual(builder["with"]["name"], "m01-analytics-task013")
+        self.assertEqual(builder["with"]["version"], "v0.36.1")
+        self.assertIn("moby/buildkit:v0.24.0@sha256:", builder["with"]["driver-opts"])
+        build = next(step for step in steps if
+                     step["name"] == "Build and verify immutable original Analytics OCI archive")
+        self.assertIn("--retain-verified-artifacts", build["run"])
+        self.assertIn("python3 -m release.analytics_release_source_binding", build["run"])
+        self.assertIn("--immutable-context", build["run"])
+        self.assertIn("--oci-archive", build["run"])
+        self.assertIn("ORIGINAL_ANALYTICS_UNSIGNED_SOURCE_BINDING_PASS", build["run"])
+        self.assertEqual(next(step for step in steps if step["name"] ==
+                         "Install original pinned Analytics Syft")["with"]["syft-version"], "v1.51.0")
+        self.assertEqual(next(step for step in steps if step["name"] ==
+                         "Install original pinned Analytics Grype")["with"]["grype-version"], "v0.118.0")
+        scan = next(step for step in steps if step["name"] ==
+                    "Scan exact Analytics OCI and enforce original Critical High policy")
+        for expected in ("release.vulnerability_policy", "validate_database_status",
+                         "evaluate(policy_path, {'oci': scanner}",
+                         "policy['exceptions'] != []", "'blocked_findings'", "decision",
+                         "ORIGINAL_ANALYTICS_REAL_OCI_SYFT_GRYPE_POLICY_PASS_NO_WAIVERS"):
+            if expected == "'blocked_findings'":
+                self.assertIn("'blocked_findings'", scan["run"])
+            else:
+                self.assertIn(expected, scan["run"])
         self.assertEqual(self.jobs["publish-zot"]["needs"], ["gate", "build"])
         self.assertEqual(self.jobs["publish-forgejo"]["needs"],
                          ["gate", "build", "publish-zot"])
