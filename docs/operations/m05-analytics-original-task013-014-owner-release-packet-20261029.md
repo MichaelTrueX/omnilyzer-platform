@@ -406,3 +406,80 @@ remain canary-only. Product runtime Compose remains a separate **not-installed**
 review file, pending explicit owner-approved original Task013 signing,
 Task014 product-aware closed authority/secret references, genuine hosted
 functional readiness and write-preserving signed immutable-digest rollback.
+
+## 11. 29 October: REAL PR50 OCI Syft/Grype security re-scan — STILL NO-GO
+
+**Scope and chronology:** M01 PR50 exact source
+`b2a02e54cb5d51f06cb56b9f9d7aa7ca2fae2a50`, M04 independently
+accepted only its changed source boundary for this scan (GitHub Issue #27
+comment 6488856441). The original-platform source commit which actually
+executed this **unsigned local scan** was
+`cf3b436cb98b74aba35e4f5e179dfcb25c8eb0cf`; subsequent documentation
+updates do not retroactively change its source/provenance identity. This is
+NOT an original Task013 protected-main GitHub signed release or any registry
+OCI digest. No installed Task014 Analytics deployment occurred.
+
+The real locally generated OCI from the original pinned BuildKit **v0.24.0**
+passed exact 76 Git source identities, immutable 541-file Git-only TAR
+(SHA256 `2fe0a3e59d01eab1da4a53e834576a4e4adfee57310456aae001a8d61e6abfc8`),
+original OCI blob/content digest validation and original pre-sign external
+source claim binding. The OCI had a source-only build recipe with the Node
+22.23.4 bookworm-slim runtime and Next.js 15.5.28 source from PR50.
+
+**Actual scan, not npm audit or a scanner fixture:**
+- Syft **1.51.0** analyzed the real OCI archive and produced CycloneDX 1.6
+  with **4,482 detected components** (historical PR49 OCI: 22,750).
+- Grype **0.118.0** analyzed that exact OCI SBOM. Grype DB v6.1.10,
+  built **2026-10-28T06:23:30Z**, valid `true`, DB checksum
+  `sha256:b08902b91738f1a9bc7fd61942f331d8e5e76a5df0c0b5f8c17c18bd787ee278`.
+- Scanner matches: **2 Critical, 81 High, 82 Medium, 15 Low,
+  67 Negligible — 247 total**. Previously PR49 had 67 Critical,
+  510 High, 886 Medium, 276 Low, 1,008 Negligible, 49 Unknown,
+  2,796 total. Current Critical/High **83** versus PR49 **577**.
+- Both Critical **matches** refer to Debian libc packages with the
+  *same advisory*: `CVE-2026-5450` for `libc6` and `libc-bin`
+  (version `2.36-9+deb12u14`). Do not present these as two different
+  root vulnerability IDs. Examples of remaining High matches:
+  `CVE-2025-13151` on `libtasn1-6` `4.19.0-2+deb12u1`;
+  `CVE-2026-41992` on `gzip` `1.12-1`;
+  `GHSA-rgw5-rvv9-x895`/`GHSA-mh99-v99m-4gvg` on
+  `brace-expansion` `2.0.2`;
+  `GHSA-ch52-4w7c-c8xp` on `http-cache-semantics` `4.2.0`;
+  `GHSA-mwp4-54f8-5fhr` on `ip-address` `10.1.0`;
+  and additional Debian `perl-base`, `zlib1g`, `ncurses` hits.
+  These are package/advisory **scan matches**, not individually
+  demonstrated exploits; all nonetheless block under the current policy.
+- Original `release/vulnerability-policy.json` remains untouched:
+  `block_severities=[Critical,High]`, `exceptions=[]`.
+  **SECURITY GATE = FAIL, RELEASE NO-GO**. Never waive, ignore these
+  findings, sign PR49, or treat PR50 npm-only audit as sufficient.
+
+**Actual local unsigned archive proof** (for diagnosis only; NOT registry):
+- OCI manifest digest
+  `sha256:443b54786ddddd8bc636d36a1984cbea88cb07bbd1443e84e8f0a5c26c7d8d54`
+- Full OCI tar SHA256
+  `8e8931a2dbce8cba7fd4d8d7bf4931ab7ee6d8ab17571d254ed60a94ded4a4dc`
+- Original source claim `signed=false`, `release_authorized=false`,
+  `deployment_authorized=false`; no protected workflow, Zot/Forgejo
+  publish or Task014 promotion.
+
+**M01 remediation handoff:** keep the same accepted Analytics features,
+JSON Bearer/localStorage, revocable DB Sessions and real RLS. Patch or
+replace remaining vulnerable Debian runtime packages/base and direct and
+transitive npm runtime dependencies. Review whether an updated digest-pinned
+slim base + fully security-updated OS packages suffices. Do NOT delete
+required Prisma OpenSSL3 or relax Docker rootless/capability controls.
+M04 reviews only actual new changes; M05 then performs one exact Git source
+repin and original pinned BuildKit/Syft/Grype re-scan on the new source.
+No further Task013 signing/Task014 installed product activation until zero
+policy-blocking findings and separately authorized protected release.
+
+**Disk safety/cleanup:** This re-scan stored the ~3.3 GB Grype database
+in a private **/dev/shm RAM filesystem** because the shared DEV disk had
+limited free storage. The temporary ~335 MB OCI TAR, ~10 MB source TAR,
+Grype DB, Syft/Grype intermediate reports, temporary original BuildKit
+v0.24.0 builder/container were all removed. Actual post-scan available
+root space **~7.0 GB**; `/dev/shm` returned to ~3.1 MB use; the original
+Docker default builder remains running/unchanged. Neither original DEV
+canary nor product services, DB, Nginx, Cloudflare, registry, signing
+identity, DNS, token/cookie handling, secrets or production changed.
