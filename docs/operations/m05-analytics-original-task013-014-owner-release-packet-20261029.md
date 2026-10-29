@@ -559,3 +559,95 @@ failure evidence only, not a claim about PR51. If PR51 has any blocking
 findings, stop before signing and provide a **complete sanitized machine-
 readable blocker inventory**, not a selective list. No owner approval has
 been given to operate protected signing/registry or live Task014.
+
+## 14. 29 October — genuine original Task013 PR51 OCI scan: 0 Critical, 54 High (NO-GO)
+
+**Actual, independently source-accepted candidate** Analytics PR51 exact
+Git SHA `df40b4632a088232de4699d5826641e0cf269dc8`, source tree
+`b6b4f5f210d61d2cfef25cfe3f04b55eb8f509a8`; original platform
+Task013 PR244 exact build source SHA
+`1cfb0f8844093d8d7959dbc7c23e3afbfee1a97c`.
+M04 source acceptance Issue #27 `6489733825`; M04 secret-mount review
+Issue #27 `6489772603`. Neither authorizes signing or installation.
+
+This is **not a reconstructed/npm audit/synthetic scan**. M05 built the
+actual PR51 original immutable 542-Git-file context using the ORIGINAL
+pinned BuildKit v0.24.0 container and original unchanged
+`release.analytics_task013_build_candidate`, archive verifier and
+`release.analytics_release_source_binding`. To protect the shared DEV host's
+low free disk, M05 tested a **temporary 5GB RAM-backed Docker builder
+volume** (verified actually mounted at `/var/lib/buildkit`), and stored the
+private archive/reports/Grype database in a separately private `/dev/shm`
+folder. The earlier disk-backed build was **safely aborted** on the
+900MB-low-free guard, recovered its source-only artifacts and full free
+disk, and was NOT recorded as an Analytics product failure. On the RAM
+builder, actual BuildKit OCI/archive/source-proof build **PASS**.
+
+**REAL actual OCI scan** Syft **1.51.0**: CycloneDX 1.6, **3,531
+components**. Grype **0.118.0**, genuine valid DB schema v6.1.10 built
+**2026-10-28T06:23:30Z**, checksum
+`sha256:b08902b91738f1a9bc7fd61942f331d8e5e76a5df0c0b5f8c17c18bd787ee278`:
+
+| Grype severity | Prior PR50 | Actual PR51 |
+| --- | ---: | ---: |
+| Critical | 2 | **0** |
+| High | 81 | **54** |
+| Medium | 82 | 47 |
+| Low | 15 | 11 |
+| Negligible | 67 | 46 |
+| Unknown | 0 | 0 |
+| TOTAL | 247 | **158** |
+
+Original immutable `release/vulnerability-policy.json` SHA256
+`475ad38ef4ae8d89dcf7d4e03eeb76701085fdcd4ebdb8ae9aa41a7bce2cde8f`
+**still blocks ALL Critical and High; zero exceptions**. Actual
+`release.vulnerability_policy.evaluate()` on the original Grype OCI report:
+**FAIL / 54 blocking package-advisory matches**. These reduce to **14
+unique CVE IDs** distributed across installed Debian13 OS packages;
+**no application npm high findings** in the PR51 OCI report. All 54
+are Debian packages: 53 Grype `wont-fix`, 1 `not-fixed` (zlib1g).
+The scanner supplied **no fixed-version recommendations** for these 54
+matches; this is NOT evidence that a vendor patch exists or that any
+scanner match is demonstrably exploitable.
+
+**Complete machine-readable, no-secret evidence retained:**
+[`docs/operations/m05-pr51-oci-security-scan-20261029.json`](./m05-pr51-oci-security-scan-20261029.json)
+contains ALL 54 matched records, exact CVE, package, installed version,
+package type, Grype fix state, reported fixed versions (empty where
+not supplied), original Grype report and OCI/SBOM SHA256, signed-status
+false, and original deterministic source SHA. Its own SHA256 is
+`85a4a7e95b46c7fabd0d033154c9465c47f10a6c0c190bd1c164bdb389329f3c`.
+No entire raw Grype database, local host paths, secrets or archive layers
+were committed. Representative advisory groups: util-linux (4 CVEs
+across 9 Debian packages), gcc14 runtime (2 across 3), libc (2 across
+2), ncurses, libacl1, perl-base and zlib1g. Consult full JSON rather
+than selective summary for remediation.
+
+**Actual local unsigned artifact identities (NOT signed registry):**
+- Source TAR SHA256
+  `815fd9c6e2ca9fc019c7c6b782e4276849a9d410bee166e811ced63719258cbe`.
+- OCI manifest digest
+  `sha256:8620a7d7ecb88ccf52a5129b50bbc48e296f51d7057ab3fb06a6c773a3389ab3`.
+- Whole OCI archive SHA256
+  `f8c7874799ba814d754ad0e844b3ad798b53f8fae5dd11cf047d2283cf4c826f`.
+- Actual SBOM SHA256
+  `ae61fc62c0bbcb14c834f845f5a0a40407e085864bc7f7e6dde61fc85df8d0d8`.
+- Actual complete Grype OCI report SHA256
+  `02e6489124b8acea3a577b2d37573def8399b68bc0d17ec353c5fd7f3ceb0e46`.
+
+Original protected Task013 sign/publish, Zot/Forgejo registry, signed
+Task014 broker promotion, DEV runtime, real secrets, database migrations,
+canary and truexmainserver remain **UNTOUCHED**. After scan M05 removed
+its own pinned BuildKit container, ephemeral RAM volume, 333MB OCI,
+source TAR, 3.3GB Grype DB, SBOM and private scan folder. The unrelated
+existing Docker default builder, user services and canary were preserved.
+
+**One next remediation, not another release-cycle or scanner exception:**
+M01 to assess the actual 14 Debian13 advisory identities against Debian
+security tracker and packages required by runtime, select a supported
+minimal updated container runtime/base with fewer zero-waiver High
+matches (or otherwise provide corrected packages) **without silently
+waiving policy, falsifying SBOM or weakening Python/Prisma/Node runtime**.
+M04 reviews only material changed runtime source. M05 applies one exact
+new PR51-successor Git source freeze and original OCI scan. No protected
+signing/DEV/production approval while any Critical/High remains.
