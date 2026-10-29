@@ -312,3 +312,140 @@ therefore remain intact. The new read-only Analytics composition lives in
 its own module and does not introduce missing imports in the installed
 canary environment. No request forwarding, plugin runtime or privileged
 feature flag was activated.
+
+## M05-14 after independent M04 5699460077: private broker and sealed Zot scope
+
+M04 reviewed exact prior PR258 HEAD
+`90d57c4d19ce5f44a16e00ac821dbbe7d584f6ed` and conditionally accepted
+its read-only/inert code only. That review is **not a security approval of the
+following new broker/FD transport boundary**. No new general QA meeting or
+parallel PR is needed; request ONE independent final M04 acceptance after the
+complete privileged executor, actual isolated rootless DEV runtime, PG roles,
+health and first-install rollback work exists.
+
+### Exact existing Task014 primitives reused
+
+- `deployment/private_registry_fd.py` now supports an *explicit*
+  `product_id="analytics"` on existing sealed-FD creation/read operations,
+  requiring the **exact signed 0.15.0 digest**. The original default is still
+  `product_id="canary"` and rejects Analytics. No tags, repository patterns,
+  prefixes or caller-selected registries accepted. The same original Linux
+  CLOEXEC, F_SEAL_* seals, request-SHA256, max 300-second TTL and credential
+  redaction apply. `deployment/tests/test_private_registry_fd.py` adds exact
+  positive/negative Analytics and cross-product cases. No credential data is
+  added to executor request JSON or disk.
+- New complete `deployment/analytics_promotion_broker.py` composes the
+  original GitHub OIDC authorization and `_normalize_identity`, exact root-
+  reviewed schema-v2 Analytics request parser, **internal** call to the
+  original verified OIDC/registry/Sigstore/Cosign review composition,
+  `bind_analytics_request_to_verified_evidence`, an independent original
+  `GitHubRegistryCredentialVerifier` (separate authenticated Zot/Forgejo
+  audiences), then seals the short-lived exact-image token. It requires the
+  original 180-second pull budget plus 45 seconds BEFORE consuming the
+  existing replay-guard JTI/run/request-hash. It then invokes only a distinct
+  `_send_analytics_private` method, carrying canonical token-free bytes and
+  the sealed descriptor; cannot default to the old canary transport method.
+  Linux FD is closed on success, replay denial and transport failure.
+- New complete `deployment/tests/test_analytics_promotion_broker.py` exercises
+  the actual original JWT audience validation and sealed Linux FD, mocked
+  **signed-release result** and private transport, source mismatch, wrong
+  audience, invalid canonical request, OIDC failure, replay duplicate,
+  short token TTL, runtime transport failure, canary transport separation,
+  collaborator capture and FD cleanup. The mocked release **does not prove
+  real Sigstore/Cosign verification**. No code can supply a release-review
+  dataclass as a public argument to the broker. The reviewed request object
+  remains *only a data shape*, not grant authority.
+
+### Important explicit outstanding boundaries
+
+1. The above broker is **not yet installed** in the reviewed Task014 source
+   manifest, has no activated listener or owner-authorized root-controlled
+   dependency composition, and uses no existing canary transport fallback.
+   A test-only transport can return simulated success; that is NOT acceptance
+   of a privileged action.
+2. There is no root-owned Analytics-specific executor receiver that
+   independently verifies SO_PEERCRED, exact signed source, schema-v2
+   request, FD scope, replay and installed source manifest, nor an approved
+   rootless Docker/Compose product installer. The original canary executor
+   still rejects Analytics; do not alter it by broad allowlisting.
+3. No real Task014 Zot/Forgejo reader ACL or live signature acceptance has
+   been demonstrated, and no real DEV app or PostgreSQL two-role RLS and
+   rollback has been tested. Signed Task013 0.15.0 must not be regenerated.
+4. Real runtime activation requires an exact root-owned source check and
+   approved product-specific private transport. Until completed and finally
+   reviewed by M04, this PR remains **draft / installed Analytics NO-GO**.
+5. PR branch baseline was protected `b9e22e7...`; protected main subsequently
+   acquired the unrelated product-first `AGENTS.md` change (`25c5ecf...`).
+   Reconcile before any eventual approved merge; do not reset main or
+   silently override its new development rules.
+
+### M04 follow-up validation and original canary regression
+
+The complete new test file
+`deployment/tests/test_analytics_promotion_broker.py` also checks an
+**actual AF_UNIX SCM_RIGHTS Linux descriptor transfer** (no Docker) from
+broker to simulated private Analytics receiver, AND the original durable
+`SQLiteReplayGuard` across two separately constructed brokers with one
+persisted JTI/run. A second attempt is rejected before transport. A credential
+with less than the original `MIN_POST_PREFLIGHT_VALIDITY_SECONDS=225` fails
+before consuming replay. These are synthetic signing tests; there is no live
+privileged executor on the target host.
+
+One original canary integration test,
+`deployment/tests/test_private_registry_end_to_end.py`, FAILED identically on
+untouched protected main SHA `25c5ecfab1f0df5df413bb0e722c5c5c3747b510`
+with `TASK014_EXECUTOR_FAILURE boundary=private phase=credential_pull_budget`.
+Its synthetic Zot credential TTL was **120 seconds**, incompatible with the
+already enforced original **180-second pull + 45-second safety** threshold.
+The test fixture now uses a **270-second** synthetic TTL (inside original
+300-second cap). The original policy, pull budget, execution control and
+runtime behavior are unchanged; the actual Linux canary end-to-end test then
+passes. No real credential or registry host was read during this regression.
+
+Final focused validation on `truexdevelopment`:
+
+```
+python3 -m unittest \
+  deployment.tests.test_analytics_promotion_broker \
+  deployment.tests.test_analytics_review_composition \
+  deployment.tests.test_analytics_execution \
+  deployment.tests.test_analytics_signed_release_consumer \
+  deployment.tests.test_analytics_signed_source_evidence \
+  deployment.tests.test_analytics_signed_source_pin \
+  deployment.tests.test_analytics_cross_repo_product_binding \
+  deployment.tests.test_release_consumer \
+  deployment.tests.test_oci_verifier \
+  deployment.tests.test_blob_verifier \
+  deployment.tests.test_registry_oidc_credentials \
+  deployment.tests.test_executor \
+  deployment.tests.test_broker \
+  deployment.tests.test_broker_integration \
+  deployment.tests.test_private_registry_broker \
+  deployment.tests.test_private_registry_end_to_end \
+  deployment.tests.test_private_registry_fd \
+  deployment.tests.test_private_registry_pull \
+  deployment.tests.test_request_scoped_registry_integration \
+  deployment.tests.test_analytics_dev_release_review \
+  deployment.tests.test_m05_14_analytics_signed_admission \
+  deployment.tests.test_m05_14_analytics_compose_envfiles \
+  deployment.tests.test_application_source_set \
+  deployment.tests.test_executor_composition \
+  deployment.tests.test_executor_service_entrypoint \
+  deployment.tests.test_rootless_docker_authority -q
+```
+
+Result: **366 run, 363 passed, 3 skipped, 0 failures**. The historic
+independent `test_execution.NonLiveRegressionTests` protected workflow
+SHA256 baseline issue was reproduced on untouched main in an earlier pass;
+that test was not silently removed or weakened. This exact 366-case focused
+set does not include that known historical hash test.
+
+**Still NO-GO for Analytics installation.** The new broker and private
+product transport are NOT registered in the root-controlled installed source
+set and use only a synthetic receiver in tests. Original executor cannot
+accept Analytics schema v2; no rootless DEV product runtime, PostgreSQL role
+separation, signed live GET/Cosign consumer or stop-first-install rollback was
+performed. Keep PR draft, no merge or rollout. M04 prior conditional review
+covered the previous read-only HEAD only; the new broker/FD change needs the
+ONE final independent review after the complete privileged executor and
+actual isolated DEV acceptance have been implemented.

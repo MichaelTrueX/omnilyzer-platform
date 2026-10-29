@@ -122,8 +122,11 @@ class CompletePrivateTransportTests(unittest.TestCase):
                 replay_guard=broker_replay,
                 transport=constructed(path),
                 request_builder=RequestBuilder(),
+                # Keep synthetic Zot TTL above the ORIGINAL 180s private
+                # pull budget plus 45s safety margin. 120s cannot pass the
+                # original receiver's legitimate pre-replay qualification.
                 promotion_context_verifier=ContextVerifier(
-                    VerifiedContext(JWT, int(time.time()) + 120)
+                    VerifiedContext(JWT, int(time.time()) + 270)
                 ),
                 private_registry_transport=True,
             )
