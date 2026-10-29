@@ -1,0 +1,116 @@
+# File: deployment/runtime/dev/analytics.compose.review.yaml
+# Purpose: Review-only original Task014 Analytics product slot definitions.
+#          The installed canary compose.yaml is UNCHANGED and independent.
+# Links: deployment/analytics_dev_release_review.py, deployment/products/
+#        analytics-runtime-dev.json, Dockerfile.analytics (Analytics repo),
+#        original deployment/docker_runtime.py and Task014 controller/state.
+# Authorization: NOT in the installed application_source_set.py. It does not
+#                run via Docker/Compose until separately admitted by Task014.
+#
+# Section 1: the exact same hardening as original rootless canary where valid.
+# All values are explicit, except the TWO digest-qualified images supplied by
+# the ORIGINAL verified signed promotion and the four operator-owned secrets.
+name: omnilyzer-analytics-dev
+
+x-analytics: &analytics
+  user: "10001:10001"
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+  pids_limit: 192
+  cpus: "1.00"
+  mem_limit: 1536m
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+  environment:
+    NODE_ENV: production
+    NEXT_TELEMETRY_DISABLED: "1"
+  command:
+    - node
+    - --env-file=/run/secrets/COLLECTOR_DATABASE_URL
+    - --env-file=/run/secrets/DATABASE_URL
+    - --env-file=/run/secrets/JWT_REFRESH_SECRET
+    - --env-file=/run/secrets/JWT_SECRET
+    - node_modules/next/dist/bin/next
+    - start
+    - -H
+    - 0.0.0.0
+    - -p
+    - "3000"
+  secrets:
+    - source: ANALYTICS_COLLECTOR_DATABASE_URL
+      target: COLLECTOR_DATABASE_URL
+      uid: "10001"
+      gid: "10001"
+      mode: 0400
+    - source: ANALYTICS_DATABASE_URL
+      target: DATABASE_URL
+      uid: "10001"
+      gid: "10001"
+      mode: 0400
+    - source: ANALYTICS_JWT_REFRESH_SECRET
+      target: JWT_REFRESH_SECRET
+      uid: "10001"
+      gid: "10001"
+      mode: 0400
+    - source: ANALYTICS_JWT_SECRET
+      target: JWT_SECRET
+      uid: "10001"
+      gid: "10001"
+      mode: 0400
+  healthcheck:
+    test:
+      - CMD
+      - node
+      - -e
+      - 'fetch("http://127.0.0.1:3000/readyz",{cache:"no-store"}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'
+    interval: 15s
+    timeout: 5s
+    retries: 3
+    start_period: 30s
+  networks:
+    - analytics_backend
+
+# Section 2: separate immutable blue/green digest slots, no traffic switch.
+# The installed canary still uses its distinct port 3020 and project name.
+# Neither profile starts without an explicit --profile selection.
+services:
+  analytics-blue:
+    <<: *analytics
+    profiles: ["blue"]
+    image: ${ANALYTICS_BLUE_IMAGE:?original Task013 signed immutable OCI digest required}
+    ports:
+      - "127.0.0.1:3141:3000"
+
+  analytics-green:
+    <<: *analytics
+    profiles: ["green"]
+    image: ${ANALYTICS_GREEN_IMAGE:?original Task013 signed immutable OCI digest required}
+    ports:
+      - "127.0.0.1:3142:3000"
+
+# Section 3: separate restricted PostgreSQL network and host secret references.
+# The network, secret files and any Nginx traffic switching must be provisioned
+# by separately authorized original Task014 operation; NEVER by this template.
+networks:
+  analytics_backend:
+    external: true
+    name: omnilyzer-analytics-backend-dev
+
+secrets:
+  ANALYTICS_COLLECTOR_DATABASE_URL:
+    file: /var/lib/omnilyzer/deployment/analytics/dev/secrets/COLLECTOR_DATABASE_URL
+  ANALYTICS_DATABASE_URL:
+    file: /var/lib/omnilyzer/deployment/analytics/dev/secrets/DATABASE_URL
+  ANALYTICS_JWT_REFRESH_SECRET:
+    file: /var/lib/omnilyzer/deployment/analytics/dev/secrets/JWT_REFRESH_SECRET
+  ANALYTICS_JWT_SECRET:
+    file: /var/lib/omnilyzer/deployment/analytics/dev/secrets/JWT_SECRET
