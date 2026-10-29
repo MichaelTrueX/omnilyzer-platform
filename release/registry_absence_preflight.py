@@ -33,6 +33,8 @@ PACKAGE_NAMES = {
     "npm": "@omnilyzer/release-canary",
     "generic": "task013-release-evidence",
 }
+ANALYTICS_OCI_REPO = "omnilyzer/analytics"
+ANALYTICS_PACKAGE_NAMES = {"generic": "analytics-release-evidence"}
 MAX_JSON = 128 * 1024
 MAX_PAGES = 25
 
@@ -95,9 +97,13 @@ def _checked_package_list(raw: bytes) -> list[dict]:
     return payload
 
 
-def check_absence(version: str, forgejo_jwt: str, zot_jwt: str) -> None:
+def check_absence(version: str, forgejo_jwt: str, zot_jwt: str, *, product: str = "canary") -> None:
     """Prove authenticated registry access and absence of all exact version identities."""
     validate_semver(version)
+    if product not in ("canary", "analytics"):
+        raise PreflightError("REGISTRY_PREFLIGHT_UNKNOWN_PRODUCT")
+    packages = PACKAGE_NAMES if product == "canary" else ANALYTICS_PACKAGE_NAMES
+    oci_repository = OCI_REPO if product == "canary" else ANALYTICS_OCI_REPO
     jwt_pattern = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\Z")
     if jwt_pattern.fullmatch(forgejo_jwt) is None or jwt_pattern.fullmatch(zot_jwt) is None:
         raise PreflightError("REGISTRY_PREFLIGHT_JWT_FORMAT_INVALID")
@@ -112,7 +118,7 @@ def check_absence(version: str, forgejo_jwt: str, zot_jwt: str) -> None:
 
     # Section 3: Check precise package-version records and independently scan
     # bounded paginated listings, catching URL-escaped npm name ambiguities.
-    for kind, name in PACKAGE_NAMES.items():
+    for kind, name in packages.items():
         encoded_name = urllib.parse.quote(name, safe="")
         path = f"/api/v1/packages/{OWNER}/{kind}/{encoded_name}/{version}"
         status, _ = _status(opener, FORGEJO, path, forgejo_jwt)
@@ -140,19 +146,20 @@ def check_absence(version: str, forgejo_jwt: str, zot_jwt: str) -> None:
     status, _ = _status(opener, ZOT, "/v2/", zot_jwt)
     if status != 200:
         raise PreflightError(f"REGISTRY_PREFLIGHT_ZOT_AUTH_HTTP_{status}")
-    status, _ = _status(opener, ZOT, f"/v2/{OCI_REPO}/manifests/{version}", zot_jwt, method="HEAD")
+    status, _ = _status(opener, ZOT, f"/v2/{oci_repository}/manifests/{version}", zot_jwt, method="HEAD")
     if status == 200:
         raise PreflightError("REGISTRY_PREFLIGHT_OCI_TAG_OCCUPIED")
     if status != 404:
         raise PreflightError(f"REGISTRY_PREFLIGHT_OCI_HEAD_HTTP_{status}")
     print("REGISTRY_PREFLIGHT_OCI_TAG_ABSENT", flush=True)
-    print("REGISTRY_PREFLIGHT_ALL_FOUR_DESTINATIONS_ABSENT", flush=True)
+    print("REGISTRY_PREFLIGHT_ALL_FOUR_DESTINATIONS_ABSENT" if product == "canary" else "REGISTRY_PREFLIGHT_ANALYTICS_TWO_DESTINATIONS_ABSENT", flush=True)
 
 
 def main() -> int:
     """Run the exact trusted preflight from an already validated GitHub release."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--product", choices=("canary", "analytics"), default="canary")
     parser.add_argument("--forgejo-token-file", required=True, type=Path)
     parser.add_argument("--zot-token-file", required=True, type=Path)
     args = parser.parse_args()
@@ -161,6 +168,7 @@ def main() -> int:
             args.version,
             read_token(args.forgejo_token_file),
             read_token(args.zot_token_file),
+            product=args.product,
         )
     except (PreflightError, ValueError) as err:
         # Only predefined markers may be printed; exception strings from

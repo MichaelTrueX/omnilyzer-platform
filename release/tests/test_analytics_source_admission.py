@@ -50,7 +50,7 @@ class AnalyticsSourceAdmissionTests(unittest.TestCase):
             self.skipTest('requires explicit separately checked out Analytics PR36')
         receipt = verify_source(self.checkout, self.binding)
         self.assertEqual(receipt['source_commit'], self.binding['source_commit'])
-        self.assertEqual(receipt['source_files_verified'], 51)
+        self.assertEqual(receipt['source_files_verified'], 78)
         self.assertFalse(receipt['release_authorized'])
         self.assertFalse(receipt['deployment_authorized'])
 
@@ -96,6 +96,24 @@ class AnalyticsSourceAdmissionTests(unittest.TestCase):
             self.skipTest('requires explicit Analytics OCI source checkout')
         bad = copy.deepcopy(self.binding)
         del bad['source_critical_files']['.dockerignore']
+        with self.assertRaises(AnalyticsAdmissionError):
+            verify_source(self.checkout,bad)
+
+    def test_reject_modified_nonowner_workspace_policy_hash(self):
+        """New tenant isolation SQL must be bound to exact reviewed bytes."""
+        if self.checkout is None:
+            self.skipTest('requires exact committed PR49 checkout')
+        bad=copy.deepcopy(self.binding)
+        bad['source_critical_files']['prisma/rls/analytics-app-workspace.install.sql']='e'*64
+        with self.assertRaisesRegex(AnalyticsAdmissionError,'critical source hash'):
+            verify_source(self.checkout,bad)
+
+    def test_reject_dropped_nonowner_route_pin(self):
+        """A changed Workspace route cannot be exempted from SHA admission."""
+        if self.checkout is None:
+            self.skipTest('requires exact committed PR49 checkout')
+        bad=copy.deepcopy(self.binding)
+        del bad['source_critical_files']['app/api/v1/workspaces/route.ts']
         with self.assertRaises(AnalyticsAdmissionError):
             verify_source(self.checkout,bad)
 
