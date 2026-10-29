@@ -192,3 +192,30 @@ document's initial source-only acceptance:
   runtime issuer DSN, operational origin DNS/TLS and end-to-end real OIDC
   browser cycle remain separate P0 activities. No main merge, production
   database migration, server change or learner access was authorized.
+
+
+## Subsequent platform identity QA (29 Oct, no production changes)
+
+On the disconnected development host, the current persistent original-platform
+`services/identity/identity_bff/oidc.py` successfully fetched **actual live
+Keycloak 26.7.2** OIDC discovery and RSA JWKS from the temporary TLS test
+issuer `https://127.0.0.1:18443/realms/omnilyzer-auth-spike` using its
+test-only SAN certificate, and verified that discovery advertised PKCE S256.
+**PERSISTENT_BFF_TO_REAL_KEYCLOAK_26_TLS_DISCOVERY_JWKS_S256_PASS.**
+
+Also changed callback ordering: signed identity is verified, OAuth state
+is encrypted and its expiry verified **before** attempting any S03 restricted
+session issuance. Earlier ordering issued a learner session first and could
+leave a short-lived orphan if provider token contents were unsealable or
+expiry invalid. Two negative regression cases confirm S03 issue/revoke are
+not called for failed sealing or invalid expiry. **21/21** local identity
+tests PASS and Python compilation PASS.
+
+**Evidence boundary:** This validates real Keycloak HTTPS discovery/JWKS
+connectivity and the separate real PostgreSQL issuer adapter test; it does
+**NOT** validate the full new Django BFF Authorization Code callback
+exchange against that actual Keycloak test client, refresh-token rotation
+against Keycloak, production PostgreSQL-backed Django sessions or the real
+browser+Native full journey. Those remain explicit blockers before any
+authorization to lift HTTP503. The disposable test Keycloak was shut down
+after these checks, with no change to the production realm or Sumlaude.

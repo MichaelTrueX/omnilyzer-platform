@@ -77,12 +77,15 @@ def callback(request):
         tokens = oidc.exchange(request.GET["code"], transaction["verifier"])
         principal = oidc.verify_id(tokens["id_token"], tokens["access_token"],
                                    nonce=transaction["nonce"])
+        # Validate and encrypt *all* OAuth data before creating an S03
+        # database session: a missing refresh token or invalid expiry
+        # must never leave an orphan, unrecoverable learner session.
+        sealed = oidc.seal(tokens)
+        deadline = oidc.deadline(tokens)
         # No product session is issued on unaudited identity/guardian data.
         # Existing session is revoked before another cookie is minted.
         _revoke_existing(request)
         product_cookie, digest = issuer.issue(principal)
-        sealed = oidc.seal(tokens)
-        deadline = oidc.deadline(tokens)
     except (issuer.AdmissionError, oidc.IdentityError, KeyError, TypeError, ValueError):
         return _fail(403)
     request.session.cycle_key()

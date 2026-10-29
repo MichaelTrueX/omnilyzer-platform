@@ -201,6 +201,26 @@ class IdentityRouteTests(SimpleTestCase):
         self.assertEqual(result.status_code, 403)
         self.assertEqual(self.mocks[5].call_count, 0)
 
+    def test_unsealable_provider_response_does_not_issue(self):
+        with mock.patch.object(oidc, "seal",
+                               side_effect=oidc.IdentityError("invalid data")):
+            self.assertEqual(self.get("/auth/login").status_code, 302)
+            state = self.client.session["transaction"]["state"]
+            result = self.get("/auth/callback?state=" + state + "&code=abc")
+        self.assertEqual(result.status_code, 403)
+        self.assertEqual(self.mocks[5].call_count, 0)
+        self.assertEqual(self.mocks[6].call_count, 0)
+
+    def test_invalid_provider_expiry_does_not_issue(self):
+        with mock.patch.object(oidc, "deadline",
+                               side_effect=oidc.IdentityError("invalid expiry")):
+            self.assertEqual(self.get("/auth/login").status_code, 302)
+            state = self.client.session["transaction"]["state"]
+            result = self.get("/auth/callback?state=" + state + "&code=abc")
+        self.assertEqual(result.status_code, 403)
+        self.assertEqual(self.mocks[5].call_count, 0)
+        self.assertEqual(self.mocks[6].call_count, 0)
+
 
 class ContractTests(unittest.TestCase):
     def test_issuer_disallows_qa_function_in_prod(self):
