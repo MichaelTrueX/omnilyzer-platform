@@ -209,3 +209,76 @@ All five values match the read-only Task014 consumer's reviewed pin.
 This is a genuine Task013 publication *receipt*, not the signed Forgejo
 manifest/provenance, actual registry readback, or Cosign verification
 by Task014. The private source archive was neither accessed nor disclosed.
+
+## M05-14: Closed Analytics request grammar and actual host readiness
+
+### Task014 first-install request v2, inert and NOT routed
+
+The original schema-v1 canary `deployment/execution.py` request, installed
+broker, privileged executor, sealed Zot FD and private Docker pull are all
+**canary-specific**. They cannot be safely generalized with a single OCI
+repository allowlist edit. To avoid breaking the old canary route, the
+separate complete `deployment/analytics_execution.py` adds one closed
+**Analytics-only schema-v2 FIRST-install request grammar**, tested in
+`deployment/tests/test_analytics_execution.py`.
+
+This request is constrained to release 0.15.0, exact signed Task013 platform
+source/run/OCI, exact external Analytics source commit, four signed-evidence
+hash fields, original GitHub OIDC actor/run/JTI/expiry, installed reviewed
+Compose + product/runtime SHA256s, four names-only host-secret references,
+mandatory rootless+UID10001+0600 metadata, blue slot at 127.0.0.1:3141,
+separate backend network, NO public origin and NO previous rollback digest.
+
+`parse_analytics_request` explicitly REQUIRES four independent values supplied
+by the future root-owned installer: installed platform commit, Compose SHA,
+product profile SHA and runtime profile SHA. These inputs are never copied
+from untrusted promotion fields. `bind_analytics_request_to_identity` requires
+all original authorized GitHub OIDC identity fields. The companion
+`bind_analytics_request_to_verified_evidence` requires exact original signed
+manifest/provenance hashes, external-source claim SHA, OCI release and profile
+hashes.
+
+**Important trust distinction:** Neither the new public request dataclass,
+`AnalyticsSignedEvidenceReview`, nor the public OIDC dataclass proves a
+signature. A caller could construct all three in normal Python. Therefore
+parsing/binding SHALL NOT be used as deployment permission. The ORIGINAL
+protected broker must invoke actual signature verification and verified OIDC,
+apply replay and sealed credentials, and route through an independently
+reviewed product-only executor before any installation. Currently it does
+none of that for Analytics. The existing canary parser explicitly rejects
+Analytics schema-v2 request bytes. NO live installation authority was added.
+
+### Observed host prerequisites, read-only check
+
+- `truexdevelopment`: existing Docker is ROOTFUL, not the accepted original
+  Task014 rootless Docker authority. Its Analytics secret directory is absent.
+- `truexmainserver`: active `zot.service`, original Task014 DEV broker and
+  executor services not active under the checked names. Expected Task014
+  rootless socket and Analytics secrets directory absent. Zot configuration
+  is root-protected and its Analytics *promoter* read ACL was not inspected.
+- `omnilyzerdev`: checked standard Task014 rootless socket absent and default
+  Docker CLI cannot reach a daemon in the authorized unprivileged session.
+  This does not prove that no other user's rootless daemon exists.
+
+Actual production registry is `truexmainserver`, which also hosts production.
+No sudo, registry ACL modification, systemd, Docker host installation, secrets
+provisioning, firewall or traffic change was performed.
+
+### Exact remaining Task014 secure activation path
+
+1. Review and install signed Analytics schema-v1 **read-only consumer** under
+   root-controlled source authority, preserving canary schema v2 unchanged.
+2. Add a separately closed Analytics request to original OIDC broker + replay
+   + sealed registry credential and bound receiver, without allowing arbitrary
+   caller-provided schema-v2 bytes to reach the executor.
+3. Implement product-scoped rootless Compose/secret UID mapping, isolated
+   PostgreSQL auth and collector roles, original audited first-install state,
+   readiness gate and first-install **stop/deactivate** rollback, without
+   reusing canary migrations/state or resetting database writes.
+4. Independently confirm `platform-promote.yml` Analytics Zot and Forgejo
+   reader ACL, actual original Sigstore and Cosign v1 evidence and root-owned
+   installed manifest hashes. Then M04 independently reviews the combined
+   evidence, security boundaries and rollback.
+5. Only after explicit owner approval, execute one original-Task014-authorized
+   private DEV promotion with replay-denial proof and actual rollback. This
+   does not authorize public or production activation.

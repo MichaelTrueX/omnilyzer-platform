@@ -108,6 +108,31 @@ def _sha(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+class _BoundedDecompressedStream:
+    """Bound decompressed bytes even for gzip bombs and trailing TAR padding.
+
+    This wrapper is only an untrusted-input resource guard; it is not a
+    cryptographic verifier or a new release transport.
+    """
+
+    __slots__ = ("_source", "_read_count")
+
+    def __init__(self, source: gzip.GzipFile):
+        self._source = source
+        self._read_count = 0
+
+    def read(self, requested: int = -1) -> bytes:
+        """Make every read bounded and reject excess decompressed content."""
+        if type(requested) is not int:
+            raise ValueError("invalid gzip read size")
+        size = min(65536, requested) if requested >= 0 else 65536
+        content = self._source.read(size)
+        self._read_count += len(content)
+        if self._read_count > _MAX_UNCOMPRESSED:
+            raise ValueError("Analytics signed evidence decompression limit exceeded")
+        return content
+
+
 def _analytics_archive(raw: bytes) -> tuple[dict[str, bytes], dict[str, str]]:
     """Stream an authenticated gzip/TAR archive with exact closed file names.
 
@@ -122,7 +147,8 @@ def _analytics_archive(raw: bytes) -> tuple[dict[str, bytes], dict[str, str]]:
     total = 0
     try:
         with gzip.GzipFile(fileobj=io.BytesIO(raw)) as compressed:
-            with tarfile.open(fileobj=compressed, mode="r|") as stream:
+            bounded = _BoundedDecompressedStream(compressed)
+            with tarfile.open(fileobj=bounded, mode="r|") as stream:
                 for member in stream:
                     if (
                         not member.isfile() or member.name not in _ARCHIVE_FILES
@@ -153,6 +179,11 @@ def _analytics_archive(raw: bytes) -> tuple[dict[str, bytes], dict[str, str]]:
                         scanner_hashes[member.name] = hasher.hexdigest()
                     else:
                         extracted[member.name] = bytes(chunks)
+            # Tar can stop at its EOF markers while the gzip payload still
+            # contains compressed data. Drain and account for ALL decompressed
+            # content; an attacker cannot hide a large tail behind TAR EOF.
+            while bounded.read(65536):
+                pass
     except (OSError, EOFError, ValueError, tarfile.TarError) as exc:
         raise AnalyticsSignedEvidenceError(ERROR) from exc
     if set(extracted) != _SIGNED_FILES | _SOURCE_FILES or set(scanner_hashes) != _SCANNER_FILES:

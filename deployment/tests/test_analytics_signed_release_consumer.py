@@ -465,6 +465,23 @@ class AnalyticsSignedReleaseConsumerTests(unittest.TestCase):
         self.assertEqual(zot.calls[1][1],
                          f"/v2/omnilyzer/analytics/manifests/{PINNED_DIGEST}")
 
+    def test_bounded_gzip_decompression_includes_trailing_data(self):
+        """Reject a gzip bomb even if TAR stops before its trailing bytes."""
+        from unittest.mock import patch
+        from deployment import analytics_signed_release_consumer as consumer
+
+        evidence, _scanner = fixture()
+        good = archive(evidence)
+        with patch.object(consumer, "_MAX_UNCOMPRESSED", 1024):
+            with self.assertRaises(AnalyticsSignedEvidenceError):
+                _analytics_archive(good)
+        # Concatenated gzip members are legal to gzip but not a chance to
+        # bypass the review consumer's maximum decompressed evidence size.
+        trailing = good + gzip.compress(b"x" * 50000, mtime=0)
+        with patch.object(consumer, "_MAX_UNCOMPRESSED", 40000):
+            with self.assertRaises(AnalyticsSignedEvidenceError):
+                _analytics_archive(trailing)
+
     def test_original_canary_paths_default_and_distinct_analytics_paths(self):
         """Original HTTP path grammar remains strict, no product wildcard."""
         from deployment.tests.test_release_consumer import Factory, Response
