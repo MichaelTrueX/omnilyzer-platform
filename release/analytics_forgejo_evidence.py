@@ -24,7 +24,9 @@ OWNER = 'omnilyzer'
 PACKAGE = 'analytics-release-evidence'
 FILES = frozenset({'release-manifest.json', 'release-provenance.json',
                    'release-manifest.sigstore.json', 'release-provenance.sigstore.json',
-                   'analytics-source-claim.json', 'oci-publication.json'})
+                   'analytics-source-claim.json', 'oci-publication.json',
+                   'oci-sbom.cdx.json', 'oci-grype.json', 'grype-db-status.json',
+                   'vulnerability-policy.json'})
 
 
 def archive_evidence(directory: Path, expected_digest: str, version: str) -> bytes:
@@ -33,9 +35,11 @@ def archive_evidence(directory: Path, expected_digest: str, version: str) -> byt
         raise ValueError('invalid immutable release version')
     if not directory.is_dir() or directory.is_symlink() or {p.name for p in directory.iterdir()} != FILES:
         raise ValueError('Analytics evidence file allowlist mismatch')
+    large_scanner_files = {'oci-sbom.cdx.json', 'oci-grype.json'}
     for name in FILES:
         path = directory / name
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
+        limit = 128 * 1024 * 1024 if name in large_scanner_files else 4 * 1024 * 1024
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
             raise ValueError('Analytics evidence input is unsafe')
     claim = _canonical_json((directory / 'analytics-source-claim.json').read_bytes(), 'source claim')
     if claim.get('oci_manifest_digest') != expected_digest or claim.get('oci_repository') != 'omnilyzer/analytics':
@@ -54,6 +58,14 @@ def archive_evidence(directory: Path, expected_digest: str, version: str) -> byt
             or provenance.get('external_source') != claim
             or manifest.get('signing', {}).get('oci_signature') != 'omnilyzer/analytics@' + expected_digest):
         raise ValueError('Analytics provenance hash mismatch')
+    scanner_hashes = provenance.get('subjects', {}).get('scanner_sha256')
+    scanner_names = ('oci-sbom.cdx.json', 'oci-grype.json', 'grype-db-status.json',
+                     'vulnerability-policy.json')
+    if (type(scanner_hashes) is not dict or set(scanner_hashes) != set(scanner_names)
+            or any(scanner_hashes[name] != hashlib.sha256((directory / name).read_bytes()).hexdigest()
+                   for name in scanner_names)
+            or provenance.get('subjects', {}).get('security_exceptions') != 0):
+        raise ValueError('signed Analytics scanner evidence mismatch')
     # Signed bundles must be actual structured Sigstore JSON, not empty placeholders.
     for name in ('release-manifest.sigstore.json', 'release-provenance.sigstore.json'):
         bundle = _canonical_json((directory / name).read_bytes(), name)
