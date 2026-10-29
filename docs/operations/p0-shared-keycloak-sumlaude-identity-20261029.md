@@ -449,3 +449,17 @@ real DNS or TLS, secrets/session DB migration, lawful enrollment, active
 systemd/Nginx changes, private S01/S03 deployment, production smoke,
 owner activation, or a private learner release. The previously accepted
 Keycloak→persistent BFF→S01 Chromium→S03 LC1 QA is reused rather than rerun.
+
+### Staged host preflight: Django frame-embedding protection
+
+The first isolated, no-secrets production settings check on truexmainserver
+identified Django's genuine security.W002 warning on the existing BFF.
+The existing `services/identity/config/settings.py` now includes Django's
+standard `XFrameOptionsMiddleware` with `X_FRAME_OPTIONS="DENY"`.
+The current `services/identity/tests/test_identity.py` verifies the actual
+`/auth/csrf` header. No login routes, cookies, CSRF, issuer, SQL or token
+lifecycle functions changed. Production HSTS warnings W005/W021 are
+intentional until the owner confirms HTTPS for the relevant subdomains;
+HSTS preload/includeSubDomains must NOT be switched on speculatively.
+The staging package is not live and must be repinned to the NEW exact Git
+SHA before any future service source is installed or approved.

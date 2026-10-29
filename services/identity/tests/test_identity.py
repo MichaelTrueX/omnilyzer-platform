@@ -82,6 +82,12 @@ class IdentityRouteTests(SimpleTestCase):
         self.assertTrue(result.cookies["__Host-sumlaude_session"]["httponly"])
         self.assertEqual(result.cookies["__Host-sumlaude_session"]["samesite"], "Lax")
 
+    def test_auth_responses_have_frame_protection(self):
+        """Check production anti-embedding response headers."""
+        r = self.get("/auth/csrf")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["X-Frame-Options"], "DENY")
+
     def test_one_use_state_pkce_and_verified_issuance(self):
         self.assertEqual(self.get("/auth/login").status_code, 302)
         self.assertEqual(self.get("/auth/callback?state=wrong&code=abc").status_code, 400)
