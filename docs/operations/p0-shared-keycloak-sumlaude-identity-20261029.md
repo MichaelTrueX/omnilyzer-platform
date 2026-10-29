@@ -219,3 +219,53 @@ against Keycloak, production PostgreSQL-backed Django sessions or the real
 browser+Native full journey. Those remain explicit blockers before any
 authorization to lift HTTP503. The disposable test Keycloak was shut down
 after these checks, with no change to the production realm or Sumlaude.
+
+
+## Joined actual Keycloak 26 -> permanent Django BFF -> full S03 PG16 (29 Oct)
+
+**PASS** on `truexdevelopment`, no production access. The new optional
+`services/identity/tests/run_keycloak_provider_interop_qa.py` drives the
+original isolated Keycloak 26.7.2 SAN-TLS fixture, **not** the original
+Task004 BFF. The actual new platform `identity_bff/oidc.py`, `views.py`
+and `issuer.py` run in the same test. Exact S03 PR #230 schema source was
+fetched from Git HEAD `952974ef78470bf45ec8b579115302e0c23c3760`;
+`scripts/production/s03-native-full-schema.sql.candidate` SHA256
+`5a69447bf27acb844eb9ae2f953eb7e9109a5712474bbd6e4d5877ea2d3da455`.
+
+The S03 canonical self-cleaning `scripts/qa/s03-str013-production-sql-pg16.sh`
+was copied to an outside-Git **temporary** shell wrapper, with the root
+pointing to the exact S03 worktree and one extra call to the platform
+interoperability script immediately after S03's synthetic admission setup,
+while the isolated PostgreSQL16.15 container was running. The **actual
+unmodified, SHA-pinned full schema** was installed. This QA script created
+one additional `identity_disposable` database in the *same disposable
+PostgreSQL container*, ran real Django session migrations there, and
+used a separate `sumlaude_learning` database with actual restricted
+`sumlaude_identity_issuer` role and 33-table Native/RLS source schema.
+
+Observed PASS, in order:
+1. Actual Keycloak HTTPS Authorization Code + PKCE, server-side token
+   exchange and signed issuer/sub/nonce/JWKS validation through the
+   **new persistent** Django BFF; callback returns query-free `/start`.
+2. Test-only fictional adult admission attached to the **actual signed**
+   Keycloak subject, created in the ephemeral DB by the QA harness,
+   never by the BFF; exact role-bound S03 SQL function issued the digest
+   of the real newly generated opaque cookie.
+3. Cross-client Django login state **persisted in separate PostgreSQL**
+   `django_session`, with the browser's host-only secure/httpOnly cookies.
+4. Actual Keycloak refresh token exchange: old S03 session revoked,
+   new S03 opaque cookie minted and session remained authenticated.
+5. Django CSRF-protected logout: new S03 session revoked in real PG16,
+   Django identity database session record removed, UI auth state false.
+6. All existing S03 actual migration/RLS/privilege tests passed, including
+   22 sensitive access denials and mutation-detected grant regression,
+   migration/bootstrap reapply denial and disposable container cleanup.
+
+**Trust boundary:** Adult admission row was fictional, created ONLY by the
+QA test after a verified provider subject; the test does **not** provide
+real registration/guardian evidence, a real production Keycloak confidential
+client or live enrollment. Django and Native PG were two distinct databases
+within one disposable container, not a deployed server layout. The joined
+S01 real Chromium practice journey, public/private LC1 rights/release,
+operational TLS/domain/secret rotation, and owner-authorized production
+rollout remain outstanding. Never lift production HTTP503 based on this test.
