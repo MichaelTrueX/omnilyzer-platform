@@ -75,12 +75,12 @@ class AnalyticsSignedSourceBindingTests(unittest.TestCase):
                 _hash_existing_regular(Path(root))
 
     def test_unsigned_evidence_requires_verified_real_git_and_archive(self) -> None:
-        """Real PR45 Git tree and deterministic tar are required to create claim."""
+        """Real PR49 Git tree and deterministic tar are required to create claim."""
         checkout = os.environ.get("OMNILYZER_ANALYTICS_CHECKOUT")
         if not checkout:
-            self.skipTest("actual clean Analytics PR45 checkout not provided")
+            self.skipTest("actual clean Analytics PR49 checkout not provided")
         source = Path(checkout)
-        expected_commit = "8648adba2db884cc78274080b9836ca46bafd630"
+        expected_commit = "2472d5265688b4f1e18d91f140afe61307ea371b"
         self.assertEqual(
             __import__("subprocess").check_output(
                 ["git", "-C", str(source), "rev-parse", "HEAD"], text=True,
@@ -97,7 +97,7 @@ class AnalyticsSignedSourceBindingTests(unittest.TestCase):
                 source, context, oci, platform_root=ROOT,
             )
             self.assertEqual(claim["source_commit"], expected_commit)
-            self.assertEqual(claim["source_files_verified"], 51)
+            self.assertEqual(claim["source_files_verified"], 72)
             self.assertEqual(claim["build_context_sha256"], built["context_sha256"])
             self.assertTrue(claim["oci_manifest_digest"].startswith("sha256:"))
             self.assertNotIn("signed", claim)

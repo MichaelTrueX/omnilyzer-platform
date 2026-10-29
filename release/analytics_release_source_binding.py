@@ -7,7 +7,7 @@ Cosign/Forgejo signing step. This is a source-evidence adapter, not a signer,
 registry publisher, deployment controller or authorization gate.
 
 Related complete files:
-  release/analytics_source_admission.py (M01 source pin and 51 Git blobs)
+  release/analytics_source_admission.py (M01 source pin and 72 Git blobs)
   release/analytics_task013_build_input.py (M05 review input)
   release/analytics_oci_context.py (M01 immutable Git-only Docker context)
   release/analytics_oci_archive.py (M05 OCI manifest and layer validation)
@@ -193,7 +193,7 @@ def prepare_original_signed_evidence_inputs(
             or verified_source_claim["product_id"] != "analytics"
             or verified_source_claim["source_repository"] != "MichaelTrueX/omnilyzer"
             or verified_source_claim["oci_repository"] != "omnilyzer/analytics"
-            or verified_source_claim["source_files_verified"] != 51
+            or verified_source_claim["source_files_verified"] != 72
             or verified_source_claim["readiness_path"] != "/readyz"):
         raise DeploymentPolicyError("external product provenance claim is invalid")
     for name, value in verified_source_claim.items():
