@@ -350,3 +350,102 @@ and `... reused`. Both check exact Git identity, reuse the S03 canonical
 disposable shell and delete DB, session secrets and cookies after exit.
 Do not run on the live host. No main merge, DNS, product login or release
 change was performed.
+
+## Operator-ready original-platform identity installation (29 Oct, INACTIVE)
+
+**Files and exact purpose:** `services/identity/omnilyzer-identity.service`
+is the COMPLETE, initially uninstalled original Django BFF systemd unit;
+`services/identity/nginx-auth-location.conf.review` is the COMPLETE,
+initially uninstalled same-origin `/auth/*` Nginx location fragment;
+`services/identity/config/settings.py`, `config/wsgi.py`, and
+`identity_bff/{oidc,views,issuer}.py` remain the existing trusted identity
+implementation. This is **one source/operator integration in platform PR #243**,
+not a new login system, staging environment, release workflow or deployed unit.
+
+**Actual host evidence:** Read-only inspection of `truexmainserver` as
+`trusthansen` confirmed Ubuntu 24.04.3, Python 3.12.3,
+running Nginx and PostgreSQL 16, and unused loopback ports 18740/18741.
+Existing public `/etc/nginx/sites-enabled/sumlaude.conf` serves
+`sumlaude.com` only; it must NOT be changed for the private app.
+`app.sumlaude.com` and `auth.omnilyzer.ai` did not resolve on this
+host; there was no identifiable BFF/Keycloak systemd service or expected
+app/auth Let's Encrypt certificate directory. Other installation arrangements
+were not excluded. **No production writes, DNS changes or service start
+were performed.**
+
+### Preconditions (operator/owner; NOT executed by this PR)
+
+1. Obtain explicit product-owner production activation approval **after**
+   S03 approves a real independent adult/minor/guardian registration and
+   revocation process and S02 approves the private LC1 source. A successful
+   Keycloak login alone is NEVER consent/admission.
+2. Use the *existing* Keycloak 26 confidential realm/client, with an actual
+   trusted HTTPS issuer, PKCE S256 and registered callback
+   `https://app.sumlaude.com/auth/callback`. Do not use the QA realm,
+   self-signed development certificate or invented bearer claims.
+   Provision legitimate app/issuer DNS and valid TLS. The host must
+   serve one HTTPS `app.sumlaude.com` origin.
+3. Prepare existing PostgreSQL 16 with ONE independent Django session
+   database. Run the original `manage.py migrate` with a separate
+   migration owner; the BFF runtime user needs only the necessary
+   `django_session` DML grants. S03 controls its OWN separately restricted
+   `sumlaude_identity_issuer` role, existing production SQL functions,
+   independent lawful admission and Native database.
+4. With privileged operator access, stage the exact approved immutable
+   platform PR #243 source as
+   `/opt/omnilyzer/identity/releases/<approved-git-sha>/` and point
+   `/opt/omnilyzer/identity/current` to that version only after the
+   release identity/hash is verified. Install exact
+   `services/identity/requirements.txt` in
+   `/opt/omnilyzer/identity/current/.venv`, keeping the Venv and source
+   read-only to the dedicated nonroot `omnilyzer-identity` system account.
+5. Create a root-owned private `/etc/omnilyzer/identity/` directory
+   (0700) and root-owned `identity.env` file (0600) OUTSIDE Git.
+   Set `DJANGO_SECRET_KEY`, `TOKEN_FERNET_KEY`,
+   `PRODUCT_ORIGIN=https://app.sumlaude.com`, `OIDC_ISSUER`,
+   `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`,
+   `IDENTITY_PG_DATABASE`, `IDENTITY_PG_USER`,
+   `IDENTITY_PG_PASSWORD`, `IDENTITY_PG_HOST`,
+   `IDENTITY_PG_PORT` and `SUMLAUDE_ISSUER_DSN`.
+   Issue/revoke function names default to reviewed production names,
+   not `qa_*`. Never share credential values through GitHub, ChatGPT,
+   Nginx access logs or shell command arguments.
+6. Copy the reviewed systemd source unit to the host service unit directory
+   and `nginx-auth-location.conf.review` to a private host-specific Nginx
+   include path. Do NOT enable the service or include the fragment until
+   approved. In the final app HTTPS vhost, exact `/auth/*` goes ONLY to
+   loopback 127.0.0.1:18740; S03's own private `/api/*` must remain
+   denied until S03's dedicated 127.0.0.1:18741 service and admissions
+   are verified, and S01 exclusively owns `/start`.
+   Keep Nginx's existing CSP/HSTS/SSL headers; strip any untrusted
+   `X-Forwarded-Proto` before asserting HTTPS to Django. Disable
+   `/auth/*` access logs, because the OIDC callback contains a code.
+   Do not expose either loopback port.
+7. Operator preflight after staging but **before activation**:
+   verify approved Git HEAD and artifact hashes; use non-secret-only
+   Django `manage.py check --deploy`, verify `django_session` schema
+   and restricted role grants, inspect `nginx -t` with the actual valid
+   TLS vhost and confirm that app/source remains disabled. Compare
+   backups/rollback of the existing host and separate session/Native DB.
+   The source unit has `AssertPathExists=/etc/omnilyzer/identity/owner-approved-go`;
+   absent this owner-controlled marker it refuses even a mistaken service
+   startup. **Do not create that marker until actual approved activation.**
+8. Only after explicit owner GO: start the existing nonroot Gunicorn
+   service and enable exact app-origin HTTPS/Nginx routing. One real
+   owner-authorized flow must prove Keycloak Authorization Code+PKCE,
+   bounded server-only provider tokens, per-product secure HttpOnly cookie,
+   S03 restricted live allowed-user session, 5-unit LC1 read/write with
+   saved progression, CSRF POST denial, refresh/revocation, logout stale
+   cookie denial, and cross-user isolation. Reject traffic/leave 503
+   if lawful guardian/adult admission or signed rights are unavailable.
+9. Rollback: withdraw `/auth/*` and private `/api/*` upstream routing
+   from the app vhost (restore prior 503), revoke existing S03 sessions
+   under its authorized issuer role, stop this BFF unit, restore previous
+   immutable source and database snapshots if required. Never silently
+   delete valid learner progress or re-enable legacy password paths.
+
+**Not done by these files:** Keycloak installation/client provisioning,
+real DNS or TLS, secrets/session DB migration, lawful enrollment, active
+systemd/Nginx changes, private S01/S03 deployment, production smoke,
+owner activation, or a private learner release. The previously accepted
+Keycloak→persistent BFF→S01 Chromium→S03 LC1 QA is reused rather than rerun.

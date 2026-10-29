@@ -1,0 +1,43 @@
+# File: services/identity/nginx-auth-location.conf.review
+# Purpose: Inactive Nginx location fragment for the EXISTING app.sumlaude.com
+# TLS vhost. Include ONLY after explicit owner GO, validated app DNS/TLS,
+# independent S03 legal admission and service readiness. Not a complete vhost.
+# Linked files: services/identity/omnilyzer-identity.service,
+# services/identity/config/settings.py,
+# docs/operations/p0-shared-keycloak-sumlaude-identity-20261029.md.
+#
+# Section 1 - Exact /auth without a route is deliberately not proxied.
+location = /auth {
+    return 404;
+}
+
+# Section 2 - Only the existing confidential BFF handles /auth/*.
+# This fragment MUST be included inside app.sumlaude.com's HTTPS server {}.
+# Never include in an HTTP vhost, on sumlaude.com or a broad wildcard domain.
+location ^~ /auth/ {
+    # Disable access logs: OIDC callback query includes one-use code and state.
+    access_log off;
+    proxy_pass http://127.0.0.1:18740;
+    proxy_http_version 1.1;
+
+    # Section 3 - Canonicalize inbound identity/proxy trust boundary. The
+    # public HTTPS vhost, not a browser-supplied header, asserts TLS to Django.
+    proxy_set_header Host app.sumlaude.com;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host "";
+    proxy_set_header X-Forwarded-Port "";
+    proxy_set_header Forwarded "";
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header Connection "";
+
+    # Section 4 - No proxy cache, no extended backend request exposure.
+    # Do not add location-level add_header: that would override inherited
+    # HTTPS security headers (HSTS/CSP) from the existing S01 vhost.
+    proxy_cache off;
+    proxy_buffering off;
+    proxy_connect_timeout 3s;
+    proxy_send_timeout 15s;
+    proxy_read_timeout 15s;
+    client_max_body_size 16k;
+}
