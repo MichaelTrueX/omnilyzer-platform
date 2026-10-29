@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "product": "analytics",
+  "source_repository": "MichaelTrueX/omnilyzer",
+  "source_commit": "8648adba2db884cc78274080b9836ca46bafd630",
+  "source_manifest_path": "docs/qa/m01-integrated-release-20261027.manifest.json",
+  "source_manifest_sha256": "d5a8b056581e4f30d4e352d04492b0bf8f8b2560b3b01eda1c679a8b1a0d9a3e",
+  "source_critical_files": {
+    "package-lock.json": "a1a6d6b615536de9804ae6a05a168e6c7112838e275b57c06ac0f532c695d3ce",
+    "prisma/schema.prisma": "bf84817b0416fcfc4f75c36a21aba145984e370e21304cdb76155972b9eb8b31",
+    "lib/server-api-auth.ts": "76d93b3dc6dd499af9fab1ac56d6cbbf8f5099c7e84b1d1f52d0d8fd30c5c316",
+    "app/api/v1/auth/login/route.ts": "5aae431490ce021684edc7fa554eaac3426b31913a9d5a5b59d911eb6df6827a",
+    "app/dashboard/workspaces/page.tsx": "4276a26bc7b6dfccd218f8e525eaf589dd81388ab50a40e9c222faac2bfb3d9e",
+    "lib/website-management.ts": "6b858ecfc51af1763c882e24b957f7a38ca879bcaec86708c467c4eed141f5f4",
+    "components/websites/WebsiteOverview.tsx": "e236233f32deb2d5ac6f1f875d6e207a25955ef6fc69276f3b7591c0e9fe18c9",
+    "components/websites/WebsiteDetail.tsx": "81411931e961a8a1f5d333ca0384bf6489a941b3efa44118a60617d120944db4",
+    "__tests__/m03-website-overview-isolation.test.cjs": "24cfb088a6eb011de641b87ccdd2252e67e17a2003cf009e7d7f6575b7428a23",
+    "__tests__/m03-website-refresh-isolation.test.cjs": "a73f7564e134a1be423ee3accb625f8a078adccca5efba6c22aad7a5dd682de7",
+    "app/livez/route.ts": "aab1779905f4d957501b6d6e646b13f839bdb948e5dce03144cd68ce8f1c1161",
+    "app/readyz/route.ts": "f08d51eaff8d7fd80f33737905db05f7479f4307cfad69411a11517e43e5800e",
+    "__tests__/m03-platform-product-health.test.cjs": "e549f97c7e753b06122d8afc614c7a6a8f4f0e47c86501abd6d53c0b8084620c",
+    "scripts/accept-m03-product-health-pg16.py": "992a9d2853dff28a7132ab25a773e867dfceaed61e7986d30dcb683fc19b3e9f",
+    "docs/qa/m03-platform-first-consumer-20261027.md": "9d8db769659705fc89f60d68fc9993f1c1876c5c7e2bf1f8e3ac68431655c22f",
+    "prisma/rls/analytics-app-events.install.sql": "87b6e44917ccf716421cbe3e4df3fd46ee1ff08cfa30a7ea3476956ecbf85328",
+    "prisma/rls/analytics-app-events.rollback.sql": "baf90ae46c0cec7a8c06fe9c311193ec814059db4dd640a5534e104299044544",
+    "scripts/accept-platform-integration-dev.py": "8b60d86be246c07eed0a2351d52ea5f1e5dc75c7de0c3c82951cdd61cb24aafd",
+    "__tests__/secure-analytics-postgres.e2e.cjs": "8f1ee5ce0d0995ae04a27ba7a7242ac16646f1972081b9f75c93a4834e1b04f1",
+    "Dockerfile.analytics": "59c1437d2699c5696540697c3b369d4915b59ed10fb5ed013e71a46dc507156e",
+    ".dockerignore": "10e66496d6ecef461d5d5af6250f92ec1096e467cf313ea68fc2cc70d2c41dd3",
+    "scripts/accept-m05-analytics-oci-dev.py": "b0e517f14a1c08e12ffb719c41893ffdfd67edf7848746de6fe8aa4e809989ff"
+  },
+  "runtime": {
+    "framework": "nextjs-14",
+    "auth": "json-bearer-localstorage",
+    "session": "postgresql-revocable",
+    "tenant_isolation": "postgresql-force-rls",
+    "database": "dedicated-analytics-postgresql",
+    "http_ready_path": "/readyz",
+    "authenticated_api_path": "/api/v1/workspaces",
+    "dashboard_path": "/dashboard/workspaces"
+  },
+  "authorization": "review-only-not-a-signed-release"
+}

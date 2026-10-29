@@ -82,11 +82,11 @@ were skipped. These historical facts and the denial evidence remain authoritativ
 
 The isolated remediation pins the public Chainguard Python image by its exact
 multi-platform OCI index digest
-`sha256:d0a0ef8759e4da134c9848b9bba9aa9b7fec345427f093f1a37ca02434e685d8`.
-Its publisher signature was independently verified with Cosign 3.1.2 under the
-`chainguard-images/images` GitHub release workflow identity. The public `latest`
-stream moved from Python 3.14 to 3.15, so this is **not** an ordinary patch-level
-replacement. The canary uses only the Python standard library, but its executable
+`sha256:549f3ba5e588ebab80dcf5a5a3536aa7f4b5c384bc6955c0347d372414197386`.
+The previous pin had an independently verified publisher signature; this
+new digest must obtain independent Cosign publisher-signature verification
+before promotion. The public `latest` stream moved from Python 3.14 to 3.15,
+so this is **not** an ordinary patch-level replacement. The canary uses only the Python standard library, but its executable
 image and full Grype policy must be retested before any publication approval.
 
 This change updates only the Task 013 synthetic canary base and its exact-digest
