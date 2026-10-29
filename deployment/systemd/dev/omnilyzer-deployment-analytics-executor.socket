@@ -1,0 +1,23 @@
+# File: deployment/systemd/dev/omnilyzer-deployment-analytics-executor.socket
+# Purpose: reserved, private Analytics-only Task014 executor listener.
+# Related: deployment/analytics_executor_service_bootstrap.py,
+#          deployment/analytics_unix_boundary.py,
+#          deployment/systemd/dev/omnilyzer-deployment-analytics-executor.service.
+# Inert repository asset: no installation, enabling, or socket creation.
+
+[Unit]
+Description=Omnilyzer DEV Analytics Task014 executor private socket
+
+[Socket]
+ListenStream=/run/omnilyzer/deployment/analytics-executor.sock
+SocketUser=omnilyzer-executor
+SocketGroup=omnilyzer-deployment
+SocketMode=0660
+DirectoryMode=0755
+FileDescriptorName=omnilyzer-analytics-executor
+Accept=no
+Service=omnilyzer-deployment-analytics-executor.service
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

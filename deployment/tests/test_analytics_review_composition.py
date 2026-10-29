@@ -87,12 +87,17 @@ class OriginalAnalyticsReadonlyCompositionTests(unittest.TestCase):
             "deployment/analytics_execution.py",
             "deployment/analytics_executor.py",
             "deployment/analytics_executor_composition.py",
+            "deployment/analytics_executor_service_bootstrap.py",
+            "deployment/analytics_executor_service_config.py",
+            "deployment/analytics_executor_service_entrypoint.py",
             "deployment/analytics_first_install.py",
             "deployment/analytics_unix_boundary.py",
             "deployment/analytics_private_registry.py",
             "deployment/analytics_signed_release_consumer.py",
             "deployment/analytics_registry_review_composition.py",
             "deployment/runtime/dev/analytics.compose.review.yaml",
+            "deployment/systemd/dev/omnilyzer-deployment-analytics-executor.socket",
+            "deployment/systemd/dev/omnilyzer-deployment-analytics-executor.service",
         ):
             with self.subTest(file=new_file):
                 self.assertNotIn(new_file, paths)

@@ -1,0 +1,44 @@
+# File: deployment/systemd/dev/omnilyzer-deployment-analytics-executor.service
+# Purpose: inert, separately approved Task014 Analytics first-install service.
+# Related: deployment/analytics_executor_service_entrypoint.py,
+#          deployment/analytics_executor_service_config.py,
+#          deployment/systemd/dev/omnilyzer-deployment-analytics-executor.socket,
+#          deployment/systemd/rootless/rootless-docker-executor-socket.conf.
+# Import/checkout does not install/enable/start this service.
+
+[Unit]
+Description=Omnilyzer DEV Analytics Task014 private executor
+Requires=omnilyzer-deployment-analytics-executor.socket
+After=omnilyzer-deployment-analytics-executor.socket
+# A separate reviewed, root-owned authorization is mandatory before startup.
+ConditionPathExists=/etc/omnilyzer/deployment/dev/analytics-executor.json
+
+[Service]
+Type=exec
+User=omnilyzer-executor
+Group=omnilyzer-executor
+SupplementaryGroups=omnilyzer-replay
+WorkingDirectory=/opt/omnilyzer/deployment/app
+ExecStart=/opt/omnilyzer/deployment/venv/bin/python -m deployment.analytics_executor_service_entrypoint
+Restart=no
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/omnilyzer/deployment /run/omnilyzer/deployment/rootless-docker
+BindReadOnlyPaths=/run/user/991/docker.sock:/run/omnilyzer/deployment/rootless-docker/docker.sock
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

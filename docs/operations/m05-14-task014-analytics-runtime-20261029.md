@@ -747,3 +747,88 @@ executor code have no changes.
 authorized; real rootless secrets, PostgreSQL restricted app/collector role
 isolation, private health and rollback must be verified by a single final
 privileged DEV acceptance followed by M04 approval and owner authorization.
+
+## M05-14: root-controlled Analytics executor service bootstrap (2026-10-30)
+
+**Same delivery PR #258.** This increment introduces exactly one product-only,
+fail-closed Task014 Analytics bootstrap. It does NOT install or enable a systemd
+unit or start a Docker container. There is no generic routing framework and
+no change to the original installed canary or its reserved socket.
+
+### Complete files
+
+- `deployment/analytics_executor_service_config.py`: read the ORIGINAL
+  hardening-validated Task014 C17 `executor.json` first, in the original
+  executor UID/GID and group context. Read only the second fixed, root-owned
+  `/etc/omnilyzer/deployment/dev/analytics-executor.json` via original
+  descriptor-relative and O_NOFOLLOW directory checks; require root:executor
+  group, mode0640, one link, bounded canonical duplicate-free JSON, matching
+  original installed platform commit, and exact product=Analytics/stage=DEV.
+  Check real root-owned installed app source bytes through fd-relative reads
+  and SHA256 for 14 named Python modules. Check the exact Docker Compose bytes
+  and the two product/runtime profile **canonical parsed profile hashes**;
+  these differ from simple file SHA256, and match the signed release's pinned
+  profile hashes. Reject symlinks, wrong modes, non-root ownership, extra
+  source entries, file drift, malformed metadata and arbitrary paths.
+  Construct only four reviewed root-controlled source hashes and original
+  C13 numeric identities; never accept them from a promotion HTTP request.
+- `deployment/analytics_executor_service_bootstrap.py`: require the above
+  verified installed source BEFORE consuming any systemd activation FD.
+  Require exactly one FD3, the exact `omnilyzer-analytics-executor` name,
+  proper LISTEN_PID/PIDFDID, and original UID/GID; instantiate only
+  `AnalyticsExecutorComposition` and run one original secured accept, then
+  close the FD on both success/failure. No canary socket/name fallback.
+- `deployment/analytics_executor_service_entrypoint.py`: explicit, closed
+  exit-status entrypoint. Import has no infrastructure side effect.
+- `deployment/systemd/dev/omnilyzer-deployment-analytics-executor.socket`:
+  inert reserved original-style systemd socket unit, exact fixed separate
+  `/run/omnilyzer/deployment/analytics-executor.sock`,
+  `omnilyzer-executor:omnilyzer-deployment` 0660, one named FD, Accept=no.
+- `deployment/systemd/dev/omnilyzer-deployment-analytics-executor.service`:
+  inert separate, uninstalled original UID991 systemd unit with original
+  restricted account, original rootless user socket's protected bind mount,
+  private writable volatile auth dir, no privileges/capabilities, strict
+  filesystem, exact Python module and fail-closed root config condition.
+  Neither unit is enabled in this branch.
+- `deployment/tests/test_analytics_executor_service_bootstrap.py`: complete
+  root-owned source schema/duplicates/strict paths, simulated real
+  descriptor-backed byte/inode/mode/symlink/changed-hash checks, original
+  C17 load failure before FD use, reserved systemd named-FD/PID denial,
+  one-shot FD close on success/failure, and inert systemd checks.
+- `deployment/tests/test_analytics_review_composition.py`: prove all new
+  Analytics modules/unit paths remain OUTSIDE the original canary source set.
+  This documentation file is also complete.
+
+### Product-first admission and installation acceptance, still HOLD
+
+The root-owned JSON file is **not committed with deployment-specific hashes
+or any real credentials**. When the approved immutable platform commit is
+installed by the existing Task014 root-owned installer, it must produce the
+*exact* 14 Git-object SHA256 values in `source_sha256` and reviewed Compose
+SHA256 and canonical product/runtime profile hashes. Its
+`reviewed_installed_commit` must match original hardened C17
+`executor.json` for that installation, not a mutable branch or the current
+conversation's suggested hash. The source pin is installation authority ONLY
+when the independent root-controlled file and installed source file checks
+pass; the original broker still independently checks OIDC, true Sigstore/
+Cosign/Forgejo/Zot signatures, 0.15.0 source and digest, audience/replay/FD.
+The separate systemd socket and service must be installed and enabled only by
+a subsequently approved root-owned Task014 host operation. They are
+intentionally uninstalled, disabled and absent on the current DEV host.
+
+`systemd-analyze verify` read the source unit files without installing them.
+It returned only the expected uninstalled-venv warning that
+`/opt/omnilyzer/deployment/venv/bin/python` is not accessible from the
+current development sandbox; the initial unit-section placement warning was
+corrected. This is NOT installed-host systemd verification. Original canary
+units and rootless daemon configurations remain byte-identical to main.
+
+**Validation:** 691 relevant original Task014 and Analytics tests ran,
+**688 PASS, 3 expected SKIP, 0 FAIL**, including the new descriptor-backed
+tamper/ownership test. No privileged socket or real Docker was touched.
+Actual final approval must still demonstrate the root-controlled installed
+manifest/units, approved UID10001 four source secrets mounted with positive
+and negative file-access checks, two restricted PostgreSQL app/collector roles
+and RLS, genuine signed release registry and original OIDC broker, actual
+private blue /readyz, first-install stop-only rollback and one bounded M04
+security review. NO-GO for live DEV install, merge and production remains.
