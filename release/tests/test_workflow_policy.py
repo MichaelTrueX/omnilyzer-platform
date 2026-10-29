@@ -39,6 +39,22 @@ class WorkflowPolicyTests(unittest.TestCase):
         cls.workflow = yaml.safe_load(cls.raw)
         cls.jobs = cls.workflow["jobs"]
 
+    def test_private_cross_repo_analytics_checkout_requires_scoped_token(self) -> None:
+        """Both protected consumer jobs use an explicit read-only private Git credential."""
+        for job_name in ("analytics-source-admission", "analytics-publish-zot"):
+            steps = self.jobs[job_name]["steps"]
+            checkout = next(step for step in steps if step.get("with", {}).get("repository") == "MichaelTrueX/omnilyzer")
+            self.assertEqual(checkout["with"]["token"], "${{ secrets.ANALYTICS_SOURCE_READ_TOKEN }}")
+            self.assertEqual(checkout["with"]["ref"], "4cdda7faeba57abb3388f9be5c450fe6afb1140d")
+            self.assertIs(checkout["with"]["persist-credentials"], False)
+            index = steps.index(checkout)
+            self.assertGreater(index, 0)
+            precheck = steps[index - 1]
+            self.assertIn("TOKEN_MISSING", precheck["run"])
+            self.assertEqual(precheck["env"]["SOURCE_READ_TOKEN"], "${{ secrets.ANALYTICS_SOURCE_READ_TOKEN }}")
+            self.assertNotIn("echo $SOURCE_READ_TOKEN", precheck["run"])
+            self.assertNotIn("set -x", precheck["run"])
+
     def test_manual_trigger_and_global_permissions_are_closed(self) -> None:
         self.assertEqual(self.workflow["permissions"], {})
         self.assertIn("workflow_dispatch", self.raw)
@@ -193,8 +209,12 @@ class WorkflowPolicyTests(unittest.TestCase):
         ):
             self.assertIn(required, run)
         for forbidden in ("id-token", "cosign", "publish_zot", "publish_forgejo",
-                          "docker login", "docker push", "secrets."):
+                          "docker login", "docker push"):
             self.assertNotIn(forbidden, str(source_job))
+        self.assertEqual(str(source_job).count('secrets.'), 2)
+        self.assertNotIn('secrets.', str([step for step in steps
+            if not step['name'].startswith('Require least-privilege')
+            and step.get('with', {}).get('repository') != 'MichaelTrueX/omnilyzer']))
         names = [step["name"] for step in steps]
         self.assertLess(names.index("Build and verify immutable original Analytics OCI archive"),
                         names.index("Scan exact Analytics OCI and enforce original Critical High policy"))
@@ -408,7 +428,10 @@ class AnalyticsProtectedPublicationTests(unittest.TestCase):
         for job in (zot, forgejo):
             self.assertEqual(job['permissions'], {'contents': 'read', 'id-token': 'write'})
             self.assertIn("inputs.product == 'analytics'", job['if'])
-            self.assertNotIn('secrets.', str(job))
+            if job is zot:
+                self.assertEqual(str(job).count('secrets.'), 2)
+            else:
+                self.assertNotIn('secrets.', str(job))
 
     def test_signatures_are_verified_before_forgejo_publication(self):
         """Require the real protected-main signer and digest-specific Cosign."""

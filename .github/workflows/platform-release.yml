@@ -116,11 +116,24 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Require least-privilege private Analytics Git source credential
+        shell: bash
+        env:
+          SOURCE_READ_TOKEN: ${{ secrets.ANALYTICS_SOURCE_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if test -z "$SOURCE_READ_TOKEN"; then
+            echo 'TASK013_ANALYTICS_PRIVATE_SOURCE_READ_TOKEN_MISSING' >&2
+            exit 1
+          fi
       - name: Check out exact reviewed Analytics PR52 Git objects
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: MichaelTrueX/omnilyzer
           ref: 4cdda7faeba57abb3388f9be5c450fe6afb1140d
+          # Cross-repository private checkout needs its own least-privilege
+          # read-only credential; platform GITHUB_TOKEN cannot access it.
+          token: ${{ secrets.ANALYTICS_SOURCE_READ_TOKEN }}
           fetch-depth: 0
           path: analytics-review-source
           persist-credentials: false
@@ -283,11 +296,24 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Require least-privilege private Analytics Git source credential
+        shell: bash
+        env:
+          SOURCE_READ_TOKEN: ${{ secrets.ANALYTICS_SOURCE_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if test -z "$SOURCE_READ_TOKEN"; then
+            echo 'TASK013_ANALYTICS_PRIVATE_SOURCE_READ_TOKEN_MISSING' >&2
+            exit 1
+          fi
       - name: Checkout reviewed immutable Analytics Git source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: MichaelTrueX/omnilyzer
           ref: 4cdda7faeba57abb3388f9be5c450fe6afb1140d
+          # Cross-repository private checkout needs its own least-privilege
+          # read-only credential; platform GITHUB_TOKEN cannot access it.
+          token: ${{ secrets.ANALYTICS_SOURCE_READ_TOKEN }}
           fetch-depth: 0
           path: analytics-review-source
           persist-credentials: false
