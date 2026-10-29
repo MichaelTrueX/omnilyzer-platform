@@ -54,6 +54,13 @@ def archive_evidence(directory: Path, expected_digest: str, version: str) -> byt
             or provenance.get('external_source') != claim
             or manifest.get('signing', {}).get('oci_signature') != 'omnilyzer/analytics@' + expected_digest):
         raise ValueError('Analytics provenance hash mismatch')
+    # Signed bundles must be actual structured Sigstore JSON, not empty placeholders.
+    for name in ('release-manifest.sigstore.json', 'release-provenance.sigstore.json'):
+        bundle = _canonical_json((directory / name).read_bytes(), name)
+        if (bundle.get('mediaType') != 'application/vnd.dev.sigstore.bundle.v0.3+json'
+                or type(bundle.get('verificationMaterial')) is not dict
+                or type(bundle.get('messageSignature')) is not dict):
+            raise ValueError('invalid Sigstore evidence bundle structure')
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode='w', format=tarfile.PAX_FORMAT) as tar:
         for name in sorted(FILES):

@@ -23,14 +23,16 @@ def fixture(directory):
                 'provenance': {'sha256': hashlib.sha256(provenance_raw).hexdigest()},
                 'external_source': claim,
                 'signing': {'oci_signature': 'omnilyzer/analytics@' + DIGEST}}
+    bundle = json.dumps({'mediaType': 'application/vnd.dev.sigstore.bundle.v0.3+json',
+                         'verificationMaterial': {}, 'messageSignature': {}}).encode()
     data = {'analytics-source-claim.json': json.dumps(claim).encode(),
             'oci-publication.json': json.dumps({'schema_version': 1,
                 'registry': 'https://oci-dev.omnilyzer.ai', 'repository': 'omnilyzer/analytics',
                 'tag': VERSION, 'manifest_digest': DIGEST}).encode(),
             'release-manifest.json': json.dumps(manifest).encode(),
             'release-provenance.json': provenance_raw,
-            'release-manifest.sigstore.json': b'fixture-only',
-            'release-provenance.sigstore.json': b'fixture-only'}
+            'release-manifest.sigstore.json': bundle,
+            'release-provenance.sigstore.json': bundle}
     for name, value in data.items():
         (directory / name).write_bytes(value)
 
@@ -65,6 +67,15 @@ class AnalyticsForgejoEvidenceTests(unittest.TestCase):
             manifest['external_source']['oci_repository'] = 'omnilyzer/other'
             manifest_path.write_text(json.dumps(manifest))
             with self.assertRaises(ValueError):
+                archive_evidence(directory, DIGEST, VERSION)
+
+    def test_invalid_signature_bundle_denied(self):
+        """Section: reject missing or malformed Sigstore bundle structures."""
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            fixture(directory)
+            (directory / 'release-manifest.sigstore.json').write_bytes(b'fixture-only')
+            with self.assertRaises(Exception):
                 archive_evidence(directory, DIGEST, VERSION)
 
     def test_publish_readback_must_match(self):
