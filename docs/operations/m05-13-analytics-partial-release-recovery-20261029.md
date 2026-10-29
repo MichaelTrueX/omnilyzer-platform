@@ -53,13 +53,26 @@ intentionally fail-closed on an occupied version; do not weaken this check.
    the exact OCI digest. Task014 requires its own authorization, runtime
    validation, installation and rollback proof.
 
-## Current source blocker (2026-10-29)
+## Exact PR52 OCI security evidence (2026-10-29)
 
-PR #244 documents the actual Analytics OCI scan as **0 Critical / 54 High**.
-The zero-High/zero-exception release gate must reject this image. Do not
-initiate a public release or claim a green scanner from the synthetic unit
-fixtures. Source remediation and a fresh actual pinned scan are required
-before any publish/merge/release authorization.
+The **original pinned Task013** unsigned OCI run has now completed for exact
+Analytics PR52 `4cdda7faeba57abb3388f9be5c450fe6afb1140d` and exact original
+platform build source `b315601e74b68096a0c887b54d7aebed35ab7ca0`.
+The retained sanitized machine-readable report is
+`docs/operations/m05-pr52-oci-security-scan-20261029.json` (added by this
+review follow-up), transcribed byte-for-byte from the original local scanner
+artifact. It records Syft 1.51.0 CycloneDX 1.6, Grype 0.118.0, Grype DB
+`2026-10-29T06:23:34Z`, **0 Critical / 0 High / 3 Medium / 1 Low**, zero
+blocked findings and policy `PASS`. The source TAR SHA256 is
+`c4474ae71ac2acf58876c9ab502e009c866fbeb29862ce991374b8396abf092f`.
+
+These are **UNSIGNED local build and scanner results**, not a successful
+protected-main workflow run or registry attestation. The image may produce a
+different OCI digest when built again; never pin a different build's digest to
+this receipt. The protected workflow must perform its OWN pinned actual scan
+and source binding and must reject any new Critical/High or exceptions.
+Release deployment, registry publication, Task014 and rollback acceptance
+remain **HOLD** until separately authorized and genuinely verified.
 
 ## Regression coverage
 
