@@ -106,7 +106,7 @@ jobs:
   analytics-source-admission:
     if: ${{ inputs.product == 'analytics' && inputs.auth_probe == false }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -143,6 +143,102 @@ jobs:
           python3 -m release.analytics_source_admission --analytics-checkout analytics-review-source
           python3 -m release.analytics_task013_build_input --analytics-checkout analytics-review-source
           echo "ANALYTICS_SOURCE_ONLY_ACCEPTED: NO SIGNATURE, NO REGISTRY, NO EXECUTOR"
+      # Section 1c: original Task013 pinned build and scanner; all outputs
+      # remain LOCAL, unsigned, and inaccessible to the canary publishers.
+      - name: Set up pinned Analytics Python runtime
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - name: Set up original pinned Analytics Buildx and BuildKit
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          name: m01-analytics-task013
+          version: v0.36.1
+          driver: docker-container
+          driver-opts: image=moby/buildkit:v0.24.0@sha256:6eceb8971ce4fceb3daca562832642706238b7eea72941fcf9896c93c3c4a53e
+      - name: Build and verify immutable original Analytics OCI archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          handoff="$RUNNER_TEMP/analytics-task013-unsigned"
+          mkdir -m 0700 "$handoff"
+          python3 -m release.analytics_task013_build_candidate \
+            --analytics-checkout analytics-review-source \
+            --builder m01-analytics-task013 --build \
+            --retain-verified-artifacts "$handoff/candidate"
+          test -s "$handoff/candidate/source.tar"
+          test -s "$handoff/candidate/analytics.oci.tar"
+          python3 -m release.analytics_release_source_binding \
+            --analytics-checkout analytics-review-source \
+            --immutable-context "$handoff/candidate/source.tar" \
+            --oci-archive "$handoff/candidate/analytics.oci.tar" \
+            > "$handoff/unsigned-source-claim.json"
+          python3 - "$handoff/unsigned-source-claim.json" <<'PYCODE'
+          import json, sys
+          from pathlib import Path
+          receipt = json.loads(Path(sys.argv[1]).read_bytes())
+          if (receipt.get('signed') is not False
+                  or receipt.get('release_authorized') is not False
+                  or receipt.get('deployment_authorized') is not False
+                  or receipt.get('claim', {}).get('source_files_verified') != 78
+                  or receipt.get('claim', {}).get('source_commit') !=
+                  '4cdda7faeba57abb3388f9be5c450fe6afb1140d'):
+              raise SystemExit('ORIGINAL_ANALYTICS_SOURCE_CLAIM_DENIED')
+          print('ORIGINAL_ANALYTICS_UNSIGNED_SOURCE_BINDING_PASS')
+          PYCODE
+      - name: Install original pinned Analytics Syft
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.22.2
+        with:
+          syft-version: v1.51.0
+      - name: Install original pinned Analytics Grype
+        id: analytics-grype
+        uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.3.0
+        with:
+          grype-version: v0.118.0
+      - name: Scan exact Analytics OCI and enforce original Critical High policy
+        shell: bash
+        env:
+          GRYPE_COMMAND: ${{ steps.analytics-grype.outputs.cmd }}
+        run: |
+          set -euo pipefail
+          handoff="$RUNNER_TEMP/analytics-task013-unsigned"
+          oci="$handoff/candidate/analytics.oci.tar"
+          test -s "$oci"
+          test -x "$GRYPE_COMMAND"
+          "$GRYPE_COMMAND" version | python3 -c \
+            'import re,sys; v=re.findall(r"(?im)^version:\s*v?([^\s]+)\s*$",sys.stdin.read());sys.exit(0 if v==["0.118.0"] else 1)'
+          syft scan "oci-archive:$oci" \
+            -o "cyclonedx-json@1.6=$handoff/oci-sbom.cdx.json"
+          "$GRYPE_COMMAND" "sbom:$handoff/oci-sbom.cdx.json" -o json > "$handoff/oci-grype.json"
+          "$GRYPE_COMMAND" db status -o json > "$handoff/grype-db-status.raw.json"
+          python3 -m release.vulnerability_policy sanitize-db \
+            "$handoff/grype-db-status.raw.json" "$handoff/grype-db-status.json"
+          rm -f "$handoff/grype-db-status.raw.json"
+          # This is the existing original policy evaluator applied to the
+          # actual OCI Grype report. No fictitious Python/npm reports are used.
+          python3 - "$handoff/oci-grype.json" "$handoff/grype-db-status.json" <<'PYCODE'
+          import datetime as dt
+          import json
+          import sys
+          from pathlib import Path
+          from release.vulnerability_policy import (
+              evaluate, validate_database_status, validate_policy,
+          )
+          scanner = Path(sys.argv[1])
+          status = Path(sys.argv[2])
+          if not validate_database_status(json.loads(status.read_bytes()))['valid']:
+              raise SystemExit('ORIGINAL_ANALYTICS_GRYPE_DATABASE_DENIED')
+          policy_path = Path('release/vulnerability-policy.json')
+          policy = validate_policy(json.loads(policy_path.read_bytes()), dt.date.today())
+          if policy['exceptions'] != []:
+              raise SystemExit('ORIGINAL_ANALYTICS_SECURITY_WAIVER_DENIED')
+          receipt = evaluate(policy_path, {'oci': scanner}, dt.date.today())
+          if receipt['decision'] != 'PASS' or receipt['blocked_findings']:
+              raise SystemExit('ORIGINAL_ANALYTICS_CRITICAL_HIGH_POLICY_DENIED')
+          print('ORIGINAL_ANALYTICS_REAL_OCI_SYFT_GRYPE_POLICY_PASS_NO_WAIVERS')
+          PYCODE
+          # No signed artifact, publication or Task014 request is emitted.
 
   # Section 2: Release gate runs only in the DEFAULT non-diagnostic mode.
   gate:
