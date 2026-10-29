@@ -1000,3 +1000,53 @@ Two parallel regression groups after this fix: **142 Analytics tests (139 PASS,
 DEV broker and executor socket remain active, original canary maintenance
 port returns HTTP503 (no active canary slot), Analytics port3141 still has
 no listener. This remains **NO-GO for real installation, merger or promotion**.
+
+### 2026-10-30 — Additive Git-object source handoff and mandatory signed claim
+
+The live-path audit found an additional **actual P0 source-install blocker**:
+`analytics_signed_source_pin.review_signed_analytics_source()` reads the
+installed `release/products/analytics-source.json` file for every real signed
+0.15.0 review, yet neither existing root-owned Analytics source admission
+checked nor the proposed installer supplied that exact file. Installing the
+20 modules and the three original Compose/product/runtime assets would
+therefore still produce a hard denial when checking the actual signed release.
+
+Both `deployment/analytics_executor_service_config.py` and
+`deployment/analytics_broker_service.py` now require **four** exact additive
+runtime/source assets. The fourth is the signed-source claim at
+`release/products/analytics-source.json`, SHA256
+`45e13536c413a5e5c0a39a4d8c98daf412614dec535398b2ba204039772c88b9`.
+This hard-coded digest is the checked original Git-object file identity; a
+root-owned source must match it byte-for-byte before accessing OIDC/registry,
+inherited systemd socket or starting rootless Docker. Updated fd-relative
+tests exercise the actual claim-file bytes and reject tampering or deletion,
+including if the other three profiles and 20 Python hashes match. The
+original canary source set remains unchanged.
+
+**New complete, review-only handoff:**
+`deployment/analytics_source_handoff.py` plus
+`deployment/tests/test_analytics_source_handoff.py`.
+The handoff reuses ORIGINAL Task014 C26's bounded, hook-free, no-network Git
+object reader. It requires a reviewed immutable repository HEAD and
+constructs one canonical additive **27-file** inventory:
+**20 required Python modules + 4 exact data/source assets + 3 proposed
+inert systemd assets**. All files must be regular Git mode100644, bounded
+and checked against raw blob hashes; both product profile hashes match the
+original signed Analytics source policy. It produces a small unsigned JSON
+review inventory (no secrets, no deploy privileges) without inspecting any
+mutable working-tree contents or making a host write. Wrong SHA, other root,
+modified Git object bytes or missing signed-source claim are rejected. This
+is tangible input to the **existing** protected root-owned Task014 host
+installer and separate M04 security review, **not** an installer/approval
+by itself. No generic new framework or canary source-policy widening.
+
+**Actual DEV:** The authorized original application still has 40 root-owned
+Python modules; none of the 20 Analytics-only modules, the four required
+extra source assets, two protected product configurations or proposed
+systemd units has been installed. A future Task014 root-controlled additive
+source operation must preserve and reverify the existing 40-module canary,
+install the exact reviewed 27-file Git blob inventory and two protected
+configuration files, and safely roll back newly created files if any
+verification fails. It requires owner permission and M04 review. Product
+activation, real OCI read, UID10001 secret mount, PG role/RLS, /readyz and
+stop-only rollback remain **NO-GO** pending the same one approved DEV gate.

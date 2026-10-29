@@ -69,7 +69,16 @@ ANALYTICS_INSTALLED_FILES = (
 _PRODUCT_PATH = "deployment/products/analytics-dev.json"
 _RUNTIME_PATH = "deployment/products/analytics-runtime-dev.json"
 _COMPOSE_PATH = "deployment/runtime/dev/analytics.compose.review.yaml"
-_INSTALLED_RUNTIME_FILES = (_PRODUCT_PATH, _RUNTIME_PATH, _COMPOSE_PATH)
+# A required signed-release source-claim is read at runtime from the
+# INSTALLED app's release/ directory by analytics_signed_source_pin.py.
+# Its exact raw SHA comes from original reviewed Git-object evidence.
+# Omitting this file would let the source pass preflight but always reject
+# the genuine signed 0.15.0 release in the live broker.
+_SOURCE_CLAIM_PATH = "release/products/analytics-source.json"
+_SOURCE_CLAIM_SHA256 = "45e13536c413a5e5c0a39a4d8c98daf412614dec535398b2ba204039772c88b9"
+_INSTALLED_RUNTIME_FILES = (
+    _PRODUCT_PATH, _RUNTIME_PATH, _COMPOSE_PATH, _SOURCE_CLAIM_PATH,
+)
 CONFIG_PATH = "/etc/omnilyzer/deployment/dev/analytics-executor.json"
 _INSTALLED_ROOT = Path("/opt/omnilyzer/deployment/app")
 _CONFIGURATION_NAME = "analytics-executor.json"
@@ -196,7 +205,10 @@ def _verify_source_bytes(
             if name not in approved_names or type(digest) is not str:
                 raise ValueError
             parts = name.split("/")
-            if parts[0] != "deployment" or not 2 <= len(parts) <= 5:
+            if (
+                not 2 <= len(parts) <= 5
+                or not (parts[0] == "deployment" or name == _SOURCE_CLAIM_PATH)
+            ):
                 raise ValueError
             # All components are literally selected from reviewed module
             # constants above. No request-selected path or filesystem walk.
@@ -307,6 +319,7 @@ def load_analytics_executor_service_config() -> tuple[dict[str, str], dict[str, 
             (_PRODUCT_PATH, product["reviewed_product_profile_sha256"]),
             (_RUNTIME_PATH, product["reviewed_runtime_profile_sha256"]),
             (_COMPOSE_PATH, product["reviewed_compose_sha256"]),
+            (_SOURCE_CLAIM_PATH, _SOURCE_CLAIM_SHA256),
         ))
         result = (
             {key: product[key] for key in (

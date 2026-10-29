@@ -33,6 +33,7 @@ from .analytics_broker_router import AnalyticsDEVPromotionRouter
 from .analytics_executor_service_config import (
     parse_analytics_executor_service_config, _verify_source_bytes,
     _PRODUCT_PATH, _RUNTIME_PATH, _COMPOSE_PATH,
+    _SOURCE_CLAIM_PATH, _SOURCE_CLAIM_SHA256,
 )
 from .analytics_promotion_broker import AnalyticsPrivatePromotionBroker
 from .analytics_registry_review_composition import (
@@ -119,6 +120,7 @@ def load_analytics_broker_installed_source(
                 (_PRODUCT_PATH, parsed["reviewed_product_profile_sha256"]),
                 (_RUNTIME_PATH, parsed["reviewed_runtime_profile_sha256"]),
                 (_COMPOSE_PATH, parsed["reviewed_compose_sha256"]),
+                (_SOURCE_CLAIM_PATH, _SOURCE_CLAIM_SHA256),
             ))
             result = {
                 key: parsed[key] for key in (

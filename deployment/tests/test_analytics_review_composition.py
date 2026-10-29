@@ -99,6 +99,7 @@ class OriginalAnalyticsReadonlyCompositionTests(unittest.TestCase):
             "deployment/analytics_signed_release_consumer.py",
             "deployment/analytics_registry_review_composition.py",
             "deployment/runtime/dev/analytics.compose.review.yaml",
+            "release/products/analytics-source.json",
             "deployment/systemd/dev/omnilyzer-deployment-analytics-executor.socket",
             "deployment/systemd/dev/omnilyzer-deployment-analytics-executor.service",
         ):

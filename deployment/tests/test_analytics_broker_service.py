@@ -193,7 +193,7 @@ class OriginalRootOwnedOptInTests(unittest.TestCase):
         verified.assert_not_called()
 
     def test_present_root_owned_sha_bound_conf_yields_only_four_hashes(self):
-        """Exact source proof checks 16 Python modules, Compose and profiles."""
+        """Exact source proof checks 20 Python modules and four runtime assets."""
         stack, verified = self.preflight()
         with stack:
             result = broker_service.load_analytics_broker_installed_source(self.cfg)
@@ -201,11 +201,16 @@ class OriginalRootOwnedOptInTests(unittest.TestCase):
         verified.assert_called_once()
         names = tuple(name for name, _digest in verified.call_args.args[0])
         self.assertEqual(names[:len(ANALYTICS_INSTALLED_FILES)], ANALYTICS_INSTALLED_FILES)
-        self.assertEqual(names[-3:], (
+        self.assertEqual(names[-4:], (
             "deployment/products/analytics-dev.json",
             "deployment/products/analytics-runtime-dev.json",
             "deployment/runtime/dev/analytics.compose.review.yaml",
+            "release/products/analytics-source.json",
         ))
+        self.assertEqual(
+            verified.call_args.args[0][-1][1],
+            "45e13536c413a5e5c0a39a4d8c98daf412614dec535398b2ba204039772c88b9",
+        )
 
     def test_wrong_owner_or_wrong_platform_commit_fails_closed(self):
         """A present wrong file must never silently become canary-only."""

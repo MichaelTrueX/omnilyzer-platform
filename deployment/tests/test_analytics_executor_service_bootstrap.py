@@ -174,6 +174,9 @@ class InstalledSourceConfigTests(unittest.TestCase):
                  EXPECTED["reviewed_runtime_profile_sha256"]),
                 ("deployment/runtime/dev/analytics.compose.review.yaml", b"C",
                  hashlib.sha256(b"C").hexdigest()),
+                (config._SOURCE_CLAIM_PATH, (
+                    ROOT / config._SOURCE_CLAIM_PATH
+                ).read_bytes(), config._SOURCE_CLAIM_SHA256),
             )
             for name, value, _expected in data:
                 file = root / name
@@ -248,6 +251,19 @@ class InstalledSourceConfigTests(unittest.TestCase):
                 modified.write_bytes(b"A")
                 modified.chmod(0o644)
                 self.assertIsNone(config._verify_source_bytes(expected, root=root))
+
+                # The signed-source claim is mandatory, not merely a
+                # self-described candidate; same-length content mutation
+                # and deletion independently fail this ORIGINAL source gate.
+                claim = root / config._SOURCE_CLAIM_PATH
+                approved = claim.read_bytes()
+                claim.write_bytes(approved[:-1] + (b"0" if approved[-1:] != b"0" else b"1"))
+                with self.assertRaises(AnalyticsInstalledAuthorityError):
+                    config._verify_source_bytes(expected, root=root)
+                claim.write_bytes(approved)
+                claim.unlink()
+                with self.assertRaises(AnalyticsInstalledAuthorityError):
+                    config._verify_source_bytes(expected, root=root)
 
     def test_missing_privileged_file_denied_before_any_listener(self):
         """Ordinary unprivileged test process cannot spoof owner/config."""
