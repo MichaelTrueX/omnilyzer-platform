@@ -284,3 +284,69 @@ The optional `services/identity/tests/qa_s01_browser_gate.py` test used S01 sour
 ## Rechecked against current restricted Native production SQL (29 Oct)
 
 Exact S03 draft #230 HEAD `d038f085d84db085055432c03cf99e4bad12d828`, full migration SHA256 `3beb7d4ac8c9cce3d8735ebb0d3432a985b252b047535d4b5e88689b3b6de2e9` (replaces older candidate hashes). On `truexdevelopment`, copied S03's self-clean PG16 test runner OUTSIDE Git, changed only its checkout root and added a temporary optional call to the original platform real-Keycloak join script. Installed the exact current production-shaped 33-table migration into disposable network-disabled PG16. Real S03 `sumlaude_app` restricted role plus 22/22 privilege/RLS mutation checks PASS. Actual Fastify route and HMAC role proved allowed empty learner context, CSRF and revocation controls; private production startup stays held. New persistent Django BFF signed real Keycloak 26.7.2 HTTPS login PASS; Django identity session persisted in a separate DB inside the ephemeral PG16, actual `sumlaude_identity_issuer` issued/revoked learner cookie, real provider refresh rotated, and S01's genuine Chromium private build recognized the PostgreSQL Django identity session, then rejected its stale cookie after logout with no private API request. Entire isolated suite PASS, cleanup exit 0. Private content API deliberately returned 503 in this browser-gate test. This is NOT yet one five-unit Chromium journey with a real provider-issued cookie or lawful real admission.
+
+
+## Full Keycloak -> S01 Chromium -> Native LC1 joined QA (29 October)
+
+**PASS on fresh AND Valoria-reused disposable PostgreSQL16.15.** Exact reviewed
+S01 DRAFT #243 HEAD `5730b9edbf7adce3d2e920f2f20a65d29baeae1c`;
+S03 DRAFT #230 HEAD `d038f085d84db085055432c03cf99e4bad12d828`.
+The original Omnilyzer BFF at this PR HEAD validates a real local Keycloak
+26.7.2 HTTPS Authorization Code + PKCE callback, signed issuer/subject,
+audience, nonce and JWKS, and persists its private identity session in a
+**second PostgreSQL database** inside S03's disposable network-disabled PG16
+container. S03's actual Valoria Native Fastify/PG16 production codepaths run
+in the canonical disposable QA role/fixture; no source or release is deployed.
+
+Reproducible opt-in QA artifacts added here:
+- `services/identity/tests/run_keycloak_s01_full_lc1_qa.py` checks exact
+  S01/S03 Git commit hashes and reuses a *temporary copy* of S03's existing
+  self-cleaning PostgreSQL test shell; never edits S03's canonical test.
+- `services/identity/tests/qa_keycloak_native_bridge.py` authenticates a
+  fictional Keycloak test account through the **real permanent Django BFF**,
+  stores sealed OAuth tokens only in PostgreSQL-backed Django session,
+  and writes the temporary host-only identity/product cookie values into
+  a 0600 file under S03's automatically deleted QA directory.
+- `services/identity/tests/qa_keycloak_s01_full_lc1.cjs` reuses S03's
+  original real Chromium/React Native logic, with the same content SHA
+  `6f6502a6ccda3ad6d418973fd481d29941a7b11f9461b1ec90b8bcce3cf335b9`.
+  The positive `/auth/session` is served by a **fresh Django client reading
+  the actual signed identity cookie from PostgreSQL** on every browser request;
+  it is NOT a synthetic `authenticated:true` stub. S03's real Fastify
+  noncredit backend handles private content and submissions.
+
+Evidence: real Keycloak verified signed subject is stored in S03's test-only
+immutable identity link for the independently *fictional* admitted learner.
+Chromium saved exactly 7 noncredit activities and 11 answers across 5 LC1
+units; all 6 authored manual prompts remained read-only. Reload persisted
+progress without duplicate POSTs. Focus return and forced identity outage
+hid private content without any additional S03 API request. Revoked S03
+digest denied private API. Original Django logout revoked its server-side
+session; Chromium with the previous HttpOnly identity cookie displayed
+"Sign in to study" with ZERO private Native API calls. Original S03
+PG16/S01 tests and mandatory negative security tests still pass.
+Both fresh and reused original Valoria074 PG16 cleanup PASS.
+
+**Critical separation:** the test-only product cookie registration in the
+QA Native learner database is intentionally materialized by S03's fictional
+test harness *after* Keycloak's signed ID token was verified. The existing
+S03 **production restricted-role issuer SQL** is separately tested against
+the exact latest SHA256 `3beb7d4ac8c9cce3d8735ebb0d3432a985b252b047535d4b5e88689b3b6de2e9`
+in an independent isolated PG16 run. A live deployment combining the new
+Keycloak issuer and the production-role Native HTTP bridge with real lawful
+adult/minor/guardian admissions is **not** yet authorized or proven.
+The LC1 content fixture is synthetic/review-only and does not grant
+academic release, credits or mastery.
+
+To repeat on `truexdevelopment` only: start the existing disposable
+`sumlaude-keycloak-https-handoff-20261028/scripts/start-keycloak.sh` fixture;
+build the exact S01 private candidate with
+`npm run build:private-bff-native`; ensure QA Node/Playwright and
+platform Python 3 QA dependencies (including cryptography, psycopg, Django)
+are installed. Export `S03_QA_S03_ROOT` and `S03_QA_S01_ROOT` to the
+respective review-only source checkouts under `/tmp`; run
+`python services/identity/tests/run_keycloak_s01_full_lc1_qa.py fresh`
+and `... reused`. Both check exact Git identity, reuse the S03 canonical
+disposable shell and delete DB, session secrets and cookies after exit.
+Do not run on the live host. No main merge, DNS, product login or release
+change was performed.
