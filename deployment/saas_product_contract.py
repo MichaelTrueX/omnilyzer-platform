@@ -206,14 +206,35 @@ def validate_existing_signed_release(
     except (ValueError, TypeError) as exc:
         raise DeploymentPolicyError(_ERROR) from exc
 
-    # No signed cross-repository source binding exists in the current Task013
-    # canary release schema. Do NOT turn the caller-provided mapping into an
-    # authority: a forged mapping would permit external source substitution.
+    # Only the original verified release consumer can supply this immutable
+    # external-source projection. Ignore all caller-provided unsigned mappings.
+    # This validator is necessary but is NOT standalone deployment authority.
+    claim = release.external_source
+    if (
+        claim is None
+        or claim.product_id != profile.product_id
+        or claim.source_repository != profile.source_repository
+        or claim.source_commit != profile.source_commit
+        or claim.product_profile_sha256 != profile.sha256()
+        or claim.oci_manifest_digest != release.manifest_digest
+    ):
+        raise DeploymentPolicyError("Analytics signed product source binding mismatch")
+    from .saas_product_runtime import load_review_profile
+    runtime_path = Path(__file__).resolve().parent / "products/analytics-runtime-dev.json"
+    runtime = load_review_profile(runtime_path)
+    if (
+        runtime.product_id != profile.product_id
+        or runtime.oci_repository != profile.oci_repository
+        or runtime.container_port != profile.app_port
+        or runtime.ready_path != profile.readiness_path
+        or runtime.runtime_secret_names != profile.secret_names
+        or claim.runtime_profile_sha256 != runtime.sha256()
+    ):
+        raise DeploymentPolicyError("Analytics signed runtime binding mismatch")
+    # Do not use signed_external_source: it is an untrusted input independent
+    # of the signed release evidence.
     _ = signed_external_source
-    raise DeploymentPolicyError(
-        "Analytics requires Task 013 signed external-source provenance "
-        "and Task 014 installed product-scoped broker/executor authority"
-    )
+    return release.exact_image_reference
 
 
 def load_reviewed_profile(path: Path) -> SaaSProductProfile:

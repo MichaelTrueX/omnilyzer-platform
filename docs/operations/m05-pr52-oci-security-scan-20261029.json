@@ -1,0 +1,35 @@
+{
+  "blocked_count": 0,
+  "blocking_findings": [],
+  "deployment_authorized": false,
+  "grype_db": {
+    "built": "2026-10-29T06:23:34Z",
+    "checksum": "sha256:a5ad3344d964e4d1472fa615b0e70f87c27cd21470fede2a8fbf6e4c6c32c907",
+    "schema_version": "v6.1.10",
+    "valid": true
+  },
+  "grype_report_sha256": "55015a5fda7997080e93168654139ee486b1199b4f818d6fa3dea1d83a74b286",
+  "grype_version": "0.118.0",
+  "oci_archive_sha256_local_unsigned": "e027cc9df9a7e8dbc918188eb2898c4b34798a0b11d705069a19bb3f4001875b",
+  "oci_manifest_digest_local_unsigned": "sha256:46331e904d7410c72597b91d48555886015f211bf27d227e30950243d33a9bab",
+  "platform_build_commit": "b315601e74b68096a0c887b54d7aebed35ab7ca0",
+  "policy_sha256": "475ad38ef4ae8d89dcf7d4e03eeb76701085fdcd4ebdb8ae9aa41a7bce2cde8f",
+  "release_authorized": false,
+  "sbom_format": "CycloneDX1.6",
+  "sbom_sha256": "bd3ed3d5886bda6912a7e28e9c86d8d56f34787b866e1729e41b567184d53838",
+  "schema_version": 1,
+  "severity_counts": {
+    "Critical": 0,
+    "High": 0,
+    "Low": 1,
+    "Medium": 3,
+    "Negligible": 0,
+    "Unknown": 0
+  },
+  "source_commit": "4cdda7faeba57abb3388f9be5c450fe6afb1140d",
+  "source_context_sha256": "c4474ae71ac2acf58876c9ab502e009c866fbeb29862ce991374b8396abf092f",
+  "source_tree": "5c71020a6d9b66b5010386f2743111936a164daa",
+  "status": "unsigned-original-task013-local-oci-scan",
+  "syft_version": "1.51.0",
+  "vulnerability_policy_decision": "PASS"
+}

@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "release/products/analytics-source.json"
 CONTRACT = ROOT / "deployment/products/analytics-dev.json"
 RUNTIME = ROOT / "deployment/products/analytics-runtime-dev.json"
-FINAL_SOURCE = "2472d5265688b4f1e18d91f140afe61307ea371b"
+FINAL_SOURCE = "4cdda7faeba57abb3388f9be5c450fe6afb1140d"
 
 
 def validate_local_consistency(source: dict, contract: SaaSProductProfile, runtime) -> None:
@@ -107,12 +107,12 @@ class AnalyticsCrossRepositoryProductBindingTests(unittest.TestCase):
             validate_existing_signed_release(self.contract, object())
 
     def test_exact_packaged_git_source_optional(self):
-        """When a fresh source checkout is provided, verify all 72 real Git blobs."""
+        """When a fresh source checkout is provided, verify all 78 real Git blobs."""
         path = os.environ.get("OMNILYZER_ANALYTICS_CHECKOUT")
         if not path:
             self.skipTest("exact trusted Analytics checkout not supplied")
         receipt = verify_source(Path(path), self.source)
-        self.assertEqual(receipt["source_files_verified"], 72)
+        self.assertEqual(receipt["source_files_verified"], 78)
         self.assertEqual(receipt["source_commit"], FINAL_SOURCE)
         self.assertFalse(receipt["release_authorized"])
         self.assertFalse(receipt["deployment_authorized"])
