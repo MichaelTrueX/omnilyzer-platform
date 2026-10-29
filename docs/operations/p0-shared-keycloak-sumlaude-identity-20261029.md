@@ -161,3 +161,34 @@ revoke sessions using controlled issuer role before retiring backend;
 restore prior service release and DB snapshot without deleting learner data.
 No protected branch merge, production SQL, DNS, server modification,
 Keycloak config, or real student login is performed by this review PR.
+
+
+## Verified REAL platform adapter -> S03 production SQL interoperability (29 Oct)
+
+New independently executed **disposable PostgreSQL16.15** evidence, after this
+document's initial source-only acceptance:
+
+- Exact S03 canonical DRAFT PR #230 HEAD
+  `8f1ff7f9503c2cb33a987c225041d857c5bfbd4a`, unmodified SQL input
+  `scripts/production/s03-verified-oidc-session-issuer.sql.candidate`,
+  SHA256 `1a61604b7ac7327ecd74e08f52b2f7daf6f6d138205bef05c9dd3f8169a32cba`.
+- Ran the exact S03 disposable QA script from a separate **temporary copy**,
+  modifying only the temporary script to mount an isolated test Unix socket
+  into the network-disabled PostgreSQL container and to invoke the actual
+  platform `services/identity/identity_bff/issuer.py` before teardown.
+  Original S03 Git worktree, canonical SQL and platform production config
+  were NOT modified by the test.
+- **PASS**: real restricted `sumlaude_identity_issuer` login and exact
+  production-named SQL function calls; platform-generated 256-bit random
+  cookie and SHA256 digest actually stored in PostgreSQL, exact mapped
+  adult and separately approved fictional minor account, revoke then
+  idempotent repeat, unknown subject denied. Existing S03 **12 negative
+  cases** plus source installer wrong-database denial PASS. The isolated
+  container and data were automatically removed after test completion.
+- This is **real PostgreSQL BFF-adapter integration**, NOT real HTTPS
+  Keycloak callback through this new persistent Django BFF or legal
+  verification of a student/guardian. Both fixture admissions are
+  synthetic. Full production Native/RLS migration, secret-carrying
+  runtime issuer DSN, operational origin DNS/TLS and end-to-end real OIDC
+  browser cycle remain separate P0 activities. No main merge, production
+  database migration, server change or learner access was authorized.
