@@ -85,6 +85,9 @@ class OriginalAnalyticsReadonlyCompositionTests(unittest.TestCase):
         self.assertIn("deployment/registry_promotion_composition.py", paths)
         for new_file in (
             "deployment/analytics_execution.py",
+            "deployment/analytics_broker_router.py",
+            "deployment/analytics_broker_service.py",
+            "deployment/analytics_broker_service_entrypoint.py",
             "deployment/analytics_executor.py",
             "deployment/analytics_executor_composition.py",
             "deployment/analytics_executor_service_bootstrap.py",

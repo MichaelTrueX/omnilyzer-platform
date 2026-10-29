@@ -832,3 +832,96 @@ and negative file-access checks, two restricted PostgreSQL app/collector roles
 and RLS, genuine signed release registry and original OIDC broker, actual
 private blue /readyz, first-install stop-only rollback and one bounded M04
 security review. NO-GO for live DEV install, merge and production remains.
+
+## M05-14: one existing Task014 broker HTTP endpoint, root-owned Analytics opt-in
+
+**The first, rejected approach would have added Analytics imports into the
+ORIGINAL installed canary broker bootstrap. Original C32V's protected
+source-import-closure regression rejected 53 imports instead of the approved
+40. That approach was REMOVED, not whitelisted or hidden behind a dynamic
+import.** Original `deployment/broker_service_bootstrap.py`, original
+`deployment/broker_service_entrypoint.py`, original 3031 HTTP ingress, original
+Nginx and the original installed `DevApplicationSourceSet` are unchanged.
+
+### Complete source files
+
+- `deployment/analytics_broker_router.py`: a closed *product-only* router
+  behind the EXISTING /task014/dev/promote HTTP/1.0 endpoint. Its unchanged
+  ingress validates Host, Authorization Bearer, two separate registry OIDC
+  headers, Content-Type, exact Content-Length, duplicates and no cookies.
+  Original canary schema-v1 requests enter the existing original broker;
+  ONLY canonical, fully parsed schema-v2 product_id=analytics and exact signed
+  0.15.0 request shape enters Analytics. Unknown product, mixed schemas,
+  duplicated JSON, wrong digest, noncanonical bytes and extra authority are
+  rejected BEFORE any registry/signature or replay. A true signer outage
+  retains original HTTP503; malformed claims retain 403.
+- `deployment/analytics_broker_service.py`: reuses the original C32H
+  broker's fixed root-owned `/etc/omnilyzer/deployment/broker` directory
+  and protected UID/GID, 0640 file and descriptor-relative source reader.
+  The single, separately root-provisioned **analytics.json** configuration
+  uses the same closed source schema as the executor's **analytics-executor.json**
+  but matches the EXISTING original broker installation's reviewed Git SHA.
+  Exact product Python source digests, Compose SHA256 and canonical signed
+  product/runtime profile hashes are checked through O_NOFOLLOW, inode/mode
+  and root ownership controls. The root-controlled source config cannot be
+  supplied through HTTP, a review receipt, an unsigned mapping or a remote
+  token. A missing product config may mean canary-only under the unchanged
+  ORIGINAL broker; when the **explicit opt-in replacement service** runs,
+  missing or malformed config is a hard failure (NEVER auto-downgrade).
+  The approved replacement reuses the existing C32H broker config,
+  GitHubJWKSCache, GitHubOIDCVerifier, original Sqlite replay, original Cosign
+  signature verifier, original registry readers, original canary handler and
+  original DevBrokerLoopbackListener on the SAME 127.0.0.1:3031 port.
+- `deployment/analytics_broker_service_entrypoint.py`: closed opt-in
+  service entrypoint with the original SIGTERM/SIGINT stop behavior, fixed
+  exit status and restored signal handlers. No auto-start on import.
+- `deployment/systemd/dev/analytics-broker-enabled.conf`: **inert,
+  uninstalled root-owned systemd drop-in** for the existing original
+  `omnilyzer-deployment-broker.service` (not a new service):
+  `ConditionPathExists=/etc/omnilyzer/deployment/broker/analytics.json`
+  and a fixed `ExecStart` override to the Analytics-aware entrypoint.
+  Installation destination ONLY after owner/M04 approval:
+  `/etc/systemd/system/omnilyzer-deployment-broker.service.d/analytics-enabled.conf`.
+  Without this drop-in the existing canary process and port remain untouched.
+  Removing the separately approved drop-in and restarting the original broker
+  is the broker-only rollback; never delete shared replay/DB data.
+- `deployment/tests/test_analytics_broker_router.py`: true disposable
+  Linux TCP 127.0.0.1 HTTP/1.0 request through the ACTUAL original
+  `DevBrokerLoopbackListener`, signed-shaped schema-v2 broker and real
+  sealed memfd. Test uses only synthetic signer and receiving executor.
+  Additional tests verify canary controls, no cross-product routing,
+  rejection of credential/header injection and 403/503 behavior.
+- `deployment/tests/test_analytics_broker_service.py`: actual original
+  broker classes compose with a shared replay, JWT/JWKS, Cosign and exact
+  product transport without service startup; synthetic root-owned descriptor
+  metadata tests enforce owner/group/commit/permissions, absent/mismatched
+  configs and no fallback. Tests verify opt-in service cannot run without
+  validated root-owned source; no second network listener exists.
+- `deployment/analytics_executor_service_config.py`: the exact separate
+  root-owned source allowlist now contains the new broker modules as well as
+  original Analytics-only executor source. It does NOT modify the protected
+  C32V canary source selection. Both product bootstrap configurations must
+  bind all these files and canonical signed profiles.
+- `deployment/tests/test_analytics_review_composition.py` protects the
+  new broker files against accidental entry into the original canary source
+  selection.
+
+### Release/operational state (NO-GO for installation)
+
+The original Task013 signed Analytics v0.15.0 release is immutable, not
+reissued, and still the exact OCI digest. Original Task014 broker remains on
+the original canary-only service entrypoint unless a separate root-owned
+systemd drop-in is installed and enabled by the approved original host
+release workflow. The active rootless daemon, existing broker and canary are
+NOT touched by this code change.
+
+The remaining single DEV acceptance must prove actual original GitHub OIDC
+JWTs with three separate audiences, live original Zot/Forgejo archive and
+Sigstore/Cosign, root-owned signed-source file admission and service drop-in,
+real rootless container UID10001 access to four genuine secret files, PG
+nonowner analytics app/collector roles + RLS, private /readyz and first
+blue stop-only rollback with database writes preserved. A standalone PR,
+local actual HTTP test or synthetic security test does not grant that live
+authority. One independent final M04 review is needed of the NEW broker
+root-owned trust boundary before approved installation. No merge, service
+enablement, registry write, real credential or production change here.

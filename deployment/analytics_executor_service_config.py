@@ -42,6 +42,10 @@ from .saas_product_runtime import SaaSRuntimeProfile
 # Existing Task014 canary sources are protected by their original 43-file
 # installed source manifest; this list must be separately reviewed by M04.
 ANALYTICS_INSTALLED_FILES = (
+    "deployment/analytics_broker_router.py",
+    "deployment/analytics_broker_service.py",
+    "deployment/analytics_broker_service_entrypoint.py",
+    "deployment/analytics_broker_service_entrypoint.py",
     "deployment/analytics_dev_release_review.py",
     "deployment/analytics_execution.py",
     "deployment/analytics_executor.py",
