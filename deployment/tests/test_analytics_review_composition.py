@@ -86,6 +86,7 @@ class OriginalAnalyticsReadonlyCompositionTests(unittest.TestCase):
         for new_file in (
             "deployment/analytics_execution.py",
             "deployment/analytics_executor.py",
+            "deployment/analytics_executor_composition.py",
             "deployment/analytics_first_install.py",
             "deployment/analytics_unix_boundary.py",
             "deployment/analytics_private_registry.py",

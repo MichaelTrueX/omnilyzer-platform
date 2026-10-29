@@ -33,7 +33,7 @@ from deployment.analytics_executor import AnalyticsPrivilegedExecutor
 import deployment.analytics_unix_boundary as analytics_boundary
 from deployment.analytics_unix_boundary import (
     AnalyticsUnixExecutorConnectionHandler,
-    AnalyticsUnixExecutorTransport,
+    AnalyticsUnixExecutorTransport, AnalyticsUnixExecutorListener,
 )
 from deployment.analytics_signed_release_consumer import PINNED_IMAGE
 from deployment.executor import (
@@ -452,6 +452,120 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
             self.assertEqual(events, [
                 "private_manifest", "deploy_analytics",
             ])
+
+    def test_original_single_accept_listener_validates_exact_analytics_socket(self):
+        """Original Task014 listener independently binds socket inode and path.
+
+        This is a real disposable Linux AF_UNIX accept/SCM_RIGHTS flow. It
+        neither installs nor activates a systemd service.
+        """
+        with tempfile.TemporaryDirectory(prefix="m05-14-listener-") as folder:
+            path = str(Path(folder) / "analytics-executor.sock")
+            privileged, replay, events = receiver()
+            handler = AnalyticsUnixExecutorConnectionHandler(
+                executor=privileged, expected_broker_uid=os.getuid(),
+                expected_broker_gid=os.getgid(), reviewed_installed_source=EXPECTED,
+            )
+            original = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            original.bind(path)
+            original.set_inheritable(False)
+            os.chmod(path, 0o660)
+            original.listen(1)
+            errors = []
+            try:
+                with patch.object(
+                    analytics_boundary, "ANALYTICS_EXECUTOR_SOCKET_PATH", path,
+                ):
+                    executor_listener = AnalyticsUnixExecutorListener(
+                        listener=original, handler=handler,
+                        expected_socket_owner_uid=os.getuid(),
+                        expected_socket_group_gid=os.getgid(),
+                    )
+                    # Relocate only the original ancestor tuple for a local
+                    # disposable socket; original installed /run hierarchy
+                    # remains fixed in the production Analytics class.
+                    settings = list(object.__getattribute__(
+                        executor_listener, "_configuration",
+                    ))
+                    settings[27] = ("/", "/tmp", folder)
+                    object.__setattr__(
+                        executor_listener, "_configuration", tuple(settings),
+                    )
+                    transport = AnalyticsUnixExecutorTransport(
+                        expected_executor_uid=os.getuid(),
+                        expected_executor_gid=os.getgid(),
+                        expected_socket_group_gid=os.getgid(),
+                        reviewed_installed_source=EXPECTED,
+                    )
+
+                def serve_once():
+                    """Run the *original* listener identity and socket checks."""
+                    try:
+                        executor_listener.serve_once()
+                    except BaseException as exc:
+                        errors.append(exc)
+
+                server = threading.Thread(target=serve_once, daemon=True)
+                server.start()
+                fd = credential()
+                try:
+                    result = transport._send_analytics_private(
+                        REQUEST, credential_fd=fd,
+                    )
+                    self.assertEqual(
+                        parse_canonical_response(result).executor_request_sha256,
+                        hashlib.sha256(REQUEST).hexdigest(),
+                    )
+                finally:
+                    os.close(fd)
+                server.join(5)
+                self.assertFalse(server.is_alive())
+                self.assertEqual(errors, [])
+                self.assertEqual(
+                    events, ["private_manifest", "begin_execution",
+                             "deploy_analytics", "finish_execution"],
+                )
+            finally:
+                original.close()
+
+    def test_original_canary_listener_never_accepts_analytics_handler_as_route(self):
+        """Analytics listener does not use ordinary canary executor path."""
+        from deployment.executor_listener import UnixExecutorListener
+        privileged, replay, events = receiver()
+        handler = AnalyticsUnixExecutorConnectionHandler(
+            executor=privileged, expected_broker_uid=os.getuid(),
+            expected_broker_gid=os.getgid(), reviewed_installed_source=EXPECTED,
+        )
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            with self.assertRaises(TypeError):
+                AnalyticsUnixExecutorListener(
+                    listener=listener, handler=object(),
+                    expected_socket_owner_uid=os.getuid(),
+                    expected_socket_group_gid=os.getgid(),
+                )
+            original = UnixExecutorListener(
+                listener=listener, handler=handler,
+                expected_socket_owner_uid=os.getuid(),
+                expected_socket_group_gid=os.getgid(),
+            )
+            original_settings = object.__getattribute__(
+                original, "_configuration",
+            )
+            self.assertEqual(
+                original_settings[26], "/run/omnilyzer/deployment/executor.sock",
+            )
+            with patch.object(
+                analytics_boundary, "ANALYTICS_EXECUTOR_SOCKET_PATH",
+                "/run/omnilyzer/deployment/executor.sock",
+            ), self.assertRaises(TypeError):
+                AnalyticsUnixExecutorListener(
+                    listener=listener, handler=handler,
+                    expected_socket_owner_uid=os.getuid(),
+                    expected_socket_group_gid=os.getgid(),
+                )
+        finally:
+            listener.close()
 
     def test_explicit_analytics_transport_denies_canonical_canary_fallback(self):
         """No generic send() or original canary _send_private() on Analytics."""

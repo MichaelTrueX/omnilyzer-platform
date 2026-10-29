@@ -695,3 +695,55 @@ positive/negative secret mount check remains REQUIRED before installation.
   actual OCI runtime `/readyz`, state/rollback and final independent M04
   review are all still unconfirmed. A running UID991 Docker daemon and
   green unit tests do not supersede the owner's installation approval.
+
+
+## M05-14: original socket identity and complete inert executor composition (2026-10-30)
+
+**New complete file** `deployment/analytics_executor_composition.py` constructs
+one product-only receiver using the SAME original privileged Task014 primitives:
+`SQLiteReplayGuard(PRODUCTION_REPLAY_DATABASE)`,
+`SubprocessCommandRunner`, `AnalyticsPrivateZotPullAdapter`,
+`AnalyticsFirstInstallOperation`, `AnalyticsPrivilegedExecutor`,
+`AnalyticsUnixExecutorConnectionHandler`, and
+`AnalyticsUnixExecutorListener`. This is a single explicit product-specific
+graph, not a configurable deployment framework. It uses one common original
+replay store with canary rather than silently creating a second JTI ledger.
+
+**Modified complete file** `deployment/analytics_unix_boundary.py` adds the
+Analytics-specific `AnalyticsUnixExecutorListener` subclass of the original
+`UnixExecutorListener`, bound to exactly
+`/run/omnilyzer/deployment/analytics-executor.sock`. It reuses the original
+inode/procfs socket binding check, socket owner/group, one-accept deadline,
+transport close semantics, peer authentication, SCM_RIGHTS and original replay.
+It verifies the original listener's exact reviewed configuration shape before
+selecting the separate socket; no canary listener code or canary socket path
+is changed.
+
+**New complete test** `deployment/tests/test_analytics_executor_composition.py`
+verifies all actual original classes are captured without any Docker, secret,
+registry, SQLite connect, listener bind or socket accept during construction;
+validates the shared replay DB and a separate fixed socket; rejects invalid
+source profiles and dynamic nonlistener dependencies. The modified complete
+`deployment/tests/test_analytics_unix_boundary.py` exercises a real
+disposable local AF_UNIX socket with the **original listener's** procfs inode
+validation through the original handler, actual Linux sealed FD transfer, and
+the original schema-v2 Analytics executor; no live application is installed.
+The existing `deployment/tests/test_analytics_review_composition.py` asserts
+both new source files remain OUT of original Task014 installed canary source
+allowlist. Canonical README/AGENTS and canary source files remain unchanged.
+
+**Required activation step:** the root-owned Task014 source/manifest installer
+must first attest every new Analytics source file, exact protected release SHA
+and product/runtime profiles; a dedicated pre-authorized systemd listener must
+then supply the exact named Unix FD with correct UID/GID; and the original
+OIDC broker, real Sigstore/Cosign, signed Zot/Forgejo reader access and
+rootless runtime must be composed under an approved host configuration.
+The public `reviewed_installed_source` dict accepted by this inert class is
+NOT root authority, and the class is **not installed or started** by this PR.
+No new endpoint is exposed, and the existing canary socket, broker and
+executor code have no changes.
+
+**Status remains HARD NO-GO:** service activation is not demonstrated or
+authorized; real rootless secrets, PostgreSQL restricted app/collector role
+isolation, private health and rollback must be verified by a single final
+privileged DEV acceptance followed by M04 approval and owner authorization.

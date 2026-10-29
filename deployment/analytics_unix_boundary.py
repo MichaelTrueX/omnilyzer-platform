@@ -7,6 +7,7 @@ Purpose: Product-scoped, inert Task014 Analytics private Unix executor
 Related: deployment/unix_transport.py, deployment/executor_server.py,
          deployment/private_registry_fd.py, deployment/analytics_execution.py,
          deployment/analytics_executor.py,
+         deployment/executor_listener.py (original single accept),
          deployment/tests/test_analytics_unix_boundary.py.
 
 Sections: fixed dedicated Analytics socket transport, strict receiver adapter.
@@ -25,6 +26,9 @@ from .analytics_execution import (
 from .analytics_executor import AnalyticsPrivilegedExecutor
 from .analytics_signed_release_consumer import PINNED_IMAGE
 from .executor_server import UnixExecutorConnectionHandler
+from .executor_listener import (
+    UnixExecutorListener, PRODUCTION_EXECUTOR_SOCKET_PATH as CANARY_LISTENER_PATH,
+)
 from .execution import parse_canonical_request
 from .private_registry_fd import read_sealed_credential
 from .unix_transport import (
@@ -179,7 +183,48 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
         object.__setattr__(self, "_configuration", tuple(settings))
 
 
+class AnalyticsUnixExecutorListener(UnixExecutorListener):
+    """Original single-accept inode and procfs checks on exact Analytics socket.
+
+    No systemd socket is created, installed, enabled or bound here. The
+    immutable parent class performs its existing credential-free listener
+    security checks, accept, deadline, close and handler dispatch.
+    """
+
+    __slots__ = ()
+
+    def __init__(
+        self, *, listener: object, handler: AnalyticsUnixExecutorConnectionHandler,
+        expected_socket_owner_uid: int, expected_socket_group_gid: int,
+        accept_timeout_ms: int = 3000,
+    ) -> None:
+        """Bind one exact Analytics-only listener; never choose a caller path."""
+        if type(handler) is not AnalyticsUnixExecutorConnectionHandler:
+            raise TypeError("Analytics listener requires its exact receiver")
+        super().__init__(
+            listener=listener, handler=handler,
+            expected_socket_owner_uid=expected_socket_owner_uid,
+            expected_socket_group_gid=expected_socket_group_gid,
+            accept_timeout_ms=accept_timeout_ms,
+        )
+        settings = list(object.__getattribute__(self, "_configuration"))
+        if (
+            len(settings) != 38
+            or settings[26] != CANARY_LISTENER_PATH
+            or settings[27] != (
+                "/", "/run", "/run/omnilyzer", "/run/omnilyzer/deployment",
+            )
+        ):
+            raise TypeError("Original Task014 listener contract has changed")
+        # The only permitted path is this exact product-specific socket.
+        new_path, _encoded = _validate_path(ANALYTICS_EXECUTOR_SOCKET_PATH)
+        if new_path == CANARY_LISTENER_PATH:
+            raise TypeError("Analytics may not attach to the canary socket")
+        settings[26] = new_path
+        object.__setattr__(self, "_configuration", tuple(settings))
+
+
 __all__ = (
     "ANALYTICS_EXECUTOR_SOCKET_PATH", "AnalyticsUnixExecutorTransport",
-    "AnalyticsUnixExecutorConnectionHandler",
+    "AnalyticsUnixExecutorConnectionHandler", "AnalyticsUnixExecutorListener",
 )
