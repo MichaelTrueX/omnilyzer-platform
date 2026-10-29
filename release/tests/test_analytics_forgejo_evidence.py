@@ -17,10 +17,12 @@ VERSION = '1.2.3'
 def fixture(directory):
     """Section: Create synthetic unsigned test evidence; never production credentials."""
     claim = {'oci_repository': 'omnilyzer/analytics', 'oci_manifest_digest': DIGEST}
-    provenance = {'subjects': {'oci_manifest_digest': DIGEST}}
+    provenance = {'subjects': {'oci_manifest_digest': DIGEST}, 'external_source': claim}
     provenance_raw = json.dumps(provenance).encode()
     manifest = {'oci': {'repository': 'omnilyzer/analytics', 'manifest_digest': DIGEST},
-                'provenance': {'sha256': hashlib.sha256(provenance_raw).hexdigest()}}
+                'provenance': {'sha256': hashlib.sha256(provenance_raw).hexdigest()},
+                'external_source': claim,
+                'signing': {'oci_signature': 'omnilyzer/analytics@' + DIGEST}}
     data = {'analytics-source-claim.json': json.dumps(claim).encode(),
             'oci-publication.json': json.dumps({'schema_version': 1,
                 'registry': 'https://oci-dev.omnilyzer.ai', 'repository': 'omnilyzer/analytics',
@@ -50,6 +52,18 @@ class AnalyticsForgejoEvidenceTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     archive_evidence(directory, digest, version)
             (directory / 'unexpected').write_text('no')
+            with self.assertRaises(ValueError):
+                archive_evidence(directory, DIGEST, VERSION)
+
+    def test_mismatched_external_source_denied(self):
+        """Section: reject missing or altered source binding in signed evidence."""
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            fixture(directory)
+            manifest_path = directory / 'release-manifest.json'
+            manifest = json.loads(manifest_path.read_bytes())
+            manifest['external_source']['oci_repository'] = 'omnilyzer/other'
+            manifest_path.write_text(json.dumps(manifest))
             with self.assertRaises(ValueError):
                 archive_evidence(directory, DIGEST, VERSION)
 

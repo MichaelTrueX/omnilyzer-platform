@@ -49,7 +49,10 @@ def archive_evidence(directory: Path, expected_digest: str, version: str) -> byt
             or manifest.get('oci', {}).get('repository') != 'omnilyzer/analytics'
             or provenance.get('subjects', {}).get('oci_manifest_digest') != expected_digest):
         raise ValueError('Analytics signed subject mismatch')
-    if manifest.get('provenance', {}).get('sha256') != hashlib.sha256((directory / 'release-provenance.json').read_bytes()).hexdigest():
+    if (manifest.get('provenance', {}).get('sha256') != hashlib.sha256((directory / 'release-provenance.json').read_bytes()).hexdigest()
+            or manifest.get('external_source') != claim
+            or provenance.get('external_source') != claim
+            or manifest.get('signing', {}).get('oci_signature') != 'omnilyzer/analytics@' + expected_digest):
         raise ValueError('Analytics provenance hash mismatch')
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode='w', format=tarfile.PAX_FORMAT) as tar:
