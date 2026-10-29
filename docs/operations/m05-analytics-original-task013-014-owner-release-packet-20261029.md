@@ -92,14 +92,22 @@ These textual **example placeholders are not credentials**. The actual
 files are provisioned out-of-band ONLY by authorized host execution,
 with private directory mode **0700** and each nonempty regular file
 mode **0600**, owned by the precisely mapped unprivileged runtime
-identity. The Compose reference requests runtime `uid=10001`,
-`gid=10001`, and restrictive `mode=0400`. **Important limitation:**
-Docker Compose local-file secrets may implement these as host bind mounts
-and may not honor requested uid/gid/mode remapping. Do not trust YAML
-alone: original Task014's authorized host installer must verify real
-container UID10001 access and that other container UIDs cannot read the
-four files before enabling ingress. Failure must block activation;
-never relax modes to 0444/0666 to make the app start.
+identity. **Verified limitation:** Docker Compose v5.5.0 explicitly
+reports that its local-file secret `uid`, `gid` and `mode` properties
+**are ignored**. The reviewed Compose template therefore no longer claims
+these mount attributes protect secrets. Actual source file ownership
+(effective host UID mapped to container UID10001), directory mode 0700
+and per-file mode 0600 determine access. On truexdevelopment, an isolated
+real Compose container (Node22.23.4, UID10001, read-only, no network,
+cap_drop ALL) read all four synthetic 0600 source files when owned by
+the mapped UID10001. Changing just synthetic JWT_SECRET ownership to
+UID0 made the same container fail to read it. Exact positive and
+negative actual Compose outcomes PASS, with temporary test-only Docker
+containers/project and files cleaned. This is still **not proof** that
+the separately authorized target rootless Docker daemon's host/userns
+UID mapping matches truexdevelopment: original Task014 must verify
+its *actual* secret-file read and wrong-owner denial on the target
+before enabling ingress, with **no** 0444/0666 permission fallback.
 The Python reviewer checks only names, ownership, sizes,
 mode and symlinks; it **never opens or returns secret contents**.
 In each container, read-only mounted individual secrets are loaded
@@ -483,3 +491,31 @@ root space **~7.0 GB**; `/dev/shm` returned to ~3.1 MB use; the original
 Docker default builder remains running/unchanged. Neither original DEV
 canary nor product services, DB, Nginx, Cloudflare, registry, signing
 identity, DNS, token/cookie handling, secrets or production changed.
+
+## 12. 29 October: Original Compose local-secret permission caveat closed
+
+**Actual observed, not inferred from parsed YAML:** isolated Docker Compose
+v5.5.0 explicitly warned that file secret `uid/gid/mode` are unsupported
+and silently ignored. M05 removed those misleading fields from the
+review-only Analytics Compose file and moved trust to host 0700 directory,
+0600 regular secret files, carefully established effective host UID/GID
+and an actual runtime positive/negative test. Four synthetic secrets
+were mounted inside a rootless-user **container** UID10001 with all
+capabilities dropped, no network, no exposed ports, read-only rootfs,
+Node22.23.4. The actual Compose execution succeeded when all four
+synthetic files were owned by UID10001; changing only JWT_SECRET to
+owner UID0 prevented Node's --env-file from loading it. The short setup
+container was allowed CHOWN only for its own synthetic temp file; the
+running app container never received CHOWN privileges. No production
+credentials, no real Analytics OCI, no installed Task014 broker, canary
+or shared network were used.
+
+**Persistent opt-in regression** added to the existing
+`deployment/tests/test_analytics_dev_release_review.py`:
+`M05_REAL_COMPOSE_SECRET_TEST=1 python3 -m unittest -v
+deployment.tests.test_analytics_dev_release_review`.
+Requires a pre-cached pinned Node22 base, local Docker Compose and PyYAML;
+test always creates a unique throwaway Compose project and removes it.
+Default CI keeps this optional to prevent access to host Docker when it
+is not authorized. The original Task014 target rootless UID mapping
+and secure secret provisioning **still need real host acceptance**.

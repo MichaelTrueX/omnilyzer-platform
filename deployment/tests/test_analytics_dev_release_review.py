@@ -143,10 +143,12 @@ class AnalyticsDevRuntimeReviewTests(unittest.TestCase):
                 "ANALYTICS_" + selected.upper() + "_IMAGE"])
             self.assertEqual(service["ports"][0]["host_ip"], "127.0.0.1")
             self.assertEqual(len(service["secrets"]), 4)
+            # Compose ignores uid/gid/mode for local file secrets; security
+            # comes from host 0600 ownership plus actual rootless UID tests.
             for secret in service["secrets"]:
-                self.assertEqual(secret["uid"], "10001")
-                self.assertEqual(secret["gid"], "10001")
-                self.assertEqual(secret["mode"], "0400")
+                self.assertNotIn("uid", secret)
+                self.assertNotIn("gid", secret)
+                self.assertNotIn("mode", secret)
             self.assertFalse(service.get("privileged", False))
             self.assertTrue(service["read_only"])
             self.assertEqual(service["cap_drop"], ["ALL"])
@@ -155,6 +157,112 @@ class AnalyticsDevRuntimeReviewTests(unittest.TestCase):
             self.assertEqual(config["networks"]["analytics_backend"]["name"],
                              "omnilyzer-analytics-backend-dev")
             self.assertTrue(config["networks"]["analytics_backend"]["external"])
+
+    @unittest.skipUnless(
+        os.getenv("M05_REAL_COMPOSE_SECRET_TEST") == "1",
+        "explicit Docker opt-in; test starts ONLY isolated no-network containers",
+    )
+    def test_actual_compose_uid10001_secrets_read_and_wrong_owner_denied(self):
+        """Test actual file-secret mounts under UID10001, not YAML-only claims.
+
+        Test-only: temp Compose project, no host ports or external network,
+        official pinned Node22 image, four synthetic 0600 secrets; no real
+        product image, credentials, installer, Task014 authority or canary.
+        Root in a setup-only container creates synthetic ownership; the
+        actual Compose service keeps cap_drop=ALL and no-new-privileges.
+        """
+        try:
+            import yaml
+        except ImportError as exc:
+            self.skipTest("PyYAML required by explicit real Compose probe")
+        image = (
+            "node:22.23.4-bookworm@sha256:"
+            "78bc820a7a6148e8c48731eca18dbb9b6b2c05ac4a52138479be565f2831682d"
+        )
+        # Fail if the pinned image is unavailable; do not fetch or build.
+        present = subprocess.run(
+            ["docker", "image", "inspect", image],
+            capture_output=True, timeout=15, check=False,
+        )
+        if present.returncode != 0:
+            self.skipTest("pinned synthetic Node22 image not cached")
+        with tempfile.TemporaryDirectory(prefix="m05-compose-secret-proof-") as tmp:
+            root = Path(tmp)
+            source = root / "secrets"
+            source.mkdir(mode=0o700)
+            expected = [str(name) for name in REQUIRED_SECRET_NAMES]
+            for name in expected:
+                secret = source / name
+                secret.write_text(f"{name}=m05_synthetic_{name}\n")
+                secret.chmod(0o600)
+
+            parsed = yaml.safe_load(ANALYTICS_PATH.read_text())
+            service = dict(parsed["services"]["analytics-blue"])
+            self.assertEqual(service["user"], "10001:10001")
+            self.assertEqual(service["cap_drop"], ["ALL"])
+            for field in ("profiles", "ports", "networks", "healthcheck"):
+                service.pop(field, None)
+            service["network_mode"] = "none"
+            service["restart"] = "no"
+            service["image"] = image
+            service["command"] = [
+                "node", *(f"--env-file=/run/secrets/{name}" for name in expected),
+                "-e",
+                'const keys=["COLLECTOR_DATABASE_URL","DATABASE_URL",'
+                '"JWT_REFRESH_SECRET","JWT_SECRET"];'
+                'if(keys.some(k=>process.env[k]!=="m05_synthetic_"+k))'
+                'process.exit(31);console.log("M05_REAL_COMPOSE_SECRET_PASS")',
+            ]
+            project = "m05-pr50-secrets-" + root.name[-8:].lower()
+            parsed["name"] = project
+            parsed["services"] = {"analytics-blue": service}
+            parsed.pop("networks", None)
+            for ref in parsed["secrets"].values():
+                name = Path(ref["file"]).name
+                self.assertIn(name, expected)
+                ref["file"] = str(source / name)
+            compose = root / "isolated-compose.yaml"
+            compose.write_text(yaml.safe_dump(parsed, sort_keys=False))
+
+            def run(args, *, check=True):
+                return subprocess.run(
+                    list(args), capture_output=True, text=True, check=check,
+                    timeout=45, env=dict(os.environ, DOCKER_CLI_HINT="opt-in"),
+                )
+
+            def change_owner(name, uid):
+                run([
+                    "docker", "run", "--rm", "--pull", "never",
+                    "--network", "none", "--mount",
+                    f"type=bind,src={source / name},dst=/proof",
+                    "--user", "0:0", image, "chown", f"{uid}:{uid}", "/proof",
+                ])
+
+            compose_cmd = ["docker", "compose", "-p", project, "-f", str(compose)]
+            try:
+                for name in expected:
+                    change_owner(name, 10001)
+                data = json.loads(run([
+                    *compose_cmd, "config", "--format", "json",
+                ]).stdout)
+                self.assertEqual(data["services"]["analytics-blue"]["network_mode"], "none")
+                self.assertNotIn("ports", data["services"]["analytics-blue"])
+                success = run([
+                    *compose_cmd, "run", "--rm", "--no-deps", "-T",
+                    "analytics-blue",
+                ])
+                self.assertIn("M05_REAL_COMPOSE_SECRET_PASS", success.stdout)
+                # The Docker Compose local-file mount ignores uid/gid/mode;
+                # the ONLY permission boundary here is host file ownership.
+                change_owner("JWT_SECRET", 0)
+                refused = run([
+                    *compose_cmd, "run", "--rm", "--no-deps", "-T",
+                    "analytics-blue",
+                ], check=False)
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertNotIn("M05_REAL_COMPOSE_SECRET_PASS", refused.stdout)
+            finally:
+                run([*compose_cmd, "down", "--remove-orphans", "--volumes"], check=False)
 
     def test_private_owner_only_secret_paths_metadata_only(self):
         """Never read or leak four secrets; only report approved reference names."""

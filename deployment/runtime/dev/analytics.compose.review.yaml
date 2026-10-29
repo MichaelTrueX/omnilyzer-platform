@@ -10,6 +10,10 @@
 # Section 1: the exact same hardening as original rootless canary where valid.
 # All values are explicit, except the TWO digest-qualified images supplied by
 # the ORIGINAL verified signed promotion and the four operator-owned secrets.
+# IMPORTANT: Compose v5.5.0 ignores uid/gid/mode for local file secrets.
+# An authorized host installer MUST provision real source files mode 0600
+# for the effective rootless-mapped UID that appears as UID10001 in the
+# container; verify actual positive+negative reads before activation.
 name: omnilyzer-analytics-dev
 
 x-analytics: &analytics
@@ -48,24 +52,12 @@ x-analytics: &analytics
   secrets:
     - source: ANALYTICS_COLLECTOR_DATABASE_URL
       target: COLLECTOR_DATABASE_URL
-      uid: "10001"
-      gid: "10001"
-      mode: 0400
     - source: ANALYTICS_DATABASE_URL
       target: DATABASE_URL
-      uid: "10001"
-      gid: "10001"
-      mode: 0400
     - source: ANALYTICS_JWT_REFRESH_SECRET
       target: JWT_REFRESH_SECRET
-      uid: "10001"
-      gid: "10001"
-      mode: 0400
     - source: ANALYTICS_JWT_SECRET
       target: JWT_SECRET
-      uid: "10001"
-      gid: "10001"
-      mode: 0400
   healthcheck:
     test:
       - CMD
