@@ -57,7 +57,8 @@ _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 class AnalyticsPrivilegedExecutor:
     """Exact first-install receiver; no generic or canary deployment method."""
 
-    __slots__ = ("_replay", "_preflight", "_deploy", "_reviewed_source")
+    __slots__ = ("_replay", "_preflight", "_deploy", "_rollback",
+                 "_reviewed_source")
 
     def __init__(
         self, *, replay_guard: object, private_registry_preflight: object,
@@ -88,6 +89,9 @@ class AnalyticsPrivilegedExecutor:
             deploy = _ordinary_bound_method(
                 operation, "deploy_analytics", positional=("request",),
             )
+            rollback = _ordinary_bound_method(
+                operation, "rollback_first_analytics", positional=("request",),
+            )
             replay = (
                 _ordinary_bound_method(
                     replay_guard, "begin_execution", positional=("jti",),
@@ -101,6 +105,7 @@ class AnalyticsPrivilegedExecutor:
             object.__setattr__(self, "_replay", replay)
             object.__setattr__(self, "_preflight", preflight)
             object.__setattr__(self, "_deploy", deploy)
+            object.__setattr__(self, "_rollback", rollback)
             object.__setattr__(self, "_reviewed_source", tuple(sorted(source.items())))
         except _CONTROL:
             raise
@@ -114,6 +119,18 @@ class AnalyticsPrivilegedExecutor:
     def __delattr__(self, name: str) -> None:
         """Disallow deletion of captured privileged collaborators."""
         raise AttributeError("Analytics executor is immutable")
+
+    def _stop_unfinished_first_install(self, request: AnalyticsExecutorRequest) -> None:
+        """Fail safe after deployment or durable replay finalization failure."""
+        try:
+            if object.__getattribute__(self, "_rollback")(request) is not None:
+                raise ValueError("invalid rollback outcome")
+        except _CONTROL:
+            raise
+        except Exception:
+            sys.stderr.write(
+                "TASK014_ANALYTICS_EXECUTOR_UNAVAILABLE phase=rollback_unconfirmed\n"
+            )
 
     def execute_private(
         self, canonical_request: bytes, *, credential_fd: int,
@@ -201,8 +218,10 @@ class AnalyticsPrivilegedExecutor:
                 if result is not None:
                     raise TypeError("invalid Analytics deployment result")
             except _CONTROL:
+                self._stop_unfinished_first_install(request)
                 raise
             except Exception:
+                self._stop_unfinished_first_install(request)
                 raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
             try:
                 finished = replay_finish(
@@ -213,8 +232,10 @@ class AnalyticsPrivilegedExecutor:
                 if finished is not None:
                     raise TypeError("invalid replay finish")
             except _CONTROL:
+                self._stop_unfinished_first_install(request)
                 raise
             except Exception:
+                self._stop_unfinished_first_install(request)
                 raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
             return _build_success_response(request_hash)
         finally:

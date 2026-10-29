@@ -104,6 +104,11 @@ class SyntheticFirstInstall:
         if self.error:
             raise OSError("synthetic private install failed")
 
+    def rollback_first_analytics(self, request):
+        """Synthetic no-op rollback for original executor failure paths."""
+        self.events.append("rollback_first_analytics")
+        return None
+
 
 def receiver(*, events=None, fail_preflight=False, fail_deploy=False):
     """Assemble actual original replay and product-specific executor callbacks."""

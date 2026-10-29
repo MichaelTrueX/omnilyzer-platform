@@ -527,3 +527,85 @@ Task014 `DevApplicationSourceSet`; no service or host configuration changed.
   for the earlier inert source boundary.
 - Production remains unchanged; no merge, registry publication, deployment,
   real tokens, DB writes, or public traffic were authorized or attempted.
+
+## M05-14: signed 0.15.0 first-install rootless Compose/health/rollback (2026-10-30)
+
+**Complete source:** `deployment/analytics_first_install.py` and
+`deployment/tests/test_analytics_first_install.py`. The original protected
+Task014 canary Docker runtime, Compose file, deployment controller, broker,
+executor, executor_server, Unix transport and installed source set remain
+byte-unchanged. The new component is STILL OUTSIDE the installed source set;
+this is not a live Task014 deployment or an activation grant.
+
+### Closed first-install phase sequence
+
+When explicitly composed behind the original verified OIDC + signed evidence,
+sealed Zot FD, durable replay and root-owned source manifest, the new
+`AnalyticsFirstInstallOperation.deploy_analytics`:
+
+1. Requires EXACT pinned source/profile/Compose hashes, signed Analytics 0.15.0
+   image, initial blue/127.0.0.1:3141/no-public-ingress/no-prior-slot,
+   original rootless socket and the **existing four private secret names**.
+   Checks the reviewed Compose bytes and refuses symlinks or source drift.
+   Calls existing `review_private_secret_paths` for four 0600, non-symlink,
+   nonempty files and private directory, owned by rootless-mapped host UID
+   **503216** (container UID10001). Also checks exact mapped GID 503216.
+   **No real secret contents are opened or logged.**
+2. Verifies the already provisioned, separate external Docker backend network
+   name `omnilyzer-analytics-backend-dev` and actual Compose parser with the
+   exact immutable image references. Denies first install if an Analytics-blue
+   container already exists, including one merely stopped. Does NOT create
+   network, initialize DB or modify any canary Docker project.
+3. Calls the already implemented private immutable Zot pull with the broker-
+   provided sealed short-lived FD, original 30s manifest + 180s pull bounds,
+   then requires actual local Docker `RepoDigests == [pinned-0.15.0-image]`.
+4. Executes ONLY `docker compose --project-name omnilyzer-analytics-dev
+   --file <reviewed-YAML> --profile blue up --detach --no-deps
+   --force-recreate --no-build --pull never analytics-blue`. The green profile
+   remains inactive; the environment contains only fixed immutable image
+   references, PATH and LANG. No token, URL, DB password or JWT value is an
+   argv/environment parameter.
+5. Verifies the actual started image, UID10001, read-only root filesystem,
+   privileged=false, all capabilities dropped, no-new-privileges, exact
+   127.0.0.1:3141 port bind and sole separate backend network. Checks bounded
+   Docker health status and makes a **private in-container 127.0.0.1:3000
+   GET /readyz** (not an Nginx/public endpoint), demanding HTTP success.
+6. On every failure that could follow a partial container start, invokes
+   **only `docker compose stop --timeout 15 analytics-blue`** and confirms no
+   running slot. Never `down`, `rm`, `prune`, delete PG writes, volumes,
+   networks or images, or roll back to a nonexistent prior signed release.
+   Rollback errors are reported as `rollback=unconfirmed`; no positive result
+   is returned. The modified Analytics executor also captures the operation's
+   exact `rollback_first_analytics` method: if the newly healthy container
+   exists but original durable `replay.finish_execution` fails, it stops that
+   same slot before returning failure. Request-bound in-memory nonsecret SHA
+   prevents unrelated requests from stopping this slot.
+
+### Real parser and Node envfile proof (no Docker daemon writes)
+
+On `truexdevelopment` 2026-10-30:
+
+- Installed Docker Compose **v5.5.0** `--profile blue config --quiet` with
+  both immutable OCI digest image variables: **PASS**, no daemon/container
+  operation and no host or registry mutation.
+- Installed Node **v22.23.3** with exactly FOUR disposable 0600
+  `NAME=SYNTHETIC_VALUE` env-file secrets: **PASS 4/4**. Omitting
+  `JWT_SECRET` caused the expected failing exit status **91**.
+- The existing optional disposable Docker/UID10001 integration test remains
+  a separate opt-in (`M05_REAL_ANALYTICS_COMPOSE_TEST=1`) and is NOT real
+  rootless host acceptance. No real Analytics secret or personal user data
+  was read; the test did not start an application container.
+
+### Still NO-GO for installing on a real host
+
+These checks do not prove the original installed Task014 broker/executor source
+selection, actual rootless UID mapping/Compose file-secret bind reads, active
+Zot/Forgejo promoter ACL + real signed consumer, private PostgreSQL auth and
+collector roles/RLS or a durable installed first-install state/audit/rollback.
+The unprivileged DEV checks did not locate the approved Task014 rootless
+Docker socket or the four real secret files. Actual `/readyz`/persisted
+PostgreSQL data and rollback are **not demonstrated**. M04's last security
+review was on older PR HEAD; a complete changed privileged boundary still
+requires one independent final review and explicit owner approval for live
+host promotion. No merge, systemd, Docker write, PG change, or public traffic
+activation is performed by this coding delivery.

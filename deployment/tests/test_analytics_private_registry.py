@@ -140,6 +140,10 @@ class RootlessAnalyticsZotTests(unittest.TestCase):
                 self.calls += 1
                 self.adapter.pull_analytics(request)
 
+            def rollback_first_analytics(self, request):
+                """No container started by this narrow fake pull operation."""
+                return None
+
         events = []
         replay = Replay(events)
         operation = ExactPrivateFirstInstall(self.adapter)
