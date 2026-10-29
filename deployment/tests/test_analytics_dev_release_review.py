@@ -306,7 +306,9 @@ class AnalyticsDevRuntimeReviewTests(unittest.TestCase):
             directory.mkdir(mode=0o700)
             for name in REQUIRED_SECRET_NAMES:
                 file = directory / name
-                file.write_text(f"{name}=SYNTHETIC_NOT_A_SECRET\n")
+                # This test needs only a non-empty file inode; never
+                # serialize any secret-like variable or name into its body.
+                file.write_bytes(b"X")
                 file.chmod(0o600)
             real_stat = Path.stat
             changed_uid = None
