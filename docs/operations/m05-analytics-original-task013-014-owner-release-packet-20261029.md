@@ -519,3 +519,43 @@ test always creates a unique throwaway Compose project and removes it.
 Default CI keeps this optional to prevent access to host Docker when it
 is not authorized. The original Task014 target rootless UID mapping
 and secure secret provisioning **still need real host acceptance**.
+
+## 13. 29 October — independently accepted PR51 source pin (review only)
+
+M04 independently approved Analytics [PR51](https://github.com/MichaelTrueX/omnilyzer/pull/51)
+exact HEAD `df40b4632a088232de4699d5826641e0cf269dc8`, Git tree
+`b6b4f5f210d61d2cfef25cfe3f04b55eb8f509a8`, for the original
+Task013 source repin and genuine OCI scan ONLY (M04 GitHub review
+`5693751996`, Issue #27 comment `6489733825`). M04 independently also
+accepted PR244's separate Compose file-secret security correction in
+review `5693770571`, comment `6489772603`. Neither review authorizes
+signing, registry publication, installed Task014, DEV activation or PROD.
+
+This existing PR244 source/presign binding has been refreshed from accepted
+PR50 to exact PR51 in **the same original Task013/014 files**:
+- **77 exact committed Git source identities**: 29 historic source identities
+  plus 48 current security-critical file hashes, including all three PR51
+  changed files; every previous PR49/PR50 source mismatch denied.
+- Reproducible **542-file** Git-only sanitized source TAR SHA256
+  `815fd9c6e2ca9fc019c7c6b782e4276849a9d410bee166e811ced63719258cbe`.
+- Changed Dockerfile SHA256
+  `b395a091001e44739c9caab8324d755e9cc72fd26da0be771de4e4ad06d88c9e`.
+- Existing original signed external-source projection, product profile,
+  Next15 runtime identity, OCI file check and original Task014 source claims
+  now all require the **same PR51 Git commit, tree and 77 hashes**.
+- Independently repeated on a disposable review-only platform copy:
+  focused 112 tests: **110 PASS, 2 opt-in SKIP, 0 FAIL**; full original
+  Task013/014 broker/executor/canary + product suite 339 tests:
+  **337 PASS, 2 opt-in SKIP, 0 FAIL**. The two skipped tests involve
+  environment-specific optional Docker/handoff scenarios and are NOT
+  presented as runtime security evidence.
+
+**Current next decisive release gate:** BUILD the exact PR51 candidate from
+these committed source hashes using ORIGINAL pinned BuildKit v0.24.0,
+generate a genuine Syft1.51.0 CycloneDX1.6 OCI SBOM, scan using
+Grype0.118.0 and its valid DB, and enforce the original zero-exception
+Critical/High policy. Previous PR50 2 Critical/81 High remains historical
+failure evidence only, not a claim about PR51. If PR51 has any blocking
+findings, stop before signing and provide a **complete sanitized machine-
+readable blocker inventory**, not a selective list. No owner approval has
+been given to operate protected signing/registry or live Task014.

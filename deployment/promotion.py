@@ -177,7 +177,7 @@ def _verified_external_source_claim(
             or claim["source_repository"] != ANALYTICS_SOURCE_REPOSITORY
             or claim["oci_repository"] != ANALYTICS_REPOSITORY
             or type(claim["source_files_verified"]) is not int
-            or claim["source_files_verified"] != 76
+            or claim["source_files_verified"] != 77
             or claim["readiness_path"] != "/readyz"
             or claim["platform_source_commit"] != request.source_sha
             or claim["oci_manifest_digest"] != request.manifest_digest):

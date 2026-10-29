@@ -38,7 +38,7 @@ from release.builder_versions import (
 ERROR = "TASK013_ANALYTICS_BUILD_CANDIDATE_DENIED"
 BUILDER_NAME = re.compile(r"[a-z][a-z0-9-]{0,62}\Z")
 OCI_REPOSITORY = "omnilyzer/analytics"
-EXPECTED_SOURCE = "b2a02e54cb5d51f06cb56b9f9d7aa7ca2fae2a50"
+EXPECTED_SOURCE = "df40b4632a088232de4699d5826641e0cf269dc8"
 
 
 def _preflight_builder(builder: str) -> None:

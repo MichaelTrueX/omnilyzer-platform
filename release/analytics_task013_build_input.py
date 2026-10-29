@@ -110,7 +110,7 @@ def _coherent_profiles(source: dict[str, Any], product: Any, runtime: Any) -> No
 
 
 def build_input(analytics_checkout: Path, *, platform_root: Path = ROOT) -> dict[str, Any]:
-    """Bind 76 source identities and the reviewed product profiles, never sign.
+    """Bind 77 source identities and the reviewed product profiles, never sign.
 
     The returned dictionary is NOT an approved Task 013 release plan and may
     not be converted to a Task 014 promotion without existing verified, signed
@@ -133,7 +133,7 @@ def build_input(analytics_checkout: Path, *, platform_root: Path = ROOT) -> dict
     # admission verifies the original 29-entry manifest plus 22 critical files.
     verified = verify_source(analytics_checkout, binding)
     if (
-        verified.get("source_files_verified") != 76
+        verified.get("source_files_verified") != 77
         or verified.get("release_authorized") is not False
         or verified.get("deployment_authorized") is not False
         or verified.get("source_commit") != product.source_commit
@@ -167,7 +167,7 @@ def build_input(analytics_checkout: Path, *, platform_root: Path = ROOT) -> dict
         "source_binding_sha256": hashlib.sha256(canonical_bytes(binding)).hexdigest(),
         "product_profile_sha256": product.sha256(),
         "runtime_profile_sha256": runtime.sha256(),
-        "source_files_verified": 76,
+        "source_files_verified": 77,
         "readiness_path": runtime.ready_path,
         "release_authorized": False,
         "deployment_authorized": False,

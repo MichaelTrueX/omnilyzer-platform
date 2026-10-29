@@ -193,7 +193,7 @@ def prepare_original_signed_evidence_inputs(
             or verified_source_claim["product_id"] != "analytics"
             or verified_source_claim["source_repository"] != "MichaelTrueX/omnilyzer"
             or verified_source_claim["oci_repository"] != "omnilyzer/analytics"
-            or verified_source_claim["source_files_verified"] != 76
+            or verified_source_claim["source_files_verified"] != 77
             or verified_source_claim["readiness_path"] != "/readyz"):
         raise DeploymentPolicyError("external product provenance claim is invalid")
     for name, value in verified_source_claim.items():

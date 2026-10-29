@@ -2,12 +2,12 @@
   "schema_version": 1,
   "product": "analytics",
   "source_repository": "MichaelTrueX/omnilyzer",
-  "source_commit": "b2a02e54cb5d51f06cb56b9f9d7aa7ca2fae2a50",
+  "source_commit": "df40b4632a088232de4699d5826641e0cf269dc8",
   "source_manifest_path": "docs/qa/m01-integrated-release-20261027.manifest.json",
   "source_manifest_sha256": "d5a8b056581e4f30d4e352d04492b0bf8f8b2560b3b01eda1c679a8b1a0d9a3e",
   "source_critical_files": {
     ".dockerignore": "10e66496d6ecef461d5d5af6250f92ec1096e467cf313ea68fc2cc70d2c41dd3",
-    "Dockerfile.analytics": "2dcbacd8ea503cd5ba7db4e2ebc75558e1256650bd6fac576c96597c27c26f11",
+    "Dockerfile.analytics": "b395a091001e44739c9caab8324d755e9cc72fd26da0be771de4e4ad06d88c9e",
     "__tests__/m01-migration-provenance.test.cjs": "b3dfeb90c989fae4089be8fe3704193231dc69917337c6dd7a2dcc04bff0cda0",
     "__tests__/m02-auth-cross-tab.test.cjs": "64e4ed92ca1ce7b08d62fc8576430a06ec30997c1d7eef1e7ca93b856b4c8d1b",
     "__tests__/m03-platform-product-health.test.cjs": "e549f97c7e753b06122d8afc614c7a6a8f4f0e47c86501abd6d53c0b8084620c",
@@ -34,6 +34,7 @@
     "components/websites/WebsiteOverview.tsx": "e236233f32deb2d5ac6f1f875d6e207a25955ef6fc69276f3b7591c0e9fe18c9",
     "docs/qa/m01-node22-security-repin-20261028.md": "60228f3ed3e530a1e725bd531e256337147c9611597096518e7971e0d0f86e8c",
     "docs/qa/m01-nonowner-app-runtime-20261028.md": "0e66d5d7f02e49294bccf317528e5447d5db307c3bff9561ded53db7882d5a80",
+    "docs/qa/m01-pr50-debian13-runtime-20261029.md": "19da7705055856e0bf5c026de30caa721bc65de050323b97c4c43892fb41f497",
     "docs/qa/m01-security-runtime-repin-20261029.md": "da5cabc63bc09693652a95baba37b958305eeb664136b3e1bd43a03541304eab",
     "docs/qa/m03-platform-first-consumer-20261027.md": "9d8db769659705fc89f60d68fc9993f1c1876c5c7e2bf1f8e3ac68431655c22f",
     "lib/app-workspace-scope.ts": "92e673ecc342de1850483f2b90ef92b27bf80975add2762083ad610510f0beb7",
@@ -52,7 +53,7 @@
     "scripts/accept-platform-integration-dev.py": "8b60d86be246c07eed0a2351d52ea5f1e5dc75c7de0c3c82951cdd61cb24aafd",
     "scripts/accept_m01_nonowner_http_pg16.py": "a6bb623fad869864a7ae5cb4e6e65ecd087c40899fda315e5408ceead17d54fb",
     "scripts/accept_m01_nonowner_workspace_pg16.py": "69f75a2b36f5d7fb147a2ccaebbf63b5da0b9e4415fa1ccf847d22ce6f47ad8a",
-    "scripts/test_m01_node22_analytics_oci.py": "e009b7c9c955825cb897518caa9a9f4bd549dec1e25d2d7ba3ef5a192e98c68b"
+    "scripts/test_m01_node22_analytics_oci.py": "e446b34e178cde8b097208dbe96c0b2d4964b084e2b3977bdcb31c34766c7740"
   },
   "runtime": {
     "framework": "nextjs-15",
