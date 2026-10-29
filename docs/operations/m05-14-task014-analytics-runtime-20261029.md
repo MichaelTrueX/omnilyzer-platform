@@ -117,3 +117,80 @@ Task013 release. Exact missing gates:
 No unsigned installation, production modification, canary policy expansion,
 registry write, release dispatch, merge, or Task014 privileged activation
 was performed by this change.
+
+## Additional signed Analytics evidence v1 compatibility (M05-14)
+
+**Actual important format difference:** The original protected Task013
+Analytics-only producer `release/analytics_release_evidence.py` emits
+*schema-version 1*, an Analytics-specific provenance statement, a signed
+`external_source` claim in BOTH manifest and provenance, and **no synthetic
+canary Python/npm packages**. The original canary-only Task014 release
+consumer requires schema v2 and canary Python/npm artifact identities.
+Simply adding an Analytics repository to `APPROVED_OCI_REPOSITORIES` would
+both fail and broaden the wrong trust boundary.
+
+The follow-up adds these complete review-only files:
+
+- `deployment/analytics_signed_release_consumer.py`: an immutable 0.15.0
+  Analytics evidence reader fixed to signed Task013 run 40881693662, platform
+  source SHA `b9e22e7...` and the exact published digest recorded above.
+  Reuses the ORIGINAL TLS, read-token, Sigstore blob and Cosign OCI verifier
+  *interfaces*. Validates the genuine Analytics v1 manifest/provenance schema,
+  separate Forgejo Generic package, closed gzip/TAR file set, streaming
+  scanner SHA256 hashes, zero security exceptions, signer issuer/identity,
+  source claim and reviewed product/runtime pins. Returns an INERT receipt.
+  Does not return a privileged request or permit installation.
+- `deployment/tests/test_analytics_signed_release_consumer.py`: synthetic
+  end-to-end schema fixture and adversarial cases. Synthetic verifier results
+  do not prove signatures of the actual published release.
+- `deployment/release_consumer.py`: exact Analytics-only GET routes in the
+  original TLS helper, preserving all default canary paths and size limits.
+- `deployment/oci_verifier.py`: explicit constructor-only
+  `product_id="analytics"` read-only OCI repository selection. The ORIGINAL
+  existing default remains the canary-only verifier and continues using the
+  original global canary repository validator. No wildcard or unapproved
+  product name is accepted.
+
+The review-only consumer intentionally remains OUTSIDE the current installed
+`deployment/application_source_set.py`. It is NOT wired into the original
+broker, privileged executor, workflow, installed rootless socket, secret
+mounts, ingress or deployment policy, because those require separate
+product-scoped Task014 integration and independent security approval.
+
+The real signer/OCI release status is independently confirmed via GitHub,
+but **no original Task014 authenticated Forgejo/Zot GET plus actual Cosign
+signature verification against those live bytes has yet been executed**.
+The synthetic regression tests validate only the code path and rejection
+logic. No install, no production host modification, and no extension to the
+canary runtime authority is implied.
+
+### Independent CI / baseline and least-privilege registry follow-up
+
+The original `deployment/tests/test_execution.py` static historical
+`test_protected_live_files_are_byte_identical` expects an old hash for
+`.github/workflows/platform-release.yml`. It fails with the same exact
+observed and expected SHA256 values on a **fresh, untouched** detached
+platform `origin/main` checkout at `b9e22e7...`. That baseline failure is
+not introduced by this branch and is NOT waived or silently rewritten.
+The original 245-test focused release/broker/executor/OCI subset without
+that preexisting baseline case passed (3 expected skips). A missing
+`test_registry_promotion_composition` name in an initial ad hoc command
+was operator test selection error; no such test module exists.
+
+The successful Zot publisher ACL added for `omnilyzer/analytics` was
+reported by M05-13 as the publisher's exact read/create identity, NOT an
+independent grant to `platform-promote.yml`. Before attempting original
+Task014 authenticated read-only admission, separately verify and, with
+explicit operator approval, configure an Analytics-only **read** grant for
+the exact existing Task014 promotion workflow identity on the actual Zot
+server (`truexmainserver`), preserving all existing canary ACLs and the
+anonymous deny rule. Independently verify the corresponding Forgejo
+Generic `analytics-release-evidence` reader grant. Do not assume that a
+signer's successful publication confers promoter access.
+
+The review-only code has NO runtime-activated registry permission or
+read-token fallback. Its signed evidence verification is only as strong as
+its actual installed, original Task014 Cosign/Sigstore implementations.
+Synthetic mocks establish negative test coverage, not live sigstore
+cryptographic acceptance. Release 0.15.0 is immutable and must NOT be
+rerun or overwritten during Task014 testing.
