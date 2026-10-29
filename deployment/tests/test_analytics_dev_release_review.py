@@ -51,7 +51,7 @@ class AnalyticsDevRuntimeReviewTests(unittest.TestCase):
         self.assertEqual(p.existing_slot, None)
         self.assertEqual(p.secret_names, REQUIRED_SECRET_NAMES)
         self.assertEqual(p.ready_path, "/readyz")
-        self.assertEqual(p.source_commit, "df40b4632a088232de4699d5826641e0cf269dc8")
+        self.assertEqual(p.source_commit, "4cdda7faeba57abb3388f9be5c450fe6afb1140d")
         self.assertEqual(compose_image_variables(p), {
             "ANALYTICS_BLUE_IMAGE": p.proposed_image,
             "ANALYTICS_GREEN_IMAGE": p.proposed_image,

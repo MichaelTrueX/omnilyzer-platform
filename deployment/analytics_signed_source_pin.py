@@ -45,9 +45,9 @@ from .saas_product_runtime import load_review_profile
 # Section 1: pinned original M01 acceptance identity. Changing product code
 # requires independent review, not a mutable branch / latest tag.
 SOURCE_REPOSITORY = "MichaelTrueX/omnilyzer"
-SOURCE_COMMIT = "df40b4632a088232de4699d5826641e0cf269dc8"
-SOURCE_TREE = "b6b4f5f210d61d2cfef25cfe3f04b55eb8f509a8"
-CONTEXT_SHA256 = "815fd9c6e2ca9fc019c7c6b782e4276849a9d410bee166e811ced63719258cbe"
+SOURCE_COMMIT = "4cdda7faeba57abb3388f9be5c450fe6afb1140d"
+SOURCE_TREE = "5c71020a6d9b66b5010386f2743111936a164daa"
+CONTEXT_SHA256 = "c4474ae71ac2acf58876c9ab502e009c866fbeb29862ce991374b8396abf092f"
 SOURCE_MANIFEST_SHA256 = "d5a8b056581e4f30d4e352d04492b0bf8f8b2560b3b01eda1c679a8b1a0d9a3e"
 OCI_REPOSITORY = "omnilyzer/analytics"
 ERROR = "Analytics signed source does not match reviewed product identity"
@@ -97,7 +97,7 @@ def _load_pinned_source() -> dict[str, Any]:
         or data.get("source_commit") != SOURCE_COMMIT
         or data.get("source_manifest_sha256") != SOURCE_MANIFEST_SHA256
         or type(data.get("source_critical_files")) is not dict
-        or len(data["source_critical_files"]) != 48
+        or len(data["source_critical_files"]) != 49
         or not {"Dockerfile.analytics", ".dockerignore", "lib/server-api-auth.ts",
                 "app/readyz/route.ts", "prisma/schema.prisma"}.issubset(
                     data["source_critical_files"]

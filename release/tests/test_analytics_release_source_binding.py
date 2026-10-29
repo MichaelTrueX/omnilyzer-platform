@@ -80,7 +80,7 @@ class AnalyticsSignedSourceBindingTests(unittest.TestCase):
         if not checkout:
             self.skipTest("actual clean Analytics PR49 checkout not provided")
         source = Path(checkout)
-        expected_commit = "df40b4632a088232de4699d5826641e0cf269dc8"
+        expected_commit = "4cdda7faeba57abb3388f9be5c450fe6afb1140d"
         self.assertEqual(
             __import__("subprocess").check_output(
                 ["git", "-C", str(source), "rev-parse", "HEAD"], text=True,
@@ -97,7 +97,7 @@ class AnalyticsSignedSourceBindingTests(unittest.TestCase):
                 source, context, oci, platform_root=ROOT,
             )
             self.assertEqual(claim["source_commit"], expected_commit)
-            self.assertEqual(claim["source_files_verified"], 77)
+            self.assertEqual(claim["source_files_verified"], 78)
             self.assertEqual(claim["build_context_sha256"], built["context_sha256"])
             self.assertTrue(claim["oci_manifest_digest"].startswith("sha256:"))
             self.assertNotIn("signed", claim)

@@ -39,7 +39,7 @@ class AnalyticsTask013BuildInputTests(unittest.TestCase):
     def test_current_three_review_profiles_are_coherent(self) -> None:
         """Prove final PR45 source, /readyz, OCI repo and secrets match."""
         _coherent_profiles(self.source, self.product, self.runtime)
-        self.assertEqual(self.source["source_commit"], "df40b4632a088232de4699d5826641e0cf269dc8")
+        self.assertEqual(self.source["source_commit"], "4cdda7faeba57abb3388f9be5c450fe6afb1140d")
 
     def test_old_unpacked_git_revision_is_denied(self) -> None:
         """PR42 alone cannot become a signed OCI artifact by profile drift."""
@@ -110,7 +110,7 @@ class AnalyticsTask013BuildInputTests(unittest.TestCase):
         first = build_input(Path(source))
         second = build_input(Path(source))
         self.assertEqual(canonical_bytes(first), canonical_bytes(second))
-        self.assertEqual(first["source_files_verified"], 77)
+        self.assertEqual(first["source_files_verified"], 78)
         self.assertEqual(first["analytics_source_commit"], self.source["source_commit"])
         self.assertEqual(first["readiness_path"], "/readyz")
         self.assertEqual(first["oci_repository"], "omnilyzer/analytics")

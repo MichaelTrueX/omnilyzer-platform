@@ -90,6 +90,7 @@ CRITICAL_PATHS = frozenset((
     "app/api/chatbot/route.ts",
     "docs/qa/m01-security-runtime-repin-20261029.md",
     "docs/qa/m01-pr50-debian13-runtime-20261029.md",
+    "docs/qa/m01-pr52-alpine-musl-runtime-20261029.md",
     "next.config.js",
     "package.json",
 ))

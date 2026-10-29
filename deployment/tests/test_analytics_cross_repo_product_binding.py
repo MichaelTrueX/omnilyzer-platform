@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "release/products/analytics-source.json"
 CONTRACT = ROOT / "deployment/products/analytics-dev.json"
 RUNTIME = ROOT / "deployment/products/analytics-runtime-dev.json"
-FINAL_SOURCE = "df40b4632a088232de4699d5826641e0cf269dc8"
+FINAL_SOURCE = "4cdda7faeba57abb3388f9be5c450fe6afb1140d"
 
 
 def validate_local_consistency(source: dict, contract: SaaSProductProfile, runtime) -> None:
