@@ -116,6 +116,59 @@ existing platform, with the existing security boundaries intact.
    real user journey works in the intended environment and required release
    checks pass; a draft PR or synthetic test alone is not DONE.
 
+## Embedded QA and release readiness (owner decision 2026-10-30)
+
+Quality assurance and test management are integral to each feature delivery, not
+a late separate phase that first appears in Task 013/014. Apply **shift-left QA**
+using existing repository checks, CI and release/deployment contracts; do not
+create a separate QA organization, standing test chat, generic test framework or
+approval bureaucracy for ordinary product changes.
+
+1. **Accountability from day one.** The one accountable delivery chat owns
+   functional quality, security tests, release readiness, real user acceptance
+   and defect resolution. Request a narrow independent review only for a
+   material risk or required existing policy; do not hand a half-tested feature
+   to another chat at the end.
+2. **Definition of Done starts in the brief.** Alongside the user journey,
+   identify the few observable acceptance scenarios, negative/unauthorized and
+   cross-tenant cases as relevant, data migration/persistence implications,
+   operational prerequisites, and intended deployment/rollback path. Choose
+   checks in proportion to actual change risk; avoid expansive test plans for
+   simple changes.
+3. **Release-contract preflight before substantial implementation.** Identify
+   the current product's Task 013 build/runtime/dependency/security-policy
+   expectations and Task 014 identity, configuration, secrets, readiness,
+   deployment and rollback requirements. Check for missing contracts, vulnerable
+   dependencies, unsupported runtime assumptions, unavailable environment
+   prerequisites or incompatible ownership boundaries *early*, and fix the
+   owning cause before building more features. Do not assume the synthetic
+   canary proves the real product deploys.
+4. **Test continuously and progressively.** Add or adjust focused automated
+   tests with the changed functionality; exercise the actual browser/API/data
+   path and necessary security boundaries at integration milestones. Prefer
+   existing fixtures and test infrastructure. Run fast targeted tests during
+   iteration, required broader checks once stable; do not rerun unchanged large
+   suites or generate duplicate test evidence after every edit.
+5. **Surface release blockers before the final release.** Use existing PR/CI
+   checks for build reproducibility, locked dependencies, relevant SCA/image
+   vulnerability exposure, configuration, schema compatibility, readiness and
+   release-policy constraints as early as practical. Early scans are feedback,
+   not a substitute for the mandatory final immutable-artifact scan, verified
+   signature, provenance, authorization, and release gates.
+6. **Keep one current defect/readiness picture.** Record only actionable open
+   blockers in the canonical feature issue/PR, clearly distinguishing product
+   defects, environment prerequisites, security policy failures and approvals.
+   Resolve them in the owning delivery stream and record evidence once;
+   escalate a genuinely blocked decision rather than starting endless
+   cross-chat handoffs.
+7. **Ship only proven outcomes.** At release, run the existing required Task
+   013/014 controls and a small real-user smoke journey plus relevant failure
+   and rollback checks. Verify the exact deployed artifact, environment,
+   health, access control and data behavior. Automatic failure must stop
+   promotion or safely roll back; never weaken policy to meet a schedule.
+   Declare DONE only when the accepted user journey works on the intended
+   live environment, not when CI or isolated tests alone are green.
+
 ## Cross-chat continuity and source of truth
 
 ChatGPT conversation memory is useful context but is not a complete or reliable
