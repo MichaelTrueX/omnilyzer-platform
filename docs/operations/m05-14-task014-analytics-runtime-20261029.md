@@ -282,3 +282,33 @@ provisioning, firewall or traffic change was performed.
 5. Only after explicit owner approval, execute one original-Task014-authorized
    private DEV promotion with replay-denial proof and actual rollback. This
    does not authorize public or production activation.
+
+### Original verified OIDC + signed Analytics review composition (not broker)
+
+The complete new `deployment/analytics_registry_review_composition.py`
+implements `InertAnalyticsSignedReleaseReviewHandler`. It REUSES the
+original Task014 `_normalize_identity` and already reviewed OIDC verifier,
+`GitHubRegistryCredentialVerifier`/`VerifiedRegistryCredentials`, exact
+three-JWT audience and workflow checks, sealed-method Sigstore collaborator,
+constructor-scoped original Cosign verifier with the exact Analytics read-only
+repository, and the separate v1 consumer. Its only output is an INERT review
+receipt, not an `ExecutorRequest` or broker transport result. It intentionally
+NEVER calls original replay, executor transport or Docker.
+
+The complete independent test file
+`deployment/tests/test_analytics_review_composition.py` exercises valid
+synthetic original OIDC/registry context, wrong audience/token, unavailable
+OIDC classification, false source/signer review, immutable constructor
+collaborators and original canary composition. It additionally checks that
+ALL new Analytics consumer/request/composition/Compose modules remain OUTSIDE
+the installed `DevApplicationSourceSet` until separately approved.
+
+**Important installed-source protection:** The existing
+`deployment/registry_promotion_composition.py`, `broker.py`, `executor.py`,
+`execution.py`, `private_registry_fd.py`, `private_registry_pull.py`,
+`docker_runtime.py` and `application_source_set.py` are byte-unchanged.
+Their original imported source closure and installed canary authorization
+therefore remain intact. The new read-only Analytics composition lives in
+its own module and does not introduce missing imports in the installed
+canary environment. No request forwarding, plugin runtime or privileged
+feature flag was activated.
