@@ -146,6 +146,61 @@ class IdentityRouteTests(SimpleTestCase):
         self.assertEqual(self.post("/auth/refresh").status_code, 401)
         self.assertEqual(self.mocks[5].call_count, 1)
 
+    def test_expired_refresh_revokes_product_and_clears_cookie(self):
+        self.login()
+        session = self.client.session
+        session["absolute_deadline"] = int(time.time()) - 1
+        session.save()
+        result = self.post("/auth/refresh")
+        self.assertEqual(result.status_code, 401)
+        self.assertEqual(self.mocks[6].call_count, 1)
+        self.assertEqual(result.cookies["__Host-sumlaude_session"]["max-age"], 0)
+        self.assertEqual(self.get("/auth/session").json()["authenticated"], False)
+
+    def test_expired_refresh_revoke_failure_fails_closed_for_retry(self):
+        self.login()
+        session = self.client.session
+        session["absolute_deadline"] = int(time.time()) - 1
+        session.save()
+        self.mocks[6].side_effect = issuer.AdmissionError("DB unavailable")
+        result = self.post("/auth/refresh")
+        self.assertEqual(result.status_code, 503)
+        self.assertIn("s03_digest", self.client.session)
+        self.assertEqual(self.mocks[5].call_count, 1)
+        self.assertEqual(self.get("/auth/session").json()["authenticated"], False)
+
+    def test_cross_origin_csrf_refused_even_with_known_token(self):
+        self.login()
+        token = self.csrf()
+        for route in ("/auth/refresh", "/auth/logout"):
+            result = self.client.post(route, secure=True,
+                HTTP_ORIGIN="https://malicious.example", HTTP_X_CSRFTOKEN=token)
+            self.assertEqual(result.status_code, 403)
+        self.assertEqual(self.mocks[6].call_count, 0)
+        self.assertEqual(self.get("/auth/session").json()["authenticated"], True)
+
+    def test_callback_expired_state_and_provider_errors_do_not_issue(self):
+        self.assertEqual(self.get("/auth/login").status_code, 302)
+        session = self.client.session
+        state = session["transaction"]["state"]
+        session["transaction"]["deadline"] = int(time.time()) - 1
+        session.save()
+        self.assertEqual(self.get("/auth/callback?state=" + state + "&code=abc").status_code, 400)
+        self.assertEqual(self.mocks[5].call_count, 0)
+        self.assertEqual(self.get("/auth/login").status_code, 302)
+        state = self.client.session["transaction"]["state"]
+        self.assertEqual(self.get("/auth/callback?state=" + state +
+                                   "&code=abc&iss=https://untrusted.example").status_code, 400)
+        self.assertEqual(self.mocks[5].call_count, 0)
+
+    def test_invalid_signed_identity_never_reaches_issuer(self):
+        self.mocks[2].side_effect = oidc.IdentityError("bad nonce or audience")
+        self.assertEqual(self.get("/auth/login").status_code, 302)
+        state = self.client.session["transaction"]["state"]
+        result = self.get("/auth/callback?state=" + state + "&code=abc")
+        self.assertEqual(result.status_code, 403)
+        self.assertEqual(self.mocks[5].call_count, 0)
+
 
 class ContractTests(unittest.TestCase):
     def test_issuer_disallows_qa_function_in_prod(self):

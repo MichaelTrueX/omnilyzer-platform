@@ -98,9 +98,13 @@ MUST NOT be copied or approved for production.
 - Product session = **10 minutes** per issuance (within S03 <=30min);
   Django identity idle = 30min, absolute = 8h. Login callback rotates
   Django session ID. Browser refresh creates a NEW S03 random 256-bit
-  cookie and revokes the previous hash. Failed refresh revokes the
-  current product session and clears local auth, unless S03 revocation
-  itself is unavailable (HTTP503 fail closed for the platform action).
+  cookie and revokes the previous hash. Failed **or expired-session**
+  refresh revokes the current product session and clears the client
+  product cookie/local auth. If S03 revocation is unavailable the
+  platform responds HTTP503, preserves the server-side digest for a
+  subsequent retry, and cannot issue another product cookie. CSRF
+  cross-origin requests, expired OIDC state, wrong callback issuer and
+  invalid signed identity are explicit negative tests.
 - Keycloak signing keys cache 5min; invalid signature triggers one
   forced JWKS refresh (normal provider signing-key rollover).
 - JWT algorithm pinned to RS256, issuer/audience/exp/iat/sub/nonce

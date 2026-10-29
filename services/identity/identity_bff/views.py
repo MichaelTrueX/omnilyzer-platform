@@ -114,7 +114,15 @@ def csrf(request):
 def refresh(request):
     principal = _active(request)
     if not principal:
-        return _fail(401)
+        # A stale Django identity must not leave the browser holding a
+        # still-admitted S03 learner cookie. Revoke before local cleanup.
+        try:
+            _revoke_existing(request)
+        except issuer.AdmissionError:
+            # Preserve the server-side digest for a future retry.
+            return _fail(503)
+        request.session.flush()
+        return _clear_product_cookie(_fail(401))
     try:
         old = oidc.unseal(request.session["sealed_tokens"])
         new = oidc.refresh(old["refresh_token"])
