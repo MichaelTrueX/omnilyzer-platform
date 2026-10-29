@@ -50,7 +50,7 @@ class AnalyticsSourceAdmissionTests(unittest.TestCase):
             self.skipTest('requires explicit separately checked out Analytics PR36')
         receipt = verify_source(self.checkout, self.binding)
         self.assertEqual(receipt['source_commit'], self.binding['source_commit'])
-        self.assertEqual(receipt['source_files_verified'], 77)
+        self.assertEqual(receipt['source_files_verified'], 78)
         self.assertFalse(receipt['release_authorized'])
         self.assertFalse(receipt['deployment_authorized'])
 

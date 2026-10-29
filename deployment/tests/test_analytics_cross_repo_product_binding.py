@@ -107,12 +107,12 @@ class AnalyticsCrossRepositoryProductBindingTests(unittest.TestCase):
             validate_existing_signed_release(self.contract, object())
 
     def test_exact_packaged_git_source_optional(self):
-        """When a fresh source checkout is provided, verify all 77 real Git blobs."""
+        """When a fresh source checkout is provided, verify all 78 real Git blobs."""
         path = os.environ.get("OMNILYZER_ANALYTICS_CHECKOUT")
         if not path:
             self.skipTest("exact trusted Analytics checkout not supplied")
         receipt = verify_source(Path(path), self.source)
-        self.assertEqual(receipt["source_files_verified"], 77)
+        self.assertEqual(receipt["source_files_verified"], 78)
         self.assertEqual(receipt["source_commit"], FINAL_SOURCE)
         self.assertFalse(receipt["release_authorized"])
         self.assertFalse(receipt["deployment_authorized"])
