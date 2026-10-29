@@ -66,8 +66,30 @@ CRITICAL_PATHS = frozenset((
     "Dockerfile.analytics",
     ".dockerignore",
     "scripts/accept-m05-analytics-oci-dev.py",
+    "__tests__/m01-migration-provenance.test.cjs",
+    "__tests__/m02-auth-cross-tab.test.cjs",
+    "__tests__/workspace-analytics-dashboard.test.cjs",
+    "__tests__/workspace-site-collector.test.cjs",
+    "app/api/v1/workspaces/[workspaceId]/events/route.ts",
+    "app/api/v1/workspaces/[workspaceId]/members/route.ts",
+    "app/api/v1/workspaces/[workspaceId]/site/route.ts",
+    "app/api/v1/workspaces/[workspaceId]/sites/[siteId]/diagnostics/route.ts",
+    "app/api/v1/workspaces/[workspaceId]/sites/[siteId]/route.ts",
+    "app/api/v1/workspaces/[workspaceId]/sites/[siteId]/summary/route.ts",
+    "app/api/v1/workspaces/[workspaceId]/sites/route.ts",
+    "app/api/v1/workspaces/[workspaceId]/summary/route.ts",
+    "app/api/v1/workspaces/route.ts",
+    "docs/qa/m01-node22-security-repin-20261028.md",
+    "docs/qa/m01-nonowner-app-runtime-20261028.md",
+    "lib/app-workspace-scope.ts",
+    "lib/auth-context.tsx",
+    "prisma/rls/analytics-app-workspace.install.sql",
+    "scripts/accept_m01_nonowner_http_pg16.py",
+    "scripts/accept_m01_nonowner_workspace_pg16.py",
+    "scripts/test_m01_node22_analytics_oci.py",
 ))
 SHA_RE = re.compile(r"[0-9a-f]{64}\Z")
+BASELINE_SOURCE = "8648adba2db884cc78274080b9836ca46bafd630" # audited original PR45 ancestry
 
 class AnalyticsAdmissionError(ValueError):
     """Reject an unreviewed Analytics source or incomplete release identity."""
@@ -137,6 +159,12 @@ def verify_source(checkout: Path, binding: dict[str, Any]) -> dict[str, Any]:
     checkout = checkout.resolve(strict=True)
     if _git(checkout, "rev-parse", "HEAD").decode().strip() != commit:
         raise AnalyticsAdmissionError("unreviewed HEAD: wrong Analytics Git revision")
+    # Retain PR45 original 29-entry manifest as an immutable historical baseline.
+    # Every subsequent file change MUST be independently SHA256-pinned below.
+    _git(checkout, "merge-base", "--is-ancestor", BASELINE_SOURCE, commit)
+    changed = set(_git(checkout, "diff", "--name-only", BASELINE_SOURCE, commit, "--").decode().splitlines())
+    if changed - set(critical):
+        raise AnalyticsAdmissionError("unreviewed changed source paths")
     if _git(checkout, "config", "--get", "remote.origin.url").decode().strip() not in GIT_ORIGINS:
         raise AnalyticsAdmissionError("source origin differs from exact Analytics repository")
     # The only trusted source is committed Git content. Working tree must not
@@ -163,7 +191,13 @@ def verify_source(checkout: Path, binding: dict[str, Any]) -> dict[str, Any]:
             raise AnalyticsAdmissionError("duplicate source file")
         seen.add(rel)
         data = _blob(checkout, commit, rel)
-        if hashlib.sha256(data).hexdigest() != _digest(entry["sha256"]) or len(data) != entry["bytes"]:
+        # A changed baseline file is allowed ONLY when separately covered by an
+        # exact reviewed critical-file pin; unchanged files retain size and SHA.
+        overridden = rel in changed
+        if overridden and rel not in critical:
+            raise AnalyticsAdmissionError("changed historical source lacks new pin: " + rel)
+        expected = critical[rel] if overridden else entry["sha256"]
+        if hashlib.sha256(data).hexdigest() != _digest(expected) or (not overridden and len(data) != entry["bytes"]):
             raise AnalyticsAdmissionError("source hash or size mismatch: " + rel)
     for rel, expected in critical.items():
         data = _blob(checkout, commit, rel)

@@ -3,7 +3,7 @@
   "product_id": "analytics",
   "source": {
     "repository": "MichaelTrueX/omnilyzer",
-    "commit": "8648adba2db884cc78274080b9836ca46bafd630"
+    "commit": "2472d5265688b4f1e18d91f140afe61307ea371b"
   },
   "artifact": {
     "registry": "https://oci-dev.omnilyzer.ai",
