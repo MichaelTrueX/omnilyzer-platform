@@ -67,6 +67,67 @@ uses a dedicated branch, progressive validation, complete diff review, GitHub
 security/CI checks, and a final deployment.dev_handoff leaving DEV clean and
 synchronized to main.
 
+## Lean feature delivery (owner decision 2026-10-29)
+
+The owner is a solo operator. A normal product feature must not recreate the
+large multi-chat, multi-PR, multi-week process experienced during the initial
+Analytics integration. Optimize for a working user-visible capability on the
+existing platform, with the existing security boundaries intact.
+
+1. **One accountable delivery chat.** The owner describes the intended user
+   outcome, not the technical task breakdown. The delivery chat owns discovery,
+   implementation, integration, tests, release and final acceptance. Ask another
+   specialist chat for one bounded independent check only if necessary. Coordinate
+   directly through GitHub; do not require the owner to relay messages.
+2. **One short feature contract.** Before coding, define the user journey,
+   concrete acceptance criteria, explicit non-goals, affected product/repository,
+   and what constitutes a real working deployment. Confirm a material scope
+   trade-off once; do not demand approval at each implementation step.
+3. **Reuse before build.** Inspect existing platform capabilities, product code,
+   tests and infrastructure first. Prefer one cohesive feature PR per repository
+   and one integration handoff; avoid framework-building, generic policy
+   extensions, speculative security layers, duplicate evidence sets, micro-PRs,
+   and unrequested features. Separate changes only for a genuine independent
+   risk or required repository boundary.
+4. **Demonstrate the product early.** Deliver the smallest secure end-to-end
+   browser/API journey and actual persistence as soon as feasible. Evaluate
+   success in terms of the feature working for its intended users, not PR count,
+   test count, documentation count or release artifacts alone.
+5. **Proportionate validation.** Run focused tests while changing code and the
+   required integrated/security checks at the release boundary. Reuse previous
+   unaffected proofs; rerun when the relevant input, code, dependency, or
+   security boundary changes. Never skip mandatory security gates, tenant
+   isolation, authorization, data protections or recovery checks.
+6. **Task 013/014 are reusable automation, not new projects per feature.** For
+   deployable product versions, use the existing approved build, scan, SBOM,
+   provenance/sign, publish, verify, deploy, health and rollback workflows. Keep
+   required policy gates automatic and fail-closed. A normal product change must
+   not require new Task 013/014 implementation. Static-only changes may use
+   their existing approved static publishing path where applicable. A material
+   new runtime or trust boundary is an exception requiring explicit review.
+7. **Batch work; ask the owner only for real decisions.** Progress through safe
+   reads, edits, tests and review in one delivery stream. Pause for privileged
+   operations, approval-required merges/deployments, changed scope, or an
+   actual blocking conflict. Never treat a time target as permission to bypass
+   required controls.
+8. **One concise handover.** Record exactly what works, the deployed version
+   and environment, real acceptance evidence, outstanding defects, rollback
+   path, and the single next action. A feature is DONE only after the agreed
+   real user journey works in the intended environment and required release
+   checks pass; a draft PR or synthetic test alone is not DONE.
+
+## Cross-chat continuity and source of truth
+
+ChatGPT conversation memory is useful context but is not a complete or reliable
+repository state ledger. For each substantial new task, read this AGENTS.md,
+the current relevant GitHub issue/PR and exact source HEAD before proceeding.
+Keep one canonical feature issue/brief and one concise current-state handover,
+with links to the actual code, rather than multiplying coordination threads.
+Update the canonical issue at meaningful milestones and closure, not for every
+small edit. The repository and current deployment evidence are authoritative
+over remembered chat summaries. Do not claim an asynchronous personal-memory
+update or infer that a file was deployed merely because it was committed.
+
 ## Before editing and context discipline
 
 - Understand the affected execution flow. Search for the owning implementation
