@@ -57,7 +57,7 @@ class AnalyticsDevRuntimeReviewTests(unittest.TestCase):
             "ANALYTICS_GREEN_IMAGE": p.proposed_image,
         })
         self.assertNotIn("JWT_SECRET=", json.dumps(p.to_dict()))
-        self.assertEqual(p.rollback_kind, "original-task014-immutable-digest-preserve-database-writes")
+        self.assertEqual(p.rollback_kind, "original-task014-stop-first-slot-preserve-database-writes")
 
     def test_next_release_retains_exact_prior_digest_on_other_slot(self):
         """Rollback target is original immutable digest, never a mutable tag."""
@@ -71,6 +71,7 @@ class AnalyticsDevRuntimeReviewTests(unittest.TestCase):
         self.assertIn("@sha256:", e["ANALYTICS_BLUE_IMAGE"])
         self.assertIn("@sha256:", e["ANALYTICS_GREEN_IMAGE"])
         self.assertNotEqual(p.proposed_image, p.existing_image)
+        self.assertEqual(p.rollback_kind, "original-task014-immutable-digest-preserve-database-writes")
 
     def test_invalid_or_unsafe_inputs_rejected(self):
         """No wrong slot/stage/mutable image/ref/same digest/partial state."""

@@ -145,7 +145,14 @@ def review_dev_rollout(
         existing_image=existing,
         secret_names=REQUIRED_SECRET_NAMES,
         ready_path="/readyz",
-        rollback_kind="original-task014-immutable-digest-preserve-database-writes",
+        # First install has NO previously signed Analytics image to restore.
+        # Rollback must deactivate the private, unexposed candidate only;
+        # subsequent upgrades may return to the previous immutable digest.
+        rollback_kind=(
+            "original-task014-stop-first-slot-preserve-database-writes"
+            if existing is None else
+            "original-task014-immutable-digest-preserve-database-writes"
+        ),
     )
 
 
