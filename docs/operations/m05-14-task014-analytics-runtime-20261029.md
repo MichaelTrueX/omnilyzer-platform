@@ -925,3 +925,40 @@ local actual HTTP test or synthetic security test does not grant that live
 authority. One independent final M04 review is needed of the NEW broker
 root-owned trust boundary before approved installation. No merge, service
 enablement, registry write, real credential or production change here.
+
+### 2026-10-30 — Exact installed Analytics source closure completed
+
+This final targeted security audit found that the review-only Analytics
+privileged-service source manifest had not listed every statically imported
+product module. The protected original canary source selection had correctly
+remained unchanged, but the separate Analytics root-owned source-admission
+list was incomplete. The explicit fixed list now includes **20 unique
+Analytics-only Python modules**, with no duplicates and no overlap with
+the original **40** Python canary modules. The existing 3 canary runtime-data
+files are separate and remain untouched. The two Analytics service entrypoints
+plus `deployment/__init__.py` resolve to the exact declared original-source
+union plus 20 Analytics-only modules using the original Task014 AST static
+import resolver; dynamic imports are denied. A new test
+`test_privileged_analytics_import_closure_exactly_attested` fails closed on
+future added transitive imports, missing hashes, duplicate source names,
+unreviewed imports or changed source selection, without installing anything.
+
+A read-only candidate of the complete review schema from this isolated
+checkout shows **20 source hashes and 2,668 canonical JSON bytes**, below
+the existing 4,096-byte root-owned config limit. This is only a syntax and
+source-coverage verification. Such a candidate is **not** an installer, a
+signed source manifest or a privileged authorization; the original Task014
+root-controlled installed manifest must independently attest the exact Git
+source bytes and approved target installation SHA. No new canary source
+imports or unprivileged host changes have been made.
+
+Parallel validation after correcting the source contract: Analytics focused
+**140 tests, 137 PASS and 3 expected SKIP**; original canary/Task014 focused
+**592 PASS**, 0 failures. The source closure, source-configuration parser and
+real protected host status were verified separately. The original active
+rootless daemon UID991 and the existing Task014 broker/executor socket were
+observed read-only; neither the two Analytics root-owned service configs nor
+four Analytics secret source files are available, and ports 3141/3142 have
+no listener. Exact root-controlled activation, signed registry identity,
+separate restricted PostgreSQL roles/RLS, real private readiness and stop
+rollback remain explicit conditions for DEV installation. **NO-GO unchanged.**

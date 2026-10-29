@@ -45,7 +45,6 @@ ANALYTICS_INSTALLED_FILES = (
     "deployment/analytics_broker_router.py",
     "deployment/analytics_broker_service.py",
     "deployment/analytics_broker_service_entrypoint.py",
-    "deployment/analytics_broker_service_entrypoint.py",
     "deployment/analytics_dev_release_review.py",
     "deployment/analytics_execution.py",
     "deployment/analytics_executor.py",
@@ -55,8 +54,11 @@ ANALYTICS_INSTALLED_FILES = (
     "deployment/analytics_executor_service_entrypoint.py",
     "deployment/analytics_first_install.py",
     "deployment/analytics_private_registry.py",
+    "deployment/analytics_promotion_broker.py",
+    "deployment/analytics_registry_review_composition.py",
     "deployment/analytics_signed_release_consumer.py",
     "deployment/analytics_signed_source_pin.py",
+    "deployment/rootless_docker_authority.py",
     "deployment/analytics_unix_boundary.py",
     "deployment/saas_product_contract.py",
     "deployment/saas_product_runtime.py",
@@ -118,6 +120,8 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
             raise ValueError
         source = value["source_sha256"]
         if (
+            len(ANALYTICS_INSTALLED_FILES) != len(set(ANALYTICS_INSTALLED_FILES))
+            or
             type(source) is not dict
             or set(source) != set(ANALYTICS_INSTALLED_FILES)
             or any(type(key) is not str or type(v) is not str

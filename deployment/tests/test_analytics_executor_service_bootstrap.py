@@ -17,6 +17,7 @@ No sudo, Docker, systemd activation, registry, genuine JWT, or host secrets.
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import os
 from pathlib import Path
@@ -85,6 +86,43 @@ class InstalledSourceConfigTests(unittest.TestCase):
         for name in EXPECTED:
             self.assertEqual(parsed[name], EXPECTED[name])
         self.assertLessEqual(len(encoded), 4096)
+
+    def test_privileged_analytics_import_closure_exactly_attested(self):
+        """Mirror the original Task014 AST closure, without changing canary.
+
+        All Python modules reachable from either Analytics service entrypoint
+        must be covered by the original closed source set OR the distinct
+        Analytics source_sha256 set. A new import cannot silently escape the
+        future root-owned installation SHA manifest. Dynamic imports are
+        already forbidden by the original static resolver.
+        """
+        from deployment.application_source_set import DevApplicationSourceSet
+        from deployment.tests.test_application_source_set import local_imports
+
+        original = {
+            item.repository_path for item in DevApplicationSourceSet().files
+            if item.kind == "python-module"
+        }
+        pending = {
+            "deployment/analytics_broker_service_entrypoint.py",
+            "deployment/analytics_executor_service_entrypoint.py",
+            "deployment/__init__.py",
+        }
+        visited: set[str] = set()
+        while pending:
+            path = pending.pop()
+            if path in visited:
+                continue
+            visited.add(path)
+            source = ROOT / path
+            self.assertTrue(source.is_file(), path)
+            self.assertFalse(source.is_symlink(), path)
+            tree = ast.parse(source.read_text(), filename=path)
+            module = path.removesuffix(".py").replace("/", ".")
+            pending.update(local_imports(tree, module) - visited)
+        self.assertEqual(len(ANALYTICS_INSTALLED_FILES), len(set(ANALYTICS_INSTALLED_FILES)))
+        self.assertEqual(set(ANALYTICS_INSTALLED_FILES), visited - original)
+        self.assertTrue(original.isdisjoint(ANALYTICS_INSTALLED_FILES))
 
     def test_duplicate_unknown_wrong_noncanonical_and_missing_files_denied(self):
         """No attacker-chosen path, extra config or unsigned source is admitted."""
