@@ -364,3 +364,45 @@ NO-GO with 67 Critical + 510 High. Original Task013 protected signed
 Analytics publication and original Task014 installed Analytics broker,
 secret refs, functional DEV runtime and write-preserving rollback remain
 UNEXECUTED, as explicitly required by current owner authorization.
+
+## 10. 29 October: source-remediated PR50 source-identity checkpoint
+
+This **supersedes the PR49 build input for subsequent signing** while retaining
+section 9 as explicit historical failing PR49 OCI evidence. M01 security patch
+Analytics draft PR50 exact Git HEAD
+`b2a02e54cb5d51f06cb56b9f9d7aa7ca2fae2a50`, Git tree
+`09a4a2a63c1db3bbe8774b8292d78e8d653ece63`, based directly on
+previous M02/M03/M04 accepted PR49. Independent M04 targeted Next15+
+production-dependency+slim-container acceptance: Issue #27 comment
+6488856441, review 5693289561. The seven changed source files are
+`Dockerfile.analytics`, `app/api/chatbot/route.ts`,
+`docs/qa/m01-security-runtime-repin-20261029.md`, `next.config.js`,
+`package-lock.json`, `package.json`,
+`scripts/test_m01_node22_analytics_oci.py`.
+
+M05 refreshed the **same original** Task013/014 source admission, immutable
+BuildKit build input, OCI validator, signed external-source review, product
+profile and test fixtures to PR50. Four additional changed-file types are
+included in exact critical SHA checks, preserving all prior 43: 47 critical
+files + original immutable historical 29-file manifest = **76** checked Git
+source identities. Both PR49 and the older vulnerable PR45 are denied by
+exact HEAD/source/hash checks. The 541 committed source TAR files (Git only,
+no local dependencies or untracked files) have SHA256
+`2fe0a3e59d01eab1da4a53e834576a4e4adfee57310456aae001a8d61e6abfc8`.
+The runtime contract is exactly `nextjs-15`; JSON Bearer/localStorage,
+revocable PostgreSQL Session and nonbypass tenant RLS remain unchanged.
+
+**Original platform source-test evidence:** 111 focused Task013/014
+source/OCI/provenance/product tests (110 pass, 1 optional skip);
+full combined existing release/broker/executor/original-canary plus product
+runtime suite **338 tests (337 pass, 1 optional skip, zero fail)**.
+Both are inert review-only tests. No protected signer, public registry, host
+install or canary mutation is implied. Final Task013 OCI vulnerability
+policy Critical/High **must be tested against the new PR50 image**; PR50 npm
+audit or historical PR49 OCI Grype counts do not prove PR50 OCI security.
+
+The original protected Task013 workflow and installed Task014 broker/executor
+remain canary-only. Product runtime Compose remains a separate **not-installed**
+review file, pending explicit owner-approved original Task013 signing,
+Task014 product-aware closed authority/secret references, genuine hosted
+functional readiness and write-preserving signed immutable-digest rollback.

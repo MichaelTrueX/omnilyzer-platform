@@ -37,7 +37,7 @@ CLOSED_RUNTIME = {
     "http_ready_path", "authenticated_api_path", "dashboard_path",
 }
 RUNTIME = {
-    "framework": "nextjs-14",
+    "framework": "nextjs-15",
     "auth": "json-bearer-localstorage",
     "session": "postgresql-revocable",
     "tenant_isolation": "postgresql-force-rls",
@@ -87,6 +87,10 @@ CRITICAL_PATHS = frozenset((
     "scripts/accept_m01_nonowner_http_pg16.py",
     "scripts/accept_m01_nonowner_workspace_pg16.py",
     "scripts/test_m01_node22_analytics_oci.py",
+    "app/api/chatbot/route.ts",
+    "docs/qa/m01-security-runtime-repin-20261029.md",
+    "next.config.js",
+    "package.json",
 ))
 SHA_RE = re.compile(r"[0-9a-f]{64}\Z")
 BASELINE_SOURCE = "8648adba2db884cc78274080b9836ca46bafd630" # audited original PR45 ancestry

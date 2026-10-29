@@ -103,7 +103,7 @@ def verify_archive(archive_path: Path, receipt: dict[str, Any]) -> dict[str, Any
         or receipt.get("input_kind") != "task013-analytics-oci-review-only"
         or receipt.get("oci_repository") != "omnilyzer/analytics"
         or receipt.get("readiness_path") != "/readyz"
-        or receipt.get("source_files_verified") != 72
+        or receipt.get("source_files_verified") != 76
         or receipt.get("release_authorized") is not False
         or receipt.get("deployment_authorized") is not False
     ):
