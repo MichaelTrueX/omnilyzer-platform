@@ -284,3 +284,83 @@ parser/Node22 secret-reference mechanism additionally PASS. M04's formal
 PR49 source/runtime acceptance and original protected Syft/Grype
 Critical/High scan are still required prior to final source freeze and
 any signed real release. No signing, push, broker or installed service action.
+
+## 9. 29 October: REAL PR49 OCI Syft/Grype result — RELEASE POLICY FAIL
+
+**Mandatory P0 blocker, not a signed release.** After M01 froze Analytics
+PR49 SHA `2472d5265688b4f1e18d91f140afe61307ea371b`, and M02/M03/M04
+independently accepted the exact nonowner PG16/Next14/browser product source
+(Omnilyzer Issue #27 comments 6488111449, 6488147833, 6488148479 and
+6488212594), M05 built that exact source AGAIN with the ORIGINAL pinned
+BuildKit v0.24.0 and strict PR242 72-source hashes. Genuine Git-only TAR,
+actual linux/amd64 OCI, M05 existing archive verifier and cross-repository
+unsigned source claim all **PASS**. No protected-main signer/OIDC dispatch,
+registry publication, policy waiver, installed service or live database used.
+
+- Original Syft **1.51.0** on the **actual OCI archive** generated a valid
+  CycloneDX **1.6** SBOM containing **22,750 components**. This is **not**
+  a generic source-dir scan or synthetic test report.
+- Original Grype **0.118.0**, actual SBOM input, real vulnerability database:
+  **2,796 matches: 67 Critical, 510 High, 886 Medium, 276 Low,
+  1,008 Negligible and 49 Unknown**.
+- Real Grype DB metadata: built `2026-10-28T06:23:30Z`, schema `v6.1.10`,
+  checksum `sha256:b08902b91738f1a9bc7fd61942f331d8e5e76a5df0c0b5f8c17c18bd787ee278`,
+  valid **true**.
+- Representative actually observed blocker IDs/packages:
+  `GHSA-p293-qw3h-jr36` **Critical** on Next `14.2.32`;
+  `GHSA-2464-fhr4-w9x` and `GHSA-2xp9-vwfh-vxw4` **Critical** on Next;
+  `GHSA-2w6w-674q-4c4q` and `GHSA-8r5x-fm3f-whwj` **Critical** on Handlebars `4.7.8`;
+  `CVE-2026-19931` **Critical** on curl/libcurl Debian packages;
+  `CVE-2026-5450` **Critical** on Debian libc;
+  many additional High matches for Next, Axios, Systeminformation, Curl,
+  Node dependencies and Debian base packages. These are scanner findings
+  by package and advisory, **not claims of verified exploitability**.
+- The immutable original policy `release/vulnerability-policy.json` is
+  `block_severities=[Critical,High]` with `exceptions=[]`.
+  **Security gate outcome: FAIL / no release.** Never weaken severity
+  rules, manufacture a clean OCI/SBOM, sign the obsolete Node20 PR45,
+  or claim the new Node22 base alone resolves all current findings.
+- Latest **local UNSIGNED** original builder candidate receipt:
+  OCI manifest `sha256:50591d5ee093339536d3dab21aa2896eff848edca00bab9935fc817c4091542e`,
+  whole OCI archive SHA256 `ba0248000c02cdaefab1c7e47eef0ca627622b6d82470aefc8487ee15c3740ec`,
+  exact Git-only source TAR SHA256
+  `3e0cabf5fdd112c18c9a4540c379fbeac1de3df18f117e60e8601ed88dd4f367`.
+  Local OCI digest differs from earlier independent local build; no OCI
+  binary bit-for-bit reproducibility or published registry digest claimed.
+
+**Required one-owner remediation:** M01 must select the smallest reviewable
+Analytics Docker/runtime+dependency security patch (for example eliminate
+unneeded build-only dependencies from the final runtime OCI, use a patched
+minimal supported base, and upgrade demonstrably vulnerable direct and
+transitive application packages while preserving existing Next14/Prisma6
+and JSON Bearer / PostgreSQL session / tenant behavior). M04 must
+independently review only the actual changed security boundary. This will
+change the final Analytics Git HEAD and therefore requires exactly ONE
+post-remediation M01 PR242 source/hash/OCI re-freeze and ONE genuine
+Syft/Grype run on that new signed candidate. Do not keep repinning and
+rebuilding the same failing source. Distinguish exploitable runtime
+vulnerabilities from build-only package inventory using real OCI evidence,
+without weakening the original fail-closed policy.
+
+**Operational cleanup VERIFIED:** The ~600MB temporary OCI archive, source
+TAR, ~3.3GB Grype database and scanner report directory, and isolated
+original pinned BuildKit builder/container were deleted after results were
+recorded. Available root filesystem space recovered to ~12GB; original
+Docker builder unchanged. Original signed canary Compose source SHA256
+`c878123f77a74fba2e11e08b1d13b7cd40e8232f51471d656e927229f94dfdc9`
+and active DEV/production services were untouched.
+
+**Production host discovery limitation:** read-only SSH from
+`truexdevelopment` to hostname `truexmainserver` failed DNS lookup;
+Tailscale currently listed `truexdevelopment` and `omnilyzerdev`, but
+not `truexmainserver`. No claim about truexmainserver's current ports,
+secret ownership, writer DB cluster, Nginx loaded config or available
+storage is made from that failed check; such facts must be verified
+read-only before an independently authorized production cutover.
+
+**Result for owner decision:** product SOURCE GREEN; ORIGINAL Task013 local
+source→OCI and Syft/Grype engineering EXECUTED; actual scanner policy
+NO-GO with 67 Critical + 510 High. Original Task013 protected signed
+Analytics publication and original Task014 installed Analytics broker,
+secret refs, functional DEV runtime and write-preserving rollback remain
+UNEXECUTED, as explicitly required by current owner authorization.
