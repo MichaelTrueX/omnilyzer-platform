@@ -126,6 +126,10 @@ with mock.patch.object(issuer, "issue", side_effect=issue), mock.patch.object(is
             assert db.execute("SELECT count(*) FROM django_session").fetchone()[0] == 1
         print("REAL_POSTGRESQL_DJANGO_SESSION_RECOVERY_PASS")
     print("REAL_KEYCLOAK_NEW_PERSISTENT_BFF_CALLBACK_PASS")
+    old_browser_cookies = None
+    if socket and os.environ.get("S01_QA_PRIVATE_BUILD_ROOT"):
+        from qa_s01_browser_gate import verify
+        old_browser_cookies = verify(browser)
     token=browser.get("/auth/csrf", secure=True).json()["csrf_token"]
     first_cookie = browser.cookies["__Host-sumlaude_session"].value
     refreshed=browser.post("/auth/refresh", secure=True, HTTP_ORIGIN="https://testserver",
@@ -141,6 +145,8 @@ with mock.patch.object(issuer, "issue", side_effect=issue), mock.patch.object(is
     assert logout.status_code==200, logout.status_code
     assert len(revoked)==2
     assert browser.get("/auth/session", secure=True).json()["authenticated"] is False
+    if old_browser_cookies is not None:
+        verify(browser,authenticated=False,old_cookies=old_browser_cookies)
     if socket:
         with psycopg.connect(host=socket, dbname="sumlaude_learning", user="postgres") as db:
             record = db.execute(
