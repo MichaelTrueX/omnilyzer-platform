@@ -87,5 +87,74 @@ class AnalyticsZotPublisherTests(unittest.TestCase):
                 self.assertFalse((root / 'receipt').exists())
 
 
+    def test_failure_after_zot_put_keeps_tag_occupied_and_retry_fails_closed(self):
+        """Section: simulate failure *after* registry stored the immutable tag.
+
+        The retry must never overwrite an existing tag or issue an apparently
+        complete receipt; an operator must resolve the partial release.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / 'image.tar'
+            build_test_archive(archive)
+            with tarfile.open(archive) as tar:
+                digest = json.loads(tar.extractfile('index.json').read())['manifests'][0]['digest']
+            fake = FakeClient('https://oci-dev.omnilyzer.ai', 'fixture', 'omnilyzer/analytics')
+            original_request = fake.request
+            state = {'tag_written': False, 'fail_once': True, 'put_count': 0}
+
+            def fail_after_put(method, path, data=None, headers=None):
+                """Persist the first PUT, then interrupt digest readback."""
+                if method == 'HEAD' and '/manifests/' in path:
+                    return (200 if state['tag_written'] else 404), {}, b''
+                if method == 'PUT' and '/manifests/' in path:
+                    state['tag_written'] = True
+                    state['put_count'] += 1
+                    return original_request(method, path, data, headers)
+                if method == 'GET' and '/manifests/' in path and state['fail_once']:
+                    state['fail_once'] = False
+                    return 503, {}, b''
+                return original_request(method, path, data, headers)
+
+            fake.request = fail_after_put
+            with patch('release.analytics_publish_zot.prepare_source_claim', return_value={
+                    'oci_repository': 'omnilyzer/analytics', 'oci_manifest_digest': digest}), \
+                 patch('release.analytics_publish_zot._load_token', return_value='fixture'), \
+                 patch('release.analytics_publish_zot.Client', return_value=fake):
+                with self.assertRaises(RuntimeError):
+                    publish(root, root, archive, root / 'jwt', root / 'receipt', '1.2.3', root)
+                self.assertTrue(state['tag_written'])
+                self.assertFalse((root / 'receipt').exists())
+                with self.assertRaises(RuntimeError):
+                    publish(root, root, archive, root / 'jwt', root / 'receipt', '1.2.3', root)
+            self.assertEqual(state['put_count'], 1, 'retry must not overwrite immutable OCI version')
+            self.assertFalse((root / 'receipt').exists())
+
+    def test_bad_oci_readback_never_emits_complete_publication_receipt(self):
+        """Section: reject a registry that silently returns wrong manifest bytes."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / 'image.tar'
+            build_test_archive(archive)
+            with tarfile.open(archive) as tar:
+                digest = json.loads(tar.extractfile('index.json').read())['manifests'][0]['digest']
+            fake = FakeClient('https://oci-dev.omnilyzer.ai', 'fixture', 'omnilyzer/analytics')
+            original_request = fake.request
+
+            def mismatched_readback(method, path, data=None, headers=None):
+                if method == 'GET' and '/manifests/' in path:
+                    return 200, {}, b'mismatched-registry-bytes'
+                return original_request(method, path, data, headers)
+
+            fake.request = mismatched_readback
+            with patch('release.analytics_publish_zot.prepare_source_claim', return_value={
+                    'oci_repository': 'omnilyzer/analytics', 'oci_manifest_digest': digest}), \
+                 patch('release.analytics_publish_zot._load_token', return_value='fixture'), \
+                 patch('release.analytics_publish_zot.Client', return_value=fake):
+                with self.assertRaises(RuntimeError):
+                    publish(root, root, archive, root / 'jwt', root / 'receipt', '1.2.3', root)
+            self.assertFalse((root / 'receipt').exists())
+
+
 if __name__ == '__main__':
     unittest.main()

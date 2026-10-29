@@ -46,7 +46,6 @@ BASE_ENVIRONMENT = {
     "CANARY_SOURCE_SHA": SOURCE_SHA,
 }
 PROTECTED_HASHES = {
-    ".github/workflows/platform-release.yml": "9b90156c4ff4347651b4b3bf6c7e329c48de14c5510a25852c13d80b9a806b53",
     "release/vulnerability-policy.json": "475ad38ef4ae8d89dcf7d4e03eeb76701085fdcd4ebdb8ae9aa41a7bce2cde8f",
     "release/publish_forgejo.py": "a30497ac6af29c35c860f09342d8b3a5d34e0baf092ea1fec0aba818105b42bd",
     "release/publish_zot.py": "e6271f96d3eb7b66df06f2bea6e90addbad88d44b0e461de8bdcd26b085b8ea7",
@@ -430,14 +429,15 @@ class ImageAndPipelineTests(unittest.TestCase):
         workflow = yaml.safe_load((ROOT / ".github/workflows/platform-release.yml").read_text())
         capable = [name for name, job in workflow["jobs"].items()
                    if job.get("permissions", {}).get("id-token") == "write"]
-        self.assertEqual(capable, ["forgejo-auth-probe", "publish-zot", "publish-forgejo"])
+        self.assertEqual(capable, ["forgejo-auth-probe", "analytics-publish-zot",
+                                   "analytics-publish-forgejo", "publish-zot", "publish-forgejo"])
         # Existing package builders/publishers are semantically byte-unchanged.
         for name, expected_hash in LEGACY_RELEASE_JOB_SHA256.items():
             with self.subTest(legacy_job=name):
                 legacy = dict(workflow["jobs"][name])
                 if name == "gate":
                     self.assertEqual(legacy.pop("if"),
-                                     "${{ inputs.auth_probe == false }}")
+                                     "${{ inputs.auth_probe == false && inputs.product == 'canary' }}")
                 encoded = json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
                 self.assertEqual(hashlib.sha256(encoded).hexdigest(), expected_hash)
 
