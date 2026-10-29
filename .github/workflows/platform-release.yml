@@ -1,12 +1,12 @@
 # File: .github/workflows/platform-release.yml
-# Purpose: Gate an immutable release behind authenticated, read-only absence
-#          checks for all four remote destinations before any publication,
-#          or run the existing isolated Forgejo OIDC diagnostic.
-# Related: release/registry_absence_preflight.py, release/forgejo_oidc_probe.py,
-#          release/request_oidc.py, release/tests/test_workflow_policy.py,
-#          release/environments/dev.json.
-# Authority: Diagnostic mode skips the release gate and every publisher; normal
-#            release mode keeps its existing version/SHA/policy controls.
+# Purpose: Preserve the original protected canary release and add a separate
+#          Analytics OCI-only Task013 signing/publication path, after pinned
+#          Syft/Grype scanning and authenticated registry absence checks.
+# Related: release/registry_absence_preflight.py, release/request_oidc.py,
+#          release/analytics_publish_zot.py, release/analytics_release_evidence.py,
+#          release/analytics_forgejo_evidence.py, release/tests/test_workflow_policy.py.
+# Authority: Both product paths require the protected main SHA and original
+#            environment. Diagnostic mode remains read-only; Task014 unchanged.
 
 name: Platform release
 
@@ -27,7 +27,7 @@ on:
         type: boolean
         default: false
       product:
-        description: Canary release or exact source-only Analytics admission (not a release)
+        description: Canary or signed Analytics Task013 release
         required: false
         type: choice
         options:
@@ -102,7 +102,8 @@ jobs:
   # Section 1b: independently verify the exact Analytics source INSIDE the
   # existing protected workflow, without granting publication or promotion.
   # This read-only path is intentionally NOT the signed product release job:
-  # existing publish-zot/publish-forgejo continue to require the canary gate.
+  # existing canary publishers remain separate; Analytics publishers require
+  # the completed scanner job and the same protected release environment.
   analytics-source-admission:
     if: ${{ inputs.product == 'analytics' && inputs.auth_probe == false }}
     runs-on: ubuntu-24.04
@@ -238,7 +239,223 @@ jobs:
               raise SystemExit('ORIGINAL_ANALYTICS_CRITICAL_HIGH_POLICY_DENIED')
           print('ORIGINAL_ANALYTICS_REAL_OCI_SYFT_GRYPE_POLICY_PASS_NO_WAIVERS')
           PYCODE
-          # No signed artifact, publication or Task014 request is emitted.
+          # This job grants no signing or registry authority; the separate
+          # protected Analytics jobs require its completed scanner handoff.
+
+      - name: Retain verified Analytics release handoff for protected publication
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          handoff="$RUNNER_TEMP/analytics-task013-unsigned"
+          cp release/vulnerability-policy.json "$handoff/vulnerability-policy.json"
+          python3 - "$handoff/unsigned-source-claim.json" "$handoff/analytics-source-claim.json" <<'PYCODE'
+          import json,sys
+          from pathlib import Path
+          from deployment.policy import canonical_bytes
+          value=json.loads(Path(sys.argv[1]).read_bytes())
+          claim=value['claim']
+          if value.get('signed') is not False or claim.get('oci_repository')!='omnilyzer/analytics':
+              raise SystemExit('ANALYTICS_HANDOFF_REJECTED')
+          Path(sys.argv[2]).write_bytes(canonical_bytes(claim))
+          PYCODE
+      - name: Upload verified Analytics transport handoff
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        with:
+          name: analytics-task013-handoff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/analytics-task013-unsigned
+          if-no-files-found: error
+          retention-days: 1
+
+  # Section 1d: isolated protected Analytics OCI publisher. Canary unchanged.
+  analytics-publish-zot:
+    needs: [analytics-source-admission]
+    if: ${{ inputs.product == 'analytics' && inputs.auth_probe == false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: task013-dev-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout protected platform source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Checkout reviewed immutable Analytics Git source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: MichaelTrueX/omnilyzer
+          ref: 4cdda7faeba57abb3388f9be5c450fe6afb1140d
+          fetch-depth: 0
+          path: analytics-review-source
+          persist-credentials: false
+      - name: Download scanner-approved OCI handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: analytics-task013-handoff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/analytics-task013-handoff
+      - name: Verify source, registry absence, then publish exact OCI digest
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          REQUESTED_SHA: ${{ inputs.source_sha }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$RELEASE_REF" = refs/heads/main
+          test "$RELEASE_REPOSITORY" = MichaelTrueX/omnilyzer-platform
+          test "$REQUESTED_SHA" = "$RELEASE_SHA"
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          handoff="$RUNNER_TEMP/analytics-task013-handoff"
+          forgejo_token="$RUNNER_TEMP/analytics-preflight-forgejo.jwt"
+          zot_token="$RUNNER_TEMP/analytics-preflight-zot.jwt"
+          publish_token="$RUNNER_TEMP/analytics-zot-publish.jwt"
+          trap 'rm -f "$forgejo_token" "$zot_token" "$publish_token"' EXIT
+          python3 -m release.analytics_release_source_binding \
+            --analytics-checkout analytics-review-source \
+            --immutable-context "$handoff/candidate/source.tar" \
+            --oci-archive "$handoff/candidate/analytics.oci.tar" \
+            > "$RUNNER_TEMP/analytics-reverified.json"
+          python3 - "$handoff/analytics-source-claim.json" "$RUNNER_TEMP/analytics-reverified.json" <<'PYCODE'
+          import json,sys
+          from pathlib import Path
+          if json.loads(Path(sys.argv[1]).read_bytes()) != json.loads(Path(sys.argv[2]).read_bytes())['claim']:
+              raise SystemExit('ANALYTICS_SOURCE_BINDING_TRANSPORT_DENIED')
+          PYCODE
+          python3 -m release.request_oidc --audience u:2:316bec9a-53e4-4807-9557-7febdc979d0a --output "$forgejo_token"
+          python3 -m release.request_oidc --audience https://oci-dev.omnilyzer.ai --output "$zot_token"
+          python3 -m release.registry_absence_preflight --product analytics \
+            --version "$RELEASE_VERSION" --forgejo-token-file "$forgejo_token" \
+            --zot-token-file "$zot_token"
+          python3 -m release.request_oidc --audience https://oci-dev.omnilyzer.ai --output "$publish_token"
+          python3 -m release.analytics_publish_zot \
+            --analytics-checkout analytics-review-source \
+            --immutable-context "$handoff/candidate/source.tar" \
+            --oci-archive "$handoff/candidate/analytics.oci.tar" \
+            --token-file "$publish_token" --version "$RELEASE_VERSION" \
+            --output "$RUNNER_TEMP/analytics-oci-publication.json"
+      - name: Upload authenticated Analytics Zot publication receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        with:
+          name: analytics-task013-zot-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/analytics-oci-publication.json
+          if-no-files-found: error
+          retention-days: 1
+
+  # Section 1e: protected Analytics keyless Cosign and Forgejo publication.
+  analytics-publish-forgejo:
+    needs: [analytics-source-admission, analytics-publish-zot]
+    if: ${{ inputs.product == 'analytics' && inputs.auth_probe == false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: task013-dev-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout protected platform source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download scanner-approved Analytics handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: analytics-task013-handoff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/analytics-task013-handoff
+      - name: Download authenticated Analytics Zot receipt
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: analytics-task013-zot-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/analytics-zot-receipt
+      - name: Enforce protected identity and build exact Analytics evidence
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          REQUESTED_SHA: ${{ inputs.source_sha }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_REPOSITORY_ID: ${{ github.repository_id }}
+          RELEASE_WORKFLOW_REF: ${{ github.workflow_ref }}
+          RELEASE_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          RELEASE_EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$RELEASE_REF" = refs/heads/main
+          test "$RELEASE_REPOSITORY" = MichaelTrueX/omnilyzer-platform
+          test "$REQUESTED_SHA" = "$RELEASE_SHA"
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$RELEASE_WORKFLOW_SHA" = "$RELEASE_SHA"
+          test "$RELEASE_WORKFLOW_REF" = 'MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main'
+          python3 -m release.analytics_release_evidence \
+            --source-claim "$RUNNER_TEMP/analytics-task013-handoff/analytics-source-claim.json" \
+            --publication "$RUNNER_TEMP/analytics-zot-receipt/analytics-oci-publication.json" \
+            --scan-dir "$RUNNER_TEMP/analytics-task013-handoff" \
+            --output "$RUNNER_TEMP/analytics-release-evidence" \
+            --version "$RELEASE_VERSION" --repository "$RELEASE_REPOSITORY" \
+            --repository-id "$RELEASE_REPOSITORY_ID" \
+            --workflow-ref "$RELEASE_WORKFLOW_REF" \
+            --workflow-sha "$RELEASE_WORKFLOW_SHA" \
+            --run-id "$RELEASE_RUN_ID" --run-attempt "$RELEASE_RUN_ATTEMPT" \
+            --event-name "$RELEASE_EVENT_NAME" --source-commit "$RELEASE_SHA"
+      - name: Install original pinned Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.0
+        with:
+          cosign-release: v3.1.2
+      - name: Sign and cryptographically verify Analytics manifest provenance and OCI
+        shell: bash
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main
+          CERTIFICATE_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          umask 077
+          evidence="$RUNNER_TEMP/analytics-release-evidence"
+          for name in release-manifest release-provenance; do
+            cosign sign-blob --yes --bundle "$evidence/$name.sigstore.json" "$evidence/$name.json"
+            cosign verify-blob --bundle "$evidence/$name.sigstore.json" \
+              --certificate-identity "$CERTIFICATE_IDENTITY" \
+              --certificate-oidc-issuer "$CERTIFICATE_ISSUER" "$evidence/$name.json"
+          done
+          digest="$(python3 - "$evidence/oci-publication.json" <<'PYCODE'
+          import json,sys
+          print(json.load(open(sys.argv[1]))['manifest_digest'])
+          PYCODE
+          )"
+          token_file="$RUNNER_TEMP/analytics-zot-sign.jwt"
+          docker_config="$RUNNER_TEMP/analytics-docker"
+          mkdir -m 0700 "$docker_config"
+          export DOCKER_CONFIG="$docker_config"
+          trap 'rm -f "$token_file"; docker --config "$docker_config" logout oci-dev.omnilyzer.ai >/dev/null 2>&1 || true; rm -rf "$docker_config"' EXIT
+          python3 -m release.request_oidc --audience https://oci-dev.omnilyzer.ai --output "$token_file"
+          docker --config "$docker_config" login oci-dev.omnilyzer.ai --username oidc --password-stdin < "$token_file"
+          rm -f "$token_file"
+          cosign sign --yes "oci-dev.omnilyzer.ai/omnilyzer/analytics@$digest"
+          cosign verify --certificate-identity "$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer "$CERTIFICATE_ISSUER" \
+            "oci-dev.omnilyzer.ai/omnilyzer/analytics@$digest"
+      - name: Publish signed Analytics evidence to original Forgejo Generic registry
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          token_file="$RUNNER_TEMP/analytics-forgejo.jwt"
+          trap 'rm -f "$token_file"' EXIT
+          python3 -m release.request_oidc --audience u:2:316bec9a-53e4-4807-9557-7febdc979d0a --output "$token_file"
+          digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["manifest_digest"])' "$RUNNER_TEMP/analytics-release-evidence/oci-publication.json")"
+          python3 -m release.analytics_forgejo_evidence \
+            --evidence "$RUNNER_TEMP/analytics-release-evidence" \
+            --token-file "$token_file" --oci-digest "$digest" --version "$RELEASE_VERSION"
 
   # Section 2: Release gate runs only in the DEFAULT non-diagnostic mode.
   gate:

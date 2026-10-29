@@ -17,7 +17,13 @@ VERSION = '1.2.3'
 def fixture(directory):
     """Section: Create synthetic unsigned test evidence; never production credentials."""
     claim = {'oci_repository': 'omnilyzer/analytics', 'oci_manifest_digest': DIGEST}
-    provenance = {'subjects': {'oci_manifest_digest': DIGEST}, 'external_source': claim}
+    scanners = ('oci-sbom.cdx.json', 'oci-grype.json', 'grype-db-status.json',
+                'vulnerability-policy.json')
+    scanner_data = {name: b'{}' for name in scanners}
+    scanner_hashes = {name: hashlib.sha256(data).hexdigest() for name, data in scanner_data.items()}
+    provenance = {'subjects': {'oci_manifest_digest': DIGEST,
+                   'scanner_sha256': scanner_hashes, 'security_exceptions': 0},
+                  'external_source': claim}
     provenance_raw = json.dumps(provenance).encode()
     manifest = {'oci': {'repository': 'omnilyzer/analytics', 'manifest_digest': DIGEST},
                 'provenance': {'sha256': hashlib.sha256(provenance_raw).hexdigest()},
@@ -33,6 +39,7 @@ def fixture(directory):
             'release-provenance.json': provenance_raw,
             'release-manifest.sigstore.json': bundle,
             'release-provenance.sigstore.json': bundle}
+    data.update(scanner_data)
     for name, value in data.items():
         (directory / name).write_bytes(value)
 
@@ -66,6 +73,15 @@ class AnalyticsForgejoEvidenceTests(unittest.TestCase):
             manifest = json.loads(manifest_path.read_bytes())
             manifest['external_source']['oci_repository'] = 'omnilyzer/other'
             manifest_path.write_text(json.dumps(manifest))
+            with self.assertRaises(ValueError):
+                archive_evidence(directory, DIGEST, VERSION)
+
+    def test_tampered_scan_denied(self):
+        """Section: reject modified Grype evidence after source-bound signing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            fixture(directory)
+            (directory / 'oci-grype.json').write_bytes(b'{"tampered": true}')
             with self.assertRaises(ValueError):
                 archive_evidence(directory, DIGEST, VERSION)
 

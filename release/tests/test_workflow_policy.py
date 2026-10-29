@@ -111,7 +111,8 @@ class WorkflowPolicyTests(unittest.TestCase):
         """Do not grant id-token permission to the ordinary gate or build."""
         capable = [name for name, job in self.jobs.items()
                    if job.get("permissions", {}).get("id-token") == "write"]
-        self.assertEqual(capable, ["forgejo-auth-probe", "publish-zot", "publish-forgejo"])
+        self.assertEqual(capable, ["forgejo-auth-probe", "analytics-publish-zot",
+                                   "analytics-publish-forgejo", "publish-zot", "publish-forgejo"])
         for name in capable:
             self.assertEqual(self.jobs[name]["permissions"],
                              {"contents": "read", "id-token": "write"})
@@ -388,3 +389,45 @@ class CanarySecurityReviewWorkflowTests(unittest.TestCase):
         for banned in ("cosign sign", "request_oidc", "publish_zot", "publish_forgejo",
                        "docker login", "docker push", "gh release create"):
             self.assertNotIn(banned, self.raw)
+
+
+class AnalyticsProtectedPublicationTests(unittest.TestCase):
+    """Section: protect the new Analytics-only signers and original canary gates."""
+    @classmethod
+    def setUpClass(cls):
+        cls.jobs = yaml.safe_load(WORKFLOW_PATH.read_text())['jobs']
+
+    def test_analytics_release_depends_on_scanned_source_and_zot(self):
+        """Neither publisher may bypass the actual admission/scan job."""
+        zot = self.jobs['analytics-publish-zot']
+        forgejo = self.jobs['analytics-publish-forgejo']
+        self.assertEqual(zot['needs'], ['analytics-source-admission'])
+        self.assertEqual(forgejo['needs'], ['analytics-source-admission', 'analytics-publish-zot'])
+        self.assertEqual(zot['environment'], 'task013-dev-release')
+        self.assertEqual(forgejo['environment'], 'task013-dev-release')
+        for job in (zot, forgejo):
+            self.assertEqual(job['permissions'], {'contents': 'read', 'id-token': 'write'})
+            self.assertIn("inputs.product == 'analytics'", job['if'])
+            self.assertNotIn('secrets.', str(job))
+
+    def test_signatures_are_verified_before_forgejo_publication(self):
+        """Require the real protected-main signer and digest-specific Cosign."""
+        steps = self.jobs['analytics-publish-forgejo']['steps']
+        sign = next(s['run'] for s in steps if s['name'].startswith('Sign and cryptographically'))
+        self.assertIn('cosign sign-blob', sign)
+        self.assertIn('cosign verify-blob', sign)
+        self.assertIn('cosign sign --yes "oci-dev.omnilyzer.ai/omnilyzer/analytics@$digest"', sign)
+        self.assertIn('cosign verify --certificate-identity', sign)
+        self.assertIn('@refs/heads/main', next(s for s in steps if s['name'].startswith('Sign and cryptographically'))['env']['CERTIFICATE_IDENTITY'])
+        self.assertLess(next(i for i,s in enumerate(steps) if s['name'].startswith('Sign and cryptographically')),
+                        next(i for i,s in enumerate(steps) if s['name'].startswith('Publish signed Analytics')))
+
+    def test_no_canary_rewire_and_provenance_is_oci_only(self):
+        """Keep legacy canary flow and prohibit fake Python/npm artifacts."""
+        self.assertEqual(self.jobs['gate']['if'],
+                         "${{ inputs.auth_probe == false && inputs.product == 'canary' }}")
+        self.assertEqual(self.jobs['publish-forgejo']['needs'], ['gate', 'build', 'publish-zot'])
+        script = (ROOT / 'release/analytics_release_evidence.py').read_text()
+        self.assertIn("'oci_manifest_digest'", script)
+        self.assertNotIn('python_wheel_sha256', script)
+        self.assertNotIn('npm_tarball_sha256', script)
