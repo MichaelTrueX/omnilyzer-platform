@@ -39,21 +39,51 @@ class WorkflowPolicyTests(unittest.TestCase):
         cls.workflow = yaml.safe_load(cls.raw)
         cls.jobs = cls.workflow["jobs"]
 
-    def test_private_cross_repo_analytics_checkout_requires_scoped_token(self) -> None:
-        """Both protected consumer jobs use an explicit read-only private Git credential."""
+    def test_private_cross_repo_analytics_checkout_requires_scoped_deploy_key(self) -> None:
+        """Both exact-source checkouts require one source-only Git deploy key."""
         for job_name in ("analytics-source-admission", "analytics-publish-zot"):
             steps = self.jobs[job_name]["steps"]
             checkout = next(step for step in steps if step.get("with", {}).get("repository") == "MichaelTrueX/omnilyzer")
-            self.assertEqual(checkout["with"]["token"], "${{ secrets.ANALYTICS_SOURCE_READ_TOKEN }}")
+            self.assertEqual(checkout["with"]["ssh-key"], "${{ secrets.ANALYTICS_SOURCE_DEPLOY_KEY }}")
+            self.assertNotIn("token", checkout["with"])
             self.assertEqual(checkout["with"]["ref"], "4cdda7faeba57abb3388f9be5c450fe6afb1140d")
             self.assertIs(checkout["with"]["persist-credentials"], False)
             index = steps.index(checkout)
             self.assertGreater(index, 0)
             precheck = steps[index - 1]
-            self.assertIn("TOKEN_MISSING", precheck["run"])
-            self.assertEqual(precheck["env"]["SOURCE_READ_TOKEN"], "${{ secrets.ANALYTICS_SOURCE_READ_TOKEN }}")
-            self.assertNotIn("echo $SOURCE_READ_TOKEN", precheck["run"])
+            self.assertIn("DEPLOY_KEY_MISSING", precheck["run"])
+            self.assertEqual(precheck["env"]["ANALYTICS_DEPLOY_KEY"], "${{ secrets.ANALYTICS_SOURCE_DEPLOY_KEY }}")
+            self.assertNotIn("echo $ANALYTICS_DEPLOY_KEY", precheck["run"])
             self.assertNotIn("set -x", precheck["run"])
+
+    def test_private_source_oci_never_uploaded_unencrypted_to_public_repo(self) -> None:
+        """Keep source TAR and OCI bytes out of publicly downloadable artifacts."""
+        source = self.jobs["analytics-source-admission"]
+        steps = source["steps"]
+        encrypt = next(step for step in steps if step["name"].startswith("Encrypt private Analytics"))
+        upload = next(step for step in steps if step["name"] == "Upload encrypted Analytics handoff ONLY")
+        self.assertLess(steps.index(encrypt), steps.index(upload))
+        self.assertEqual(upload["with"]["path"], "${{ runner.temp }}/analytics-task013-transport.gpg")
+        self.assertIn("release.analytics_private_handoff encrypt", encrypt["run"])
+        self.assertIn('rm -rf -- "$RUNNER_TEMP/analytics-task013-unsigned"', encrypt["run"])
+        self.assertNotIn("ANALYTICS_HANDOFF_PRIVATE_KEY", str(source))
+        self.assertNotIn("ANALYTICS_HANDOFF_DECRYPT_KEY", str(source))
+        self.assertNotIn("ANALYTICS_SOURCE_READ_TOKEN", self.raw)
+        for name in ("analytics-publish-zot", "analytics-publish-forgejo"):
+            job = self.jobs[name]
+            self.assertEqual(job["environment"], "task013-dev-release")
+            steps = job["steps"]
+            decrypt = next(step for step in steps if step["name"].startswith("Decrypt private handoff"))
+            self.assertEqual(decrypt["env"]["ANALYTICS_HANDOFF_PRIVATE_KEY"],
+                             "${{ secrets.ANALYTICS_HANDOFF_DECRYPT_KEY }}")
+            self.assertIn("release.analytics_private_handoff decrypt", decrypt["run"])
+            download = next(step for step in steps if step.get("uses", "").startswith("actions/download-artifact@")
+                            and step["with"]["name"].startswith("analytics-task013-handoff-"))
+            self.assertLess(steps.index(download), steps.index(decrypt))
+            self.assertEqual(download["with"]["path"], "${{ runner.temp }}/analytics-task013-transport")
+            self.assertFalse(any("upload-artifact@" in step.get("uses", "") and
+                                 "source.tar" in step.get("with", {}).get("path", "")
+                                 for step in steps))
 
     def test_manual_trigger_and_global_permissions_are_closed(self) -> None:
         self.assertEqual(self.workflow["permissions"], {})
@@ -213,7 +243,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             self.assertNotIn(forbidden, str(source_job))
         self.assertEqual(str(source_job).count('secrets.'), 2)
         self.assertNotIn('secrets.', str([step for step in steps
-            if not step['name'].startswith('Require least-privilege')
+            if not step['name'].startswith('Require read-only Analytics Git deploy key')
             and step.get('with', {}).get('repository') != 'MichaelTrueX/omnilyzer']))
         names = [step["name"] for step in steps]
         self.assertLess(names.index("Build and verify immutable original Analytics OCI archive"),
@@ -429,9 +459,9 @@ class AnalyticsProtectedPublicationTests(unittest.TestCase):
             self.assertEqual(job['permissions'], {'contents': 'read', 'id-token': 'write'})
             self.assertIn("inputs.product == 'analytics'", job['if'])
             if job is zot:
-                self.assertEqual(str(job).count('secrets.'), 2)
+                self.assertEqual(str(job).count('secrets.'), 3)
             else:
-                self.assertNotIn('secrets.', str(job))
+                self.assertEqual(str(job).count('secrets.'), 1)
 
     def test_signatures_are_verified_before_forgejo_publication(self):
         """Require the real protected-main signer and digest-specific Cosign."""
