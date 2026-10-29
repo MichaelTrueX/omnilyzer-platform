@@ -449,3 +449,81 @@ performed. Keep PR draft, no merge or rollout. M04 prior conditional review
 covered the previous read-only HEAD only; the new broker/FD change needs the
 ONE final independent review after the complete privileged executor and
 actual isolated DEV acceptance have been implemented.
+
+## M05-14: Isolated product-specific privileged receiver, real local Unix and rootless Zot adapter
+
+**Security boundary and review:** This continuation changes the privileged
+executor/Unix socket and private Docker registry-access implementation. M04's
+prior conditional review 5699460077 applied to earlier HEAD
+`90d57c4d19ce5f44a16e00ac821dbbe7d584f6ed`; it does **not** approve
+this new privilege boundary. All new code remains OUTSIDE installed original
+Task014 `DevApplicationSourceSet`; no service or host configuration changed.
+
+### Three COMPLETE modules and two complete test files
+
+- `deployment/analytics_executor.py`: constructor binds the original exact
+  `begin_execution`/`finish_execution` replay operations, a product-only
+  `preflight_analytics` callback, an explicitly named `deploy_analytics`
+  callback, and four root-reviewed installed source/profile SHA values. On
+  each request, it independently reparses the canonical signed Analytics
+  schema-v2 first-install contract, validates the Linux sealed credential
+  for the **exact published 0.15.0 image**, runs the private manifest probe,
+  rechecks the original 225-second private pull budget **before executor
+  replay**, then calls the exact scoped Analytics deployment operation and
+  records original replay finish. The original Task014 `ExecutorResponse`
+  schema and hash binding are reused. The token exists only in the original
+  request-local FD scope, never in request bytes, logs or persistent files.
+- `deployment/analytics_unix_boundary.py`: new explicitly named separate
+  `AnalyticsUnixExecutorTransport` and
+  `AnalyticsUnixExecutorConnectionHandler` reusing the actual original
+  `UnixExecutorTransport` and `UnixExecutorConnectionHandler` **unchanged**
+  (secure socket inode/owner and peer checks, strict timing, bounded frames,
+  SO_PEERCRED, SCM_RIGHTS, cleanup and canonical response). Dedicated exact
+  future socket `/run/omnilyzer/deployment/analytics-executor.sock` may only
+  use Analytics request schema-v2 and original sealed credential with explicit
+  `product_id="analytics"`. The adapter fails closed if the original
+  internal reviewed handler/transport tuple layout changes. Public/default
+  canary `send`/`_send_private` are rejected by the Analytics transport and
+  its ordinary canary executor remains unable to parse Analytics schema-v2.
+- `deployment/analytics_private_registry.py`: new product-only adapter
+  `AnalyticsPrivateZotPullAdapter` reuses original rootless Docker socket
+  authority, `CommandRunner` method validation, short-lived sealed FD,
+  original `manifest inspect` and `pull --quiet` commands, capped 30s/180s
+  command timeouts, original private runtime-directory checks, and original
+  exclusive volatile Docker `config.json` 0600 under a 0700 temp directory.
+  It checks exact root-reviewed schema-v2 source hashes and uses the original
+  task-local FD scope; there is no Docker login, permanent auth file, token
+  on argv/env, arbitrary registry, canary image, or rootful fallback. It
+  invokes no Docker operation during import or constructor execution.
+- `deployment/tests/test_analytics_unix_boundary.py`: actual isolated Linux
+  AF_UNIX socket + SO_PEERCRED + kernel SCM_RIGHTS FD handoff and original
+  on-disk SQLiteReplayGuard through the original JWT-authorized broker and
+  new executor. It verifies tampering, wrong peer, canary fallback refusal,
+  preflight failure, replay/no-replay, rollback-reference preservation and
+  token/FD cleanup. **Original signer and deployment operations mocked**;
+  proves control flow, not actual product acceptance.
+- `deployment/tests/test_analytics_private_registry.py`: actual kernel
+  credential with fake original Docker runner; checks source hash scope,
+  original Docker command and rootless socket selection, positive 30s
+  manifest + 180s pull with same FD under original executor's context,
+  0600 temporary config and cleanup, short TTL and missing socket failures,
+  no temporary secrets surviving errors.
+
+### Real install remaining / GO gate
+
+- A **real** root-owned Analytics installation composition, exact source-set
+  update and the separate product socket's systemd listener/receiver and
+  approved UID mapping are NOT implemented/installed. The product-only
+  executor `deploy_analytics` callback remains a separately required
+  root-owned runtime operation, not yet an implemented privileged Docker
+  Compose rollout/health/rollback engine.
+- No true rootless Docker daemon was available in approved DEV host checks;
+  synthetic runner+socket tests DO NOT establish successful real OCI manifest,
+  image pull, actual UID10001 secret reads or real Next `/readyz`.
+- Product-separated PostgreSQL auth and collector DB roles, grants/RLS,
+  backup/persistence and first-install stop-only rollback remain the next
+  **one** operational acceptance bundle. No new independent review until the
+  complete live integration exists; M04's prior review remains valid only
+  for the earlier inert source boundary.
+- Production remains unchanged; no merge, registry publication, deployment,
+  real tokens, DB writes, or public traffic were authorized or attempted.
