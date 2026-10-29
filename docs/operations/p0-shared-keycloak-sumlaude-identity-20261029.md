@@ -269,3 +269,8 @@ within one disposable container, not a deployed server layout. The joined
 S01 real Chromium practice journey, public/private LC1 rights/release,
 operational TLS/domain/secret rotation, and owner-authorized production
 rollout remain outstanding. Never lift production HTTP503 based on this test.
+
+
+## OIDC transport regression, 29 October
+
+The OIDC provider transport now rejects HTTP redirects instead of following them. This applies to its discovery, JWKS, token and revocation requests. Regression tests cover five redirect status codes and handler installation. The previous isolated real Keycloak and S03 full-schema PostgreSQL login, refresh and logout test was rerun and passed following the transport change. The private Chromium lesson journey remains separately unverified against this specific persistent BFF.

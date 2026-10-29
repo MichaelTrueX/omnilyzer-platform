@@ -283,3 +283,23 @@ class ContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class RedirectTransportTests(unittest.TestCase):
+    def test_refuse_all_oidc_endpoint_redirects(self):
+        from urllib.request import Request
+        for code in (301, 302, 303, 307, 308):
+            with self.assertRaises(oidc.IdentityError):
+                oidc._NoProviderRedirect().redirect_request(
+                    Request('https://issuer.example/token'), None,
+                    code, 'Moved', {}, 'https://other.example')
+
+    def test_confidential_provider_uses_no_redirect_handler(self):
+        with mock.patch.object(oidc.request, 'build_opener') as build:
+            build.return_value.open.side_effect = oidc.IdentityError('blocked')
+            with self.assertRaises(oidc.IdentityError):
+                oidc._provider('https://issuer.example/token',
+                               form={'grant_type':'authorization_code'},
+                               authenticated=True)
+            self.assertIsInstance(build.call_args.args[0],
+                                  oidc._NoProviderRedirect)

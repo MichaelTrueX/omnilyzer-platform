@@ -22,6 +22,13 @@ class IdentityError(Exception):
     """Generic exception: never log secrets or raw provider response."""
 
 
+class _NoProviderRedirect(request.HTTPRedirectHandler):
+    """Never forward confidential OAuth Authorization headers on a redirect."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise IdentityError("OIDC endpoint redirect refused")
+
+
 def _provider(url, *, form=None, authenticated=False, empty_ok=False):
     if not isinstance(url, str) or not url.startswith("https://"):
         raise IdentityError("insecure endpoint")
@@ -33,7 +40,8 @@ def _provider(url, *, form=None, authenticated=False, empty_ok=False):
         pair = f"{settings.OIDC_CLIENT_ID}:{settings.OIDC_CLIENT_SECRET}".encode()
         headers["Authorization"] = "Basic " + base64.b64encode(pair).decode()
     try:
-        with request.urlopen(request.Request(url, data=body, headers=headers), timeout=8) as response:
+        opener = request.build_opener(_NoProviderRedirect())
+        with opener.open(request.Request(url, data=body, headers=headers), timeout=8) as response:
             if response.status != 200 or not response.url.startswith("https://"):
                 raise IdentityError("invalid provider HTTP response")
             data = response.read(1048577)
