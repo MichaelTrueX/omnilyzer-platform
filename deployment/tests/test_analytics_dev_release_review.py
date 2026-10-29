@@ -193,7 +193,7 @@ class AnalyticsDevRuntimeReviewTests(unittest.TestCase):
             expected = [str(name) for name in REQUIRED_SECRET_NAMES]
             for name in expected:
                 secret = source / name
-                secret.write_text(f"{name}=m05_synthetic_{name}\n")
+                secret.write_text("TEST_ONLY_PLACEHOLDER=1\n")
                 secret.chmod(0o600)
 
             parsed = yaml.safe_load(ANALYTICS_PATH.read_text())
@@ -210,7 +210,9 @@ class AnalyticsDevRuntimeReviewTests(unittest.TestCase):
                 "-e",
                 'const keys=["COLLECTOR_DATABASE_URL","DATABASE_URL",'
                 '"JWT_REFRESH_SECRET","JWT_SECRET"];'
-                'if(keys.some(k=>process.env[k]!=="m05_synthetic_"+k))'
+                'const fs=require("node:fs");'
+                'if(keys.some(k=>fs.readFileSync("/run/secrets/"+k,"utf8")'
+                '!=="TEST_ONLY_PLACEHOLDER=1\\n"))'
                 'process.exit(31);console.log("M05_REAL_COMPOSE_SECRET_PASS")',
             ]
             project = "m05-pr50-secrets-" + root.name[-8:].lower()
@@ -271,7 +273,7 @@ class AnalyticsDevRuntimeReviewTests(unittest.TestCase):
             directory.mkdir(mode=0o700)
             for name in REQUIRED_SECRET_NAMES:
                 f = directory / name
-                f.write_text(name + "=synthetic-only-never-production\n")
+                f.write_text("TEST_ONLY_PLACEHOLDER=1\n")
                 f.chmod(0o600)
             with patch("deployment.analytics_dev_release_review.SECRET_DIRECTORY", directory):
                 self.assertEqual(review_private_secret_paths(

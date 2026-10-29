@@ -250,7 +250,11 @@ def _main() -> int:
             active_digest=args.active_digest,
         )
         # No approval, secret or actual signed-release evidence in this CLI.
-        print(json.dumps(result.to_dict(), sort_keys=True, separators=(",", ":")))
+        # Never serialize review inputs or runtime secret references to logs.
+        # This CLI is a validation probe, not a manifest export facility.
+        if result.release_authorized or result.deployment_authorized:
+            raise DeploymentPolicyError(ERROR)
+        print("TASK014_ANALYTICS_DEV_INERT_REVIEW_PASS")
         return 0
     except (DeploymentPolicyError, OSError) as exc:
         print(f"{ERROR}: {type(exc).__name__}", file=sys.stderr)
