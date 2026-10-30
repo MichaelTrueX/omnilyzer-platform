@@ -1,7 +1,7 @@
 """File: deployment/analytics_source_archive.py
 
 Purpose: Build and verify ONE deterministic unsigned Task014 Analytics additive
-         source archive containing the existing 27-file Git-object handoff.
+         source archive containing the reviewed 31-file Git-object handoff (27 new + 4 shared patches).
 Related: deployment/analytics_source_handoff.py (original C26 Git-object
          evidence), deployment/analytics_executor_service_config.py (closed
          exact service source set), deployment/application_manifest.py (Git
@@ -28,6 +28,8 @@ import tarfile
 from . import application_manifest as _original_git
 from .analytics_source_handoff import (
     AnalyticsSourceHandoffError, review_analytics_source_handoff,
+    _SHARED_BASE_COMMIT, _SHARED_COMPATIBILITY_FILES,
+    _SHARED_PREIMAGE_SHA256, _SHARED_PREIMAGE_COMMITS,
 )
 from .policy import canonical_bytes
 
@@ -37,7 +39,7 @@ _META_PATH = ".omnilyzer-analytics-source-review.json"
 _MAX_TOTAL = 14 * 1024 * 1024
 _MAX_FILE = 1024 * 1024
 _MAX_MANIFEST = 8192
-_SOURCE_TOTAL = 27
+_SOURCE_TOTAL = 31
 _SHA_RE = re.compile(r"[0-9a-f]{64}")
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 
@@ -63,7 +65,9 @@ def _validate_manifest(raw: bytes, expected_sha: str, commit: str) -> dict:
             "source_file_count", "source_entries", "reviewed_compose_sha256",
             "reviewed_product_profile_sha256", "reviewed_runtime_profile_sha256",
             "reviewed_source_claim_sha256", "signed_release_authorized",
-            "deployment_authorized",
+            "deployment_authorized", "shared_base_source_commit",
+            "shared_patch_paths", "shared_preimage_sha256",
+            "shared_preimage_commits",
         }
         or type(value["schema_version"]) is not int
         or value["schema_version"] != 1
@@ -76,6 +80,10 @@ def _validate_manifest(raw: bytes, expected_sha: str, commit: str) -> dict:
         or value["deployment_authorized"] is not False
         or type(value["source_entries"]) is not list
         or len(value["source_entries"]) != _SOURCE_TOTAL
+        or value["shared_base_source_commit"] != _SHARED_BASE_COMMIT
+        or value["shared_patch_paths"] != list(_SHARED_COMPATIBILITY_FILES)
+        or value["shared_preimage_sha256"] != _SHARED_PREIMAGE_SHA256
+        or value["shared_preimage_commits"] != _SHARED_PREIMAGE_COMMITS
         or canonical_bytes(value) != raw
     ):
         raise ValueError
@@ -173,7 +181,7 @@ def build_analytics_source_archive(
 def verify_analytics_source_archive(
     raw: bytes, *, expected_manifest_sha256: str, reviewed_commit: str,
 ) -> tuple[tuple[str, bytes], ...]:
-    """Verify exact 28-member canonical USTAR and return 27 inert raw blobs.
+    """Verify exact 32-member canonical USTAR and return 31 inert raw blobs (27 new, 4 patches).
 
     The caller must derive expected_manifest_sha256 from separately reviewed
     ROOT-OWNED authority, never from the archive or HTTP request. The return
@@ -185,7 +193,7 @@ def verify_analytics_source_archive(
         with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as tar:
             # tar.getmembers() can allocate memory for every header in a
             # malicious small-input zero-length-file TAR. Cap iteration at
-            # the exact 28 legitimate members plus ONE unexpected header.
+            # the exact 32 legitimate members plus ONE unexpected header.
             members = []
             for _ in range(_SOURCE_TOTAL + 2):
                 member = tar.next()
@@ -223,9 +231,17 @@ def verify_analytics_source_archive(
                 *ANALYTICS_INSTALLED_FILES,
                 *_INSTALLED_RUNTIME_FILES,
                 *_ADDITIVE_UNITS,
+                *_SHARED_COMPATIBILITY_FILES,
             )))
             if names != approved or tuple(m.name for m in members[1:]) != approved:
                 raise ValueError
+            for entry in entries:
+                if entry["path"] in _SHARED_PREIMAGE_SHA256 and (
+                    entry["sha256"] == _SHARED_PREIMAGE_SHA256[entry["path"]]
+                ):
+                    # Refuse an unsigned archive that silently claims an
+                    # "upgrade" but packages unchanged canary modules.
+                    raise ValueError
             contents: list[tuple[str, bytes]] = []
             for member, entry in zip(members[1:], entries):
                 if (type(entry) is not dict or set(entry) != {"path", "sha256", "mode"}

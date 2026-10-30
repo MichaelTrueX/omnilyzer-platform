@@ -1086,3 +1086,117 @@ future approved privileged operation must independently authenticate the
 source Git identity, verify all existing installed canary source, safely add
 only reviewed files, protect configs/units, and prove rollback. This change
 does not install, activate or republish anything.
+
+### 2026-10-30 — CRITICAL superseding correction: 27 NEW + 3 SHARED updates
+
+The preceding 27-file add-only source-package discussion is INCOMPLETE as
+an installation plan. A complete read-only comparison of all original 43
+Task014 current files against the latest repository `main` proves that THREE
+original shared modules must also be changed to support Analytics:
+
+| Shared module | Verified live DEV/preimage SHA256 (also matches protected platform base b9e22e) |
+| --- | --- |
+| `deployment/oci_verifier.py` | `caf85eb39585ce35d5b3e5528401f78e7abe98cdcb470af55ee4dd6bdbbc30c2` |
+| `deployment/private_registry_fd.py` | `79bae35b1f62a7b33f1851275e24fa4a8f5b2077fc61fbb80b119ed7c2d4ad80` |
+| `deployment/release_consumer.py` | `d087a956ec74b2f9aaf5653537afb533460b7a0f7be498d9f6c0daa72abc6784` |
+
+These original files currently lack Analytics's explicit OCI signature
+repository selection, immutable Analytics sealed credential envelope, and
+separate authenticated Analytics Zot/Forgejo GET. The unsigned 27-file archive
+alone would therefore FAIL a genuine Analytics Task014 start, even after
+installing all new modules. The 43 original file paths in the protected
+canary source allowlist do NOT change, but their three byte contents require
+an explicit reviewed compatibility update and proper original C17
+reviewed-commit/config transition.
+
+The source handoff and canonical USTAR source archive now include EXACTLY
+**30 source files**: **27 new files** (20 Analytics Python + 4 original
+product/runtime/source-claim assets + 3 inert systemd source units) and
+**3 explicit reviewed original shared-file patches**. The handoff requires
+the three live/preimage SHA256 values above and the genuine protected
+original Git base objects. Any unexpected current hash, unchanged shared
+candidate, alternative file, incomplete source set or untrusted commit
+is a hard preflight DENY. The handoff is still **unsigned and never grants
+installation authority**.
+
+An isolated local 70-file acceptance (43 original + 27 new, with three of the
+original 43 upgraded) uses the original Task014 C31B FD-relative verifier to
+check the complete baseline before the update, checks 40 unchanged original
+blobs and three explicit replacements plus all new blobs, then simulates
+rollback: restore all three exact previous blobs, delete 27 added blobs and
+newly created directories, and PASS the complete original 43-file verifier
+again. This is a **disposable compatibility/rollback proof only**, not a
+production-grade atomic installer or a live host mutation.
+
+**Mandatory next privileged integration requirement:** the root-controlled
+original Task014 installer must stage and hash all 30 exact Git blobs,
+independently reverify the present installed originals and signed Git
+handoff, atomically update only those THREE shared files with recoverable
+preimages, provision 27 new files, transition original C17/broker and
+separate Analytics configs and systemd units under root, restart service
+only after integrity qualification, and roll back all changes on failure
+without resetting SQLite replay, PostgreSQL state, or the active canary.
+It requires owner authorization and M04 independent review. The existing
+signed Analytics OCI 0.15.0 MUST NOT be regenerated/re-published. **NO-GO for
+DEV installation and production remains.**
+
+### 2026-10-30 — FINAL superseding source inventory: 27 new + FOUR shared fixes
+
+The 27- and 30-file archives described in earlier historical sections are
+INCOMPLETE and MUST NOT be used for installation. An independent read-only
+audit compared **all 43 source files installed in real DEV** with original
+protected Git objects and discovered the actual installed baseline is mixed:
+
+- **42/43 original files** match protected base commit
+  `b9e22e745ecbaf96dc15998e91d1a74f70e5ad77`.
+- The remaining `deployment/promotion.py` matches historical commit
+  `ba4fd3cacb33f71a626eeb3877a886f0fe31c82a`, exact SHA256
+  `dd5fdc5dfaf3734eb26bfc7dae293d0797480ab03930f3da165bed710c5cbea0`.
+  That older file lacks `SignedExternalSource` and the signed external-source
+  claim parser required by the real Analytics 0.15.0 release. Using it will
+  cause a genuine Analytics broker/verifier failure.
+- Three other original files require explicit scoped Analytics compatibility
+  updates: `oci_verifier.py`, `private_registry_fd.py`,
+  `release_consumer.py`. Their verified installed/preimage SHA values are
+  recorded above.
+
+The code review inventory now contains **31 Git files**: **27 new files
+(20 Analytics Python + four source/runtime data + three inert systemd files)**
+and **four existing original Task014 Python files requiring exact compatibility
+replacement**. It binds each old file to an independently observed actual DEV
+preimage SHA256 AND to the exact corresponding historical Git blob commit.
+No other original file may change. The USTAR archive verifier refuses
+unexpected old hashes, incomplete file sets, unsorted/noncanonical archives,
+unexpected paths or symlinks, and stale same-as-old compatibility payloads.
+It does NOT authorize replacement/installation.
+
+A disposable 70-source-file acceptance (43 existing +27 added, four of the
+existing updated) now reproduces the exact mixed host preimage, validates the
+original 43 SHA-hash set with the ORIGINAL Task014 C31B FD-relative source
+verifier, checks the four exact mutations and 39 untouched originals,
+then simulates complete rollback: restore all four previous blobs, delete
+the 27 newly created files and directories, and reverify the exact original
+43 files. This is an isolated source/rollback model, NOT a root install.
+
+**Additional real host preflight:** 18 **root-owned CPython
+`deployment/__pycache__/*.cpython-312.pyc` cache files** are present in
+the original installed app tree alongside the 43 source files. All observed
+bytecode files are root:root mode0644. Original C31B source qualification
+correctly rejects such extra entries. The synthetic fixture reproduces this
+denial; removing ONLY its synthetic cache and retrying passes. The original
+18 real cache files have NOT been removed. An approved root-controlled install
+must handle the exact pre-existing bytecode cache safely, preserving
+all original data and source rollback, without broad file deletion. Python
+invocations during staging must not repopulate caches.
+
+**Install remains HARD NO-GO:** Before a live cutover, original root-owned
+Task014 installation needs one M04-reviewed/owner-approved forward operation
+that (1) checks all 43 present immutable hashes and the exact 18 known cache
+objects; (2) authenticates the Git source/USTAR provenance and builds a
+recoverable 31-file change set; (3) safely stages and verifies the 27 new
+files and four reviewed replacements, updates protected config under the
+original approved release process, then activates a separately authorized
+Analytics service; (4) restores original source, metadata, service and
+all original persistence if any step fails. The target must not delete replay
+or PostgreSQL data, republish signed 0.15.0, or alter production. No such root
+operation has been performed or approved.

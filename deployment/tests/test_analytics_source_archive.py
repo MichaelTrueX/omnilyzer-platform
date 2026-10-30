@@ -31,7 +31,11 @@ from deployment.analytics_source_archive import (
     build_analytics_source_archive,
     verify_analytics_source_archive,
 )
-from deployment.analytics_source_handoff import review_analytics_source_handoff
+from deployment.analytics_source_handoff import (
+    review_analytics_source_handoff, _SHARED_BASE_COMMIT,
+    _SHARED_COMPATIBILITY_FILES, _SHARED_PREIMAGE_SHA256,
+    _SHARED_PREIMAGE_COMMITS,
+)
 from deployment.application_source_set import DevApplicationSourceSet
 from deployment import application_manifest as original_manifest
 from deployment import dev_host_provisioning_mechanics as original_materialization
@@ -76,7 +80,7 @@ class OriginalC26ArchiveTests(unittest.TestCase):
     def test_real_git_archive_roundtrip_and_rebuild_is_deterministic(self):
         """Original immutable Git blobs survive exact canonical TAR transport."""
         source = self.inspect()
-        self.assertEqual(len(source), 27)
+        self.assertEqual(len(source), 31)
         self.assertEqual(
             tuple(name for name, _ in source),
             tuple(sorted(name for name, _ in source)),
@@ -91,7 +95,7 @@ class OriginalC26ArchiveTests(unittest.TestCase):
             ).read_bytes()), source,
         )
         with tarfile.open(fileobj=io.BytesIO(self.archive), mode="r:") as tar:
-            self.assertEqual(len(tar.getmembers()), 28)
+            self.assertEqual(len(tar.getmembers()), 32)
             self.assertEqual(
                 tar.getmembers()[0].name,
                 ".omnilyzer-analytics-source-review.json",
@@ -102,25 +106,29 @@ class OriginalC26ArchiveTests(unittest.TestCase):
                 for x in tar.getmembers()
             ))
 
-    def test_complete_disposable_70_file_overlay_preserves_original_canary(self):
-        """Use real Git objects for all ORIGINAL 43 files, then 27 Analytics.
+    def test_disposable_70_file_four_shared_upgrade_and_full_rollback(self):
+        """Prove 39 immutable originals + four bounded compatibility patches.
 
-        Original Task014 C31B verifies the 43-file rootless TEST tree before
-        the additive review bytes are staged. All 43 originals remain exact;
-        a missing, added or modified old file fails original preflight.
-        This is a disposable fixture, NOT a privileged installation API.
+        Four real installed DEV SHA-256 preimages are pinned to original
+        protected Git objects (promotion.py is from an older historical
+        revision). All 27 new files are add-only; the four
+        shared files require an exact PREIMAGE before replacement. After
+        local source simulation, rollback restores the exact original 43
+        files and removes all newly created file and directory paths.
+        No actual host installer, root privileges or live filesystem used.
         """
         sources = self.inspect()
         original_names = tuple(
             item.repository_path for item in DevApplicationSourceSet().files
         )
         self.assertEqual(len(original_names), 43)
-        self.assertTrue(set(original_names).isdisjoint(
-            {name for name, _ in sources}
-        ))
+        self.assertEqual(
+            set(original_names) & {name for name, _ in sources},
+            set(_SHARED_COMPATIBILITY_FILES),
+        )
         original_tree = original_manifest._tree(
             original_manifest._output(self.root, (
-                "ls-tree", "-r", "-z", "--full-tree", self.sha,
+                "ls-tree", "-r", "-z", "--full-tree", _SHARED_BASE_COMMIT,
                 "--", *original_names,
             ), 32768),
             original_names,
@@ -131,71 +139,128 @@ class OriginalC26ArchiveTests(unittest.TestCase):
             )
             for name, git_oid in original_tree
         }
-        initial = original_manifest.DevApplicationManifest(
-            "canonical-relative-file-set-v1", "sha256", self.sha,
-            tuple(
-                original_manifest.ApplicationManifestEntry(
-                    name, hashlib.sha256(original_blobs[name]).hexdigest(),
-                    "0644",
-                )
-                for name in original_names
-            ),
+        # Actual installed DEV is a MIXED verified historical snapshot:
+        # 42 original files match b9e22e, while promotion.py matches ba4fd3.
+        # Do not forge a DevApplicationManifest claiming all 43 from b9e22e.
+        promotion = "deployment/promotion.py"
+        old = _SHARED_PREIMAGE_COMMITS[promotion]
+        entry = original_manifest._tree(original_manifest._output(
+            self.root, ("ls-tree", "-r", "-z", "--full-tree", old,
+                        "--", promotion), 8192), (promotion,))
+        original_blobs[promotion] = original_manifest._output(
+            self.root, ("cat-file", "blob", entry[0][1]), 1024 * 1024,
         )
-        with tempfile.TemporaryDirectory(prefix="m05-14-70file-overlay-") as temp:
+        for path, old_sha in _SHARED_PREIMAGE_SHA256.items():
+            self.assertEqual(
+                hashlib.sha256(original_blobs[path]).hexdigest(), old_sha,
+            )
+        from types import SimpleNamespace
+        # This is a local FD verifier view of the REAL mixed DEV hashes,
+        # not a false claim that a single Git commit produced that mix.
+        previous = SimpleNamespace(entries=tuple(
+            original_manifest.ApplicationManifestEntry(
+                name, hashlib.sha256(original_blobs[name]).hexdigest(),
+                "0644",
+            )
+            for name in original_names
+        ))
+        with tempfile.TemporaryDirectory(prefix="m05-14-70file-upgrade-") as temp:
             app = Path(temp) / "app"
             app.mkdir(mode=0o755)
             app.chmod(0o755)
+
+            def add_directory(file):
+                """Normalize directories independent of the runner umask."""
+                file.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+                for parent in (file.parent, *file.parent.parents):
+                    if parent == app.parent:
+                        break
+                    parent.chmod(0o755)
+
+            def original_verification():
+                """Invoke the unchanged original C31B FD-relative verifier."""
+                desc = os.open(app, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                try:
+                    original_materialization._verify_application(
+                        desc, previous, os.getuid(), os.getgid(),
+                    )
+                finally:
+                    os.close(desc)
+
             for name, payload in original_blobs.items():
                 file = app / name
-                file.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-                # Explicitly normalize nested dirs; test runner may use umask077.
-                for parent in (file.parent, *file.parent.parents):
-                    if parent == app.parent:
-                        break
-                    parent.chmod(0o755)
+                add_directory(file)
                 file.write_bytes(payload)
                 file.chmod(0o644)
-            descriptor = os.open(app, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-            try:
-                original_materialization._verify_application(
-                    descriptor, initial, os.getuid(), os.getgid(),
-                )
-            finally:
-                os.close(descriptor)
+            original_verification()
+            # A real DEV preflight found 18 historical root-owned CPython
+            # bytecode files. The original C31B manifest rightly rejects
+            # any unlisted cache even though the 43 source hashes match.
+            # Never silently delete caches in the privileged installation.
+            legacy_cache = app / "deployment/__pycache__"
+            legacy_cache.mkdir(mode=0o755)
+            legacy_cache.chmod(0o755)
+            unexpected = legacy_cache / "promotion.cpython-312.pyc"
+            unexpected.write_bytes(b"synthetic legacy cache")
+            unexpected.chmod(0o644)
+            with self.assertRaises(OSError):
+                original_verification()
+            unexpected.unlink()
+            legacy_cache.rmdir()
+            original_verification()
+            original_directories = {
+                p.relative_to(app) for p in app.rglob("*") if p.is_dir()
+            }
+
+            updated = []
+            added = []
             for name, payload in sources:
                 file = app / name
-                self.assertFalse(file.exists())
-                file.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-                # Explicitly normalize nested dirs; test runner may use umask077.
-                for parent in (file.parent, *file.parent.parents):
-                    if parent == app.parent:
-                        break
-                    parent.chmod(0o755)
+                if name in _SHARED_PREIMAGE_SHA256:
+                    self.assertEqual(hashlib.sha256(file.read_bytes()).hexdigest(),
+                                     _SHARED_PREIMAGE_SHA256[name])
+                    updated.append(name)
+                else:
+                    self.assertFalse(file.exists())
+                    added.append(name)
+                add_directory(file)
                 file.write_bytes(payload)
                 file.chmod(0o644)
+            self.assertEqual(updated, list(_SHARED_COMPATIBILITY_FILES))
+            self.assertEqual(len(added), 27)
+            self.assertEqual(len(updated), 4)
             self.assertEqual(sum(
                 1 for item in app.rglob("*") if item.is_file()
             ), 70)
             for name, original in original_blobs.items():
-                self.assertEqual((app / name).read_bytes(), original, name)
+                if name not in _SHARED_PREIMAGE_SHA256:
+                    self.assertEqual((app / name).read_bytes(), original, name)
             for name, payload in sources:
                 self.assertEqual((app / name).read_bytes(), payload, name)
+            # Before service cutover, the old manifest MUST reject changes.
+            with self.assertRaises(OSError):
+                original_verification()
+
+            # Disposable rollback proof: retain all original canary bytes.
+            for name in reversed(updated):
+                (app / name).write_bytes(original_blobs[name])
+                (app / name).chmod(0o644)
+            for name in reversed(added):
+                (app / name).unlink()
+            for directory in sorted(
+                (p for p in app.rglob("*") if p.is_dir()),
+                key=lambda p: len(p.parts), reverse=True,
+            ):
+                if directory.relative_to(app) not in original_directories:
+                    directory.rmdir()
+            self.assertEqual(sum(
+                1 for item in app.rglob("*") if item.is_file()
+            ), 43)
+            original_verification()
             self.assertEqual(
-                hashlib.sha256((
-                    app / "release/products/analytics-source.json"
-                ).read_bytes()).hexdigest(),
-                "45e13536c413a5e5c0a39a4d8c98daf412614dec535398b2ba204039772c88b9",
+                {p.relative_to(app) for p in app.rglob("*") if p.is_dir()},
+                original_directories,
             )
-            # The original verifier MUST reject the new files if the old
-            # canary-only manifest were reused as the additive installer.
-            descriptor = os.open(app, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-            try:
-                with self.assertRaises(OSError):
-                    original_materialization._verify_application(
-                        descriptor, initial, os.getuid(), os.getgid(),
-                    )
-            finally:
-                os.close(descriptor)
 
     def test_bad_expected_authority_digest_commit_and_mutation_fail(self):
         """Caller-generated bytes cannot override externally reviewed digest."""

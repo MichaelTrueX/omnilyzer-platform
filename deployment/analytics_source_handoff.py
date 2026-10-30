@@ -1,7 +1,7 @@
 """File: deployment/analytics_source_handoff.py
 
 Purpose: Produce a read-only, deterministic Git-object handoff for the EXACT
-         additive Analytics Task014 DEV source. This is the missing input to
+         Analytics Task014 DEV source, including four explicit shared-file updates. This is the missing input to
          an independently authorized root-owned application installation.
 Related: deployment/application_manifest.py (original closed Git-object reader),
          deployment/application_source_set.py (original canary source boundary),
@@ -10,7 +10,7 @@ Related: deployment/application_manifest.py (original closed Git-object reader),
          deployment/systemd/dev/analytics-broker-enabled.conf,
          deployment/tests/test_analytics_source_handoff.py.
 
-Sections: exact additive source selection; original Git-blob and source-claim
+Sections: exact new and shared-compatibility source selection; original Git-blob and source-claim
           validation; canonical unsigned install-handoff review manifest.
 
 SECURITY: This module reads Git objects only. It has no installer, root writer,
@@ -48,6 +48,38 @@ _ADDITIVE_UNITS = (
     "deployment/systemd/dev/omnilyzer-deployment-analytics-executor.service",
     "deployment/systemd/dev/omnilyzer-deployment-analytics-executor.socket",
 )
+# Four pre-existing ORIGINAL C32V Task014 modules must be updated to let
+# the new Analytics broker use scoped registry GET, OCI signature, sealed
+# credential APIs and SIGNED external-source parsing. Three match the
+# protected platform base; the fourth (promotion.py) is a genuine older
+# installed source from ba4fd3. All FOUR preimage hashes were independently
+# verified against the LIVE DEV host and exact historical Git objects on
+# 2026-10-30. This explicit closed
+# compatibility patch is NOT a generic canary source allowlist expansion.
+_SHARED_BASE_COMMIT = "b9e22e745ecbaf96dc15998e91d1a74f70e5ad77"
+_SHARED_COMPATIBILITY_FILES = (
+    "deployment/oci_verifier.py",
+    "deployment/private_registry_fd.py",
+    "deployment/promotion.py",
+    "deployment/release_consumer.py",
+)
+_PROMOTION_INSTALLED_COMMIT = "ba4fd3cacb33f71a626eeb3877a886f0fe31c82a"
+_SHARED_PREIMAGE_COMMITS = {
+    "deployment/oci_verifier.py": _SHARED_BASE_COMMIT,
+    "deployment/private_registry_fd.py": _SHARED_BASE_COMMIT,
+    "deployment/promotion.py": _PROMOTION_INSTALLED_COMMIT,
+    "deployment/release_consumer.py": _SHARED_BASE_COMMIT,
+}
+_SHARED_PREIMAGE_SHA256 = {
+    "deployment/oci_verifier.py":
+        "caf85eb39585ce35d5b3e5528401f78e7abe98cdcb470af55ee4dd6bdbbc30c2",
+    "deployment/private_registry_fd.py":
+        "79bae35b1f62a7b33f1851275e24fa4a8f5b2077fc61fbb80b119ed7c2d4ad80",
+    "deployment/promotion.py":
+        "dd5fdc5dfaf3734eb26bfc7dae293d0797480ab03930f3da165bed710c5cbea0",
+    "deployment/release_consumer.py":
+        "d087a956ec74b2f9aaf5653537afb533460b7a0f7be498d9f6c0daa72abc6784",
+}
 _PRODUCT_PROFILE_SHA256 = "e54bad9537541c7ecc4056753e8cbddbf6653d53deb1be222daf2b9ffe1659f0"
 _RUNTIME_PROFILE_SHA256 = "95fd22e7a406bbc90d1f014e29fc8564028adae9dd352abfece46c3b24faf661"
 _PRODUCT_PATH, _RUNTIME_PATH, _COMPOSE_PATH, _CLAIM_PATH = _INSTALLED_RUNTIME_FILES
@@ -88,9 +120,14 @@ def review_analytics_source_handoff(
             raise ValueError
         selected = tuple(sorted((
             *ANALYTICS_INSTALLED_FILES, *_INSTALLED_RUNTIME_FILES,
-            *_ADDITIVE_UNITS,
+            *_ADDITIVE_UNITS, *_SHARED_COMPATIBILITY_FILES,
         )))
-        if len(selected) != 27 or len(set(selected)) != 27 or set(selected) & original:
+        if (
+            len(selected) != 31 or len(set(selected)) != 31
+            or set(selected) & original != set(_SHARED_COMPATIBILITY_FILES)
+            or set(_SHARED_PREIMAGE_SHA256) != set(_SHARED_COMPATIBILITY_FILES)
+            or set(_SHARED_PREIMAGE_COMMITS) != set(_SHARED_COMPATIBILITY_FILES)
+        ):
             raise ValueError
 
         # Original Task014 C26 performs bounded Git commands with no hooks,
@@ -142,6 +179,26 @@ def review_analytics_source_handoff(
                 "path": path, "sha256": hashlib.sha256(raw).hexdigest(),
                 "mode": "0644",
             })
+        # The historical original three *installed* files must have the
+        # exact independently verified preimage; otherwise a root-approved
+        # host operation cannot safely replace or roll them back.
+        for path in _SHARED_COMPATIBILITY_FILES:
+            historical = _SHARED_PREIMAGE_COMMITS[path]
+            previous = _git._tree(_git._output(
+                repository_root, (
+                    "ls-tree", "-r", "-z", "--full-tree", historical,
+                    "--", path,
+                ), 8192,
+            ), (path,))
+            preimage = _git._output(
+                repository_root, ("cat-file", "blob", previous[0][1]),
+                _MAX_ONE_FILE,
+            )
+            if (
+                hashlib.sha256(preimage).hexdigest() != _SHARED_PREIMAGE_SHA256[path]
+                or hashlib.sha256(found[path]).hexdigest() == _SHARED_PREIMAGE_SHA256[path]
+            ):
+                raise ValueError
         if (
             hashlib.sha256(found[_SOURCE_CLAIM_PATH]).hexdigest()
                 != _SOURCE_CLAIM_SHA256
@@ -162,8 +219,12 @@ def review_analytics_source_handoff(
             "purpose": "analytics-task014-additive-source-review-only",
             "source_commit": reviewed_commit,
             "source_repository": "MichaelTrueX/omnilyzer-platform",
-            "source_file_count": 27,
+            "source_file_count": 31,
             "source_entries": entries,
+            "shared_base_source_commit": _SHARED_BASE_COMMIT,
+            "shared_patch_paths": list(_SHARED_COMPATIBILITY_FILES),
+            "shared_preimage_sha256": dict(_SHARED_PREIMAGE_SHA256),
+            "shared_preimage_commits": dict(_SHARED_PREIMAGE_COMMITS),
             # These four reviewed hashes are exactly the inputs needed by
             # the separately ROOT-OWNED service config after owner approval.
             # They do NOT authorize an install by themselves.
