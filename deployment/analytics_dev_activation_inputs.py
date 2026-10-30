@@ -2,7 +2,7 @@
 
 Purpose: Construct exact UNSIGNED Task014 Analytics 0.15.0 DEV review
          inputs from the previously reviewed immutable Git source archive,
-         including the original C32ZF rootless executor drop-in contract.
+         including the original C32ZF rootless socket source contract.
 Related: deployment/analytics_source_handoff.py (31 Git objects),
          deployment/analytics_source_archive.py (canonical USTAR),
          deployment/analytics_isolated_source_install.py (root approval),
@@ -13,7 +13,7 @@ Related: deployment/analytics_source_handoff.py (31 Git objects),
 
 Sections: fixed destinations, read-only source binding, independent root
           approval, exact broker/executor configs, immutable systemd source
-          selection and the existing rootless runtime directory contract.
+          selection and product-private mount-namespace isolation.
 
 SECURITY: Review data is NOT root installation authority. No write, network,
 secret, Docker, systemd, session, OIDC, replay or database side effect.
@@ -62,8 +62,18 @@ _ANALYTICS_RUNTIME_DROPIN = (
     "omnilyzer-deployment-analytics-executor.service.d/"
     "rootless-runtime.conf"
 )
-_RUNTIME_DIRECTORY = "RuntimeDirectory=omnilyzer/deployment/rootless-docker"
-_RUNTIME_MODE = "RuntimeDirectoryMode=0700"
+_ORIGINAL_RUNTIME_DIRECTORY = (
+    "RuntimeDirectory=omnilyzer/deployment/rootless-docker"
+)
+_ORIGINAL_RUNTIME_MODE = "RuntimeDirectoryMode=0700"
+# A separate PRIVATE mount namespace makes Analytics independent of the
+# canary unit's shared RuntimeDirectory lifecycle. Explicit UID/GID991
+# matches the existing reviewed rootless Docker owner, and the original
+# binding path inside the executor remains byte-for-byte unchanged.
+_PRIVATE_TMPFS = (
+    "TemporaryFileSystem=/run/omnilyzer/deployment/rootless-docker:"
+    "mode=0700,uid=991,gid=991"
+)
 _ROOTLESS_BIND = (
     "BindReadOnlyPaths=/run/user/991/docker.sock:"
     "/run/omnilyzer/deployment/rootless-docker/docker.sock"
@@ -169,12 +179,15 @@ def build_unsigned_analytics_service_inputs(
 ) -> dict[str, bytes]:
     """Bind EXACT service review bytes to one Git generation and original C32ZF.
 
-    The original Task014 executor already uses a root-owned systemd drop-in
-    that creates the PRIVATE bind target at service activation time. The
-    isolated Analytics service has the same source socket and bind target.
-    Rather than editing that unit or duplicating BindReadOnlyPaths, reuse
-    ONLY the original trusted RuntimeDirectory and mode through one exact
-    product-specific, unsigned drop-in. No service is installed or started.
+    The original Task014 canary owns a lifecycle-managed host
+    RuntimeDirectory. Sharing it is unsafe: canary stopping could remove
+    Analytics' socket target. Analytics therefore overlays its original
+    fixed socket destination with a service-private tmpfs INSIDE its own
+    mount namespace, created with the same reviewed UID/GID991 ownership
+    and 0700 directory mode. The canary's host directory is never reused,
+    created, stopped or modified. Signed source pinning, broker signatures
+    and systemd activation remain independent and mandatory.
+    Neither unit is installed or started by this review-only builder.
     """
     try:
         sources = build_unsigned_analytics_activation_inputs(
@@ -212,8 +225,8 @@ def build_unsigned_analytics_service_inputs(
         if (
             len(expected) != 1
             or hashlib.sha256(original).hexdigest() != expected[0]
-            or original.decode("ascii").splitlines().count(_RUNTIME_DIRECTORY) != 1
-            or original.decode("ascii").splitlines().count(_RUNTIME_MODE) != 1
+            or original.decode("ascii").splitlines().count(_ORIGINAL_RUNTIME_DIRECTORY) != 1
+            or original.decode("ascii").splitlines().count(_ORIGINAL_RUNTIME_MODE) != 1
             or original.decode("ascii").splitlines().count(_ROOTLESS_BIND) != 1
             or AUTHORITY.socket !=
                 "/run/omnilyzer/deployment/rootless-docker/docker.sock"
@@ -232,16 +245,23 @@ def build_unsigned_analytics_service_inputs(
             or "NoNewPrivileges=yes" not in service_rows
             or "ProtectSystem=strict" not in service_rows
             or "CapabilityBoundingSet=" not in service_rows
-            or _RUNTIME_DIRECTORY in service_rows
-            or _RUNTIME_MODE in service_rows
+            or _ORIGINAL_RUNTIME_DIRECTORY in service_rows
+            or _ORIGINAL_RUNTIME_MODE in service_rows
+            or any(row.startswith("TemporaryFileSystem=")
+                   for row in service_rows)
         ):
             raise ValueError
 
-        # Source authority comes from original C32ZF; the generated review
-        # byte-string cannot grant root installation or Docker access.
+        # Keep the exact product-private mount option fixed, never user
+        # supplied. The original C32ZF authority pins socket destination
+        # and source; only the Analytics mount namespace is independent.
+        if _PRIVATE_TMPFS != (
+            "TemporaryFileSystem=/run/omnilyzer/deployment/rootless-docker:"
+            "mode=0700,uid=991,gid=991"
+        ):
+            raise ValueError
         result[_ANALYTICS_RUNTIME_DROPIN] = (
-            "[Service]\\n" + _RUNTIME_DIRECTORY + "\\n" +
-            _RUNTIME_MODE + "\\n"
+            "[Service]\n" + _PRIVATE_TMPFS + "\n"
         ).encode("ascii")
         if (
             set(result) != {

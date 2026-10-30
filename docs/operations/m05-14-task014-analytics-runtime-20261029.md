@@ -25,6 +25,53 @@ plans (27 new alone, 30 objects, or replacing the original canary source) are
 superseded. Preserve the existing Task014 root-owned original canary and
 reuse its proven broker/OIDC/signer/replay/executor controls.
 
+## Final corrective patch — service-private Docker namespace review
+
+The prior assertion that the reviewed service fragment \`RuntimeDirectory\`
+sharing was safe has been withdrawn. The corrected deterministic, UNSIGNED
+\`deployment/analytics_dev_activation_inputs.py\` generator now emits
+\`[Service]\` plus exactly:
+
+\`\`\`ini
+TemporaryFileSystem=/run/omnilyzer/deployment/rootless-docker:mode=0700,uid=991,gid=991
+\`\`\`
+
+For the Analytics executor ONLY. \`TemporaryFileSystem\` creates a fresh
+mount namespace for the service, overlaying its original fixed
+\`BindReadOnlyPaths=/run/user/991/docker.sock:/run/omnilyzer/deployment/rootless-docker/docker.sock\`
+destination with its own private UID991/GID991 tmpfs rather than
+reusing the host lifecycle-managed canary RuntimeDirectory. The three
+other service inputs remain byte-exact original reviewed Git blobs;
+canary's installed drop-in is unchanged. Existing C32ZF's original
+source SHA, UID991 socket identity and mode contract remain
+independently checked. Negative tests deny a mode 0777 override or
+changed Docker socket. During the final correction, a literal escaped
+newline defect in the original review output was also found by the REAL
+systemd parser and FIXED. The generated file now contains distinct
+\`[Service]\` and \`TemporaryFileSystem\` lines. Python configparser
+and systemd-analyze verify accept the real syntax. Other systemd-analyze
+complaints on the isolated build host concern absent installed app
+executable and socket unit, not INI syntax. This is CODE-LEVEL
+mitigation ONLY. A real
+systemd service-start, simultaneous Canary/Analytics start-stop,
+private mount identity and Docker socket access test are still
+REQUIRED before DEV GO. The generated fragment is unsigned and must
+not be root-installed simply because it passes offline tests.
+
+**Python security advisory:** Upstream PyPI's verified
+\`pyjwt-2.14.0-py3-none-any.whl\` SHA256 is
+\`ad0cef71c756a56e74863c2919cf0985f72decbcfcb550ee2f422e7c62b5eedc\`
+(released 2026-09-11). The known critical GHSA-ffc3-869f-jxw9
+requires both mixed HS+asymmetric JWT algorithm allow-list and
+malformed raw public-key PEM handling; Task014 currently enforces
+RS256-only decoding, reducing exposure, BUT the installed exact
+PyJWT 2.13.0 remains vulnerable by dependency policy. The above
+hash is an externally published upstream artifact digest, not a
+completed Task014 offline-wheel approval, installed-runtime
+provenance or a waiver. Upgrade 2.14.0 by the original reviewed,
+hash-pinned venv-and-manifest release process before live admission.
+No \`pip install\` or protected DEV host mutation occurred here.
+
 ## FINAL M05-14 HANDOVER — 2026-10-30
 
 **Development handover COMPLETE. Live Analytics 0.15.0 DEV acceptance NOT
@@ -36,7 +83,7 @@ default and Analytics DEV schema-v2 path; exact signed original Task013
 Analytics 0.15.0 OCI digest; immutable 70-source isolated generation and
 four unsigned root review inputs; read-only host preflight; four reviewed
 systemd-service review bytes (3 original Git objects plus a source-bound
-C32ZF runtime-directory fragment); first-install stop-only rollback
+product-private systemd tmpfs fragment); first-install stop-only rollback
 implementation. Original Canary and production were NOT changed. The owner
 successfully installed and ran the separate read-only root audit on DEV.
 Last direct DEV observation: original broker and Canary executor socket
@@ -44,18 +91,18 @@ active; UID991 rootless Docker daemon socket available; isolated Analytics
 source, protected configs, mapped secret directory absent; Analytics
 executor socket inactive. Remote agent remains NoNewPrivs=1, not root.
 
-**Two confirmed product-release blockers (do not suppress):**
+**Two mandatory release qualification gates remain (do not suppress):**
 
-1. **Concurrent systemd lifecycle.** The existing original Canary and the
-   proposed Analytics executor use the SAME runtime-directory name
-   \`omnilyzer/deployment/rootless-docker\`. The four service review inputs
-   are UNSIGNED and deliberately NOT an installation grant. Under systemd's
-   RuntimeDirectory removal semantics, stopping/restarting one service can
-   remove the other service's mount destination. The dedicated Analytics
-   service needs a separately tested, product-private rootless mount
-   lifecycle or a proven safe equivalent BEFORE root installation. Hash
-   verification and a green service-unit syntax test do NOT establish that
-   coexistence property. Do not install the current review-only fragment.
+1. **Concurrent service acceptance — unproven on the real DEV host.**
+   The previous shared host RuntimeDirectory review fragment was replaced
+   in the current exact source with a product-private UID/GID991 tmpfs
+   namespace overlay. The original Canary runtime, 3 original systemd
+   assets, signed source and Docker socket path remain unchanged.
+   Source and negative tests PASS; real \`systemd-analyze verify\` now parses
+   the generated ini fragment without syntax errors. No actual Analytics
+   service or canary/Analytics simultaneous start-stop test has occurred.
+   Full private mount and independence proof still required before GO.
+
 2. **Critical Python runtime advisory.** GitHub Dependabot alert #25
    identifies Task014's \`PyJWT[crypto]==2.13.0\` as affected; fixed version
    reported is **2.14.0** (asymmetric PEM / HS confusion issue). A read-only
@@ -82,13 +129,11 @@ installation, credentials, database write, registry republish or product
 rollout was authorized by this review batch. The owner need not rerun
 the already successful read-only root-audit script.
 
-**Source of truth:** exact current GitHub PR #258 HEAD and Issue #27.
-Historical test totals remain attached to the exact SHAs they tested;
-the relevant final focused regression suite ran **66/66 PASS** on the
-unchanged implementation before writing this handover. GitHub had 7/7
-successful required checks on the previous exact HEAD. Recheck checks
-on any subsequent documentation-only commit; do not reuse the old SHA
-to assert final CI or an actual installation.
+**Source of truth:** the exact current GitHub PR #258 HEAD and Issue #27.
+No source/release approval follows from unsigned review inputs. Test
+counts must be tied to the exact tested SHA. Mandatory latest-HEAD CI
+must be checked before any owner-authorized promotion; no source-level
+test replaces real DEV signed release, application persistence or rollback.
 
 ## Functional acceptance target
 

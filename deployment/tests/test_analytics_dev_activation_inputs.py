@@ -15,6 +15,7 @@ credentials, start services or claim real signed 0.15.0 acceptance.
 """
 from __future__ import annotations
 
+import configparser
 import hashlib
 import json
 from pathlib import Path
@@ -117,7 +118,8 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
 
     def test_four_service_assets_reuse_original_task014_rootless_mount(self):
         """One exact Git object supplies three units and original rootless
-        C32ZF supplies the private-directory fragment without duplicate bind.
+        C32ZF pins source+destination; Analytics overlays a private mount
+        so Canary and Analytics never share a RuntimeDirectory lifecycle.
         """
         services = activation.build_unsigned_analytics_service_inputs(
             repository_root=str(ROOT), reviewed_commit=self.sha,
@@ -147,9 +149,23 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         )
         self.assertEqual(
             services[activation._ANALYTICS_RUNTIME_DROPIN],
-            b"[Service]\\n"
-            b"RuntimeDirectory=omnilyzer/deployment/rootless-docker\\n"
-            b"RuntimeDirectoryMode=0700\\n",
+            b"[Service]\n"
+            b"TemporaryFileSystem=/run/omnilyzer/deployment/rootless-docker:"
+            b"mode=0700,uid=991,gid=991\n",
+        )
+        # Actual INI parser must see two distinct lines; a literal escaped
+        # backslash+n passed old tests but makes systemd reject the drop-in.
+        parser = configparser.ConfigParser(interpolation=None, strict=True)
+        parser.read_string(
+            services[activation._ANALYTICS_RUNTIME_DROPIN].decode("ascii"),
+        )
+        self.assertEqual(
+            list(parser["Service"].keys()), ["temporaryfilesystem"],
+        )
+        self.assertEqual(
+            parser["Service"]["temporaryfilesystem"],
+            "/run/omnilyzer/deployment/rootless-docker:"
+            "mode=0700,uid=991,gid=991",
         )
         self.assertIn(
             activation._ROOTLESS_BIND.encode(),
@@ -157,6 +173,12 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         )
         self.assertNotIn(
             b"BindReadOnlyPaths", services[activation._ANALYTICS_RUNTIME_DROPIN],
+        )
+        self.assertNotIn(
+            b"RuntimeDirectory=", services[activation._ANALYTICS_RUNTIME_DROPIN],
+        )
+        self.assertNotIn(
+            b"RuntimeDirectoryMode=", services[activation._ANALYTICS_RUNTIME_DROPIN],
         )
         self.assertNotIn(
             b"ExecStart", services[activation._ANALYTICS_RUNTIME_DROPIN],
@@ -185,7 +207,9 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
                     repository_root=str(ROOT), reviewed_commit=self.sha,
                 )
         with patch.object(
-            activation, "_RUNTIME_MODE", "RuntimeDirectoryMode=0777",
+            activation, "_PRIVATE_TMPFS",
+            "TemporaryFileSystem=/run/omnilyzer/deployment/rootless-docker:"
+            "mode=0777,uid=991,gid=991",
         ):
             with self.assertRaises(activation.AnalyticsActivationInputsError):
                 activation.build_unsigned_analytics_service_inputs(
@@ -203,8 +227,9 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
             activation.build_unsigned_analytics_service_inputs(
                 repository_root=str(ROOT), reviewed_commit=self.sha,
             )["/etc/systemd/system/omnilyzer-deployment-analytics-executor.service.d/rootless-runtime.conf"],
-            b"[Service]\\nRuntimeDirectory=omnilyzer/deployment/rootless-docker\\n"
-            b"RuntimeDirectoryMode=0700\\n",
+            b"[Service]\n"
+            b"TemporaryFileSystem=/run/omnilyzer/deployment/rootless-docker:"
+            b"mode=0700,uid=991,gid=991\n",
         )
 
     def test_tampered_archive_or_source_model_fails_closed(self):
