@@ -213,3 +213,51 @@ first-install stop-only rollback. Preserve original canary and all data.
 NOT DONE: no live app, no merge, no production release, no M04 final GO.
 GitHub PR #258 and shared Omnilyzer Issue #27 remain the canonical
 review and coordination points.
+
+## 2026-10-30 — Existing Task014 GitHub workflow product routing
+
+Changed complete sources:
+- \`.github/workflows/platform-promote.yml\` — exactly one existing
+  workflow_dispatch; the previous Canary release inputs, original
+  deployment.promotion path, original C33W activation policy, original
+  Tailscale transport and three audience-separated GitHub OIDC tokens remain
+  in their original task/stage. New explicit product_id choice defaults to
+  **canary**. Analytics alone has two additional required-when-selected
+  input values, \`analytics_installed_commit\` and
+  \`analytics_source_claim_sha256\`, with closed schema gate. Production,
+  STAGING, unknown product and wrong signed 0.15.0 release identity are
+  rejected for Analytics before any private promotion.
+- \`deployment/analytics_ci_request.py\` — one product-specific Python
+  gate and canonical schema-v2 constructor used inside the existing GitHub
+  deploy_dev job AFTER the original three ephemeral OIDC tokens are fetched.
+  It checks the exact 0.15.0 origin/source/run/manifest digest, signed
+  release hashes and OIDC token *shape* against GitHub runner metadata,
+  computes original product/runtime/Compose hashes, builds private-only
+  UID10001/four-secret and stop-first-slot request, and parses its own
+  canonical result with the existing Analytics grammar. This CI module
+  explicitly does NOT verify JWT signature or signed source; it is not a
+  deployment grant. Only the existing root-owned Analytics broker verifies
+  original JWKS/OIDC audience/workflow, Zot/Forgejo permissions, signed
+  Sigstore/Cosign original release, real release hashes, replay, and exact
+  reviewed installed source before a private executor action.
+- \`deployment/tests/test_analytics_ci_request.py\` and changed original
+  \`deployment/tests/test_final_dev_workflow.py\` — test actual embedded
+  Task014 workflow Python through all THREE synthetically encoded OIDC
+  audience tokens to a captured schema-v2 POST; exercise the true bash
+  gate offline and preserve the original canary request/HTTP regression.
+  Negative tests cover cross-product/stage, signed source/digest hashes,
+  malformed OIDC and foreign workflow/run identity. No real tokens or
+  deployment, and the synthetic POST is NOT real signed acceptance.
+
+The GitHub runner's **workflow_sha is whatever protected current main
+actually executes**; its new schema-v2 request contains the explicitly
+reviewed installed source SHA, and the root-owned broker must independently
+verify BOTH exact values against the deployed original broker and isolated
+Analytics source configs. This PR DOES NOT install those configs, update the
+existing broker OIDC workflow-SHA allowlist, or enable the root-owned
+systemd opt-in. A new merged workflow revision is not automatically trusted
+by an older root-owned broker. Consequently **real DEV installation stays
+NO-GO** until one reviewed, owner-approved original Task014 root-owned
+update has bound the source, workflow, broker/executor config, four secrets,
+PostgreSQL RLS and signed immutable 0.15.0 release and proven private
+/readyz/persistence/rollback.
