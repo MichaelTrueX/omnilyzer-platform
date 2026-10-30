@@ -141,6 +141,10 @@ def preflight(*, resume: bool = False) -> None:
                   mode=0o710, directory=True)
         _metadata(ADMIN_SECRET, owner=ROOTLESS_UID, group=ROOTLESS_GID,
                   mode=0o400, directory=False)
+        # Validate the existing password in memory without printing it.
+        saved = ADMIN_SECRET.read_bytes()
+        if not re.fullmatch(rb"[A-Za-z0-9_-]{50,100}\\n", saved):
+            raise BootstrapDenied("preserved admin credential is invalid")
     elif ADMIN_DIR.exists() or ADMIN_DIR.is_symlink():
         raise BootstrapDenied("admin credential generation already attempted")
     if list(SECRET_DIR.iterdir()):
@@ -155,6 +159,14 @@ def preflight(*, resume: bool = False) -> None:
     if (volume.get("Name") != VOLUME or volume.get("Driver") != "local"
             or volume.get("Labels", {}).get("ai.omnilyzer.product") != "analytics"):
         raise BootstrapDenied("unreviewed PostgreSQL volume")
+    if resume and (volume.get("Labels") != {
+            "ai.omnilyzer.environment": "dev",
+            "ai.omnilyzer.product": "analytics",
+            "ai.omnilyzer.purpose": "postgres-persistence"
+    } or volume.get("Mountpoint") != (
+            "/var/lib/omnilyzer/deployment/rootless-docker-data/volumes/"
+            "omnilyzer-analytics-pg16-dev/_data")):
+        raise BootstrapDenied("resumed PostgreSQL volume identity differs")
     data_directory = Path(volume.get("Mountpoint", ""))
     if (not data_directory.is_absolute() or data_directory.is_symlink()
             or not data_directory.is_dir() or list(data_directory.iterdir())):
