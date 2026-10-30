@@ -1,10 +1,12 @@
 """File: deployment/release_consumer.py
 
-Purpose: Inert, read-only Task 013 evidence acquisition for Task 014 DEV.
-    Retrieve signed OCI and Forgejo Generic evidence using injected
-    credentials and verify fixed response contracts without deployment.
+Purpose: Original, inert Task013 release evidence acquisition for Task014 DEV.
+    Retain the default canary OCI/Forgejo routes unchanged; permit an
+    explicit, distinct *read-only* Analytics route for its signed v1 schema
+    consumer, without adding repository permission to the original broker.
 Related: deployment/registry_oidc_credentials.py, deployment/oci_verifier.py,
     deployment/blob_verifier.py, deployment/broker_integration.py,
+    deployment/analytics_signed_release_consumer.py,
     deployment/tests/test_release_consumer.py.
 
 Sections: strict fixed registry endpoints/HTTP envelope, bounded archive
@@ -41,7 +43,9 @@ from .policy import (
     EXPECTED_CERTIFICATE_ISSUER, EXPECTED_RELEASE_WORKFLOW, validate_digest,
     validate_semver, validate_sha256,
 )
-from .promotion import PromotionRequest, TrustedRelease, verify_release_evidence
+from .promotion import (
+    ANALYTICS_REPOSITORY, PromotionRequest, TrustedRelease, verify_release_evidence,
+)
 
 
 ZOT_HOST = "oci-dev.omnilyzer.ai"
@@ -55,6 +59,7 @@ OCI_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
 ARCHIVE_MEDIA_TYPE = "application/octet-stream"
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_ARCHIVE_BYTES = 16 * 1024 * 1024
+MAX_ANALYTICS_ARCHIVE_BYTES = 64 * 1024 * 1024
 MAX_UNPACKED_BYTES = 64 * 1024 * 1024
 MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
 MAX_HEADERS = 64
@@ -143,18 +148,32 @@ def _connection(host: str, port: int, timeout: float, context: ssl.SSLContext) -
 
 def _get(
     route: str, reference: str, token: str, factory: ConnectionFactory,
+    *, product: str = "canary",
 ) -> tuple[bytes, dict[str, str]]:
+    """Original authenticated GET; separate exact Analytics paths only.
+
+    The existing canary callers retain the unchanged default. The Analytics
+    read-only consumer must explicitly select its reviewed repository and
+    separately named Forgejo package. No dynamic repository names or URLs.
+    """
+    if type(product) is not str or product not in ("canary", "analytics"):
+        raise ReleaseConsumerError(ERROR)
     if route == "zot":
         host = ZOT_HOST
-        path = f"/v2/{REPOSITORY}/manifests/{validate_digest(reference)}"
+        repository = REPOSITORY if product == "canary" else ANALYTICS_REPOSITORY
+        path = f"/v2/{repository}/manifests/{validate_digest(reference)}"
         media_type, limit = OCI_MEDIA_TYPE, MAX_MANIFEST_BYTES
     elif route == "forgejo":
         host = FORGEJO_HOST
+        package = ("task013-release-evidence" if product == "canary"
+                   else "analytics-release-evidence")
         path = (
-            "/api/packages/omnilyzer/generic/task013-release-evidence/"
+            f"/api/packages/omnilyzer/generic/{package}/"
             f"{validate_semver(reference)}/release-evidence.tar.gz"
         )
-        media_type, limit = ARCHIVE_MEDIA_TYPE, MAX_ARCHIVE_BYTES
+        media_type = ARCHIVE_MEDIA_TYPE
+        limit = (MAX_ARCHIVE_BYTES if product == "canary"
+                 else MAX_ANALYTICS_ARCHIVE_BYTES)
     else:
         raise ReleaseConsumerError(ERROR)
     connection = response = None

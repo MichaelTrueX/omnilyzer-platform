@@ -145,7 +145,14 @@ def review_dev_rollout(
         existing_image=existing,
         secret_names=REQUIRED_SECRET_NAMES,
         ready_path="/readyz",
-        rollback_kind="original-task014-immutable-digest-preserve-database-writes",
+        # First install has NO previously signed Analytics image to restore.
+        # Rollback must deactivate the private, unexposed candidate only;
+        # subsequent upgrades may return to the previous immutable digest.
+        rollback_kind=(
+            "original-task014-stop-first-slot-preserve-database-writes"
+            if existing is None else
+            "original-task014-immutable-digest-preserve-database-writes"
+        ),
     )
 
 
@@ -191,30 +198,47 @@ def compose_image_variables(review: AnalyticsDevRolloutReview) -> dict[str, str]
 
 def review_private_secret_paths(
     *, directory: Path = SECRET_DIRECTORY, owner_uid: int,
+    directory_owner_uid: int | None = None,
+    directory_group_gid: int | None = None,
 ) -> tuple[str, ...]:
-    """Read ONLY filesystem metadata of four preprovisioned owner-only secrets.
+    """Read only metadata of four source files; require least privilege.
 
-    No file content is opened, returned, logged, supplied as an environment
-    variable, copied, or persisted. Actual secret validation/injection must
-    occur under an approved original Task014 restricted host executor.
+    Original inert review callers retain private mode0700 directory owned by
+    owner_uid. For REAL rootless Compose file bind sources, the directory
+    must instead be root:executor-group mode0710: root controls which four
+    names can be bound, while only the original rootless executor group can
+    traverse it. Each source FILE must still be owned by mapped container
+    UID503216 and be exact 0600 (mapped container UID10001 can read, unrelated
+    users cannot). Do not make the directory owned/writable by Docker UID991.
+
+    Does not open, copy, expose, or log file contents. Actual positive/negative
+    rootless UID10001 mount-access and database-role isolation remain required.
     """
+    reviewed_rootless = directory_owner_uid is not None or directory_group_gid is not None
     if (
         type(owner_uid) is not int or owner_uid < 1
-        or not isinstance(directory, Path)
-        or directory != SECRET_DIRECTORY
+        or not isinstance(directory, Path) or directory != SECRET_DIRECTORY
         or not directory.is_absolute()
+        or (reviewed_rootless and (
+            type(directory_owner_uid) is not int or directory_owner_uid != 0
+            or type(directory_group_gid) is not int or directory_group_gid < 1
+        ))
     ):
         raise DeploymentPolicyError(ERROR)
+    expected_owner = 0 if reviewed_rootless else owner_uid
+    expected_mode = 0o710 if reviewed_rootless else 0o700
     current = Path("/")
-    # Reject symlinks in every component, including /var/lib paths.
+    # Deny symlinks in any component before checking exact source inode.
     for part in directory.parts[1:]:
         current /= part
         if current.is_symlink():
             raise DeploymentPolicyError(ERROR)
     try:
         folder = directory.stat(follow_symlinks=False)
-        if (not stat.S_ISDIR(folder.st_mode) or folder.st_uid != owner_uid
-                or folder.st_mode & 0o077):
+        if (not stat.S_ISDIR(folder.st_mode)
+                or folder.st_uid != expected_owner
+                or stat.S_IMODE(folder.st_mode) != expected_mode
+                or (reviewed_rootless and folder.st_gid != directory_group_gid)):
             raise DeploymentPolicyError(ERROR)
         for name in REQUIRED_SECRET_NAMES:
             path = directory / name

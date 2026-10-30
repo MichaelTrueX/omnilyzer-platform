@@ -3,7 +3,8 @@
 Purpose: negative-first, Linux socketpair acceptance of sealed, short-lived
 private Zot-read credential handoff. No real registry, Docker, service or
 replay I/O. Related: deployment/private_registry_fd.py, deployment/unix_transport.py,
-deployment/executor_server.py and deployment/tests/test_docker_runtime.py.
+deployment/executor_server.py, deployment/analytics_promotion_broker.py and
+deployment/tests/test_docker_runtime.py.
 
 Sections: sealed credential integrity, request/expiry binding, ancillary
 SCM_RIGHTS frame validation and descriptor cleanup.
@@ -23,7 +24,7 @@ import unittest
 from unittest.mock import patch
 
 from deployment.private_registry_fd import (
-    PrivateRegistryTransferError, ScopedReadCredential,
+    ANALYTICS_IMAGE, PrivateRegistryTransferError, ScopedReadCredential,
     create_sealed_credential, read_sealed_credential,
     receive_sealed_header, send_sealed_header,
 )
@@ -215,6 +216,96 @@ class AncillarySocketTests(unittest.TestCase):
         finally:
             a.close()
             b.close()
+
+
+class AnalyticsSealedCredentialScopeTests(unittest.TestCase):
+    """Prove distinct exact Analytics release scope cannot mutate canary FD."""
+
+    def test_exact_signed_analytics_fd_roundtrip_with_explicit_scope(self) -> None:
+        """One immutable reviewed OCI digest, existing FD seals and request hash."""
+        request = b'{"analytics":true,"schema_version":2}\n'
+        descriptor = create_sealed_credential(
+            SECRET, expires_at=NOW + 240, image=ANALYTICS_IMAGE,
+            canonical_request=request, now=NOW, product_id="analytics",
+        )
+        try:
+            received = read_sealed_credential(
+                descriptor, canonical_request=request,
+                image=ANALYTICS_IMAGE, now=NOW, product_id="analytics",
+            )
+            self.assertIs(type(received), ScopedReadCredential)
+            self.assertEqual(received.image, ANALYTICS_IMAGE)
+            self.assertEqual(received.token, SECRET)
+            self.assertEqual(received.request_sha256, hashlib.sha256(request).hexdigest())
+            self.assertNotIn(SECRET, repr(received))
+            self.assertFalse(os.get_inheritable(descriptor))
+            with self.assertRaises(OSError):
+                os.write(descriptor, b"tamper")
+            with self.assertRaises(PrivateRegistryTransferError):
+                read_sealed_credential(
+                    descriptor, canonical_request=request,
+                    image=ANALYTICS_IMAGE, now=NOW,
+                )
+        finally:
+            os.close(descriptor)
+
+    def test_cross_product_tag_wrong_digest_request_and_expiry_denied(self) -> None:
+        """Canary default remains canary-only; no Analytics tags or wildcards."""
+        request = b'{"analytics":true,"schema_version":2}\n'
+        kwargs = dict(token=SECRET, expires_at=NOW + 240,
+                      image=ANALYTICS_IMAGE, canonical_request=request, now=NOW)
+        for overrides in (
+            {},
+            {"product_id": "canary"},
+            {"product_id": "Analytics"},
+            {"product_id": "other"},
+            {"product_id": True},
+            {"product_id": None},
+            {"product_id": "analytics", "image": ANALYTICS_IMAGE[:-1] + "0"},
+            {"product_id": "analytics", "image": ANALYTICS_IMAGE.split("@")[0] + ":0.15.0"},
+            {"product_id": "analytics", "image": IMAGE},
+        ):
+            with self.subTest(overrides=overrides), self.assertRaises(PrivateRegistryTransferError):
+                create_sealed_credential(**(kwargs | overrides))
+        descriptor = create_sealed_credential(**(kwargs | {"product_id": "analytics"}))
+        try:
+            for overrides in (
+                {"product_id": "canary"},
+                {"product_id": "other"},
+                {"image": IMAGE},
+                {"image": ANALYTICS_IMAGE[:-1] + "0"},
+                {"canonical_request": b'{"different":true}'},
+                {"now": NOW + 240},
+                {"now": NOW - 61},
+            ):
+                with self.subTest(overrides=overrides), self.assertRaises(PrivateRegistryTransferError):
+                    read_sealed_credential(descriptor, **(dict(
+                        canonical_request=request, image=ANALYTICS_IMAGE,
+                        now=NOW, product_id="analytics",
+                    ) | overrides))
+        finally:
+            os.close(descriptor)
+
+    def test_analytics_scope_can_never_consume_canary_fd(self) -> None:
+        """An original canary credential cannot silently become an Analytics grant."""
+        descriptor = create_sealed_credential(
+            SECRET, expires_at=NOW + 240,
+            image=IMAGE, canonical_request=REQUEST, now=NOW,
+        )
+        try:
+            with self.assertRaises(PrivateRegistryTransferError):
+                read_sealed_credential(
+                    descriptor, canonical_request=REQUEST,
+                    image=IMAGE, now=NOW, product_id="analytics",
+                )
+            self.assertEqual(
+                read_sealed_credential(
+                    descriptor, canonical_request=REQUEST,
+                    image=IMAGE, now=NOW,
+                ).image, IMAGE,
+            )
+        finally:
+            os.close(descriptor)
 
 
 if __name__ == "__main__":

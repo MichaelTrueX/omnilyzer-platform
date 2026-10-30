@@ -1,4 +1,13 @@
-"""Offline contract and transport tests for the final DEV promotion caller."""
+"""File: deployment/tests/test_final_dev_workflow.py
+
+Purpose: Preserve the original Task014 canary promotion, private Tailscale,
+         three OIDC audiences, HTTP framing and closed response contracts.
+Related: .github/workflows/platform-promote.yml,
+         deployment/analytics_ci_request.py (separate schema-v2 route),
+         deployment/tests/test_analytics_ci_request.py.
+Sections: exact manual inputs, original canary request/transport, independent
+          product routing, negative OIDC/HTTP failures and diagnostic redaction.
+"""
 
 from __future__ import annotations
 
@@ -24,7 +33,10 @@ PROMOTION_INPUTS = {
     "target_stage", "release_version", "source_sha", "manifest_digest",
     "release_manifest_sha256", "provenance_sha256", "originating_release_run_id",
 }
-INPUTS = PROMOTION_INPUTS | {"auth_probe"}
+INPUTS = PROMOTION_INPUTS | {
+    "auth_probe", "product_id", "analytics_installed_commit",
+    "analytics_source_claim_sha256",
+}
 AUDIENCES = (
     "https://deploy-dev.omnilyzer.ai/task014-dev",
     "https://oci-dev.omnilyzer.ai",
@@ -79,6 +91,15 @@ class FinalDevWorkflowTests(unittest.TestCase):
         self.assertEqual(set(self.workflow["on"]), {"workflow_dispatch"})
         inputs = self.workflow["on"]["workflow_dispatch"]["inputs"]
         self.assertEqual(set(inputs), INPUTS)
+        self.assertEqual(inputs["product_id"], {
+            "description": "Exact Task014 product (original canary is default)",
+            "required": "true", "type": "choice",
+            "options": ["canary", "analytics"], "default": "canary",
+        })
+        for key in ("analytics_installed_commit", "analytics_source_claim_sha256"):
+            self.assertEqual(inputs[key]["required"], "false")
+            self.assertEqual(inputs[key]["type"], "string")
+            self.assertEqual(inputs[key]["default"], "")
         self.assertEqual(inputs["target_stage"]["required"], "true")
         self.assertEqual(inputs["auth_probe"]["required"], "false")
         self.assertEqual(inputs["auth_probe"]["type"], "boolean")
@@ -202,8 +223,18 @@ class FinalDevWorkflowTests(unittest.TestCase):
         self.assertEqual(set(create["env"]), {
             "TARGET_STAGE", "RELEASE_VERSION", "SOURCE_SHA", "MANIFEST_DIGEST",
             "RELEASE_MANIFEST_SHA256", "PROVENANCE_SHA256", "ORIGINATING_RELEASE_RUN_ID",
-            "REQUESTED_BY",
+            "REQUESTED_BY", "TASK014_PRODUCT", "ANALYTICS_INSTALLED_COMMIT",
+            "ANALYTICS_SOURCE_CLAIM_SHA256",
         })
+        self.assertEqual(create["env"]["TASK014_PRODUCT"], "${{ inputs.product_id }}")
+        self.assertEqual(create["env"]["ANALYTICS_INSTALLED_COMMIT"],
+                         "${{ inputs.analytics_installed_commit }}")
+        self.assertEqual(create["env"]["ANALYTICS_SOURCE_CLAIM_SHA256"],
+                         "${{ inputs.analytics_source_claim_sha256 }}")
+        self.assertIn("python3 -m deployment.analytics_ci_request --preflight",
+                      create["run"])
+        self.assertIn('if [ "$TASK014_PRODUCT" = analytics ]; then',
+                      create["run"])
         self.assertEqual(create["env"]["REQUESTED_BY"], "github:${{ github.actor }}")
         self.assertEqual(create["env"]["TARGET_STAGE"], "${{ inputs.target_stage }}")
         for name in PROMOTION_INPUTS - {"target_stage"}:
@@ -214,6 +245,13 @@ class FinalDevWorkflowTests(unittest.TestCase):
         self.assertIn('--output "$RUNNER_TEMP/task014-dev-promotion-request.json"', create["run"])
         self.assertNotIn("deployment.controller", create["run"])
         self.assertNotIn("deployment.promotion", self.submit["run"])
+        self.assertIn("build_analytics_ci_request(", self.submit["run"])
+        self.assertIn('elif os.environ.get("TASK014_PRODUCT") in ("canary", None):',
+                      self.submit["run"])
+        self.assertEqual(self.submit["env"]["TASK014_PRODUCT"],
+                         "${{ inputs.product_id }}")
+        self.assertIn("python3 -m deployment.analytics_ci_request --preflight",
+                      self.gate["steps"][1]["run"])
         self.assertNotIn("upload-artifact", self.raw)
         self.assertEqual(self.raw.count("secrets."), 2)
         self.assertNotIn("set -x", self.raw)

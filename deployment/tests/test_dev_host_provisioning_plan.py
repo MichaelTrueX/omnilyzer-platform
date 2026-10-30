@@ -218,10 +218,10 @@ class ProvisioningPlanTests(unittest.TestCase):
         self.assertEqual(len(requirement.wheels), 4)
         self.assertFalse(any(item.filename.startswith("pip-") for item in requirement.wheels))
         self.assertEqual(self.plan.runtime_entry_count, 237)
-        self.assertEqual(self.plan.runtime_manifest_size, 57824)
+        self.assertEqual(self.plan.runtime_manifest_size, 57825)
         self.assertEqual(
             self.plan.runtime_manifest_sha256,
-            "3966c1f4075e2813131f249eb02a473acf0e4d11be61b05f858678b668d2766b",
+            "0ca874d1ebe3f61ea1356bc20d40a1afb30d1ddb515a68b09b486c48f8471be5",
         )
         self.assertEqual(self.installer.artifact.filename,
                          "pip-26.2.1-py3-none-any.whl")
@@ -378,7 +378,7 @@ class PythonEnvironmentQualificationTests(unittest.TestCase):
         self.assertEqual(evidence.symbolic_link_count, 4)
         self.assertEqual(tuple((item.name, item.version) for item in evidence.distributions), (
             ("cffi", "2.1.1"), ("cryptography", "50.0.1"),
-            ("pycparser", "3.0"), ("PyJWT", "2.13.0"),
+            ("pycparser", "3.0"), ("PyJWT", "2.14.0"),
         ))
         for value, field in ((evidence, "root"), (evidence.distributions[0], "version")):
             self.assertFalse(hasattr(value, "__dict__"))
@@ -468,7 +468,7 @@ class PythonEnvironmentQualificationTests(unittest.TestCase):
         path = Path(environment_module.__file__).parent / environment_module._MANIFEST_PATH
         raw = path.read_bytes()
         self.assertEqual((len(raw), hashlib.sha256(raw).hexdigest()), (
-            57824, "3966c1f4075e2813131f249eb02a473acf0e4d11be61b05f858678b668d2766b",
+            57825, "0ca874d1ebe3f61ea1356bc20d40a1afb30d1ddb515a68b09b486c48f8471be5",
         ))
         self.assertEqual(len(self.entries), 237)
         self.assertEqual(sum(item["kind"] == "regular_file" for item in self.entries), 197)

@@ -57,7 +57,7 @@ class AnalyticsDevRuntimeReviewTests(unittest.TestCase):
             "ANALYTICS_GREEN_IMAGE": p.proposed_image,
         })
         self.assertNotIn("JWT_SECRET=", json.dumps(p.to_dict()))
-        self.assertEqual(p.rollback_kind, "original-task014-immutable-digest-preserve-database-writes")
+        self.assertEqual(p.rollback_kind, "original-task014-stop-first-slot-preserve-database-writes")
 
     def test_next_release_retains_exact_prior_digest_on_other_slot(self):
         """Rollback target is original immutable digest, never a mutable tag."""
@@ -71,6 +71,7 @@ class AnalyticsDevRuntimeReviewTests(unittest.TestCase):
         self.assertIn("@sha256:", e["ANALYTICS_BLUE_IMAGE"])
         self.assertIn("@sha256:", e["ANALYTICS_GREEN_IMAGE"])
         self.assertNotEqual(p.proposed_image, p.existing_image)
+        self.assertEqual(p.rollback_kind, "original-task014-immutable-digest-preserve-database-writes")
 
     def test_invalid_or_unsafe_inputs_rejected(self):
         """No wrong slot/stage/mutable image/ref/same digest/partial state."""
@@ -293,6 +294,80 @@ class AnalyticsDevRuntimeReviewTests(unittest.TestCase):
                 with self.assertRaises(DeploymentPolicyError):
                     review_private_secret_paths(directory=directory / "not-a-secret-dir",
                                                 owner_uid=os.getuid())
+
+    def test_rootless_daemon_directory_owner_is_distinct_from_mapped_secret_uid(self):
+        """Guard root:991 mode0710 parent plus UID503216-only secret files.
+
+        Virtualize only stat UID/GID on disposable test files: no chown, root,
+        secrets, Docker, or host permission mutation is necessary.
+        """
+        with tempfile.TemporaryDirectory(prefix="m05-14-secret-uid-map-") as tmp:
+            directory = Path(tmp) / "secrets"
+            directory.mkdir(mode=0o700)
+            for name in REQUIRED_SECRET_NAMES:
+                file = directory / name
+                # This test needs only a non-empty file inode; never
+                # serialize any secret-like variable or name into its body.
+                file.write_bytes(b"X")
+                file.chmod(0o600)
+            real_stat = Path.stat
+            changed_uid = None
+            changed_group = None
+            changed_mode = None
+
+            def projected_stat(target, *args, **kwargs):
+                """Project actual restrictive modes with synthetic mapped UIDs."""
+                real = real_stat(target, *args, **kwargs)
+                parts = list(real)
+                if target == directory:
+                    parts[0] = (parts[0] & ~0o777) | (
+                        0o710 if changed_mode is None else changed_mode
+                    )
+                    parts[4] = 0 if changed_uid is None else changed_uid
+                    parts[5] = 991 if changed_group is None else changed_group
+                elif target.parent == directory and target.name in REQUIRED_SECRET_NAMES:
+                    parts[4], parts[5] = 503216, 503216
+                return os.stat_result(parts)
+
+            with patch("deployment.analytics_dev_release_review.SECRET_DIRECTORY", directory), \
+                 patch.object(Path, "stat", new=projected_stat):
+                self.assertEqual(review_private_secret_paths(
+                    directory=directory, owner_uid=503216,
+                    directory_owner_uid=0, directory_group_gid=991,
+                ), REQUIRED_SECRET_NAMES)
+                # The old assumption wrongly required the source directory
+                # itself be owned by the container subordinate UID.
+                with self.assertRaises(DeploymentPolicyError):
+                    review_private_secret_paths(
+                        directory=directory, owner_uid=503216,
+                    )
+                with self.assertRaises(DeploymentPolicyError):
+                    review_private_secret_paths(
+                        directory=directory, owner_uid=503216,
+                        directory_owner_uid=True, directory_group_gid=991,
+                    )
+                changed_uid = 991
+                with self.assertRaises(DeploymentPolicyError):
+                    review_private_secret_paths(
+                        directory=directory, owner_uid=503216,
+                        directory_owner_uid=0, directory_group_gid=991,
+                    )
+                changed_uid = None
+                for wrong_gid in (0, 503216, 1005):
+                    changed_group = wrong_gid
+                    with self.subTest(gid=wrong_gid), self.assertRaises(DeploymentPolicyError):
+                        review_private_secret_paths(
+                            directory=directory, owner_uid=503216,
+                            directory_owner_uid=0, directory_group_gid=991,
+                        )
+                changed_group = None
+                for wrong_mode in (0o700, 0o750, 0o711, 0o770):
+                    changed_mode = wrong_mode
+                    with self.subTest(mode=oct(wrong_mode)), self.assertRaises(DeploymentPolicyError):
+                        review_private_secret_paths(
+                            directory=directory, owner_uid=503216,
+                            directory_owner_uid=0, directory_group_gid=991,
+                        )
 
     def test_existing_canary_oci_allowlist_unmodified(self):
         """Review-only config never broadens the active original Task014 policy."""

@@ -1,4 +1,11 @@
-# Task 014 validates all requests and submits DEV requests to the reviewed broker.
+# File: .github/workflows/platform-promote.yml
+# Purpose: The existing Task014 protected manual promotion request and
+#          three-audience OIDC broker submission; canary is the default.
+# Related: deployment.promotion (original canary), deployment.analytics_ci_request
+#          (one signed Analytics 0.15.0 DEV request), deployment.broker_https_ingress
+#          and deployment.dev_live_activation_policy (unchanged canary authority).
+# Security: Analytics does not expand the original canary C33W allowlist, create
+#           a second ingress, activate privileged source, or bypass replay.
 name: Platform promotion request
 
 on:
@@ -9,6 +16,22 @@ on:
         required: false
         type: boolean
         default: false
+      product_id:
+        description: Exact Task014 product (original canary is default)
+        required: true
+        type: choice
+        options: [canary, analytics]
+        default: canary
+      analytics_installed_commit:
+        description: Root-reviewed Analytics installed source SHA
+        required: false
+        type: string
+        default: ""
+      analytics_source_claim_sha256:
+        description: Signed external-source claim SHA256 (broker verified)
+        required: false
+        type: string
+        default: ""
       target_stage:
         description: Ordered target stage
         required: true
@@ -99,6 +122,9 @@ jobs:
           PROVENANCE_SHA256: ${{ inputs.provenance_sha256 }}
           ORIGINATING_RELEASE_RUN_ID: ${{ inputs.originating_release_run_id }}
           REQUESTED_BY: github:${{ github.actor }}
+          TASK014_PRODUCT: ${{ inputs.product_id }}
+          ANALYTICS_INSTALLED_COMMIT: ${{ inputs.analytics_installed_commit }}
+          ANALYTICS_SOURCE_CLAIM_SHA256: ${{ inputs.analytics_source_claim_sha256 }}
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "MichaelTrueX/omnilyzer-platform"
@@ -111,7 +137,10 @@ jobs:
           test -n "$PROVENANCE_SHA256"
           test -n "$ORIGINATING_RELEASE_RUN_ID"
           test "$GITHUB_REF" = "refs/heads/main"
-          request="$RUNNER_TEMP/task014-promotion-request.json"
+          if [ "$TASK014_PRODUCT" = analytics ]; then
+            python3 -m deployment.analytics_ci_request --preflight
+          elif [ "$TASK014_PRODUCT" = canary ]; then
+            request="$RUNNER_TEMP/task014-promotion-request.json"
           python3 -m deployment.promotion \
             --release-version "$RELEASE_VERSION" \
             --source-sha "$SOURCE_SHA" \
@@ -130,6 +159,9 @@ jobs:
             python3 -m deployment.controller \
               --request "$request" \
               --environment "deployment/environments/$TARGET_STAGE.json"
+          fi
+          else
+            exit 1
           fi
 
   deploy_dev:
@@ -159,13 +191,19 @@ jobs:
           PROVENANCE_SHA256: ${{ inputs.provenance_sha256 }}
           ORIGINATING_RELEASE_RUN_ID: ${{ inputs.originating_release_run_id }}
           REQUESTED_BY: github:${{ github.actor }}
+          TASK014_PRODUCT: ${{ inputs.product_id }}
+          ANALYTICS_INSTALLED_COMMIT: ${{ inputs.analytics_installed_commit }}
+          ANALYTICS_SOURCE_CLAIM_SHA256: ${{ inputs.analytics_source_claim_sha256 }}
         run: |
           set -euo pipefail
           umask 077
           test "$GITHUB_REPOSITORY" = "MichaelTrueX/omnilyzer-platform"
           test "$GITHUB_REF" = "refs/heads/main"
           test "$TARGET_STAGE" = dev
-          python3 -m deployment.promotion \
+          if [ "$TASK014_PRODUCT" = analytics ]; then
+            python3 -m deployment.analytics_ci_request --preflight
+          elif [ "$TASK014_PRODUCT" = canary ]; then
+            python3 -m deployment.promotion \
             --release-version "$RELEASE_VERSION" \
             --source-sha "$SOURCE_SHA" \
             --manifest-digest "$MANIFEST_DIGEST" \
@@ -175,6 +213,9 @@ jobs:
             --target-stage "$TARGET_STAGE" \
             --requested-by "$REQUESTED_BY" \
             --output "$RUNNER_TEMP/task014-dev-promotion-request.json"
+          else
+            exit 1
+          fi
       # Direct bootstrap is deliberate: the official Tailscale v4 action injects
       # route acceptance, which conflicts with the reviewed route-rejection setting.
       - name: Join private Task 014 tailnet with direct federated identity
@@ -376,6 +417,17 @@ jobs:
           PY
       - name: Submit DEV promotion once
         shell: bash
+        env:
+          TASK014_PRODUCT: ${{ inputs.product_id }}
+          TARGET_STAGE: ${{ inputs.target_stage }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          MANIFEST_DIGEST: ${{ inputs.manifest_digest }}
+          RELEASE_MANIFEST_SHA256: ${{ inputs.release_manifest_sha256 }}
+          PROVENANCE_SHA256: ${{ inputs.provenance_sha256 }}
+          ORIGINATING_RELEASE_RUN_ID: ${{ inputs.originating_release_run_id }}
+          ANALYTICS_INSTALLED_COMMIT: ${{ inputs.analytics_installed_commit }}
+          ANALYTICS_SOURCE_CLAIM_SHA256: ${{ inputs.analytics_source_claim_sha256 }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -435,12 +487,6 @@ jobs:
                   raise ValueError("invalid GitHub OIDC JWT structure")
               return jwt
 
-          path = Path(os.environ["RUNNER_TEMP"]) / "task014-dev-promotion-request.json"
-          if path.is_symlink() or not path.is_file() or stat.S_IMODE(path.stat().st_mode) != 0o600:
-              raise ValueError("private canonical promotion request missing")
-          body = path.read_bytes()
-          if not 1 <= len(body) <= 4096:
-              raise ValueError("invalid canonical promotion request size")
           deployment_jwt, zot_jwt, forgejo_jwt = map(github_token, AUDIENCES)
           if len({deployment_jwt, zot_jwt, forgejo_jwt}) != 3:
               raise ValueError("GitHub OIDC audiences did not yield distinct tokens")
@@ -462,6 +508,23 @@ jobs:
                     file=sys.stderr)
               if codes != ("ok",):
                   raise ValueError("DEV OIDC claim diagnostic rejected before POST")
+          # Canary uses unchanged original schema-v1 bytes. Only Analytics
+          # creates schema-v2 bytes after GitHub issues the ephemeral OIDC JWT.
+          # The original root-owned broker still verifies all actual authority.
+          if os.environ.get("TASK014_PRODUCT") == "analytics":
+              from deployment.analytics_ci_request import build_analytics_ci_request
+              body = build_analytics_ci_request(
+                  deployment_oidc_token=deployment_jwt, environment=os.environ,
+              )
+          elif os.environ.get("TASK014_PRODUCT") in ("canary", None):
+              path = Path(os.environ["RUNNER_TEMP"]) / "task014-dev-promotion-request.json"
+              if path.is_symlink() or not path.is_file() or stat.S_IMODE(path.stat().st_mode) != 0o600:
+                  raise ValueError("private canonical promotion request missing")
+              body = path.read_bytes()
+              if not 1 <= len(body) <= 4096:
+                  raise ValueError("invalid canonical promotion request size")
+          else:
+              raise ValueError("unrecognized Task014 product")
           req = request.Request(ENDPOINT, data=body, method="POST", headers={
               "Authorization": "Bearer " + deployment_jwt,
               "X-Omnilyzer-Zot-OIDC": zot_jwt,
