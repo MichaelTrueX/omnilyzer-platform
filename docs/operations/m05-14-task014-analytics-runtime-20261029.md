@@ -18,9 +18,62 @@ Authorization: This document cannot grant root source installation, activate
 
 # M05-14 — Analytics signed 0.15.0 via existing Task014 (current handover)
 
-Status as of 2026-10-30: **DRAFT / NO-GO FOR LIVE DEV INSTALLATION / NO MERGE.**
-The exact code and immutable Git commit in the latest open platform PR #258,
-not ChatGPT memory or older text, are authoritative. Historical intermediate
+Status as of 2026-10-30: **CODE MERGED; ANALYTICS DEV APPLICATION NO-GO.**
+PR #258 (source `eedbf26ca164728a4b2b4d906a9fb9f58bfbe816`) and database
+fix PR #263 are merged. Issue #27 records the owner's successful PostgreSQL16
+bootstrap, five SQL phases and four private secret files. Never rerun that
+bootstrap. Existing installed Analytics source remains pinned to PR258;
+the corrected activation operator was restored byte-for-byte for download
+but is NOT cleared for execution. Its revision-compatibility stop remains
+necessary for that unmodified installed generation.
+
+## Current correction: independently reviewed product generations
+
+The original broker `reviewed_commit` pins Canary runtime and ingress.
+The original executor `reviewed_commit` likewise pins Canary execution
+references. Analytics has its own root-owned `reviewed_installed_commit`,
+source-file hash set, Compose/profile hashes and separately installed code.
+Requiring those two different authorities to carry an equal commit rejects
+a valid independently reviewed product generation. Focused regressions
+reproduce the denial in BOTH loaders before the correction.
+
+The correction removes only that cross-product equality requirement in the
+Analytics broker/executor loaders. Both retain original protected C17/C32H
+configuration loading, strict descriptors, ownership, modes, process/group
+identities, canonical closed Analytics config and full product source hashes.
+The returned Analytics commit remains its OWN root-controlled product commit.
+OIDC/workflow authority, sealed registry access, signed 0.15.0 image,
+Cosign/Sigstore, replay, private socket and original Canary pins are unchanged.
+No new configuration schema, trust root, service or release framework is added.
+
+Validation: both distinct-generation regressions fail before the source fix;
+86 focused broker/executor/product/configuration tests pass after it, including
+invalid product revisions, protected ownership and product-byte tampering.
+Synthetic source tests are NOT a live installation or signature assertion.
+The broader Analytics suite on the restricted DEV connector ran 196 tests:
+192 passed, 2 expected skips, and 2 errors because setgid temporary-directory
+creation/chmod is denied by this host boundary. Those two existing durable
+replay/Unix tests require an appropriate test runner; they are not waived.
+GitHub CI must resolve this validation before merge.
+
+This correction is a review candidate only. It is NOT installed on DEV, does
+not authorize root changes and does not make the old activation script ready.
+M04 must review the exact corrective commit and generation transition before
+a narrowly pinned owner-local source update/activation. Preserve the current
+70-file generation/config/archive and database; do not rewrite Canary's
+protected commit, change expected hashes to live values, rerun database setup
+or blindly overwrite the existing source. Read-only live compatibility metadata
+is still inaccessible to the unprivileged connector, so the actual original
+protected commit values have not been asserted by this delivery.
+
+Next: one bounded exact-commit M04 source review, followed by a reviewed
+generation transition and original signed Task014 promotion. Then verify real
+private readiness/login/collector persistence, restricted DB/RLS tenant-deny,
+secret permissions, Canary coexistence and first-install rollback; obtain the
+required independent live acceptance. Production remains outside this scope.
+
+The historical sections below describe earlier snapshots. Current GitHub
+PRs, exact source commits and Issue #27 take precedence over those snapshots. Historical intermediate
 plans (27 new alone, 30 objects, or replacing the original canary source) are
 superseded. Preserve the existing Task014 root-owned original canary and
 reuse its proven broker/OIDC/signer/replay/executor controls.

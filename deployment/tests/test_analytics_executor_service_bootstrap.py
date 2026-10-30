@@ -286,6 +286,72 @@ class InstalledSourceConfigTests(unittest.TestCase):
                 load_analytics_executor_service_config()
 
 
+    def installed_source_preflight(self, *, product_commit=None):
+        """Simulate protected descriptor reads with independent real C17 config."""
+        from contextlib import ExitStack
+        from deployment.executor_service_config import DevExecutorServiceConfiguration
+        from deployment.tests.test_executor_service_config import configuration_values
+
+        base = DevExecutorServiceConfiguration(**configuration_values(
+            broker_uid=990, broker_gid=990, executor_uid=991, executor_gid=991,
+            replay_group_gid=992, socket_group_gid=993, reviewed_commit="d" * 40,
+        ))
+        value = sample_config()
+        if product_commit is not None:
+            value["reviewed_installed_commit"] = product_commit
+        raw = canonical_bytes(value)
+        meta = os.stat_result((
+            stat.S_IFREG | 0o640, 123, 456, 1, 0, 991, len(raw), 1, 2, 3,
+        ))
+        stack = ExitStack()
+        for name, result in (
+            ("load_dev_executor_service_configuration", base),
+            ("_process_identity", (991, 991, 991, 991, [992, 993])),
+            ("_required_flags", (0, 0)),
+            ("_open_directories", ([], 77)),
+            ("_configuration_file", tuple(meta)),
+            ("_bounded_read", raw),
+            ("_revalidate_directories", (0, 0, 0, 0, 0, 991)),
+            ("_close_owned", (False, None)),
+        ):
+            stack.enter_context(patch.object(config, name, return_value=result))
+        for name, result in (("stat", meta), ("fstat", meta), ("open", 55)):
+            stack.enter_context(patch.object(config.os, name, return_value=result))
+        verified = stack.enter_context(patch.object(
+            config, "_verify_source_bytes", return_value=None,
+        ))
+        return stack, base, verified
+
+    def test_distinct_canary_revision_keeps_product_source_and_identity(self):
+        """Older canary config cannot replace Analytics source or process IDs."""
+        stack, base, verified = self.installed_source_preflight()
+        self.assertNotEqual(base.reviewed_commit, EXPECTED["reviewed_installed_commit"])
+        with stack:
+            source, identities = load_analytics_executor_service_config()
+        self.assertEqual(source, EXPECTED)
+        self.assertEqual(identities["expected_executor_uid"], 991)
+        self.assertEqual(identities["expected_executor_gid"], 991)
+        verified.assert_called_once()
+        self.assertEqual(verified.call_args.args[0][0][0], ANALYTICS_INSTALLED_FILES[0])
+
+    def test_distinct_revisions_do_not_allow_invalid_product_commit(self):
+        """Independent canary revision never relaxes the closed product parser."""
+        stack, _base, verified = self.installed_source_preflight(
+            product_commit="invalid",
+        )
+        with stack, self.assertRaises(AnalyticsInstalledAuthorityError):
+            load_analytics_executor_service_config()
+        verified.assert_not_called()
+
+    def test_distinct_revisions_do_not_allow_tampered_product_source(self):
+        """A protected config remains insufficient when installed bytes differ."""
+        stack, _base, verified = self.installed_source_preflight()
+        verified.side_effect = AnalyticsInstalledAuthorityError("source mismatch")
+        with stack, self.assertRaises(AnalyticsInstalledAuthorityError):
+            load_analytics_executor_service_config()
+        verified.assert_called_once()
+
+
 class SocketActivationTests(unittest.TestCase):
     """Name/PID/FD are exact before the listener can be claimed."""
 

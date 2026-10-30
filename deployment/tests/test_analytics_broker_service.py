@@ -212,20 +212,31 @@ class OriginalRootOwnedOptInTests(unittest.TestCase):
             "45e13536c413a5e5c0a39a4d8c98daf412614dec535398b2ba204039772c88b9",
         )
 
-    def test_wrong_owner_or_wrong_platform_commit_fails_closed(self):
-        """A present wrong file must never silently become canary-only."""
+    def test_distinct_canary_revision_preserves_product_source_checks(self):
+        """Independent reviewed generations need not have equal commit IDs."""
+        self.cfg = DevBrokerServiceConfiguration(**configuration_values())
+        self.assertNotEqual(self.cfg.reviewed_commit,
+                            EXPECTED["reviewed_installed_commit"])
+        stack, verified = self.preflight()
+        with stack:
+            result = broker_service.load_analytics_broker_installed_source(self.cfg)
+        self.assertEqual(result, EXPECTED)
+        verified.assert_called_once()
+
+    def test_wrong_owner_or_invalid_product_commit_fails_closed(self):
+        """A present untrusted file must never silently become canary-only."""
         stack, verified = self.preflight(wrong_owner=True)
         with stack, self.assertRaises(broker_service.AnalyticsBrokerSourceError):
             broker_service.load_analytics_broker_installed_source(self.cfg)
         verified.assert_not_called()
+        self.raw = canonical_bytes({
+            "schema_version": 1, "product_id": "analytics", "stage": "dev",
+            **EXPECTED, "reviewed_installed_commit": "invalid",
+            "source_sha256": {name: "a" * 64
+                              for name in ANALYTICS_INSTALLED_FILES},
+        })
         stack, verified = self.preflight()
-        with stack, patch.object(
-            broker_service, "parse_analytics_executor_service_config",
-            return_value={
-                **EXPECTED, "reviewed_installed_commit": "b" * 40,
-                "source_sha256": tuple(),
-            },
-        ), self.assertRaises(broker_service.AnalyticsBrokerSourceError):
+        with stack, self.assertRaises(broker_service.AnalyticsBrokerSourceError):
             broker_service.load_analytics_broker_installed_source(self.cfg)
         verified.assert_not_called()
 
