@@ -1050,3 +1050,39 @@ configuration files, and safely roll back newly created files if any
 verification fails. It requires owner permission and M04 review. Product
 activation, real OCI read, UID10001 secret mount, PG role/RLS, /readyz and
 stop-only rollback remain **NO-GO** pending the same one approved DEV gate.
+
+### 2026-10-30 — Deterministic additive source archive, NOT an installer
+
+The original C31B DEV materializer is restricted to its closed historical
+43-source canary manifest. Enlarging this manifest would break historical
+installation and recovery validation. Analytics must NOT call it with a forged
+70-file manifest or silently widen the original source allowlist.
+
+New complete unprivileged source-preparation files:
+
+- `deployment/analytics_source_archive.py`: produces an exactly reproducible
+  USTAR archive from the original C26 immutable Git-object reader containing
+  **27 source objects** (20 Analytics Python, four data/source policy and
+  three inert systemd assets) plus one canonical review-only manifest.
+  Fixed mode0644, UID/GID0 and mtime0 on every member. No arbitrary paths,
+  working-tree source, network, credentials, symlinks, chmod, Docker or root
+  operation. A separate strict verifier requires an independently trusted
+  manifest SHA256 and reviewed Git commit, caps input and TAR member count,
+  verifies exact names, modes and blob SHA256s, and reconstructs the original
+  canonical archive bytes. It rejects traversal, links, extra members,
+  changed modes, changed bytes, trailing content and other encodings.
+  Verified content is inert data, not installation authority.
+- `deployment/tests/test_analytics_source_archive.py`: exact Git-object
+  roundtrip, byte-for-byte reproducibility, negative TAR/security cases and
+  a disposable isolated combined application tree with **all 43 original
+  canary files + all 27 Analytics source files**. Original C31B verifies
+  the initial 43-file tree; the test verifies all 43 remain byte-identical
+  after adding the 27 and proves that the canary-only verifier rejects the
+  expanded tree rather than silently accepting new runtime source.
+
+This closes the **source-package transport/reproducibility** part of the
+original Task014 additive install gap, NOT its root-owned authority. The
+future approved privileged operation must independently authenticate the
+source Git identity, verify all existing installed canary source, safely add
+only reviewed files, protect configs/units, and prove rollback. This change
+does not install, activate or republish anything.
