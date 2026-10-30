@@ -246,9 +246,18 @@ class AnalyticsCIRequestTests(unittest.TestCase):
         class Opener:
             """Capture all three OIDC JWT audiences and one exact body."""
             def open(self, req, timeout):
-                if req.full_url.startswith("https://oidc.actions.githubusercontent.com"):
+                parsed = parse.urlsplit(req.full_url)
+                if (
+                    parsed.scheme == "https"
+                    and parsed.hostname == "oidc.actions.githubusercontent.com"
+                    and parsed.port in (None, 443)
+                    and parsed.path == "/token"
+                    and parsed.username is None
+                    and parsed.password is None
+                    and not parsed.fragment
+                ):
                     audience = parse.parse_qs(
-                        parse.urlsplit(req.full_url).query,
+                        parsed.query,
                     )["audience"][0]
                     self.assert_audience(audience)
                     body = json.dumps({"value": token(audience=audience)}).encode()
