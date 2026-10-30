@@ -179,5 +179,29 @@ class BootstrapOperatorTests(unittest.TestCase):
                 bootstrap.inspect_partial_install()
 
 
+    def test_inspect_cli_prints_only_static_nonsecret_statuses(self):
+        """Never serialize secret-derived metadata or filenames into logs."""
+        evidence = {
+            "postgres_container": "running",
+            "admin_secret": "metadata_ok",
+            "product_secrets": {name: "metadata_ok" for name in bootstrap.SECRET_NAMES},
+            "private_internal_value": "do-not-emit-this",
+        }
+        output = io.StringIO()
+        with patch.object(bootstrap.sys, "argv", ["bootstrap", "--inspect"]), \
+             patch.object(bootstrap, "inspect_partial_install", return_value=evidence), \
+             redirect_stdout(output):
+            self.assertEqual(bootstrap.main(), 0)
+        text = output.getvalue()
+        self.assertEqual(text.splitlines(), [
+            "PARTIAL_DB_CONTAINER_RUNNING",
+            "PARTIAL_ADMIN_SECRET_METADATA_VALID",
+            "PARTIAL_FOUR_SECRET_FILES_METADATA_VALID",
+            "PARTIAL_SQL_STATE_UNVERIFIED_MANUAL_RECONCILIATION_REQUIRED",
+        ])
+        self.assertNotIn("do-not-emit-this", text)
+        self.assertNotIn("DATABASE_URL", text)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -358,7 +358,30 @@ def main() -> int:
     phase = "preflight"
     try:
         if args.inspect:
-            print(json.dumps(inspect_partial_install(), sort_keys=True), flush=True)
+            # A root operator can inspect the internal metadata in Python.
+            # CLI output is deliberately a SMALL FIXED vocabulary. Do not
+            # log a JSON dump of values derived from protected secret paths:
+            # even file metadata may be treated as sensitive by CodeQL.
+            evidence = inspect_partial_install()
+            if evidence["postgres_container"] == "running":
+                print("PARTIAL_DB_CONTAINER_RUNNING", flush=True)
+            else:
+                print("PARTIAL_DB_CONTAINER_ABSENT_STOPPED_OR_UNVERIFIED", flush=True)
+            if evidence["admin_secret"] == "metadata_ok":
+                print("PARTIAL_ADMIN_SECRET_METADATA_VALID", flush=True)
+            elif evidence["admin_secret"] == "absent":
+                print("PARTIAL_ADMIN_SECRET_ABSENT", flush=True)
+            else:
+                print("PARTIAL_ADMIN_SECRET_UNTRUSTED", flush=True)
+            secrets_seen = tuple(evidence["product_secrets"].values())
+            if all(value == "metadata_ok" for value in secrets_seen):
+                print("PARTIAL_FOUR_SECRET_FILES_METADATA_VALID", flush=True)
+            elif all(value == "absent" for value in secrets_seen):
+                print("PARTIAL_PRODUCT_SECRETS_ABSENT", flush=True)
+            else:
+                print("PARTIAL_PRODUCT_SECRETS_INCOMPLETE_OR_UNTRUSTED", flush=True)
+            print("PARTIAL_SQL_STATE_UNVERIFIED_MANUAL_RECONCILIATION_REQUIRED",
+                  flush=True)
             return 0
         preflight()
         print("PASS protected PostgreSQL16 and reviewed-source preflight", flush=True)
