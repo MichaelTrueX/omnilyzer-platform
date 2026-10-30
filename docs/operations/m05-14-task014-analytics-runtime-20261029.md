@@ -54,6 +54,9 @@ The broader Analytics suite on the restricted DEV connector ran 196 tests:
 192 passed, 2 expected skips, and 2 errors because setgid temporary-directory
 creation/chmod is denied by this host boundary. Those two existing durable
 replay/Unix tests require an appropriate test runner; they are not waived.
+The existing read-only C34D GitHub test workflow now runs the Analytics
+suite and existing M05-14 Compose/signed-admission tests automatically.
+It adds no workflow, permissions, credential access or deployment action.
 GitHub CI must resolve this validation before merge.
 
 This correction is a review candidate only. It is NOT installed on DEV, does

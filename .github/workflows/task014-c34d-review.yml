@@ -83,6 +83,15 @@ jobs:
             deployment.tests.test_rootless_docker_daemon_preflight \
             deployment.tests.test_dev_live_activation_policy \
             deployment.tests.test_dev_live_activation_contract
+      # Product source admission runs in the existing read-only test workflow.
+      # Synthetic fixtures only; no DEV access, signing or install permission.
+      - name: Test Analytics Task014 source and product security
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s deployment/tests -p 'test_analytics*.py'
+          python -m unittest \
+            deployment.tests.test_m05_14_analytics_compose_envfiles \
+            deployment.tests.test_m05_14_analytics_signed_admission
       # Section 6: Review-only private OCI OIDC diagnostic tests.
       # No id-token:write, workflow dispatch, registry or deployment access.
       - name: Test private Zot diagnostic isolation without issuing credentials
