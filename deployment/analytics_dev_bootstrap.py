@@ -143,7 +143,8 @@ def preflight(*, resume: bool = False) -> None:
                   mode=0o400, directory=False)
         # Validate the existing password in memory without printing it.
         saved = ADMIN_SECRET.read_bytes()
-        if not re.fullmatch(rb"[A-Za-z0-9_-]{50,100}\\n", saved):
+        if (saved[-1:] != bytes([10]) or
+                not re.fullmatch(rb"[A-Za-z0-9_-]{50,100}", saved[:-1])):
             raise BootstrapDenied("preserved admin credential is invalid")
     elif ADMIN_DIR.exists() or ADMIN_DIR.is_symlink():
         raise BootstrapDenied("admin credential generation already attempted")
