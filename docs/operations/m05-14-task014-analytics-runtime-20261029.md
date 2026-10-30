@@ -25,6 +25,49 @@ plans (27 new alone, 30 objects, or replacing the original canary source) are
 superseded. Preserve the existing Task014 root-owned original canary and
 reuse its proven broker/OIDC/signer/replay/executor controls.
 
+## FINAL SECURITY FIX — PyJWT 2.14.0 SOURCE / C31A VENV REQUALIFIED
+
+The vulnerable PyJWT 2.13.0 dependency pin has now been REPLACED in this
+PR's **future** C1/C24/C31A source requirements with PyJWT 2.14.0.
+The original reviewed cryptography/cffi/pycparser pins and pip 26.2.1
+installer are unchanged. Exact upstream wheel and artifact metadata were
+downloaded and SHA256-checked against PyPI; the new wheel's SHA256 is
+ad0cef71c756a56e74863c2919cf0985f72decbcfcb550ee2f422e7c62b5eedc.
+The locked requirements SHA256 is
+8466e0fca40b070d25710168094e6d52099ec3e2c65ef67f0ae0d26e1a20fc86.
+
+The ORIGINAL pip wheel's isolated, no-pip Python3.12 bootstrap and strict
+no-index / no-deps / no-compile / require-hashes installation were actually
+executed on the development workstation. A clean control install of the old
+2.13.0 wheel reproduced all 24 retained C31A PyJWT file/path SHA hashes
+before replacing them with hashes from the verified clean 2.14.0 wheel.
+The complete FOUR-WHEEL closure also installed successfully in an isolated
+no-pip Python3.12 environment with the current reviewed lock. The resulting
+new 237-entry C31A installed-file evidence manifest has 197 files,
+36 directories, 4 symlinks, length 57,825 bytes and exact SHA256
+0ca874d1ebe3f61ea1356bc20d40a1afb30d1ddb515a68b09b486c48f8471be5.
+220/221 actual installed package objects matched the new C31A manifest
+exactly in the temporary-path full-closure installation; the single
+cffi RECORD differs because its generated bin/cffi-gen-src shebang contains
+the actual venv root path. That original path-sensitive RECORD remains pinned
+to the fixed /opt/omnilyzer/deployment/venv target, as before. This DOES
+NOT constitute a full real installed-target C31A acceptance.
+
+C24 lock, immutable wheel contract, C31A static manifest/source distribution
+identity, original host provisioning-plan SHA pins and affected tests were
+updated TOGETHER. Original historical C32D predecessor migration source
+hashes deliberately remain unchanged, as they identify an older installation
+generation. No direct pip install/update was performed on DEV; its live
+protected venv is still PyJWT 2.13.0, and enabling this new C31A source
+against that old venv must FAIL CLOSED until separately root-provisioned.
+
+Real Analytics DEV remains **NO-GO** pending one owner-authorized Task014
+root installation, final on-target C31A full qualification, product-private
+systemd coexistence mount/start-stop proof, true original signer/JWKS/registry
+evidence, four mapped secrets, restricted PostgreSQL RLS, /readyz/persistence
+and first-install stop-only rollback, then ONE independent M04 acceptance.
+This does not permit a runtime waiver, unsigned install or silent merge.
+
 ## Final corrective patch — service-private Docker namespace review
 
 The prior assertion that the reviewed service fragment \`RuntimeDirectory\`
@@ -103,19 +146,16 @@ executor socket inactive. Remote agent remains NoNewPrivs=1, not root.
    service or canary/Analytics simultaneous start-stop test has occurred.
    Full private mount and independence proof still required before GO.
 
-2. **Critical Python runtime advisory.** GitHub Dependabot alert #25
-   identifies Task014's \`PyJWT[crypto]==2.13.0\` as affected; fixed version
-   reported is **2.14.0** (asymmetric PEM / HS confusion issue). A read-only
-   inspection of the REAL DEV protected venv confirmed PyJWT 2.13.0 and
-   cryptography 50.0.1. \`deployment/oidc_verifier.py\` explicitly fixes
-   RS256 algorithm selection, which narrows the relevant attack surface,
-   but does not justify waiving the published critical dependency finding.
-   Task014's wheel SHA256 lock, exact immutable installed Python
-   environment manifest and C31A source qualification all pin 2.13.0.
-   Updating the runtime requires a single properly hash-verified 2.14.0
-   wheel, regenerated/independently qualified installed-runtime source
-   manifest, dependent tests and original Task014 release checks.
-   **Do not run a direct \`pip install --upgrade\` on DEV.**
+2. **Installed DEV Python runtime still requires safe re-provisioning.**
+   GitHub critical Dependabot alert #25 applies to the LIVE original
+   DEV PyJWT 2.13.0 installation. The source dependency pin, wheel
+   SHA lock and C31A future-runtime manifest are now coherently updated
+   to patched 2.14.0; the isolated four-wheel acceptance passes.
+   The running DEV protected venv is NOT updated or independently
+   root-qualified. New C31A code MUST reject it until the original
+   root-controlled Task014 package installation/review process has
+   installed and qualified the exact pinned full closure. No direct
+   pip upgrade or security-policy waiver is permitted.
 
 **Explicit next authorized action:** After those TWO blockers have been
 resolved using the existing code/source qualification and privately

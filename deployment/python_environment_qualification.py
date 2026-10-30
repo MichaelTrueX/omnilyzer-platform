@@ -30,8 +30,8 @@ _MODEL_ERROR = "DEV Python environment qualification evidence is invalid"
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _CHUNK = 64 * 1024
 _MANIFEST_PATH = "provenance/python-runtime-py312-linux-x86_64-installed.json"
-_MANIFEST_SIZE = 57824
-_MANIFEST_SHA256 = "3966c1f4075e2813131f249eb02a473acf0e4d11be61b05f858678b668d2766b"
+_MANIFEST_SIZE = 57825
+_MANIFEST_SHA256 = "0ca874d1ebe3f61ea1356bc20d40a1afb30d1ddb515a68b09b486c48f8471be5"
 _ENTRY_COUNT = 237
 _FILE_COUNT = 197
 _DIRECTORY_COUNT = 36
@@ -44,7 +44,7 @@ _DISTRIBUTIONS = (
     ("cffi", "2.1.1", "cffi-2.1.1.dist-info"),
     ("cryptography", "50.0.1", "cryptography-50.0.1.dist-info"),
     ("pycparser", "3.0", "pycparser-3.0.dist-info"),
-    ("PyJWT", "2.13.0", "pyjwt-2.13.0.dist-info"),
+    ("PyJWT", "2.14.0", "pyjwt-2.14.0.dist-info"),
 )
 _SOURCES = {
     "venv", "wheel-layout", "pip-generated-metadata", "pip-generated-script",
@@ -54,7 +54,7 @@ _SOURCE_COUNTS = {
     "wheel-layout": 30,
     "pip-generated-metadata": 12,
     "pip-generated-script": 1,
-    "pyjwt-2.13.0-py3-none-any.whl": 18,
+    "pyjwt-2.14.0-py3-none-any.whl": 18,
     "cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl": 119,
     "cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": 30,
     "pycparser-3.0-py3-none-any.whl": 12,
