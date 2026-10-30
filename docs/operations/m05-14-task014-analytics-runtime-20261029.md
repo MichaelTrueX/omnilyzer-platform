@@ -25,6 +25,71 @@ plans (27 new alone, 30 objects, or replacing the original canary source) are
 superseded. Preserve the existing Task014 root-owned original canary and
 reuse its proven broker/OIDC/signer/replay/executor controls.
 
+## FINAL M05-14 HANDOVER — 2026-10-30
+
+**Development handover COMPLETE. Live Analytics 0.15.0 DEV acceptance NOT
+COMPLETE; ACTIVE DEPLOYMENT NO-GO.** This is the last consolidated status
+for this development batch, not another framework/PR/QA process.
+
+**Delivered and verified:** one original Task014 workflow with Canary as
+default and Analytics DEV schema-v2 path; exact signed original Task013
+Analytics 0.15.0 OCI digest; immutable 70-source isolated generation and
+four unsigned root review inputs; read-only host preflight; four reviewed
+systemd-service review bytes (3 original Git objects plus a source-bound
+C32ZF runtime-directory fragment); first-install stop-only rollback
+implementation. Original Canary and production were NOT changed. The owner
+successfully installed and ran the separate read-only root audit on DEV.
+Last direct DEV observation: original broker and Canary executor socket
+active; UID991 rootless Docker daemon socket available; isolated Analytics
+source, protected configs, mapped secret directory absent; Analytics
+executor socket inactive. Remote agent remains NoNewPrivs=1, not root.
+
+**Two confirmed product-release blockers (do not suppress):**
+
+1. **Concurrent systemd lifecycle.** The existing original Canary and the
+   proposed Analytics executor use the SAME runtime-directory name
+   \`omnilyzer/deployment/rootless-docker\`. The four service review inputs
+   are UNSIGNED and deliberately NOT an installation grant. Under systemd's
+   RuntimeDirectory removal semantics, stopping/restarting one service can
+   remove the other service's mount destination. The dedicated Analytics
+   service needs a separately tested, product-private rootless mount
+   lifecycle or a proven safe equivalent BEFORE root installation. Hash
+   verification and a green service-unit syntax test do NOT establish that
+   coexistence property. Do not install the current review-only fragment.
+2. **Critical Python runtime advisory.** GitHub Dependabot alert #25
+   identifies Task014's \`PyJWT[crypto]==2.13.0\` as affected; fixed version
+   reported is **2.14.0** (asymmetric PEM / HS confusion issue). A read-only
+   inspection of the REAL DEV protected venv confirmed PyJWT 2.13.0 and
+   cryptography 50.0.1. \`deployment/oidc_verifier.py\` explicitly fixes
+   RS256 algorithm selection, which narrows the relevant attack surface,
+   but does not justify waiving the published critical dependency finding.
+   Task014's wheel SHA256 lock, exact immutable installed Python
+   environment manifest and C31A source qualification all pin 2.13.0.
+   Updating the runtime requires a single properly hash-verified 2.14.0
+   wheel, regenerated/independently qualified installed-runtime source
+   manifest, dependent tests and original Task014 release checks.
+   **Do not run a direct \`pip install --upgrade\` on DEV.**
+
+**Explicit next authorized action:** After those TWO blockers have been
+resolved using the existing code/source qualification and privately
+reviewed, a single owner-approved original Task014 ROOT installation
+may install exact isolated sources, protected configs, product services,
+mapped four secrets and restricted PostgreSQL roles/RLS, exercise REAL
+three-audience OIDC + signed Zot/Forgejo/Cosign, private \`/readyz\`,
+logged-in persisted Analytics journey and stop-only rollback. One
+independent M04 DEV acceptance then yields GO/NO-GO. No merge, live
+installation, credentials, database write, registry republish or product
+rollout was authorized by this review batch. The owner need not rerun
+the already successful read-only root-audit script.
+
+**Source of truth:** exact current GitHub PR #258 HEAD and Issue #27.
+Historical test totals remain attached to the exact SHAs they tested;
+the relevant final focused regression suite ran **66/66 PASS** on the
+unchanged implementation before writing this handover. GitHub had 7/7
+successful required checks on the previous exact HEAD. Recheck checks
+on any subsequent documentation-only commit; do not reuse the old SHA
+to assert final CI or an actual installation.
+
 ## Functional acceptance target
 
 One working PRIVATE DEV Analytics 0.15.0 journey, using the original
