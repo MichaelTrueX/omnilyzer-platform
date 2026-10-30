@@ -315,3 +315,45 @@ separately authorized ORIGINAL Task014 root actor must independently install
 the exact reviewed code, source approval/archive, broker/executor config and
 systemd assets; the read-only generator and in-memory host probe do NOT
 provide that privilege. Owner and required M04 approval remain mandatory.
+
+## 2026-10-30 — Owner-initiated, narrowly scoped DEV root audit
+
+To unblock live-source and rootless metadata qualification without making the
+remote agent a general privileged administrator, the single owner-run reviewed
+bootstrap script is `deployment/enable_dev_root_audit.sh`.
+
+The operator must personally download the file from an immutable Git commit,
+verify its published SHA256, then run it using an **existing administrator's**
+`sudo bash` on the **actual omnilyzerdev** host. The script fails closed on
+wrong hostname/omnigpt UID, missing protected Task014 baseline, malformed
+sudoers syntax, wrong existing installed files or unsafe root-owned parent
+metadata. It installs only:
+- `/usr/local/libexec/omnilyzer-dev-root-audit.py`: root:root mode0644,
+  exact Python-stdlib read-only 9-path/3-unit metadata audit; no secret
+  content, arbitrary input, Docker connection, container launch, source
+  installation, state mutation or auth bypass.
+- `/etc/sudoers.d/91-omnilyzer-dev-root-audit`: root:root mode0440,
+  grants the specific `omnigpt` user ONLY
+  `/usr/bin/python3 -I /usr/local/libexec/omnilyzer-dev-root-audit.py --read-only`.
+  There is no sudo ALL/wildcard/shell. `-I` ignores Python environment and
+  user-site imports. The script validates syntax with real visudo before
+  writing and again after installation.
+
+The remote Desktop Commander configuration may independently block `sudo`.
+Only **after the operator has installed and authenticated this exact sudoers
+rule** should its remote `sudo` command blockade be reviewed; that
+configuration change is separate from OS authorization and MUST NOT widen the
+OS rule. A missing or mismatched root file must STOP further operations.
+
+To revoke the limited audit grant, the owner can use their existing admin
+account to remove only the two fixed installed files:
+`sudo rm -f /etc/sudoers.d/91-omnilyzer-dev-root-audit
+/usr/local/libexec/omnilyzer-dev-root-audit.py`. This does not alter the
+original broker, executor, rootless Docker or any Analytics data.
+
+**This is NOT approval to merge, install Analytics, open rootless sockets,
+supply secrets, deploy images or run migrations.** Those require the already
+reviewed, independently root-owned original Task014 source admission plus
+explicit DEV deployment authorization and M04's final real installation
+acceptance. One read-only root helper avoids both blanket root access and a
+fresh per-feature administrative control plane.
