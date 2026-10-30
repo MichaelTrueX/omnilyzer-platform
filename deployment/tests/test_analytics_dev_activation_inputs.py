@@ -1,14 +1,14 @@
 """File: deployment/tests/test_analytics_dev_activation_inputs.py
 
-Purpose: Verify exact no-write Task014 Analytics root activation inputs using
-         real immutable Git sources; test four fixed paths, source hashes,
-         original closed config and approval parsers, tamper denial and
-         public review isolation.
+Purpose: Verify no-write Task014 Analytics root and systemd review inputs
+         using real immutable Git sources: fixed paths, source hashes,
+         existing rootless C32ZF mount contract and negative tampering.
 Related: deployment/analytics_dev_activation_inputs.py,
          deployment/analytics_source_handoff.py,
          deployment/analytics_source_archive.py,
          deployment/analytics_executor_service_config.py,
-         deployment/analytics_isolated_source_install.py.
+         deployment/analytics_isolated_source_install.py,
+         deployment/rootless_docker_authority.py.
 
 These tests never grant permissions, stage files, write root paths, use
 credentials, start services or claim real signed 0.15.0 acceptance.
@@ -113,6 +113,98 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         ))
         self.assertEqual(
             json.loads(outputs[activation.SOURCE_APPROVAL])["stage"], "dev",
+        )
+
+    def test_four_service_assets_reuse_original_task014_rootless_mount(self):
+        """One exact Git object supplies three units and original rootless
+        C32ZF supplies the private-directory fragment without duplicate bind.
+        """
+        services = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+        )
+        self.assertEqual(len(services), 4)
+        self.assertEqual(set(services), {
+            activation._ANALYTICS_RUNTIME_DROPIN,
+            *(destination for _src, destination in activation._SERVICE_SOURCES),
+        })
+        reviewed = dict(verify_analytics_source_archive(
+            self.artifacts[activation.SOURCE_ARCHIVE],
+            expected_manifest_sha256=_approval(
+                self.artifacts[activation.SOURCE_APPROVAL],
+            )["manifest_sha256"],
+            reviewed_commit=self.sha,
+        ))
+        for source, destination in activation._SERVICE_SOURCES:
+            with self.subTest(source=source):
+                self.assertEqual(services[destination], reviewed[source])
+
+        original = (ROOT /
+            "deployment/systemd/rootless/rootless-docker-executor-socket.conf"
+        ).read_bytes()
+        self.assertEqual(
+            hashlib.sha256(original).hexdigest(),
+            "afef78b7ed57beedc2a8496b602c3f7d6dad7981dd88258f6b7e8c35a7fbed2d",
+        )
+        self.assertEqual(
+            services[activation._ANALYTICS_RUNTIME_DROPIN],
+            b"[Service]\\n"
+            b"RuntimeDirectory=omnilyzer/deployment/rootless-docker\\n"
+            b"RuntimeDirectoryMode=0700\\n",
+        )
+        self.assertIn(
+            activation._ROOTLESS_BIND.encode(),
+            services[activation._SERVICE_SOURCES[1][1]],
+        )
+        self.assertNotIn(
+            b"BindReadOnlyPaths", services[activation._ANALYTICS_RUNTIME_DROPIN],
+        )
+        self.assertNotIn(
+            b"ExecStart", services[activation._ANALYTICS_RUNTIME_DROPIN],
+        )
+        self.assertNotIn(
+            b"User=", services[activation._ANALYTICS_RUNTIME_DROPIN],
+        )
+
+    def test_original_rootless_source_contract_cannot_be_changed_by_caller(self):
+        """No new authority from changing public fixed mount input values."""
+        from types import SimpleNamespace
+        original = activation.AUTHORITY
+        wrong = SimpleNamespace(
+            installed_assets=tuple(
+                (src, dst, "f" * 64, uid, gid, mode)
+                if src == activation._ORIGINAL_ROOTLESS_SOURCE
+                else (src, dst, sha, uid, gid, mode)
+                for src, dst, sha, uid, gid, mode in original.installed_assets
+            ),
+            daemon_socket=original.daemon_socket,
+            socket=original.socket,
+        )
+        with patch.object(activation, "AUTHORITY", wrong):
+            with self.assertRaises(activation.AnalyticsActivationInputsError):
+                activation.build_unsigned_analytics_service_inputs(
+                    repository_root=str(ROOT), reviewed_commit=self.sha,
+                )
+        with patch.object(
+            activation, "_RUNTIME_MODE", "RuntimeDirectoryMode=0777",
+        ):
+            with self.assertRaises(activation.AnalyticsActivationInputsError):
+                activation.build_unsigned_analytics_service_inputs(
+                    repository_root=str(ROOT), reviewed_commit=self.sha,
+                )
+        with patch.object(
+            activation, "_ROOTLESS_BIND",
+            "BindReadOnlyPaths=/run/user/991/other.sock:/tmp/other.sock",
+        ):
+            with self.assertRaises(activation.AnalyticsActivationInputsError):
+                activation.build_unsigned_analytics_service_inputs(
+                    repository_root=str(ROOT), reviewed_commit=self.sha,
+                )
+        self.assertEqual(
+            activation.build_unsigned_analytics_service_inputs(
+                repository_root=str(ROOT), reviewed_commit=self.sha,
+            )["/etc/systemd/system/omnilyzer-deployment-analytics-executor.service.d/rootless-runtime.conf"],
+            b"[Service]\\nRuntimeDirectory=omnilyzer/deployment/rootless-docker\\n"
+            b"RuntimeDirectoryMode=0700\\n",
         )
 
     def test_tampered_archive_or_source_model_fails_closed(self):

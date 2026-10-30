@@ -409,20 +409,34 @@ canary source, Docker socket authority, service drop-in and executor
 behavior remain untouched. No root operation, service mutation, secret
 disclosure or runtime acceptance resulted.
 
-### Remaining Analytics systemd unit requirement (unmodified)
+### Analytics systemd runtime-directory handoff resolved in review bytes (NOT installed)
 
-The original Task014 executor has a reviewed, deployed systemd drop-in
-`rootless-docker-executor-socket.conf` that supplies both
-`RuntimeDirectory=omnilyzer/deployment/rootless-docker` and
-`RuntimeDirectoryMode=0700` before
-`BindReadOnlyPaths=/run/user/991/docker.sock:/run/omnilyzer/deployment/rootless-docker/docker.sock`.
-The proposed new
-`deployment/systemd/dev/omnilyzer-deployment-analytics-executor.service`
-currently contains the bind but **does not independently declare those
-RuntimeDirectory settings**. Because its target directory is not persistent
-on the host, the product service's private socket mount must be explicitly
-validated and, if needed, corrected within a reviewed root-owned systemd
-installation. The new source preflight does NOT claim it has verified a
-running Analytics executor or mount. A tool security control prevented
-editing the privileged unit in this turn; no workaround or host operation
-was attempted. Treat this as a concrete P0 to resolve before real activation.
+The proposed Analytics executor unit retains the exact original rootless
+Docker socket bind but does not itself declare the required service-private
+RuntimeDirectory. Instead of modifying the unit or inventing another runtime
+framework, \`deployment/analytics_dev_activation_inputs.py\` now produces
+**four additional UNSIGNED, canonical service review inputs** tied to the
+same exact Git commit as the 31-object source archive:
+
+- Existing broker opt-in drop-in, existing Analytics executor unit and
+  existing Analytics executor private socket: exact Git-object bytes already
+  checked by the original 31-member handoff.
+- New product-specific review-only \`rootless-runtime.conf\`, DESTINATION
+  \`/etc/systemd/system/omnilyzer-deployment-analytics-executor.service.d/\`
+  \`rootless-runtime.conf\`. Contains ONLY the original, SHA-pinned Task014
+  C32ZF \`RuntimeDirectory=omnilyzer/deployment/rootless-docker\` and
+  \`RuntimeDirectoryMode=0700\`. Its source is compared against the immutable
+  original \`deployment/systemd/rootless/rootless-docker-executor-socket.conf\`
+  hash \`afef78b7ed57beedc2a8496b602c3f7d6dad7981dd88258f6b7e8c35a7fbed2d\`
+  via original C26 Git blob reader, with the matching exact daemon/bind paths
+  verified. The existing Analytics unit's \`BindReadOnlyPaths\` remains
+  single-source; the review drop-in does NOT duplicate that mount.
+
+\`deployment/tests/test_analytics_dev_activation_inputs.py\` exercises
+original Git source selection, SHA matching, exact four destination paths,
+negative altered-source and bind rejection and canonical bytes. All outputs
+remain **UNSIGNED, INERT, NOT ROOT-AUTHORIZED**. The independently owner-
+approved original Task014 root installation must verify and apply these
+exact service inputs, preserve the existing broker/canary and test the mount
+inside the real activated Analytics executor. Neither passing unit review
+nor the owner's earlier read-only root audit authorizes active deployment.

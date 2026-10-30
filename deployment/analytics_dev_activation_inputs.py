@@ -1,16 +1,19 @@
 """File: deployment/analytics_dev_activation_inputs.py
 
-Purpose: Construct FOUR exact UNSIGNED Task014 Analytics 0.15.0 DEV root inputs
-         from the previously reviewed immutable Git source archive.
+Purpose: Construct exact UNSIGNED Task014 Analytics 0.15.0 DEV review
+         inputs from the previously reviewed immutable Git source archive,
+         including the original C32ZF rootless executor drop-in contract.
 Related: deployment/analytics_source_handoff.py (31 Git objects),
          deployment/analytics_source_archive.py (canonical USTAR),
          deployment/analytics_isolated_source_install.py (root approval),
          deployment/analytics_executor_service_config.py (20 source hashes),
          deployment/analytics_broker_service.py (broker config admission),
+         deployment/rootless_docker_authority.py (original C32ZF contract),
          deployment/tests/test_analytics_dev_activation_inputs.py.
 
 Sections: fixed destinations, read-only source binding, independent root
-          approval and exact broker/executor source configuration.
+          approval, exact broker/executor configs, immutable systemd source
+          selection and the existing rootless runtime directory contract.
 
 SECURITY: Review data is NOT root installation authority. No write, network,
 secret, Docker, systemd, session, OIDC, replay or database side effect.
@@ -22,6 +25,8 @@ from __future__ import annotations
 import hashlib
 import json
 
+from . import application_manifest as _original_git
+from .rootless_docker_authority import AUTHORITY
 from .analytics_executor_service_config import (
     ANALYTICS_INSTALLED_FILES, _INSTALLED_RUNTIME_FILES,
     _SOURCE_CLAIM_SHA256, parse_analytics_executor_service_config,
@@ -39,6 +44,30 @@ EXECUTOR_CONFIG = "/etc/omnilyzer/deployment/dev/analytics-executor.json"
 BROKER_CONFIG = "/etc/omnilyzer/deployment/broker/analytics.json"
 DESTINATION = "/opt/omnilyzer/deployment/analytics-app"
 _CLOSED_PATHS = (SOURCE_ARCHIVE, SOURCE_APPROVAL, EXECUTOR_CONFIG, BROKER_CONFIG)
+# These systemd objects remain inert until separately installed by root.
+# Exactly three are already bound in the canonical 31-object reviewed archive.
+_SERVICE_SOURCES = (
+    ("deployment/systemd/dev/analytics-broker-enabled.conf",
+     "/etc/systemd/system/omnilyzer-deployment-broker.service.d/analytics-enabled.conf"),
+    ("deployment/systemd/dev/omnilyzer-deployment-analytics-executor.service",
+     "/etc/systemd/system/omnilyzer-deployment-analytics-executor.service"),
+    ("deployment/systemd/dev/omnilyzer-deployment-analytics-executor.socket",
+     "/etc/systemd/system/omnilyzer-deployment-analytics-executor.socket"),
+)
+_ORIGINAL_ROOTLESS_SOURCE = (
+    "deployment/systemd/rootless/rootless-docker-executor-socket.conf"
+)
+_ANALYTICS_RUNTIME_DROPIN = (
+    "/etc/systemd/system/"
+    "omnilyzer-deployment-analytics-executor.service.d/"
+    "rootless-runtime.conf"
+)
+_RUNTIME_DIRECTORY = "RuntimeDirectory=omnilyzer/deployment/rootless-docker"
+_RUNTIME_MODE = "RuntimeDirectoryMode=0700"
+_ROOTLESS_BIND = (
+    "BindReadOnlyPaths=/run/user/991/docker.sock:"
+    "/run/omnilyzer/deployment/rootless-docker/docker.sock"
+)
 _ERROR = "Analytics Task014 source activation inputs are unavailable"
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 
@@ -135,7 +164,102 @@ def build_unsigned_analytics_activation_inputs(
         raise AnalyticsActivationInputsError(_ERROR) from None
 
 
+def build_unsigned_analytics_service_inputs(
+    *, repository_root: str, reviewed_commit: str,
+) -> dict[str, bytes]:
+    """Bind EXACT service review bytes to one Git generation and original C32ZF.
+
+    The original Task014 executor already uses a root-owned systemd drop-in
+    that creates the PRIVATE bind target at service activation time. The
+    isolated Analytics service has the same source socket and bind target.
+    Rather than editing that unit or duplicating BindReadOnlyPaths, reuse
+    ONLY the original trusted RuntimeDirectory and mode through one exact
+    product-specific, unsigned drop-in. No service is installed or started.
+    """
+    try:
+        sources = build_unsigned_analytics_activation_inputs(
+            repository_root=repository_root, reviewed_commit=reviewed_commit,
+        )
+        approval = _approval(sources[SOURCE_APPROVAL])
+        selected = dict(verify_analytics_source_archive(
+            sources[SOURCE_ARCHIVE],
+            expected_manifest_sha256=approval["manifest_sha256"],
+            reviewed_commit=reviewed_commit,
+        ))
+        if len(selected) != 31 or len(_SERVICE_SOURCES) != 3:
+            raise ValueError
+        result = {
+            destination: selected[source]
+            for source, destination in _SERVICE_SOURCES
+        }
+        # Original Task014 C26 immutable Git reader: not the mutable working
+        # tree or a caller-specified path. The existing source authority
+        # supplies the sole permitted SHA for its rootless Docker drop-in.
+        records = _original_git._tree(_original_git._output(
+            repository_root, ("ls-tree", "-r", "-z", "--full-tree",
+                              reviewed_commit, "--", _ORIGINAL_ROOTLESS_SOURCE),
+            1024,
+        ), (_ORIGINAL_ROOTLESS_SOURCE,))
+        if len(records) != 1 or records[0][0] != _ORIGINAL_ROOTLESS_SOURCE:
+            raise ValueError
+        original = _original_git._output(
+            repository_root, ("cat-file", "blob", records[0][1]), 4096,
+        )
+        expected = [
+            sha for source, _dest, sha, _uid, _gid, _mode in AUTHORITY.installed_assets
+            if source == _ORIGINAL_ROOTLESS_SOURCE
+        ]
+        if (
+            len(expected) != 1
+            or hashlib.sha256(original).hexdigest() != expected[0]
+            or original.decode("ascii").splitlines().count(_RUNTIME_DIRECTORY) != 1
+            or original.decode("ascii").splitlines().count(_RUNTIME_MODE) != 1
+            or original.decode("ascii").splitlines().count(_ROOTLESS_BIND) != 1
+            or AUTHORITY.socket !=
+                "/run/omnilyzer/deployment/rootless-docker/docker.sock"
+            or AUTHORITY.daemon_socket != "/run/user/991/docker.sock"
+        ):
+            raise ValueError
+        service = result[_SERVICE_SOURCES[1][1]].decode("ascii")
+        service_rows = service.splitlines()
+        if (
+            service_rows.count(_ROOTLESS_BIND) != 1
+            or sum(row.startswith("BindReadOnlyPaths=")
+                   for row in service_rows) != 1
+            or "WorkingDirectory=/opt/omnilyzer/deployment/analytics-app"
+                not in service_rows
+            or "User=omnilyzer-executor" not in service_rows
+            or "NoNewPrivileges=yes" not in service_rows
+            or "ProtectSystem=strict" not in service_rows
+            or "CapabilityBoundingSet=" not in service_rows
+            or _RUNTIME_DIRECTORY in service_rows
+            or _RUNTIME_MODE in service_rows
+        ):
+            raise ValueError
+
+        # Source authority comes from original C32ZF; the generated review
+        # byte-string cannot grant root installation or Docker access.
+        result[_ANALYTICS_RUNTIME_DROPIN] = (
+            "[Service]\\n" + _RUNTIME_DIRECTORY + "\\n" +
+            _RUNTIME_MODE + "\\n"
+        ).encode("ascii")
+        if (
+            set(result) != {
+                _ANALYTICS_RUNTIME_DROPIN,
+                *(destination for _source, destination in _SERVICE_SOURCES),
+            }
+            or any(type(raw) is not bytes or not raw for raw in result.values())
+        ):
+            raise ValueError
+        return result
+    except _CONTROL:
+        raise
+    except Exception:
+        raise AnalyticsActivationInputsError(_ERROR) from None
+
+
 __all__ = (
     "AnalyticsActivationInputsError", "build_unsigned_analytics_activation_inputs",
     "SOURCE_ARCHIVE", "SOURCE_APPROVAL", "EXECUTOR_CONFIG", "BROKER_CONFIG",
+    "build_unsigned_analytics_service_inputs",
 )
