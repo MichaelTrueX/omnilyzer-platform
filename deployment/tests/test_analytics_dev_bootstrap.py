@@ -5,7 +5,8 @@ Purpose: Static and mocked first-install safety checks for the DEV-only
 Related: deployment/analytics_dev_bootstrap.py.
 
 Sections: host/privilege denial, no-replacement secret files, precise SQL and
-          container command construction, restricted named credential handoff.
+          container command construction, restricted named credential handoff,
+          partial-state inspection and failure-phase preservation.
 """
 from __future__ import annotations
 
@@ -14,6 +15,8 @@ from pathlib import Path
 import tempfile
 import types
 import unittest
+import io
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 from deployment import analytics_dev_bootstrap as bootstrap
@@ -99,6 +102,81 @@ class BootstrapOperatorTests(unittest.TestCase):
             with self.assertRaisesRegex(bootstrap.BootstrapDenied, "secret operation denied") as cm:
                 bootstrap.run(["/usr/bin/false"], data=b"secret-sql", secret_step=True)
         self.assertNotIn("secret-leak-string", str(cm.exception))
+
+
+    def test_partial_state_inspection_uses_metadata_only(self):
+        """Report preserved partial secret status without reading secret values."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            admin = root / "pg-admin"
+            admin.mkdir()
+            (admin / "POSTGRES_ADMIN_PASSWORD").write_text(
+                "do-not-print-secret-value", encoding="ascii")
+            os.chmod(admin / "POSTGRES_ADMIN_PASSWORD", 0o400)
+            secret_dir = root / "secrets"
+            secret_dir.mkdir()
+            source = secret_dir / "DATABASE_URL"
+            source.write_text("another-secret-value", encoding="ascii")
+            os.chmod(source, 0o600)
+            current_uid = os.geteuid()
+            current_gid = os.getegid()
+            backend = types.SimpleNamespace(returncode=0, stdout=b"running\n")
+            with patch.object(bootstrap, "ADMIN_DIR", admin), \
+                 patch.object(bootstrap, "ADMIN_SECRET", admin / "POSTGRES_ADMIN_PASSWORD"), \
+                 patch.object(bootstrap, "SECRET_DIR", secret_dir), \
+                 patch.object(bootstrap, "ROOTLESS_UID", current_uid), \
+                 patch.object(bootstrap, "ROOTLESS_GID", current_gid), \
+                 patch.object(bootstrap, "MAPPED_APP_UID", current_uid), \
+                 patch.object(bootstrap, "MAPPED_APP_GID", current_gid), \
+                 patch.object(bootstrap.os, "geteuid", return_value=0), \
+                 patch.object(bootstrap.socket, "gethostname",
+                              return_value="omnilyzerdev"), \
+                 patch.object(bootstrap.subprocess, "run", return_value=backend):
+                evidence = bootstrap.inspect_partial_install()
+            text = repr(evidence)
+            self.assertEqual(evidence["postgres_container"], "running")
+            self.assertEqual(evidence["admin_secret"], "metadata_ok")
+            self.assertEqual(evidence["product_secrets"]["DATABASE_URL"], "metadata_ok")
+            self.assertEqual(evidence["product_secrets"]["JWT_SECRET"], "absent")
+            self.assertFalse(evidence["operator_may_retry"])
+            self.assertEqual(evidence["sql_state"], "unverified_no_automatic_replay")
+            self.assertNotIn("do-not-print-secret-value", text)
+            self.assertNotIn("another-secret-value", text)
+
+    def test_partial_failure_reports_phase_but_preserves_data(self):
+        """On SQL failure, no secret installation, resource deletion or retry."""
+        calls = []
+        def database_create(_password):
+            calls.append("database_created")
+        def fail_schema():
+            calls.append("schema_partial")
+            raise bootstrap.BootstrapDenied("synthetic SQL error")
+        def forbidden_credentials(*args):
+            raise AssertionError("must never issue credentials on failed SQL")
+        error_output = io.StringIO()
+        with patch.object(bootstrap.sys, "argv", ["bootstrap", "--install"]), \
+             patch.object(bootstrap, "preflight", return_value=None), \
+             patch.object(bootstrap, "create_database", side_effect=database_create), \
+             patch.object(bootstrap, "install_reviewed_schema", side_effect=fail_schema), \
+             patch.object(bootstrap, "install_runtime_credentials",
+                          side_effect=forbidden_credentials), \
+             redirect_stderr(error_output), redirect_stdout(io.StringIO()):
+            rc = bootstrap.main()
+        self.assertEqual(rc, 1)
+        self.assertEqual(calls, ["database_created", "schema_partial"])
+        self.assertIn("phase=reviewed_sql_stages", error_output.getvalue())
+        self.assertNotIn("synthetic SQL error", error_output.getvalue())
+
+    def test_inspection_is_root_dev_only(self):
+        """Read-only inspection does not allow remote or unprivileged access."""
+        with patch.object(bootstrap.os, "geteuid", return_value=1005):
+            with self.assertRaises(bootstrap.BootstrapDenied):
+                bootstrap.inspect_partial_install()
+        with patch.object(bootstrap.os, "geteuid", return_value=0), \
+             patch.object(bootstrap.socket, "gethostname",
+                          return_value="truexmainserver"):
+            with self.assertRaises(bootstrap.BootstrapDenied):
+                bootstrap.inspect_partial_install()
 
 
 if __name__ == "__main__":

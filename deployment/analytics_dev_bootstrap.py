@@ -17,7 +17,8 @@ hosts, existing databases, or original Canary resources may be modified.
 
 Sections: fixed release identity, root-only preflight, locally generated
           credentials, isolated PostgreSQL16 container, reviewed SQL install,
-          restricted role credentials, protected four-file handoff, evidence.
+          restricted role credentials, protected four-file handoff, phase-aware
+          failure and read-only partial-state inspection.
 """
 from __future__ import annotations
 
@@ -270,32 +271,118 @@ def install_runtime_credentials(app_password: str, collector_password: str,
     print("PASS four mapped product secrets, all 0600; no contents emitted", flush=True)
 
 
+def inspect_partial_install() -> dict[str, object]:
+    """Read protected metadata only; identify any partial install for manual reconciliation.
+
+    This is NOT a retry, repair, readiness or authorization proof. A crashed or
+    interrupted install must be inspected before any operator changes the
+    preserved container/volume/secret state. It never reads credential bytes.
+    """
+    if os.geteuid() != 0 or socket.gethostname().split(".")[0] != HOST:
+        raise BootstrapDenied("operator is not authorized for this host")
+    directory_state = {}
+    for label, path in (("admin_dir", ADMIN_DIR), ("secrets_dir", SECRET_DIR)):
+        if not path.exists() and not path.is_symlink():
+            directory_state[label] = "absent"
+            continue
+        info = path.lstat()
+        directory_state[label] = (
+            "directory" if stat.S_ISDIR(info.st_mode) and not path.is_symlink()
+            else "untrusted_path"
+        )
+    secret_state = {}
+    for name in SECRET_NAMES:
+        path = SECRET_DIR / name
+        if not path.exists() and not path.is_symlink():
+            secret_state[name] = "absent"
+            continue
+        info = path.lstat()
+        secret_state[name] = (
+            "metadata_ok"
+            if stat.S_ISREG(info.st_mode)
+            and info.st_uid == MAPPED_APP_UID
+            and info.st_gid == MAPPED_APP_GID
+            and stat.S_IMODE(info.st_mode) == 0o600
+            and info.st_nlink == 1
+            else "untrusted_metadata"
+        )
+    if not ADMIN_SECRET.exists() and not ADMIN_SECRET.is_symlink():
+        admin_secret_state = "absent"
+    else:
+        info = ADMIN_SECRET.lstat()
+        admin_secret_state = (
+            "metadata_ok"
+            if stat.S_ISREG(info.st_mode) and info.st_uid == ROOTLESS_UID
+            and info.st_gid == ROOTLESS_GID
+            and stat.S_IMODE(info.st_mode) == 0o400
+            and info.st_nlink == 1
+            else "untrusted_metadata"
+        )
+    # Docker inspect shows only state, never environment variables.
+    result = subprocess.run(
+        [*DOCKER, "container", "inspect", "--format",
+         "{{.State.Status}}", CONTAINER],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, timeout=8, check=False,
+    )
+    status = (
+        result.stdout.decode("ascii").strip()
+        if result.returncode == 0 and len(result.stdout) < 40
+        else "absent_or_unavailable"
+    )
+    if status not in ("created", "running", "restarting", "exited",
+                      "paused", "dead", "removing"):
+        status = "absent_or_unavailable"
+    return {
+        "host": HOST,
+        "recovery_required": True,
+        "operator_may_retry": False,
+        "postgres_container": status,
+        "admin_dir": directory_state["admin_dir"],
+        "admin_secret": admin_secret_state,
+        "secrets_dir": directory_state["secrets_dir"],
+        "product_secrets": secret_state,
+        "sql_state": "unverified_no_automatic_replay",
+    }
+
+
 def main() -> int:
-    """Expose only review/preflight or explicitly approved one-shot install."""
+    """Review preflight, inspect partial state or approved one-shot install."""
     parser = argparse.ArgumentParser(description="Analytics DEV-only one-time PostgreSQL bootstrap")
-    parser.add_argument("--preflight", action="store_true")
-    parser.add_argument("--install", action="store_true")
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--preflight", action="store_true")
+    action.add_argument("--inspect", action="store_true")
+    action.add_argument("--install", action="store_true")
     args = parser.parse_args()
     os.umask(0o077)
-    if args.preflight == args.install:
-        parser.error("choose exactly one of --preflight or --install")
+    phase = "preflight"
     try:
+        if args.inspect:
+            print(json.dumps(inspect_partial_install(), sort_keys=True), flush=True)
+            return 0
         preflight()
         print("PASS protected PostgreSQL16 and reviewed-source preflight", flush=True)
-        if not args.install:
+        if args.preflight:
             return 0
+        # Fixed, non-secret phase markers allow review after a partial failure.
+        # No cleanup/retry is permitted; volume and any credentials stay intact.
+        phase = "postgres_start"
         admin = secrets.token_urlsafe(48)
         app = secrets.token_urlsafe(48)
         collector = secrets.token_urlsafe(48)
         jwt = secrets.token_urlsafe(48)
         refresh = secrets.token_urlsafe(48)
         create_database(admin)
+        phase = "reviewed_sql_stages"
         install_reviewed_schema()
+        phase = "restricted_credentials"
         install_runtime_credentials(app, collector, jwt, refresh)
         print("DEV_POSTGRES_BOOTSTRAP_STAGED_NOT_SIGNED_TASK014_DEPLOYED", flush=True)
         return 0
     except (BootstrapDenied, OSError, ValueError) as exc:
-        print("DEV_BOOTSTRAP_FAIL_CLOSED; review existing resources before retry", file=sys.stderr)
+        print("DEV_BOOTSTRAP_FAIL_CLOSED phase=" + phase
+              + "; inspect existing resources before any retry",
+              file=sys.stderr)
         return 1
 
 
