@@ -122,8 +122,8 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def preflight() -> None:
-    """Prove root, DEV-only immutable SQL, empty new PG and no secret drift."""
+def preflight(*, resume: bool = False) -> None:
+    """Prove immutable DEV-only SQL and a fresh or safely resumable PG state."""
     if os.geteuid() != 0 or socket.gethostname().split(".")[0] != HOST:
         raise BootstrapDenied("operator is not authorized for this host")
     _metadata(DB_DIR, owner=0, group=0, mode=0o700, directory=True)
@@ -135,7 +135,13 @@ def preflight() -> None:
     for directory in (PRIVATE_DIR.parent, PRIVATE_DIR, SECRET_DIR):
         _metadata(directory, owner=0, group=ROOTLESS_GID,
                   mode=0o710, directory=True)
-    if ADMIN_DIR.exists() or ADMIN_DIR.is_symlink():
+    if resume:
+        # Resume only the exact known partial state. Never replace the credential.
+        _metadata(ADMIN_DIR, owner=0, group=ROOTLESS_GID,
+                  mode=0o710, directory=True)
+        _metadata(ADMIN_SECRET, owner=ROOTLESS_UID, group=ROOTLESS_GID,
+                  mode=0o400, directory=False)
+    elif ADMIN_DIR.exists() or ADMIN_DIR.is_symlink():
         raise BootstrapDenied("admin credential generation already attempted")
     if list(SECRET_DIR.iterdir()):
         raise BootstrapDenied("product secret path is not empty")
@@ -204,6 +210,11 @@ def create_database(password: str) -> None:
               mode=0o710, directory=True)
     private_file(ADMIN_SECRET, (password + "\n").encode("ascii"),
                  uid=ROOTLESS_UID, gid=ROOTLESS_GID, mode=0o400)
+    start_database()
+
+
+def start_database() -> None:
+    """Start the isolated PG16 image with the already verified admin secret."""
     run((*DOCKER, "run", "--detach", "--name", CONTAINER,
          "--network", NETWORK, "--network-alias", CONTAINER,
          "--restart", "unless-stopped", "--pids-limit", "192",
@@ -219,8 +230,10 @@ def create_database(password: str) -> None:
     # automatic cleanup, docker rm, volume rm, or compose down is allowed.
     for _ in range(60):
         try:
+            # Unix sockets respond during the temporary initdb server.
+            # TCP loopback responds only after PostgreSQL full startup.
             run((*DOCKER, "exec", CONTAINER, "pg_isready", "-q",
-                 "-U", DB_OWNER, "-d", DB_NAME), timeout=4)
+                 "-h", "127.0.0.1", "-U", DB_OWNER, "-d", DB_NAME), timeout=4)
             break
         except BootstrapDenied:
             time.sleep(1)
@@ -357,6 +370,7 @@ def main() -> int:
     action.add_argument("--preflight", action="store_true")
     action.add_argument("--inspect", action="store_true")
     action.add_argument("--install", action="store_true")
+    action.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     os.umask(0o077)
     phase = "preflight"
@@ -387,7 +401,7 @@ def main() -> int:
             print("PARTIAL_SQL_STATE_UNVERIFIED_MANUAL_RECONCILIATION_REQUIRED",
                   flush=True)
             return 0
-        preflight()
+        preflight(resume=True) if args.resume else preflight()
         print("PASS protected PostgreSQL16 and reviewed-source preflight", flush=True)
         if args.preflight:
             return 0
@@ -399,7 +413,11 @@ def main() -> int:
         collector = secrets.token_urlsafe(48)
         jwt = secrets.token_urlsafe(48)
         refresh = secrets.token_urlsafe(48)
-        create_database(admin)
+        if args.resume:
+            # Never regenerate or replace the existing admin secret.
+            start_database()
+        else:
+            create_database(admin)
         phase = "reviewed_sql_stages"
         install_reviewed_schema()
         phase = "restricted_credentials"
