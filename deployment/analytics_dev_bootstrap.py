@@ -198,6 +198,10 @@ def create_database(password: str) -> None:
         raise BootstrapDenied("invalid generated admin credential")
     os.mkdir(ADMIN_DIR, mode=0o710)
     os.chown(ADMIN_DIR, 0, ROOTLESS_GID)
+    # The process has umask 0077, so mkdir's 0710 would become 0700.
+    os.chmod(ADMIN_DIR, 0o710)
+    _metadata(ADMIN_DIR, owner=0, group=ROOTLESS_GID,
+              mode=0o710, directory=True)
     private_file(ADMIN_SECRET, (password + "\n").encode("ascii"),
                  uid=ROOTLESS_UID, gid=ROOTLESS_GID, mode=0o400)
     run((*DOCKER, "run", "--detach", "--name", CONTAINER,
