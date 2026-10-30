@@ -357,3 +357,72 @@ reviewed, independently root-owned original Task014 source admission plus
 explicit DEV deployment authorization and M04's final real installation
 acceptance. One read-only root helper avoids both blanket root access and a
 fresh per-feature administrative control plane.
+
+### 2026-10-30 — Owner's real root audit accepted; rootless mount corrected
+
+The owner executed the exact immutable, SHA-verified
+`deployment/enable_dev_root_audit.sh` as admin `trust` on the REAL
+`omnilyzerdev`. The script reported success, exact expected root-owned
+helper SHA256 `d58a2b4d199254aa72348a5c768a73244a91dea5f263adb39d71bdd32b2f4d12`
+(root:root 0644) and installed sudoers SHA256
+`2adcdfadab749a1b7e1b35ef2c73cc1ae6cfea154cadb0890a3178af3694381f`
+(root:root 0440). The helper was also independently verified from the
+unprivileged live DEV connector (same source hash and metadata).
+
+**The remote agent remains deliberately UNPRIVILEGED.** An attempted
+`sudo -n /usr/bin/python3 -I /usr/local/libexec/omnilyzer-dev-root-audit.py
+--read-only` failed with Linux `no_new_privileges`, as verified from
+`/proc/self/status: NoNewPrivs: 1`. This is a second restriction beyond
+the narrow OS sudoers entry; no attempt to bypass it was made. The
+Desktop Commander blockedCommands `sudo` entry was restored immediately.
+The owner's personally executed root audit is the authoritative read-only
+report; an in-chat root installation is NOT available via this agent.
+
+**Real root-audit result (not an installation):** original canary and
+broker/executor socket healthy; Analytics source, archive, configs and four
+secret directory missing; product executor socket inactive. The rootless
+daemon's REAL `/run/user/991/docker.sock` **EXISTS** (UID991:GID991, mode
+01660), and independent process inspection confirms a running rootlesskit/
+dockerd/containerd under UID991.
+
+**CORRECTION to older host-preflight checklist:** The missing path
+`/run/omnilyzer/deployment/rootless-docker/docker.sock` is a
+**systemd executor-private mount target**, not a permanent host prerequisite.
+Original deployed `omnilyzer-deployment-executor.service.d/
+rootless-docker-socket.conf` uses `RuntimeDirectory` and
+`BindReadOnlyPaths=/run/user/991/docker.sock:/run/omnilyzer/deployment/
+rootless-docker/docker.sock`. The separately reviewed Analytics executor
+service has the same private bind. It is EXPECTED that the target is not
+present in the idle HOST namespace. The unprivileged 9-path diagnostic
+records its raw host absence but now correctly excludes that entry from
+install-blocking host prerequisites and explicitly marks
+`actual_executor_mount_verified=false` until one genuine, approved service
+start validates it INSIDE the executor. The root-owned helper already
+installed by the owner is immutable and still reports the raw observation;
+do not ask for another privileged script merely to alter its diagnostic
+wording or mistake the raw absence for an installation blocker.
+
+Source change is restricted to
+`deployment/analytics_dev_host_preflight.py` and
+`deployment/tests/test_analytics_dev_host_preflight.py`. The original
+canary source, Docker socket authority, service drop-in and executor
+behavior remain untouched. No root operation, service mutation, secret
+disclosure or runtime acceptance resulted.
+
+### Remaining Analytics systemd unit requirement (unmodified)
+
+The original Task014 executor has a reviewed, deployed systemd drop-in
+`rootless-docker-executor-socket.conf` that supplies both
+`RuntimeDirectory=omnilyzer/deployment/rootless-docker` and
+`RuntimeDirectoryMode=0700` before
+`BindReadOnlyPaths=/run/user/991/docker.sock:/run/omnilyzer/deployment/rootless-docker/docker.sock`.
+The proposed new
+`deployment/systemd/dev/omnilyzer-deployment-analytics-executor.service`
+currently contains the bind but **does not independently declare those
+RuntimeDirectory settings**. Because its target directory is not persistent
+on the host, the product service's private socket mount must be explicitly
+validated and, if needed, corrected within a reviewed root-owned systemd
+installation. The new source preflight does NOT claim it has verified a
+running Analytics executor or mount. A tool security control prevented
+editing the privileged unit in this turn; no workaround or host operation
+was attempted. Treat this as a concrete P0 to resolve before real activation.

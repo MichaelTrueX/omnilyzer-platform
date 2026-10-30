@@ -5,11 +5,14 @@ Purpose: Run a single read-only M05-14 Analytics DEV host prerequisite matrix,
 Related: deployment/analytics_dev_activation_inputs.py (four reviewed bytes),
          deployment/analytics_isolated_source_install.py (source root),
          deployment/analytics_executor_service_config.py (protected C17),
-         deployment/rootless_docker_authority.py (socket layout),
+         deployment/rootless_docker_authority.py (daemon socket identity),
+         deployment/systemd/dev/omnilyzer-deployment-analytics-executor.service
+         (BindReadOnlyPaths executor-only mount),
          deployment/tests/test_analytics_dev_host_preflight.py.
 
 Sections: fixed product-only host paths; stat-based metadata probe; service
-          activity probe; bounded redacted combined report and CLI.
+          activity probe; distinguish host prerequisites from executor-private
+          mount targets; bounded redacted combined report and CLI.
 SECURITY: No writes, sudo, privileged socket access, secret reads, HTTP,
 Docker commands, migrations, OIDC/signature assertions or deployment. This
 tool does not elevate a 403/permission denial into a claim of missing data.
@@ -109,11 +112,22 @@ def collect_analytics_dev_preflight() -> dict[str, object]:
         and units["original_broker"] == "active"
         and units["original_executor_socket"] == "active"
     )
-    missing = sorted(key for key, value in files.items() if value == "missing")
-    inaccessible = sorted(
-        key for key, value in files.items() if value == "inaccessible"
+    # The original Task014 systemd design creates this runtime bind path
+    # INSIDE the executor's private mount namespace, using RuntimeDirectory
+    # and BindReadOnlyPaths from /run/user/991/docker.sock. It need not exist
+    # in the host namespace before activation (or when idle).
+    # The daemon socket is a real host prerequisite and MUST still be checked.
+    private_mount = "rootless_bind_socket"
+    required_host_paths = tuple(key for key in files if key != private_mount)
+    missing = sorted(
+        key for key in required_host_paths if files[key] == "missing"
     )
-    invalid = sorted(key for key, value in files.items() if value == "invalid")
+    inaccessible = sorted(
+        key for key in required_host_paths if files[key] == "inaccessible"
+    )
+    invalid = sorted(
+        key for key in required_host_paths if files[key] == "invalid"
+    )
     return {
         "schema_version": 1,
         "product_id": "analytics",
@@ -124,8 +138,14 @@ def collect_analytics_dev_preflight() -> dict[str, object]:
         "release_signatures_verified": False,
         "real_runtime_accepted": False,
         "original_canary_healthy": original_ok,
+        "executor_private_mount": {
+            "name": private_mount,
+            "host_observation": files[private_mount],
+            "required_as_host_path": False,
+            "actual_executor_mount_verified": False,
+        },
         "installed_source_preflight_complete": (
-            all(value == "present" for value in files.values())
+            all(files[key] == "present" for key in required_host_paths)
             and original_ok
             and units["analytics_executor_socket"] == "active"
         ),

@@ -105,15 +105,56 @@ class AnalyticsHostReadOnlyPreflightTests(unittest.TestCase):
         self.assertFalse(review["installed_source_preflight_complete"])
         self.assertEqual(review["missing"], sorted([
             "analytics_app", "source_archive", "four_secret_directory",
-            "rootless_bind_socket",
         ]))
         self.assertEqual(review["inaccessible"], sorted([
             "source_approval", "analytics_broker_config",
             "analytics_executor_config", "rootless_daemon_socket",
         ]))
+        self.assertEqual(
+            review["executor_private_mount"],
+            {
+                "name": "rootless_bind_socket",
+                "host_observation": "missing",
+                "required_as_host_path": False,
+                "actual_executor_mount_verified": False,
+            },
+        )
         self.assertFalse(review["deployment_authorized"])
         self.assertFalse(review["release_signatures_verified"])
         self.assertFalse(review["real_runtime_accepted"])
+
+    def test_rootless_runtime_bind_is_not_a_host_install_prerequisite(self):
+        """Systemd creates the bind inside executor mount namespace only.
+
+        A running rootless daemon socket is required on the host; even when
+        all other prerequisites are visible, no signed release or real
+        executor mount is automatically proved by this read-only preflight.
+        """
+        with patch.object(probe, "_file_probe", side_effect=(
+            "present", "present", "present", "present",
+            "present", "present", "present", "missing", "present",
+        )), patch.object(probe, "_unit_probe", return_value="active"):
+            report = probe.collect_analytics_dev_preflight()
+        self.assertEqual(report["files"]["rootless_bind_socket"], "missing")
+        self.assertNotIn("rootless_bind_socket", report["missing"])
+        self.assertTrue(report["installed_source_preflight_complete"])
+        self.assertFalse(
+            report["executor_private_mount"]["actual_executor_mount_verified"],
+        )
+        self.assertFalse(report["release_signatures_verified"])
+        self.assertFalse(report["real_runtime_accepted"])
+        self.assertFalse(report["deployment_authorized"])
+
+    def test_missing_daemon_socket_is_a_hard_host_prerequisite(self):
+        """Never infer a working daemon merely from the bind-mount design."""
+        with patch.object(probe, "_file_probe", side_effect=(
+            "present", "present", "present", "present",
+            "present", "present", "present", "missing", "missing",
+        )), patch.object(probe, "_unit_probe", return_value="active"):
+            report = probe.collect_analytics_dev_preflight()
+        self.assertFalse(report["installed_source_preflight_complete"])
+        self.assertEqual(report["missing"], ["rootless_daemon_socket"])
+        self.assertFalse(report["executor_private_mount"]["actual_executor_mount_verified"])
 
     def test_active_canary_does_not_prove_analytics_ready(self):
         """Source and service status is NOT a signed-release qualification."""
