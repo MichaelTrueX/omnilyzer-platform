@@ -203,5 +203,77 @@ class BootstrapOperatorTests(unittest.TestCase):
         self.assertNotIn("DATABASE_URL", text)
 
 
+    def test_umask_cannot_block_rootless_admin_secret_directory(self):
+        """A restrictive process umask must not remove UID991 group traversal."""
+        with tempfile.TemporaryDirectory() as tmp:
+            admin = Path(tmp) / "pg-admin"
+            with patch.object(bootstrap, "ADMIN_DIR", admin), \
+                 patch.object(bootstrap.os, "chown"), \
+                 patch.object(bootstrap, "_metadata"), \
+                 patch.object(bootstrap, "private_file"), \
+                 patch.object(bootstrap, "start_database"):
+                previous = os.umask(0o077)
+                try:
+                    bootstrap.create_database("X" * 64)
+                finally:
+                    os.umask(previous)
+            self.assertEqual(admin.stat().st_mode & 0o777, 0o710)
+
+    def test_resume_reuses_admin_secret_and_runs_once(self):
+        """Resume only existing credentials; install original SQL and secret steps."""
+        calls = []
+        def preflight(*, resume=False):
+            calls.append(("preflight", resume))
+        def start():
+            calls.append(("postgres", True))
+        def schema():
+            calls.append(("schema", True))
+        def creds(*_):
+            calls.append(("credentials", True))
+        with patch.object(bootstrap.sys, "argv", ["bootstrap", "--resume"]), \
+             patch.object(bootstrap, "preflight", side_effect=preflight), \
+             patch.object(bootstrap, "start_database", side_effect=start), \
+             patch.object(bootstrap, "create_database",
+                          side_effect=AssertionError("must not regenerate admin secret")), \
+             patch.object(bootstrap, "install_reviewed_schema", side_effect=schema), \
+             patch.object(bootstrap, "install_runtime_credentials", side_effect=creds), \
+             redirect_stdout(io.StringIO()):
+            rc = bootstrap.main()
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, [("preflight", True), ("postgres", True),
+                                 ("schema", True), ("credentials", True)])
+
+    def test_resume_stops_without_sql_on_postgres_failure(self):
+        """Failure leaves secrets and database alone and prints phase only."""
+        error = io.StringIO()
+        with patch.object(bootstrap.sys, "argv", ["bootstrap", "--resume"]), \
+             patch.object(bootstrap, "preflight"), \
+             patch.object(bootstrap, "start_database",
+                          side_effect=bootstrap.BootstrapDenied("synthetic-secret")), \
+             patch.object(bootstrap, "install_reviewed_schema",
+                          side_effect=AssertionError("must stop before SQL")), \
+             patch.object(bootstrap, "install_runtime_credentials",
+                          side_effect=AssertionError("must not create secrets")), \
+             redirect_stdout(io.StringIO()), redirect_stderr(error):
+            rc = bootstrap.main()
+        self.assertEqual(rc, 1)
+        self.assertIn("phase=postgres_start", error.getvalue())
+        self.assertNotIn("synthetic-secret", error.getvalue())
+
+    def test_postgres_ready_uses_tcp_not_temporary_socket(self):
+        """Only full PostgreSQL TCP readiness can authorize reviewed SQL."""
+        calls = []
+        def capture(argv, **_):
+            calls.append(tuple(argv))
+            return b""
+        with patch.object(bootstrap, "run", side_effect=capture):
+            bootstrap.start_database()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][3], "run")
+        self.assertIn("pg_isready", calls[1])
+        self.assertIn("127.0.0.1", calls[1])
+        self.assertNotIn("--publish", calls[0])
+
+
 if __name__ == "__main__":
     unittest.main()
