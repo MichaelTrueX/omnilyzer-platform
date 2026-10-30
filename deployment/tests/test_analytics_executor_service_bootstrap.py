@@ -75,6 +75,14 @@ def sample_identities():
 class InstalledSourceConfigTests(unittest.TestCase):
     """Public dataclass/json grammar must NOT be a privileged authority."""
 
+    def test_exact_product_source_root_is_disjoint_from_original_canary(self):
+        """Signed Analytics source lives in its own root-owned app generation."""
+        self.assertEqual(str(config._INSTALLED_ROOT), "/opt/omnilyzer/deployment/analytics-app")
+        self.assertNotEqual(str(config._INSTALLED_ROOT), "/opt/omnilyzer/deployment/app")
+        unit = (ROOT / "deployment/systemd/dev/omnilyzer-deployment-analytics-executor.service").read_text()
+        self.assertIn("WorkingDirectory=/opt/omnilyzer/deployment/analytics-app", unit)
+        self.assertNotIn("WorkingDirectory=/opt/omnilyzer/deployment/app\n", unit)
+
     def test_exact_canonical_config_is_only_a_parsed_shape(self):
         """Check sorted source paths and exact pinned 0.15.0 source metadata."""
         encoded = canonical_bytes(sample_config())

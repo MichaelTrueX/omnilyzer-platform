@@ -70,10 +70,19 @@ class AdditiveSourceHandoffTests(unittest.TestCase):
                 "signed_release_authorized", "deployment_authorized",
                 "shared_base_source_commit", "shared_patch_paths",
                 "shared_preimage_sha256", "shared_preimage_commits",
+                "inherited_canary_sha256", "isolation_target",
             },
         )
         entries = manifest["source_entries"]
         self.assertEqual(len(entries), 31)
+        self.assertEqual(manifest["isolation_target"],
+                         "/opt/omnilyzer/deployment/analytics-app")
+        self.assertEqual(len(manifest["inherited_canary_sha256"]), 39)
+        self.assertEqual(
+            set(manifest["inherited_canary_sha256"]),
+            {x.repository_path for x in DevApplicationSourceSet().files}
+            - set(_SHARED_COMPATIBILITY_FILES),
+        )
         self.assertEqual(manifest["shared_base_source_commit"], _SHARED_BASE_COMMIT)
         self.assertEqual(manifest["shared_patch_paths"],
                          list(_SHARED_COMPATIBILITY_FILES))
@@ -105,7 +114,7 @@ class AdditiveSourceHandoffTests(unittest.TestCase):
         for item in entries:
             self.assertEqual(item["mode"], "0644")
             self.assertEqual(len(item["sha256"]), 64)
-        self.assertLess(len(raw), 8192)
+        self.assertLess(len(raw), 16384)
         self.assertEqual(raw, handoff.canonical_bytes(manifest))
 
     def test_three_shared_preimages_match_original_protected_git_blobs(self):

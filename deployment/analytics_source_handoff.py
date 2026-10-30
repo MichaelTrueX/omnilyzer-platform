@@ -42,6 +42,7 @@ from .saas_product_runtime import SaaSRuntimeProfile
 _ERROR = "Analytics Task014 additive Git source handoff is unavailable"
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _MAX_TOTAL_BYTES = 12 * 1024 * 1024
+_MAX_HANDOFF_BYTES = 16 * 1024
 _MAX_ONE_FILE = 1024 * 1024
 _ADDITIVE_UNITS = (
     "deployment/systemd/dev/analytics-broker-enabled.conf",
@@ -199,6 +200,32 @@ def review_analytics_source_handoff(
                 or hashlib.sha256(found[path]).hexdigest() == _SHARED_PREIMAGE_SHA256[path]
             ):
                 raise ValueError
+        # The 39 unchanged protected canary files are COPIED from the already
+        # root-owned original application into a separate Analytics source
+        # generation. Pin their raw Git preimage hashes here so a future
+        # privileged installer can reject altered host bytes before staging.
+        inherited = tuple(item.repository_path for item in base.files
+                          if item.repository_path not in _SHARED_COMPATIBILITY_FILES)
+        if len(inherited) != 39:
+            raise ValueError
+        inherited_records = _git._tree(_git._output(
+            repository_root, ("ls-tree", "-r", "-z", "--full-tree",
+                              _SHARED_BASE_COMMIT, "--", *inherited), 32768,
+        ), inherited)
+        inherited_hashes: dict[str, str] = {}
+        for path, oid in inherited_records:
+            blob = _git._output(
+                repository_root, ("cat-file", "blob", oid), _MAX_ONE_FILE,
+            )
+            # The copied legacy file must be identical at the NEW product
+            # generation as it was in the protected C32V original baseline.
+            current = _git._tree(_git._output(
+                repository_root, ("ls-tree", "-r", "-z", "--full-tree",
+                                  reviewed_commit, "--", path), 8192,
+            ), (path,))
+            if current[0][1] != oid:
+                raise ValueError
+            inherited_hashes[path] = hashlib.sha256(blob).hexdigest()
         if (
             hashlib.sha256(found[_SOURCE_CLAIM_PATH]).hexdigest()
                 != _SOURCE_CLAIM_SHA256
@@ -225,6 +252,8 @@ def review_analytics_source_handoff(
             "shared_patch_paths": list(_SHARED_COMPATIBILITY_FILES),
             "shared_preimage_sha256": dict(_SHARED_PREIMAGE_SHA256),
             "shared_preimage_commits": dict(_SHARED_PREIMAGE_COMMITS),
+            "inherited_canary_sha256": inherited_hashes,
+            "isolation_target": "/opt/omnilyzer/deployment/analytics-app",
             # These four reviewed hashes are exactly the inputs needed by
             # the separately ROOT-OWNED service config after owner approval.
             # They do NOT authorize an install by themselves.
@@ -237,7 +266,7 @@ def review_analytics_source_handoff(
             "signed_release_authorized": False,
             "deployment_authorized": False,
         })
-        if len(review) > 8192:
+        if len(review) > _MAX_HANDOFF_BYTES:
             raise ValueError
         return review
     except _CONTROL:

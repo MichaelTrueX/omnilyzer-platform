@@ -80,7 +80,7 @@ _INSTALLED_RUNTIME_FILES = (
     _PRODUCT_PATH, _RUNTIME_PATH, _COMPOSE_PATH, _SOURCE_CLAIM_PATH,
 )
 CONFIG_PATH = "/etc/omnilyzer/deployment/dev/analytics-executor.json"
-_INSTALLED_ROOT = Path("/opt/omnilyzer/deployment/app")
+_INSTALLED_ROOT = Path("/opt/omnilyzer/deployment/analytics-app")
 _CONFIGURATION_NAME = "analytics-executor.json"
 _FIELDS = frozenset({
     "schema_version", "product_id", "stage", "reviewed_installed_commit",

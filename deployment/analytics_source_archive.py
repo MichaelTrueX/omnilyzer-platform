@@ -32,13 +32,14 @@ from .analytics_source_handoff import (
     _SHARED_PREIMAGE_SHA256, _SHARED_PREIMAGE_COMMITS,
 )
 from .policy import canonical_bytes
+from .application_source_set import DevApplicationSourceSet
 
 _ERROR = "Task014 Analytics source archive is unavailable"
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _META_PATH = ".omnilyzer-analytics-source-review.json"
 _MAX_TOTAL = 14 * 1024 * 1024
 _MAX_FILE = 1024 * 1024
-_MAX_MANIFEST = 8192
+_MAX_MANIFEST = 16 * 1024
 _SOURCE_TOTAL = 31
 _SHA_RE = re.compile(r"[0-9a-f]{64}")
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
@@ -68,6 +69,7 @@ def _validate_manifest(raw: bytes, expected_sha: str, commit: str) -> dict:
             "deployment_authorized", "shared_base_source_commit",
             "shared_patch_paths", "shared_preimage_sha256",
             "shared_preimage_commits",
+            "inherited_canary_sha256", "isolation_target",
         }
         or type(value["schema_version"]) is not int
         or value["schema_version"] != 1
@@ -84,6 +86,15 @@ def _validate_manifest(raw: bytes, expected_sha: str, commit: str) -> dict:
         or value["shared_patch_paths"] != list(_SHARED_COMPATIBILITY_FILES)
         or value["shared_preimage_sha256"] != _SHARED_PREIMAGE_SHA256
         or value["shared_preimage_commits"] != _SHARED_PREIMAGE_COMMITS
+        or value["isolation_target"] != "/opt/omnilyzer/deployment/analytics-app"
+        or type(value["inherited_canary_sha256"]) is not dict
+        or len(value["inherited_canary_sha256"]) != 39
+        or any(type(key) is not str or type(digest) is not str
+               or _SHA_RE.fullmatch(digest) is None
+               for key, digest in value["inherited_canary_sha256"].items())
+        or (set(value["inherited_canary_sha256"])
+            != {item.repository_path for item in DevApplicationSourceSet().files}
+               - set(_SHARED_COMPATIBILITY_FILES))
         or canonical_bytes(value) != raw
     ):
         raise ValueError

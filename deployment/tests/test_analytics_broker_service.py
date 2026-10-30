@@ -331,7 +331,10 @@ class ApprovedReplacementServiceTests(unittest.TestCase):
             "ConditionPathExists=/etc/omnilyzer/deployment/broker/analytics.json",
             content,
         )
-        self.assertIn("[Service]\nExecStart=\nExecStart=/opt/omnilyzer/deployment/venv/bin/python -m deployment.analytics_broker_service_entrypoint", content)
+        self.assertIn("[Service]\n# Isolate all Analytics-aware imports", content)
+        self.assertIn("ExecStart=\nExecStart=/opt/omnilyzer/deployment/venv/bin/python -m deployment.analytics_broker_service_entrypoint", content)
+        self.assertIn("WorkingDirectory=/opt/omnilyzer/deployment/analytics-app", content)
+        self.assertNotIn("WorkingDirectory=/opt/omnilyzer/deployment/app\n", content)
         self.assertNotIn("ListenStream=", content)
         self.assertNotIn("3032", content)
         self.assertEqual(content.count("ExecStart="), 2)
