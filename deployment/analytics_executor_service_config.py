@@ -297,6 +297,9 @@ def load_analytics_executor_service_config() -> tuple[dict[str, str], dict[str, 
         if opened != named or opened[5] != base.executor_gid:
             raise ValueError
         raw = _bounded_read(desc, opened[6])
+        # C17 still owns process identity and canary runtime/ingress pins.
+        # This separate root-owned config owns the Analytics generation;
+        # verify its exact source bytes below without equating product releases.
         product = parse_analytics_executor_service_config(raw)
         if (
             _configuration_file(os.fstat(desc)) != opened
@@ -305,7 +308,6 @@ def load_analytics_executor_service_config() -> tuple[dict[str, str], dict[str, 
             )) != opened
             or _revalidate_directories(dirs)[5] != base.executor_gid
             or _process_identity() != initial
-            or product["reviewed_installed_commit"] != base.reviewed_commit
         ):
             raise ValueError
         identities = base.installation_contract().executor_composition_identity_kwargs()

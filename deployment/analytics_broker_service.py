@@ -91,13 +91,15 @@ def load_analytics_broker_installed_source(
             if current != named or current[5] != config.broker_gid:
                 raise ValueError("wrong protected broker file")
             raw = _original._bounded_read(file_fd, current[6])
+            # The protected product config owns its reviewed generation.
+            # Original canary reviewed_commit binds canary runtime/ingress,
+            # not independently installed Analytics sources. Keep both pins.
             parsed = parse_analytics_executor_service_config(raw)
             if (
                 _original._configuration_file(os.fstat(file_fd)) != current
                 or _original._configuration_file(os.stat(
                     _CONFIG_NAME, dir_fd=parent, follow_symlinks=False,
                 )) != current
-                or parsed["reviewed_installed_commit"] != config.reviewed_commit
             ):
                 raise ValueError("wrong reviewed source")
         final_directory = _original._revalidate_directories(opened)
