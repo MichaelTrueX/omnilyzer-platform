@@ -261,3 +261,57 @@ NO-GO** until one reviewed, owner-approved original Task014 root-owned
 update has bound the source, workflow, broker/executor config, four secrets,
 PostgreSQL RLS and signed immutable 0.15.0 release and proven private
 /readyz/persistence/rollback.
+
+## 2026-10-30 — One exact-commit, READ-ONLY root activation input handoff
+
+Two new task-specific Python files close the former operator transcription
+gap without adding root authority:
+- \`deployment/analytics_dev_activation_inputs.py\` makes FOUR exact canonical
+  inputs from the original immutable reviewed Git source: the canonical
+  31-source archive (0600 root:root), separate root-only source-install
+  approval (0600 root:root), the Analytics executor product configuration,
+  and byte-identical broker product configuration (both expected root-owned
+  0640 with their separately reviewed service group). All fields are parsed
+  by the ORIGINAL existing strict Analytics approval and config grammar;
+  the 20 exact Python source hashes, signed source-claim SHA and three
+  profile/Compose hashes bind to the SAME Git commit. Output is
+  **UNSIGNED / NOT INSTALLED / NOT A DEPLOYMENT GRANT**; no writes or tokens.
+- \`deployment/tests/test_analytics_dev_activation_inputs.py\` proves
+  identical broker/executor bytes, four fixed root destinations, every
+  Python digest against the canonical USTAR, malformed archive/Git
+  revision denial, and inability to self-authorize.
+
+The separate \`deployment/analytics_dev_host_preflight.py\` is a purely
+read-only **nine-resource / three-unit** status matrix. It distinguishes
+MISSING from INACCESSIBLE (Unix EACCES) and INVALID, never reads secret
+contents, and does not claim a cryptographic release or a completed
+privileged installation. Exact command on a reviewed host copy:
+\`python3 -m deployment.analytics_dev_host_preflight --read-only\`.
+Tests: \`deployment/tests/test_analytics_dev_host_preflight.py\`.
+
+### Actual read-only omnilyzerdev preflight observed 2026-10-30
+
+The full module was executed in-memory through \`omnigpt\` on the REAL DEV
+server. No file was created or service restarted. Original canary app root
+is root-owned 0755; original broker and executor socket are ACTIVE; Analytics
+executor socket is INACTIVE.
+
+- **MISSING (observable ENOENT):** isolated \`analytics-app\` source,
+  root-controlled \`source-review.tar\`, four-secret directory, host-visible
+  rootless Docker bind socket.
+- **INACCESSIBLE (EACCES, NOT asserted missing):** protected source approval,
+  Analytics broker/executor config paths, rootless daemon socket
+  \`/run/user/991/docker.sock\`. This is normal for some deliberately protected
+  parent directories; a root-owned acceptance must determine their existence
+  and exact metadata before installation. Do not assume they are absent.
+- **INVALID:** none reported by these path/metadata checks. Original
+  release signature, source 70-file root verification, actual rootless Docker,
+  real OIDC/registry read, PG roles/RLS and private /readyz remain **UNVERIFIED**.
+
+**One actual permission blocker remains:** the allowed \`omnigpt\`
+connector session on DEV runs as UID1005 with no privileged install/secret
+access; a sudo privilege probe is denied by the remote command policy. A
+separately authorized ORIGINAL Task014 root actor must independently install
+the exact reviewed code, source approval/archive, broker/executor config and
+systemd assets; the read-only generator and in-memory host probe do NOT
+provide that privilege. Owner and required M04 approval remain mandatory.
