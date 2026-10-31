@@ -39,6 +39,10 @@ class ServiceFailure(Exception):
         self.result = result
 
 
+_UNIT = re.compile(r'(?:omnilyzer-deployment-(?:broker\.service|analytics-executor\.(?:service|socket))|omnilyzer-task014-ci-[0-9a-f]{12}-(?:broker\.service|analytics\.(?:service|socket)))\Z')
+_PROPERTIES = frozenset(('ActiveState', 'MainPID', 'Job', 'NeedDaemonReload', 'ExecStart', 'ExecStartPost', 'User', 'Group', 'FragmentPath', 'DropInPaths', 'NoNewPrivileges', 'PrivateTmp', 'PrivateDevices', 'ProtectHome', 'ProtectSystem', 'ReadWritePaths', 'TemporaryFileSystem', 'BindReadOnlyPaths', 'CapabilityBoundingSet', 'AmbientCapabilities', 'SupplementaryGroups', 'WorkingDirectory', 'RestrictAddressFamilies', 'RestrictNamespaces', 'SocketUser', 'SocketGroup', 'SocketMode'))
+
+
 def systemctl(operation: str, *arguments: str, timeout: float = 30) -> CommandResult:
     """Run systemctl without a shell; cap each pipe while it is captured.
 
@@ -47,6 +51,17 @@ def systemctl(operation: str, *arguments: str, timeout: float = 30) -> CommandRe
     """
     if operation not in {'show', 'stop', 'start', 'reset-failed', 'daemon-reload'}:
         raise ValueError('unapproved_service_operation')
+    if operation == 'daemon-reload':
+        if arguments:
+            raise ValueError('invalid_reload_arguments')
+    elif not arguments or not _UNIT.fullmatch(arguments[0]):
+        raise ValueError('unapproved_service_unit')
+    elif operation == 'show':
+        tail = arguments[1:]
+        if not tail or len(tail) % 2 or any(tail[i] != '-p' or tail[i+1] not in _PROPERTIES for i in range(0, len(tail), 2)):
+            raise ValueError('unapproved_service_properties')
+    elif len(arguments) != 1:
+        raise ValueError('invalid_service_arguments')
     argv = ('/usr/bin/systemctl', operation, *arguments)
     output = [bytearray(), bytearray()]
     process = subprocess.Popen(
@@ -75,8 +90,9 @@ def systemctl(operation: str, *arguments: str, timeout: float = 30) -> CommandRe
                     if not chunk:
                         selector.unregister(key.fileobj)
                         continue
-                    output[key.data].extend(chunk)
-                    if len(output[key.data]) > 32768:
+                    space = 32768 - len(output[key.data])
+                    output[key.data].extend(chunk[:space])
+                    if len(chunk) > space:
                         raise ServiceFailure('service_command_output_limit')
         while True:
             info = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
@@ -112,6 +128,10 @@ def systemctl(operation: str, *arguments: str, timeout: float = 30) -> CommandRe
             except BaseException as error:
                 cleanup_errors.append(type(error).__name__)
     if primary is not None:
+        if isinstance(primary, ServiceFailure) and primary.result is None:
+            primary.result = CommandResult(operation, argv, process.returncode,
+                                           output[0].decode('utf-8', errors='replace'),
+                                           output[1].decode('utf-8', errors='replace'))
         if cleanup_errors:
             primary.add_note('service_command_cleanup:' + ','.join(cleanup_errors))
         raise primary
@@ -143,7 +163,14 @@ class AnalyticsServiceControl:
         self.audit = audit
 
     def call(self, operation: str, *arguments: str) -> CommandResult:
-        result = systemctl(operation, *arguments)
+        if operation != 'daemon-reload' and (not arguments or arguments[0] not in self.units):
+            raise ValueError('unapproved_analytics_unit')
+        try:
+            result = systemctl(operation, *arguments)
+        except ServiceFailure as error:
+            if error.result is not None and self.audit is not None:
+                self.audit(error.result)
+            raise
         if self.audit is not None:
             self.audit(result)
         return result
@@ -163,6 +190,10 @@ class AnalyticsServiceControl:
             values = dict(row.split('=', 1) for row in result.stdout.splitlines())
         except ValueError:
             raise ServiceFailure('invalid_service_properties', result) from None
+        # systemctl255 emits no row for a supported empty Exec* array, even
+        # with --all. Only this explicitly supported optional array is empty.
+        if 'ExecStartPost' in keys and 'ExecStartPost' not in values:
+            values['ExecStartPost'] = ''
         if set(values) != set(keys):
             raise ServiceFailure('incomplete_service_properties', result)
         for key in ('ExecStart','ExecStartPost'):
@@ -234,6 +265,22 @@ class AnalyticsServiceControl:
         if self.properties(unit, 'ActiveState')['ActiveState'] != 'active':
             raise ServiceFailure('not_active_' + unit, result)
 
+    def require_stable_broker(self, expected: dict[str, str]) -> None:
+        """Observe a stable real broker process/runtime after Type=exec starts."""
+        deadline = time.monotonic() + 1.0
+        pid = None
+        while True:
+            values = self.properties(self.broker, 'ActiveState', 'MainPID', 'Job')
+            current = values['MainPID']
+            if values['ActiveState'] != 'active' or not current.isdigit() or int(current) <= 0 or values['Job'] or (pid is not None and pid != current):
+                raise ServiceFailure('broker_not_stable')
+            pid = current
+            if self.properties(self.broker, *expected) != expected:
+                raise ServiceFailure('broker_runtime_changed')
+            if time.monotonic() >= deadline:
+                return
+            time.sleep(0.1)
+
 
 def resume_analytics(
     control: AnalyticsServiceControl, *, no_application: Callable[[], None],
@@ -241,6 +288,7 @@ def resume_analytics(
     expected: dict[str, dict[str, str]], probe: Callable[[], None],
     checkpoint: Callable[[str], None],
     restored_expected: dict[str, dict[str, str]] | None = None,
+    broker_ready: Callable[[], None] | None = None,
 ) -> dict[str, object]:
     """Resume a separately verified coherent generation; recover stopped.
 
@@ -266,6 +314,9 @@ def resume_analytics(
         checkpoint('native_probe_passed')
         no_application()
         control.start(control.broker)
+        control.require_stable_broker(expected[control.broker])
+        if broker_ready is not None:
+            broker_ready()
         checkpoint('ready_for_signed_task014')
         return {'status': 'ready_for_signed_task014', 'primary_error': None,
                 'recovery_errors': [], 'application_acceptance': False}

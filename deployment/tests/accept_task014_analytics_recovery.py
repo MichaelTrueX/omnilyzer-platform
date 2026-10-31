@@ -1,13 +1,14 @@
 """File: deployment/tests/accept_task014_analytics_recovery.py
 
 Purpose: Native systemd255 recovery/socket/mount tests on an ephemeral CI VM.
-Related: deployment/analytics_service_recovery.py; task014-c34d-review.yml.
+Related: release/task014_analytics_recovery.py; task014-c34d-review.yml.
 Never runnable on omnilyzerdev; no DEV credentials, images, DB or network.
 Creates only uniquely named /run test units and cleans its own exact paths.
 """
 from __future__ import annotations
 
 import copy
+import json
 import os
 from pathlib import Path
 import shutil
@@ -22,7 +23,7 @@ import unittest
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from deployment.analytics_service_recovery import AnalyticsServiceControl, resume_analytics
+from release.task014_analytics_recovery import AnalyticsServiceControl, resume_analytics
 
 
 CHILD = r'''
@@ -141,6 +142,10 @@ RestrictNamespaces=yes
         self.control.reload_and_verify(self.expected)
 
     def clean(self):
+        result = self._outcome.result
+        if any(test is self for test, _ in result.errors + result.failures):
+            for entry in self.audit[-12:]:
+                print('NATIVE_FIXTURE_AUDIT', json.dumps(entry.__dict__, sort_keys=True), flush=True)
         self.control.stop_and_confirm()
         subprocess.run(['/usr/bin/systemctl', 'stop', self.runtime_unit], capture_output=True)
         self.control.clear_failed_counters()
@@ -262,6 +267,23 @@ RestrictNamespaces=yes
         )
         self.assertEqual(result['status'], 'stopped_recovered', result)
         self.assertFalse(any(r.operation == 'start' for r in self.audit))
+        self.control.require_stopped()
+
+    def test_delayed_post_exec_exit_is_not_accepted_as_ready(self):
+        script = self.base / 'delayed-exit.py'
+        script.write_text('import time\ntime.sleep(0.2)\nraise SystemExit(1)\n');script.chmod(0o644)
+        command = '/usr/bin/python3 -I -B ' + str(script)
+        bad = self.broker_bytes.replace('/usr/bin/sleep infinity', command)
+        expected = copy.deepcopy(self.expected);expected[self.units[0]]['ExecStart'] = command
+        result = resume_analytics(
+            self.control, no_application=lambda: None,
+            prepare=lambda: self.paths[self.units[0]].write_text(bad),
+            restore=lambda: self.paths[self.units[0]].write_text(self.broker_bytes),
+            expected=expected, restored_expected=self.expected, probe=self.native_probe,
+            checkpoint=lambda phase: None,
+        )
+        self.assertEqual(result['status'], 'stopped_recovered', result)
+        self.assertIn('broker_not_stable', result['primary_error'])
         self.control.require_stopped()
 
 
