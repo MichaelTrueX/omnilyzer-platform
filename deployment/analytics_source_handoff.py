@@ -51,9 +51,9 @@ _ADDITIVE_UNITS = (
 )
 # Five pre-existing ORIGINAL C32V Task014 modules must be updated to let
 # the new Analytics broker use scoped registry GET, OCI signature, sealed
-# credential APIs and SIGNED external-source parsing. Three match the
-# protected platform base; the fourth (promotion.py) is a genuine older
-# installed source from ba4fd3. All FIVE preimage hashes were independently
+# credential APIs and SIGNED external-source parsing. Four match the
+# protected platform base; promotion.py is a genuine older installed source
+# from ba4fd3. All FIVE preimage hashes were independently
 # verified against the LIVE DEV host and exact historical Git objects on
 # 2026-10-30. This explicit closed
 # compatibility patch is NOT a generic canary source allowlist expansion.

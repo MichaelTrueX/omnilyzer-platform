@@ -394,24 +394,24 @@ RestrictNamespaces=yes
 
     def test_source_crash_before_rename_preserves_empty_and_partial_evidence(self):
         from deployment import analytics_task014_resume as owner
-        for index, interrupted in enumerate((b'', b'partial-new-source')):
+        for index, (source_name, interrupted) in enumerate(((owner.IDENTITY_SOURCE,b''),(owner.IDENTITY_SOURCE,b'partial-new-source'),(owner.TRANSPORT_SOURCE,b''),(owner.TRANSPORT_SOURCE,b'partial-new-source'))):
             root = self.base / ('source-' + str(index));root.mkdir(mode=0o755)
             (root / 'deployment').mkdir(mode=0o755)
             private = self.base / ('evidence-' + str(index));private.mkdir(mode=0o700)
             expected = {}
-            for name in [owner.IDENTITY_SOURCE] + ['deployment/fixture-' + str(i) + '.py' for i in range(69)]:
+            for name in [source_name] + ['deployment/fixture-' + str(i) + '.py' for i in range(69)]:
                 path = root / name;path.write_bytes(b'old-source');path.chmod(0o644)
                 expected[name] = owner.digest(b'old-source')
             def installed(root, name, sha):
                 self.assertEqual(owner.digest(self.read_root_fixture(root / name, 1048576, owner=0, group=0, mode=0o644)), sha)
             helper = SimpleNamespace(SOURCE_ROOT=root, bounded_file=self.read_root_fixture, installed_source=installed)
-            source = root / owner.IDENTITY_SOURCE;temporary = source.with_name(source.name + '.resume-next')
+            source = root / source_name;temporary = source.with_name(source.name + '.resume-next')
             temporary.write_bytes(interrupted);temporary.chmod(0o600);inode = temporary.stat().st_ino
             self.control.start(self.units[1]);self.control.start(self.units[0])
             inventory = owner.recovery_temporaries(helper, [(source,0,0o644,1048576)])
-            owner.closed_tree(helper, root, expected, preserved_temporaries=[owner.IDENTITY_SOURCE + '.resume-next'])
+            owner.closed_tree(helper, root, expected, preserved_temporaries=[source_name + '.resume-next'])
             self.control.stop_and_confirm()
-            owner.preserve_identity_source_temporary(helper, private, inventory)
+            owner.preserve_identity_source_temporary(helper, private, inventory, source_name=source_name)
             owner.closed_tree(helper, root, expected)
             saved = private / 'interrupted-source.resume-next'
             self.assertEqual((saved.stat().st_ino, saved.read_bytes()), (inode, interrupted))

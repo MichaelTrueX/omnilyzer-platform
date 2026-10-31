@@ -20,6 +20,56 @@ Authorization: This document cannot grant root source installation, activate
 
 
 
+## Current correction: Analytics systemd sender peer (2026-10-31)
+
+The owner-run identity update succeeded with actual source/mount/context and
+FD3 credential rejection, product4a6cae5/workflowca38885d. One fresh original
+signed Task014 run41185732126 then passed gate/OIDC/private metadata but returned
+503. Actual executor logs reached sealed_fd_receive. The sender connected, saw
+PID1/root listener credentials and rejected them because the shared exception
+named only the Canary path. It closed before sending SCM_RIGHTS. Earlier tests
+used directly created user sockets, while the owner probe exercised a missing
+credential; neither covered this sender/PID1 combination.
+
+The owning shared transport permits only the two exact reviewed socket paths,
+with PID1 UID0/GID0, expected991/991/993 identities, unchanged socket inode/mode
+checks, framing, sealed descriptor, deadlines and cleanup. No generic root peer
+or caller-selected path is accepted. Canary's live43-source tree/configuration
+is unchanged. The Analytics copy gains one explicit compatibility payload,
+unix_transport.py, whose independently verified historical preimage is
+8488bad2876df513c1aa3ddda626c8e9cb85e0ed905357561a3e004ee2bf6904 atb9e22.
+Exactly32 payloads plus38 inherited preserve the same70 paths. The existing four
+compatibility preimages retain their authority.
+
+The fixed target source is9cf8117025aeb210ec7997c5ff0a406ef8c79ba0, input manifest
+eafe71e5085fd9f04e46a649b843e6ec7802e1a711f55ddc1fbecbb813bb74ac. Only the
+Analytics transport file changes, with matching source authority and a separately
+approved merged workflow SHA. The immutable old31 helper remains unchanged.
+The separately reviewed exact new32 parser compares the reclassification to the
+old protected model, validates payloads and rebuilds canonical USTAR. The joined
+regression builds actual old31/new32 inputs using their respective fixed Git
+builders, including the inherited transport preimage from the unchanged Canary
+copy. Other69 Analytics files, all units, DB/secrets/replay, backups and original
+signed application0.15.0 are preserved.
+
+The existing owner entrypoint's explicit --repair-transport mode verifies the
+complete known4a6cae5 baseline, currently loaded settings and idle executor before
+cutover. It reuses the tested six-file atomic publication/stopped recovery core
+and keeps all preimages under .analytics-pr272-transport-20261031. Its extra
+actual-host check sends a synthetic sealed FD with only literal b'{}'. That body
+cannot parse as a deployment request. A fresh receiver request_execution marker
+proves framing/FD transfer completed before parsing rejected it, before private
+credential use, replay or operation. It uses the approved venv and exposes only
+closed failure codes. analytics-task014-transport-result.json reports readiness
+only after all actual probes and broker readback pass.
+
+Native CI also runs the actual Analytics senderUID990 against a real PID1-created
+socket at the exact Analytics path, received by UID991 with a synthetic sealed
+FD. This is wire evidence, not registry, application or DEV acceptance. Root
+execution must bind the exact bundle hash and merged workflow SHA. A subsequent
+signed request requires fresh original OIDC/replay authorization; never reset
+replay, rerun bootstrap, rebuild or republish the immutable0.15.0 artifact.
+
 ## Current correction: loader/startup identity handoff (2026-10-31)
 
 The owner executed bundlee43bc2a8 against workflow78436960. All162 independent
@@ -875,3 +925,4 @@ backup the complete current b42 generation and configs, and bind workflow
 identity to the exact eventual merged main SHA. A runner-only change or a
 workflow-only rotation cannot install these two host files. The immutable
 signed Analytics0.15.0 artifact/run40881693662 must not be rebuilt or republished.
+
