@@ -319,6 +319,18 @@ def native_command(argv, label, records, timeout=30):
     return record.stdout.encode('utf-8')
 
 
+def require_credential_rejection(logs):
+    if b'TASK014_EXECUTOR_FAILURE boundary=handler phase=sealed_fd_receive\n' in logs:return
+    for pattern, prefix in (
+        (rb'^TASK014_ANALYTICS_BOOTSTRAP_DENIED phase=(installed_source|systemd_socket|executor_composition|executor_once)$', 'executor_bootstrap_'),
+        (rb'^TASK014_EXECUTOR_FAILURE boundary=listener phase=(listener_validation|socket_accept|accepted_validation|connection_handler)$', 'executor_listener_'),
+        (rb'^TASK014_EXECUTOR_FAILURE boundary=handler phase=(connection_authentication|request_execution|response_transport)$', 'executor_handler_'),
+    ):
+        match = re.search(pattern, logs, re.MULTILINE)
+        if match:raise ServiceFailure(prefix + match.group(1).decode('ascii'))
+    raise ServiceFailure('actual_executor_credential_boundary_not_reached')
+
+
 def native_probe(helper, control, assets, checkpoint, records, *, product_commit=PRODUCT_COMMIT):
     """Actual executor context plus real FD3 entrypoint rejection, no release."""
     probe_state = helper.command(('/usr/bin/systemctl', 'show', PROBE, '-p', 'LoadState')).strip()
@@ -388,7 +400,7 @@ def native_probe(helper, control, assets, checkpoint, records, *, product_commit
             if negative_error is None:negative_error = observation_error
             else:negative_error.add_note('probe_observation_failed:' + type(observation_error).__name__)
     if negative_error is not None:raise negative_error
-    require(b'TASK014_EXECUTOR_FAILURE boundary=handler phase=sealed_fd_receive\n' in logs, 'actual_executor_credential_boundary_not_reached')
+    require_credential_rejection(logs)
     require(values['ActiveState'] == 'failed' and values['ExecMainStatus'] == '1', 'invalid_credential_not_closed')
     control.clear_failed_counters()
     checkpoint('actual_fd3_credential_rejection_passed')
@@ -522,6 +534,18 @@ def preserve_identity_source_temporary(helper, private, inventory):
         finally:os.close(fd)
 
 
+def identity_completion_verified(value, verify):
+    if value['status'] == 'manual_recovery_required':return False
+    try:verify()
+    except Exception as failure:
+        if value['status'] == 'ready_for_signed_task014':raise
+        value['status'] = 'manual_recovery_required'
+        value.setdefault('recovery_errors', []).append(type(failure).__name__ + ':' + str(failure))
+        if value.get('primary_error') is None:value['primary_error'] = 'ServiceFailure:identity_recovery_readback_failed'
+        return False
+    return True
+
+
 def repair_identity(args):
     """Fixed one-file source correction through the reviewed lifecycle core."""
     os.umask(0o077);helper = load_helper();records = [];phase = 'identity_preflight';outcome = None
@@ -598,18 +622,16 @@ def repair_identity(args):
             generation(new, new_hashes)
         def complete(value):
             nonlocal outcome
-            outcome = value;persist()
             product = None;workflow = None
-            try:
+            def verify():
+                nonlocal product, workflow
                 if value['status'] == 'ready_for_signed_task014':
                     generation(new, new_hashes);wanted = after;product = IDENTITY_TARGET;workflow = args.workflow_sha
-                elif value['status'] == 'stopped_recovered':
+                else:
                     generation(old, old_hashes);wanted = before;product = PRODUCT_COMMIT;workflow = CURRENT_WORKFLOW
-                else:wanted = None
-                if wanted is not None:require(helper.bounded_file(helper.BROKER_CONFIG, 4096, owner=0, group=990, mode=0o640) == wanted, 'identity_workflow_readback')
-            except Exception:
-                if value['status'] == 'ready_for_signed_task014':raise
-                product = None;workflow = None
+                require(helper.bounded_file(helper.BROKER_CONFIG, 4096, owner=0, group=990, mode=0o640) == wanted, 'identity_workflow_readback')
+            if not identity_completion_verified(value, verify):product = None;workflow = None
+            outcome = value;persist()
             raw = canonical({'status': value['status'], 'phase': phase, 'error_code': public_error(value), 'product_commit': product, 'workflow_sha': workflow, 'requested_workflow_sha': args.workflow_sha, 'application_acceptance': 'NOT_YET_VERIFIED', 'signed_task014_dispatch': False, 'database_or_secret_changes': False})
             result = BASE / 'analytics-task014-identity-result.json'
             current = helper.bounded_file(result, 16384, owner=0, group=0, mode=0o644) if result.exists() else None

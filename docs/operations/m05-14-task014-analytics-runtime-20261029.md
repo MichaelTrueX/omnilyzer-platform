@@ -65,7 +65,10 @@ Actual context now validates the loader's exact eight-field result too. The
 real installed FD3 entrypoint must still reject the uncredentialed probe at
 sealed_fd_receive before readiness is reported. Detailed evidence remains
 root-private; the separate analytics-task014-identity-result.json reports only
-safe status and verified source/workflow identity. Root execution binds the
+safe status and verified source/workflow identity. Known executor failures use
+closed phase codes without exposing journal text. Failed final recovery readback
+reports manual_recovery_required with unknown identities and a nonzero exit.
+Root execution binds the
 exact bundle hash AND eventual merged workflow SHA. No database bootstrap,
 secret changes, replay reset, image rebuild or production action is involved.
 Control-plane readiness is not signed deployment or application acceptance.
