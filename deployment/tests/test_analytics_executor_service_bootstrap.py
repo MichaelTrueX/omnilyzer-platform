@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import inspect
 import os
 from pathlib import Path
 import socket
@@ -334,6 +335,32 @@ class InstalledSourceConfigTests(unittest.TestCase):
         verified.assert_called_once()
         self.assertEqual(verified.call_args.args[0][0][0], ANALYTICS_INSTALLED_FILES[0])
 
+    def test_real_loader_identity_result_reaches_the_actual_bootstrap_contract(self):
+        """Keep the real C17 producer and Analytics consumer joined.
+
+        Only protected file I/O and side effects use fixtures. The original
+        installation-contract identity projection and Analytics config loader
+        run normally, and composition arguments bind to its real signature.
+        """
+        stack, _base, verified = self.installed_source_preflight()
+        signature = inspect.signature(boot.AnalyticsExecutorComposition)
+        events = []
+        class Listener:
+            def close(self):events.append('close')
+        class Composition:
+            def __init__(self, **kwargs):
+                signature.bind(**kwargs)
+                self_identities = {key: value for key, value in kwargs.items()
+                                   if key not in ('listener', 'reviewed_installed_source')}
+                if self_identities != sample_identities():
+                    raise AssertionError('wrong Analytics identity projection')
+                events.append('compose')
+            def serve_once(self):events.append('serve')
+        with stack, patch.object(boot, '_acquire_analytics_systemd_socket', return_value=Listener()) as acquire, patch.object(boot, 'AnalyticsExecutorComposition', Composition):
+            self.assertIsNone(run_analytics_executor_service_once())
+        acquire.assert_called_once();verified.assert_called_once()
+        self.assertEqual(events, ['compose', 'serve', 'close'])
+
     def test_distinct_revisions_do_not_allow_invalid_product_commit(self):
         """Independent canary revision never relaxes the closed product parser."""
         stack, _base, verified = self.installed_source_preflight(
@@ -510,3 +537,4 @@ class StaticSystemdTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

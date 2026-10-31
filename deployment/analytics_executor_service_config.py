@@ -328,8 +328,18 @@ def load_analytics_executor_service_config() -> tuple[dict[str, str], dict[str, 
                 "reviewed_installed_commit", "reviewed_compose_sha256",
                 "reviewed_product_profile_sha256", "reviewed_runtime_profile_sha256",
             )},
-            {**identities, "expected_executor_uid": base.executor_uid,
-             "expected_executor_gid": base.executor_gid},
+            {
+                # The original canary projection also includes state-owner
+                # IDs. Analytics uses its own operation and accepts only
+                # the six shared peer/replay/socket IDs plus executor IDs.
+                **{key: identities[key] for key in (
+                    "expected_replay_directory_uid", "expected_replay_directory_gid",
+                    "expected_broker_uid", "expected_broker_gid",
+                    "expected_socket_owner_uid", "expected_socket_group_gid",
+                )},
+                "expected_executor_uid": base.executor_uid,
+                "expected_executor_gid": base.executor_gid,
+            },
         )
     except _CONTROL:
         _close_owned(owned)
@@ -349,3 +359,4 @@ __all__ = (
     "ANALYTICS_INSTALLED_FILES", "CONFIG_PATH", "AnalyticsInstalledAuthorityError",
     "parse_analytics_executor_service_config", "load_analytics_executor_service_config",
 )
+
