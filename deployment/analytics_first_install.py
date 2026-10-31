@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -35,7 +36,9 @@ import sys
 import time
 
 from .analytics_execution import AnalyticsExecutorRequest
-from .analytics_private_registry import AnalyticsPrivateZotPullAdapter
+from .analytics_private_registry import (
+    AnalyticsPrivateZotPullAdapter, ANALYTICS_PULL_TIMEOUT_SECONDS,
+)
 from .analytics_signed_release_consumer import PINNED_IMAGE
 from .analytics_dev_release_review import (
     COMPOSE_FILE, REQUIRED_SECRET_NAMES, SECRET_DIRECTORY,
@@ -46,6 +49,7 @@ from .docker_runtime import (
     _candidate_command_run, _docker, _require_rootless_socket,
 )
 from .rootless_docker_authority import RootlessDockerAuthority
+from .unix_transport import _Deadline
 
 _ERROR = "TASK014_ANALYTICS_FIRST_INSTALL_UNAVAILABLE"
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
@@ -60,6 +64,10 @@ _INTERVAL_SECONDS = 2.0
 _RUN_TIMEOUT = 45.0
 _STOP_TIMEOUT = 45.0
 _MAX_OUTPUT = 16 * 1024
+# Cover all normal first-install work, including the cold pull. The independent
+# stop-only cleanup remains45+30s; manifest preflight is30s before this operation.
+# Those phases and replay/response reserve fit the720s Analytics response window.
+ANALYTICS_OPERATION_TIMEOUT_SECONDS = 570.0
 _CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
 
 # Never pass token bytes, file contents, operator-provided args, or public
@@ -133,7 +141,7 @@ class AnalyticsFirstInstallOperation:
     """Closed first blue-slot only, with stop-only rollback on every failure."""
 
     __slots__ = ("_run", "_pull", "_source", "_clock", "_sleep",
-                 "_completed_request_hash")
+                 "_completed_request_hash", "_deadline")
 
     def __init__(
         self, *, runner: object,
@@ -158,6 +166,7 @@ class AnalyticsFirstInstallOperation:
             object.__setattr__(self, "_clock", time.monotonic)
             object.__setattr__(self, "_sleep", time.sleep)
             object.__setattr__(self, "_completed_request_hash", None)
+            object.__setattr__(self, "_deadline", None)
         except _CONTROL:
             raise
         except Exception:
@@ -171,7 +180,14 @@ class AnalyticsFirstInstallOperation:
         """No deletion of original rootless authority collaborators."""
         raise AttributeError("Analytics first-install operation is immutable")
 
-    def _docker(
+    def _work_timeout(self, timeout: float) -> float:
+        """Clamp normal work to one validated monotonic operation deadline."""
+        if type(timeout) is not float or not math.isfinite(timeout) or timeout <= 0:
+            raise AnalyticsFirstInstallError(_ERROR)
+        deadline = object.__getattribute__(self, "_deadline")
+        return min(timeout, deadline.remaining()) if deadline is not None else timeout
+
+    def _invoke_docker(
         self, *parts: str, timeout: float = COMMAND_TIMEOUT_SECONDS,
     ) -> CommandResult:
         """Execute ONLY rootless original Docker command with no secret env."""
@@ -189,6 +205,14 @@ class AnalyticsFirstInstallOperation:
             or len(result.stdout.encode("utf-8")) > _MAX_OUTPUT
         ):
             raise AnalyticsFirstInstallError(_ERROR)
+        return result
+
+    def _docker(
+        self, *parts: str, timeout: float = COMMAND_TIMEOUT_SECONDS,
+    ) -> CommandResult:
+        bounded = self._work_timeout(timeout)
+        result = self._invoke_docker(*parts, timeout=bounded)
+        self._work_timeout(1.0)
         return result
 
     def _compose(
@@ -343,18 +367,22 @@ class AnalyticsFirstInstallOperation:
             if clock() + _INTERVAL_SECONDS >= deadline:
                 break
             if attempt < _HEALTH_PROBES - 1:
-                sleep(_INTERVAL_SECONDS)
+                sleep(self._work_timeout(_INTERVAL_SECONDS))
         raise AnalyticsFirstInstallError(_ERROR)
 
     def _stop_first_slot(self) -> bool:
         """Only stop private blue, never delete DB, volumes, image or network."""
         try:
-            self._compose(
+            # These TWO exact cleanup commands have their independent75s
+            # reserve even when the normal operation deadline has elapsed.
+            self._invoke_docker(
+                *_COMPOSE,
                 "stop", "--timeout", "15", _SERVICE,
                 timeout=_STOP_TIMEOUT,
             )
             # Running list must now be empty. No docker compose down/rm.
-            output = self._compose(
+            output = self._invoke_docker(
+                *_COMPOSE,
                 "ps", "--status", "running", "--format", "json", _SERVICE,
             ).stdout.strip()
             return output in ("", "[]")
@@ -371,9 +399,15 @@ class AnalyticsFirstInstallOperation:
         untrusted caller constructing the dataclass is not an admission.
         """
         candidate_may_exist = False
+        object.__setattr__(self, "_deadline", _Deadline(
+            object.__getattribute__(self, "_clock"),
+            int(ANALYTICS_OPERATION_TIMEOUT_SECONDS * 1000),
+        ))
         try:
             self._preflight(request)
-            object.__getattribute__(self, "_pull")(request)
+            pull_timeout = self._work_timeout(ANALYTICS_PULL_TIMEOUT_SECONDS)
+            object.__getattribute__(self, "_pull")(request, timeout=pull_timeout)
+            self._work_timeout(1.0)
             self._verify_local_digest()
             # Docker may partially start a container before returning failure;
             # set cleanup duty BEFORE invoking the first mutating operation.
@@ -386,6 +420,7 @@ class AnalyticsFirstInstallOperation:
             container_id = self._container_id()
             self._verify_private_container(container_id)
             self._private_ready(container_id)
+            self._work_timeout(1.0)
             # A successful readiness probe alone is not final Task014
             # acceptance: executor replay.finish may still fail. Retain
             # nonsecret request identity for its bound stop-only cleanup.

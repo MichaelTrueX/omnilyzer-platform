@@ -77,7 +77,7 @@ class SyntheticRootlessDocker:
         }
         assert TOKEN not in str(argv) and TOKEN not in str(environment)
         assert cwd.name == "dev" and cwd.parent.name == "runtime"
-        assert float(timeout) in (5., 30., 45., 180.)
+        assert type(timeout) is float and 0 < timeout <= 500.0
         if environment.get("ANALYTICS_IMAGE") == IMAGE:
             # The original signed-Zot pull uses a temporarily bound Docker
             # config path rather than the global uncredentialed Docker config.
@@ -85,9 +85,11 @@ class SyntheticRootlessDocker:
             config = Path(argv[2]) / "config.json"
             assert config.is_file() and config.stat().st_mode & 0o777 == 0o600
             assert argv[-1] == IMAGE and argv[5] in ("manifest", "pull")
+            assert timeout <= (500.0 if argv[5] == "pull" else 30.0)
             self.calls.append(tuple(argv[5:]))
             return CommandResult(0, "", "")
         assert argv[:len(ROOTLESS)] == ROOTLESS
+        assert timeout <= 45.0
         args = argv[len(ROOTLESS):]
         self.calls.append(args)
 

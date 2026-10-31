@@ -30,6 +30,15 @@ reviewed secure source-admission change; the checkfile MUST mark it HOLD until
 that capability is actually delivered. Task014 deployment and product smoke
 remain separate, and no production activation is implied.
 
+## Task014 entry checks
+
+Before promotion, read the [Task014 pre-release checklist](task014-pre-release-checklist.md)
+and [registry stream/deadline qualification](task014-registry-stream-deadline.md).
+The implementation table below is historical. Owner-reported 0.15.0 server
+readiness has passed, while actual signed application acceptance and subsequent
+ordinary-version repeatability remain unproven. Current promotion still has
+fixed version/source/run admission; a checklist does not remove that limitation.
+
 ## 1. Permanent operator contract
 
 Once the original protected Task013/014 product integration is accepted and installed, an ordinary change to the Analytics application **must not require a new platform PR, handwritten vulnerability report or new deployment code**. Product development occurs in `MichaelTrueX/omnilyzer`; the standard CI and protected release workflow must handle every new reviewed source commit. A protected production approval may be one click; no approval may bypass failed source, vulnerability, signature or runtime gates.
