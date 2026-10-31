@@ -198,7 +198,7 @@ class AdditiveSourceHandoffTests(unittest.TestCase):
         self.assertTrue(originals.isdisjoint(_INSTALLED_RUNTIME_FILES))
         self.assertEqual(set(_SHARED_COMPATIBILITY_FILES) & originals,
                          set(_SHARED_COMPATIBILITY_FILES))
-        self.assertEqual(len(_SHARED_PREIMAGE_SHA256), 4)
+        self.assertEqual(len(_SHARED_PREIMAGE_SHA256), 5)
 
 
 if __name__ == "__main__":

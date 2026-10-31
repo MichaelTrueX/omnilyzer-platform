@@ -106,7 +106,7 @@ class OriginalC26ArchiveTests(unittest.TestCase):
                 for x in tar.getmembers()
             ))
 
-    def test_disposable_70_file_four_shared_upgrade_and_full_rollback(self):
+    def test_disposable_70_file_five_shared_upgrade_and_full_rollback(self):
         """Prove 38 immutable originals + five bounded compatibility patches.
 
         Four real installed DEV SHA-256 preimages are pinned to original
@@ -228,7 +228,7 @@ class OriginalC26ArchiveTests(unittest.TestCase):
                 file.chmod(0o644)
             self.assertEqual(updated, list(_SHARED_COMPATIBILITY_FILES))
             self.assertEqual(len(added), 27)
-            self.assertEqual(len(updated), 4)
+            self.assertEqual(len(updated), 5)
             self.assertEqual(sum(
                 1 for item in app.rglob("*") if item.is_file()
             ), 70)
