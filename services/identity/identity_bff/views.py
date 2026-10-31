@@ -1,4 +1,10 @@
-"""Product-origin OIDC routes. S03 retains sole authority for private learning APIs."""
+"""File: services/identity/identity_bff/views.py
+Purpose: Product-origin confidential OIDC BFF routes with non-cacheable auth
+    responses. S03 retains sole authority for private learner API admission.
+Related: services/identity/config/{settings,urls}.py,
+    services/identity/identity_bff/{oidc,issuer}.py,
+    services/identity/tests/test_identity.py.
+"""
 import hmac
 import secrets
 import time
@@ -6,6 +12,7 @@ import time
 from django.conf import settings
 from django.http import JsonResponse, HttpResponseRedirect
 from django.middleware.csrf import get_token
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
 from . import issuer, oidc
@@ -47,6 +54,7 @@ def _revoke_existing(request):
         issuer.revoke(old_digest)
 
 
+@never_cache
 @require_GET
 def login(request):
     # One pending transaction per browser, 5-minute state lifetime.
@@ -62,6 +70,7 @@ def login(request):
         return _fail(503)
 
 
+@never_cache
 @require_GET
 def callback(request):
     transaction = request.session.pop("transaction", None)
@@ -99,6 +108,7 @@ def callback(request):
     return _product_cookie(HttpResponseRedirect("/start"), product_cookie)
 
 
+@never_cache
 @require_GET
 def session_state(request):
     principal = _active(request)
@@ -108,11 +118,13 @@ def session_state(request):
     return JsonResponse({"authenticated": True, "productAuthorized": "check-S03"})
 
 
+@never_cache
 @require_GET
 def csrf(request):
     return JsonResponse({"csrf_token": get_token(request)})
 
 
+@never_cache
 @require_POST
 def refresh(request):
     principal = _active(request)
@@ -156,6 +168,7 @@ def refresh(request):
         "csrfResetRequired": True}), product_cookie)
 
 
+@never_cache
 @require_POST
 def logout(request):
     try:
