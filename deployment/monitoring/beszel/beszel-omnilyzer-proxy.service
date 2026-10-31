@@ -19,7 +19,10 @@ RestrictAddressFamilies=AF_UNIX
 RestrictSUIDSGID=yes
 LockPersonality=yes
 ProtectSystem=strict
-ProtectHome=yes
+# ProtectHome=yes also hides /run/user/991 and breaks the UID991 metrics socket.
+# Explicitly mask the host home trees instead, retaining UID991's private 0700 runtime.
+ProtectHome=no
+InaccessiblePaths=/home /root
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectProc=invisible
