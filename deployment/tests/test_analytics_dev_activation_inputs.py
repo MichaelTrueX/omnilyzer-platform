@@ -150,29 +150,33 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         self.assertEqual(
             services[activation._ANALYTICS_RUNTIME_DROPIN],
             b"[Service]\n"
-            b"TemporaryFileSystem=/run/omnilyzer/deployment/rootless-docker:"
-            b"mode=0700,uid=991,gid=991\n",
+            b"TemporaryFileSystem=/run/omnilyzer/deployment:mode=0755,uid=0,gid=0 "
+            b"/run/omnilyzer/deployment/rootless-docker:mode=0700,uid=991,gid=991\n"
+            b"BindReadOnlyPaths=/run/omnilyzer/deployment/analytics-executor.sock:"
+            b"/run/omnilyzer/deployment/analytics-executor.sock\n",
         )
-        # Actual INI parser must see two distinct lines; a literal escaped
+        # Actual INI parser must see distinct lines; a literal escaped
         # backslash+n passed old tests but makes systemd reject the drop-in.
         parser = configparser.ConfigParser(interpolation=None, strict=True)
         parser.read_string(
             services[activation._ANALYTICS_RUNTIME_DROPIN].decode("ascii"),
         )
         self.assertEqual(
-            list(parser["Service"].keys()), ["temporaryfilesystem"],
+            list(parser["Service"].keys()), ["temporaryfilesystem", "bindreadonlypaths"],
         )
         self.assertEqual(
             parser["Service"]["temporaryfilesystem"],
-            "/run/omnilyzer/deployment/rootless-docker:"
-            "mode=0700,uid=991,gid=991",
+            "/run/omnilyzer/deployment:mode=0755,uid=0,gid=0 "
+            "/run/omnilyzer/deployment/rootless-docker:mode=0700,uid=991,gid=991",
         )
         self.assertIn(
             activation._ROOTLESS_BIND.encode(),
             services[activation._SERVICE_SOURCES[1][1]],
         )
-        self.assertNotIn(
-            b"BindReadOnlyPaths", services[activation._ANALYTICS_RUNTIME_DROPIN],
+        self.assertEqual(
+            parser["Service"]["bindreadonlypaths"],
+            "/run/omnilyzer/deployment/analytics-executor.sock:"
+            "/run/omnilyzer/deployment/analytics-executor.sock",
         )
         self.assertNotIn(
             b"RuntimeDirectory=", services[activation._ANALYTICS_RUNTIME_DROPIN],
@@ -185,6 +189,38 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         )
         self.assertNotIn(
             b"User=", services[activation._ANALYTICS_RUNTIME_DROPIN],
+        )
+
+    def test_private_tmpfs_is_not_shadowed_by_read_write_paths(self):
+        """Regression for real systemd255 226/NAMESPACE while Canary is idle.
+
+        systemd sorts duplicate mount paths by mode and keeps READ_WRITE
+        ahead of TMPFS. The old shared path both suppressed the private
+        mount and required a nonexistent host directory.
+        """
+        services = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+        )
+        unit = services[activation._SERVICE_SOURCES[1][1]].decode("ascii")
+        write_rows = [
+            row.partition("=")[2].split()
+            for row in unit.splitlines() if row.startswith("ReadWritePaths=")
+        ]
+        self.assertEqual(write_rows, [["/var/lib/omnilyzer/deployment"]])
+        private_mount = services[activation._ANALYTICS_RUNTIME_DROPIN].decode("ascii")
+        mount_specs = next(
+            row.partition("=")[2].split()
+            for row in private_mount.splitlines()
+            if row.startswith("TemporaryFileSystem=")
+        )
+        mount_paths = [spec.partition(":")[0] for spec in mount_specs]
+        self.assertEqual(mount_paths, [
+            "/run/omnilyzer/deployment",
+            "/run/omnilyzer/deployment/rootless-docker",
+        ])
+        self.assertFalse(set(mount_paths).intersection(*write_rows))
+        self.assertIn(
+            activation._LISTENER_BIND, private_mount.splitlines(),
         )
 
     def test_original_rootless_source_contract_cannot_be_changed_by_caller(self):
@@ -228,8 +264,10 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
                 repository_root=str(ROOT), reviewed_commit=self.sha,
             )["/etc/systemd/system/omnilyzer-deployment-analytics-executor.service.d/rootless-runtime.conf"],
             b"[Service]\n"
-            b"TemporaryFileSystem=/run/omnilyzer/deployment/rootless-docker:"
-            b"mode=0700,uid=991,gid=991\n",
+            b"TemporaryFileSystem=/run/omnilyzer/deployment:mode=0755,uid=0,gid=0 "
+            b"/run/omnilyzer/deployment/rootless-docker:mode=0700,uid=991,gid=991\n"
+            b"BindReadOnlyPaths=/run/omnilyzer/deployment/analytics-executor.sock:"
+            b"/run/omnilyzer/deployment/analytics-executor.sock\n",
         )
 
     def test_tampered_archive_or_source_model_fails_closed(self):

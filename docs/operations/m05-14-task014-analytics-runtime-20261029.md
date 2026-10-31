@@ -18,6 +18,37 @@ Authorization: This document cannot grant root source installation, activate
 
 # M05-14 — Analytics signed 0.15.0 via existing Task014 (current handover)
 
+## Current runtime correction: private mount duplicate (2026-10-31)
+
+Signed Task014 run 41172418361 reached the Analytics executor, but systemd255
+failed before ExecStart with 226/NAMESPACE at
+/run/omnilyzer/deployment/rootless-docker. The original Canary remains
+healthy; Analytics application acceptance is NOT verified.
+
+The Analytics service listed the same target in ReadWritePaths and the
+generated private TemporaryFileSystem. In systemd v255 namespace.c,
+mount_path_compare sorts READ_WRITE before TMPFS and drop_duplicates keeps
+the first entry. The private tmpfs was discarded, leaving a required absent
+host path. Remove that redundant Analytics ReadWritePaths entry.
+Keep the existing writable state directory, exact Docker socket binding,
+private Docker tmpfs mode/identity and all other sandbox restrictions. Mount
+its parent privately as root-owned0755 and rebind only the exact Analytics
+listener inode read-only into that parent. This isolates the nested Docker
+mountpoint dentry from Canary host RuntimeDirectory removal. The service input
+builder rejects reintroducing the duplicate writable mount or changing either
+private mount or the listener rebind.
+
+This does not require creating a shared host runtime directory, changing
+the original Canary service, or touching database/bootstrap/secrets.
+systemd may create a bare host mountpoint while preparing its private tmpfs;
+do not mistake its presence for private namespace or coexistence acceptance.
+Before another signed promotion, the owner-controlled transition must verify
+the complete current state, the exact private mount and Docker socket under
+the executor service sandbox, and clear only the Analytics failed-start limit.
+Concurrent Canary/Analytics start-stop and the real application journey remain
+required before DEV GO. Preserve the immutable signed Analytics 0.15.0 release.
+
+
 Status as of 2026-10-30: **CODE MERGED; ANALYTICS DEV APPLICATION NO-GO.**
 PR #258 (source `eedbf26ca164728a4b2b4d906a9fb9f58bfbe816`) and database
 fix PR #263 are merged. Issue #27 records the owner's successful PostgreSQL16

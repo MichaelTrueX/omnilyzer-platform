@@ -71,8 +71,13 @@ _ORIGINAL_RUNTIME_MODE = "RuntimeDirectoryMode=0700"
 # matches the existing reviewed rootless Docker owner, and the original
 # binding path inside the executor remains byte-for-byte unchanged.
 _PRIVATE_TMPFS = (
-    "TemporaryFileSystem=/run/omnilyzer/deployment/rootless-docker:"
+    "TemporaryFileSystem=/run/omnilyzer/deployment:mode=0755,uid=0,gid=0 "
+    "/run/omnilyzer/deployment/rootless-docker:"
     "mode=0700,uid=991,gid=991"
+)
+_LISTENER_BIND = (
+    "BindReadOnlyPaths=/run/omnilyzer/deployment/analytics-executor.sock:"
+    "/run/omnilyzer/deployment/analytics-executor.sock"
 )
 _ROOTLESS_BIND = (
     "BindReadOnlyPaths=/run/user/991/docker.sock:"
@@ -184,9 +189,16 @@ def build_unsigned_analytics_service_inputs(
     Analytics' socket target. Analytics therefore overlays its original
     fixed socket destination with a service-private tmpfs INSIDE its own
     mount namespace, created with the same reviewed UID/GID991 ownership
-    and 0700 directory mode. The canary's host directory is never reused,
-    created, stopped or modified. Signed source pinning, broker signatures
-    and systemd activation remain independent and mandatory.
+    and 0700 directory mode. A private root-owned parent tmpfs prevents
+    Canary host-directory cleanup from detaching the nested Docker mount.
+    Rebind only the exact Analytics listener inode read-only into that parent
+    for the original listener metadata checks. Do not list either tmpfs in
+    ReadWritePaths: systemd255 keeps READ_WRITE ahead of a duplicate TMPFS
+    and fails when the host mountpoint is absent. systemd may create a bare
+    host mountpoint; its contents are hidden by the private filesystem.
+    Actual Canary start/stop coexistence still requires live verification.
+    Signed source pinning, broker signatures and systemd activation remain
+    independent and mandatory.
     Neither unit is installed or started by this review-only builder.
     """
     try:
@@ -243,6 +255,8 @@ def build_unsigned_analytics_service_inputs(
                 not in service_rows
             or "User=omnilyzer-executor" not in service_rows
             or "NoNewPrivileges=yes" not in service_rows
+            or service_rows.count("ReadWritePaths=/var/lib/omnilyzer/deployment") != 1
+            or sum(row.startswith("ReadWritePaths=") for row in service_rows) != 1
             or "ProtectSystem=strict" not in service_rows
             or "CapabilityBoundingSet=" not in service_rows
             or _ORIGINAL_RUNTIME_DIRECTORY in service_rows
@@ -256,12 +270,16 @@ def build_unsigned_analytics_service_inputs(
         # supplied. The original C32ZF authority pins socket destination
         # and source; only the Analytics mount namespace is independent.
         if _PRIVATE_TMPFS != (
-            "TemporaryFileSystem=/run/omnilyzer/deployment/rootless-docker:"
+            "TemporaryFileSystem=/run/omnilyzer/deployment:mode=0755,uid=0,gid=0 "
+            "/run/omnilyzer/deployment/rootless-docker:"
             "mode=0700,uid=991,gid=991"
+        ) or _LISTENER_BIND != (
+            "BindReadOnlyPaths=/run/omnilyzer/deployment/analytics-executor.sock:"
+            "/run/omnilyzer/deployment/analytics-executor.sock"
         ):
             raise ValueError
         result[_ANALYTICS_RUNTIME_DROPIN] = (
-            "[Service]\n" + _PRIVATE_TMPFS + "\n"
+            "[Service]\n" + _PRIVATE_TMPFS + "\n" + _LISTENER_BIND + "\n"
         ).encode("ascii")
         if (
             set(result) != {
