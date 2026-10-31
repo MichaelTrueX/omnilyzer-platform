@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
-import base64
 import hashlib
 import inspect
 import json
 from pathlib import Path
 import unittest
 from unittest.mock import patch
-from urllib.parse import urlsplit, parse_qs
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -99,20 +97,10 @@ class IntegrationTests(unittest.TestCase):
         result = invoke(handler, promotion)
         self.assertEqual(result, transport.response)
         self.assertEqual(verifier.calls, [(TOKEN, NOW)])
-        self.assertEqual(len(zot.calls), 4)
-        exchange = zot.calls[1]
-        parsed = urlsplit(exchange[1])
-        self.assertEqual(parsed.path, "/zot/auth/token")
-        self.assertEqual(parse_qs(parsed.query), {
-            "service": ["oci-dev.omnilyzer.ai"],
-            "scope": ["repository:omnilyzer/task013-release-canary:pull"],
-            "account": ["oidc"],
-        })
-        self.assertEqual(exchange[3]["Authorization"],
-                         "Basic " + base64.b64encode(("oidc:" + ZOT_TOKEN).encode()).decode())
-        self.assertEqual(zot.calls[3][1],
+        self.assertEqual(len(zot.calls), 2)
+        self.assertEqual(zot.calls[1][1],
                          "/v2/omnilyzer/task013-release-canary/manifests/" + promotion.manifest_digest)
-        self.assertEqual(zot.calls[3][3]["Authorization"], "Bearer synthetic.registry.read.token")
+        self.assertEqual(zot.calls[1][3]["Authorization"], "Bearer " + ZOT_TOKEN)
         self.assertEqual(len(forgejo.calls), 2)
         self.assertEqual(len(replay.calls), 1)
         self.assertEqual(len(transport.calls), 1)

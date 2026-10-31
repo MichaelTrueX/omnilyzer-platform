@@ -12,7 +12,6 @@ Sections: synthetic registry responses and credentials; immutable release
 from __future__ import annotations
 
 from dataclasses import replace
-import base64
 from datetime import datetime, timedelta, timezone
 import gzip
 import hashlib
@@ -26,7 +25,7 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
-from urllib.parse import urlsplit, parse_qs
+from urllib.parse import urlsplit
 import ssl
 
 from cryptography import x509
@@ -105,12 +104,11 @@ class ZotProvider:
         return ZotReadCredential(TOKEN, NOW + 100)
 
 
-class ZotTokenExchangeTests(unittest.TestCase):
-    """Real local TLS protocol plus fail-closed token response envelopes."""
+class ZotBearerReadTests(unittest.TestCase):
+    """Actual Zot direct OIDC Bearer protocol and strict manifest envelopes."""
 
-    def test_local_tls_zot_oidc_passthrough_for_each_product(self):
+    def test_local_tls_direct_oidc_bearer_for_each_product(self):
         oidc = "synthetic.github.oidc"
-        scoped = oidc
         body = canonical_bytes({"schemaVersion": 2})
         calls = []
         class Handler(BaseHTTPRequestHandler):
@@ -118,22 +116,12 @@ class ZotTokenExchangeTests(unittest.TestCase):
                 pass
             def do_GET(self):
                 parsed = urlsplit(self.path)
-                if parsed.path == "/zot/auth/token":
-                    query = parse_qs(parsed.query)
-                    expected = "Basic " + base64.b64encode(("oidc:" + oidc).encode()).decode()
-                    if self.headers.get("Authorization") != expected or query.get("service") != [ZOT_HOST] or query.get("account") != ["oidc"]:
-                        self.send_error(401);return
-                    scope = query.get("scope", [])
-                    if scope not in (["repository:" + REPOSITORY + ":pull"], ["repository:omnilyzer/analytics:pull"]):
-                        self.send_error(403);return
-                    calls.append(("token", scope[0]))
-                    payload = canonical_bytes({"token": scoped, "access_token": scoped, "expires_in": 300, "issued_at": "2026-10-31T04:00:00Z"})
-                    media = "application/json; charset=utf-8"
-                else:
-                    if self.headers.get("Authorization") != "Bearer " + scoped:
-                        self.send_error(401);return
-                    calls.append(("manifest", parsed.path))
-                    payload, media = body, OCI_MEDIA_TYPE
+                if self.headers.get("Authorization") != "Bearer " + oidc:
+                    self.send_error(401);return
+                if not parsed.path.startswith("/v2/"):
+                    self.send_error(400);return
+                calls.append(("manifest", parsed.path))
+                payload, media = body, OCI_MEDIA_TYPE
                 self.send_response(200)
                 self.send_header("Content-Type", media)
                 self.send_header("Content-Length", str(len(payload)))
@@ -169,35 +157,29 @@ class ZotTokenExchangeTests(unittest.TestCase):
                     for product, repository in (("canary", REPOSITORY), ("analytics", "omnilyzer/analytics")):
                         actual, _ = rc._get("zot", "sha256:" + "a" * 64, oidc, connection, product=product)
                         self.assertEqual(actual, body)
-                        self.assertEqual(calls[-2:], [
-                            ("token", "repository:" + repository + ":pull"),
+                        self.assertEqual(calls[-1:], [
                             ("manifest", "/v2/" + repository + "/manifests/sha256:" + "a" * 64),
                         ])
             finally:
                 server.shutdown();server.server_close();thread.join(timeout=2)
 
-    def test_bad_token_envelopes_never_reach_manifest_and_never_leak(self):
-        for raw, status, extra in (
-            (b'{"token":"a","token":"b"}', 200, ()),
-            (b'{"token":"a","access_token":"b"}', 200, ()),
-            (b'{"token":"a b"}', 200, ()),
-            (b'{"token":"a","expires_in":true}', 200, ()),
-            (b'{"token":"a","expires_in":0}', 200, ()),
-            (b'{"token":"a","other":"PRIVATE"}', 200, ()),
-            (b'PRIVATE' * 3000, 200, ()),
-            (b'PRIVATE', 401, ()),
-            (b'PRIVATE', 302, (("Location", "https://untrusted.invalid/token"),)),
+    def test_denied_or_ambiguous_manifest_envelopes_fail_closed(self):
+        for status, extra in (
+            (401, ()), (403, ()),
+            (302, (("Location", "https://untrusted.invalid/manifest"),)),
+            (200, (("Content-Length", "6"),)),
+            (200, (("Transfer-Encoding", "chunked"),)),
+            (200, (("Content-Encoding", "gzip"),)),
         ):
-            with self.subTest(status=status, size=len(raw)):
-                factory = Factory(Response(b"unused", OCI_MEDIA_TYPE))
-                response = Response(raw, "application/json", status=status, extra=extra)
-                factory.token_response = response
-                with self.assertRaises(ReleaseConsumerError) as error:
+            with self.subTest(status=status, extra=extra):
+                response = Response(b"unused", OCI_MEDIA_TYPE, status=status, extra=extra)
+                factory = Factory(response)
+                with self.assertRaises(ReleaseConsumerError):
                     rc._get("zot", "sha256:" + "a" * 64, TOKEN, factory, product="analytics")
-                self.assertEqual(str(error.exception), rc.ERROR)
                 requests = [call for call in factory.calls if call[0] == "GET"]
                 self.assertEqual(len(requests), 1)
-                self.assertTrue(requests[0][1].startswith("/zot/auth/token?"))
+                self.assertTrue(requests[0][1].startswith("/v2/omnilyzer/analytics/manifests/"))
+                self.assertEqual(requests[0][3]["Authorization"], "Bearer " + TOKEN)
                 self.assertTrue(response.closed)
 
     def test_product_or_token_cannot_select_another_host_or_push_scope(self):
@@ -377,11 +359,8 @@ class ConsumerTests(unittest.TestCase):
         self.assertEqual(first.github_workflow_sha, identity.workflow_sha)
         self.assertEqual(zf.calls[0][:2], (ZOT_HOST, 443))
         self.assertEqual(zf.calls[1][0], "GET")
-        self.assertTrue(zf.calls[1][1].startswith("/zot/auth/token?"))
-        self.assertEqual(zf.calls[1][3]["Authorization"],
-                         "Basic " + base64.b64encode(("oidc:" + TOKEN).encode()).decode())
-        self.assertEqual(zf.calls[3][:3], ("GET", f"/v2/{REPOSITORY}/manifests/{request.manifest_digest}", None))
-        self.assertEqual(zf.calls[3][3]["Authorization"], "Bearer synthetic.registry.read.token")
+        self.assertEqual(zf.calls[1][:3], ("GET", f"/v2/{REPOSITORY}/manifests/{request.manifest_digest}", None))
+        self.assertEqual(zf.calls[1][3]["Authorization"], "Bearer " + TOKEN)
         self.assertEqual(ff.calls[0][:2], (FORGEJO_HOST, 443))
         self.assertEqual(ff.calls[1][:3], ("GET", f"/api/packages/omnilyzer/generic/task013-release-evidence/{VERSION}/release-evidence.tar.gz", None))
         self.assertFalse(any(hasattr(zot, name) or hasattr(forgejo, name) for name in ("put", "post", "delete", "upload")))

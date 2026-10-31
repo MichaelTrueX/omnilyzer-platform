@@ -14,9 +14,10 @@ Its bearer middleware also accepts the OIDC JWT directly. PR266's assumption
 that the returned token must differ from the input was incorrect. Rejecting
 that equality prevents the real documented protocol from completing.
 
-Remove only the equality rejection. Preserve the fixed HTTPS realm, host,
-service, closed pull-only repository, bounded response and duplicate/member/type,
-expiry, redirect, TLS and cleanup checks. Existing independent broker JWT,
+Restore the original direct OIDC Bearer manifest GET, which Zot already
+authenticates. Remove the unnecessary token-endpoint round trip rather than
+expanding the original HTTP reader. Preserve fixed host/repository, strict
+bounded headers/body, TLS, redirects, exact digest and signature checks. Existing independent broker JWT,
 source, signature, replay and executor authorization remain mandatory.
 
 The original a09ddd45 promotion failure has not been attributed to raw Bearer
@@ -40,3 +41,18 @@ It does not prove the host broker's identity, descriptor snapshots, memfd
 sealing or service sandbox. Those remain separate live host acceptance checks.
 Do not rebuild or republish Analytics0.15.0/run40881693662, reset replay or rerun
 PostgreSQL bootstrap. Actual DEV acceptance remains pending.
+
+## Real read-only matrix result
+
+Run41168342282 on reviewed main60bc8f56 passed the actual Forgejo archive,
+scanner/signed-field checks and both real Cosign blob signatures. The added
+Zot token endpoint returned200 JSON with Transfer-Encoding:chunked and no
+Content-Length, so the strict reader stopped before the manifest GET. This
+response does not establish the manifest's envelope or the original failure.
+Restore the supported direct Bearer GET before changing its HTTP contract.
+Real OCI signature verification independently returned failure. The diagnostic
+now captures at most65537 stderr bytes with a90second deadline and pinned-PID
+process-group cleanup, emitting only fixed categories. Registry access denial
+is a diagnostic category, not a proven distinction between authentication and
+repository authorization. Never print raw stderr, credentials or bodies.
+The host remains unchanged until the full real matrix passes.
