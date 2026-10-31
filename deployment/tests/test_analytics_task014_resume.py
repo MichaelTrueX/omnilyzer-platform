@@ -71,6 +71,13 @@ class OwnerAuthority(unittest.TestCase):
             self.assertEqual(checks[name]['status'], 'BLOCKED')
             self.assertEqual(checks[name]['dependency'], 'postgres_identity')
 
+    def test_changed_manifest_second_read_cannot_poison_retained_authority(self):
+        raw = b'reviewed-asset'
+        rows = [{'name': 'asset-' + str(i).zfill(2), 'size': len(raw), 'sha256': owner.digest(raw)} for i in range(8)]
+        helper = SimpleNamespace(stage_manifest=Mock(return_value={'assets': rows}), bounded_file=Mock(side_effect=lambda path, maximum, **kwargs: b'changed-manifest' if path.name == 'manifest.json' else raw))
+        with redirect_stdout(io.StringIO()), self.assertRaisesRegex(owner.ServiceFailure, 'identity_manifest_changed'):
+            owner.identity_inputs(helper, Path('/synthetic-unread-stage'), protected=False)
+
     def test_bundled_owner_keeps_the_reviewed_service_logic_unchanged(self):
         from deployment import analytics_service_recovery as services
         service_source = Path(services.__file__).read_bytes()

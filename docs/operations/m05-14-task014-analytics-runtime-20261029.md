@@ -55,8 +55,11 @@ broker/executor product configs, source approval/archive and separately approved
 workflow field. Native CI injects failure after each of those six publications
 and requires complete restoration with controls stopped. Unknown preimages block
 all writes. Explicit recovery qualifies retained intent and known partial
-generation before stopping active controls, preserves normal crash temporary
-files and refuses interrupted recovery publications for manual inspection.
+generation before stopping active controls. It preserves the qualified source
+temporary under root-private evidence before enforcing strict closed70 again,
+preserves other normal crash temporaries and refuses interrupted recovery
+publications for manual inspection. The retained manifest hash is rechecked on
+every read; all protected retained inputs are reverified before cutover.
 
 Actual context now validates the loader's exact eight-field result too. The
 real installed FD3 entrypoint must still reject the uncredentialed probe at

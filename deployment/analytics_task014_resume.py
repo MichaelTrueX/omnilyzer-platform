@@ -133,7 +133,8 @@ def atomic_file(helper, path, raw, *, group, mode, expected=None, temporary_suff
             temporary.unlink()
 
 
-def closed_tree(helper, root, expected):
+def closed_tree(helper, root, expected, *, preserved_temporaries=()):
+    require(set(preserved_temporaries).issubset({'deployment/analytics_executor_service_config.py.resume-next'}), 'invalid_preserved_source_temporary')
     actual = set();directories = set()
     allowed_dirs = {str(p) for name in expected for p in Path(name).parents if str(p) != '.'}
     for base, children, files in os.walk(root, followlinks=False):
@@ -143,6 +144,7 @@ def closed_tree(helper, root, expected):
             p = Path(base) / name;require(not p.is_symlink(), 'source_directory_symlink');directories.add(str(p.relative_to(root)))
         for name in files:
             relative = str((Path(base) / name).relative_to(root))
+            if relative in preserved_temporaries:continue
             require(relative in expected, 'unlisted_source_file')
             helper.installed_source(root, relative, expected[relative]);actual.add(relative)
     require(actual == set(expected) and len(actual) == 70 and directories == allowed_dirs, 'source_closed_set')
@@ -455,7 +457,9 @@ def identity_inputs(helper, folder, *, protected):
         except Exception:checks.append(i)
     print(json.dumps({'operation': 'read_only_identity_inputs', 'mismatched_asset_indices': checks}), flush=True)
     require(not checks and len(assets) == 8, 'identity_inputs_incomplete')
-    return assets, helper.bounded_file(folder / 'manifest.json', 16384, **({'owner': 0, 'group': 0, 'mode': 0o600} if protected else {}))
+    raw = helper.bounded_file(folder / 'manifest.json', 16384, **({'owner': 0, 'group': 0, 'mode': 0o600} if protected else {}))
+    require(digest(raw) == IDENTITY_MANIFEST, 'identity_manifest_changed')
+    return assets, raw
 
 
 def identity_delta(helper, old, new):
@@ -499,6 +503,25 @@ def publish_identity_files(helper, entries, *, forward, checkpoint):
         require(helper.bounded_file(path, 1048576, owner=0, group=group, mode=mode) == (after if forward else before), 'identity_publication_readback')
 
 
+def preserve_identity_source_temporary(helper, private, inventory):
+    """Keep the one interrupted source write as private evidence, not code."""
+    source = helper.SOURCE_ROOT / IDENTITY_SOURCE
+    temporary = source.with_name(source.name + '.resume-next')
+    selected = [row for row in inventory if row['path'] == str(temporary)]
+    if not selected:return
+    require(recovery_temporaries(helper, [(source, 0, 0o644, 1048576)]) == selected, 'identity_source_temporary_changed')
+    destination = private / 'interrupted-source.resume-next'
+    safe_parent(destination);m = private.lstat()
+    require((m.st_uid, m.st_gid, stat.S_IMODE(m.st_mode)) == (0, 0, 0o700), 'identity_evidence_directory')
+    require(not destination.exists() and not destination.is_symlink(), 'identity_source_evidence_exists')
+    before = temporary.lstat();os.rename(temporary, destination);after = destination.lstat()
+    require((before.st_dev, before.st_ino, before.st_size) == (after.st_dev, after.st_ino, after.st_size), 'identity_evidence_identity')
+    for parent in (temporary.parent, private):
+        fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:os.fsync(fd)
+        finally:os.close(fd)
+
+
 def repair_identity(args):
     """Fixed one-file source correction through the reviewed lifecycle core."""
     os.umask(0o077);helper = load_helper();records = [];phase = 'identity_preflight';outcome = None
@@ -532,10 +555,12 @@ def repair_identity(args):
                 require(current in (prior, following), 'identity_unknown_live_generation')
             partial = dict(old_hashes)
             partial[IDENTITY_SOURCE] = digest(helper.bounded_file(entries[0][0], 1048576, owner=0, group=0, mode=0o644))
-            closed_tree(helper, helper.SOURCE_ROOT, partial)
             inventory = recovery_temporaries(helper, [(p, g, m, 1048576) for p,g,m,_b,_a in entries] + [(private / name, 0, 0o600, 8 << 20) for name in ('audit.json', 'recovery-audit.json')] + [(BASE / 'analytics-task014-identity-result.json', 0, 0o644, 16384)])
             records.append(CommandResult('preserved_interrupted_identity_publications', (), 0, canonical(inventory).decode(), ''))
+            allowed = [IDENTITY_SOURCE + '.resume-next'] if any(row['path'] == str(entries[0][0]) + '.resume-next' for row in inventory) else []
+            closed_tree(helper, helper.SOURCE_ROOT, partial, preserved_temporaries=allowed)
             no_application(helper);control.stop_and_confirm();no_application(helper)
+            preserve_identity_source_temporary(helper, private, inventory)
         else:
             require(not private.exists() and not private.is_symlink(), 'identity_repair_already_attempted')
             safe_parent(private);private.mkdir(mode=0o700);retained.mkdir(mode=0o700)
@@ -547,6 +572,8 @@ def repair_identity(args):
             atomic_file(helper, retained / 'manifest.json', manifest, group=0, mode=0o600)
             for i, (_path, _group, _mode, prior, _following) in enumerate(entries):
                 atomic_file(helper, private / ('before-' + str(i)), prior, group=0, mode=0o600)
+            verified, _manifest = identity_inputs(helper, retained, protected=True)
+            require(verified == new, 'identity_retained_inputs_changed')
         audit_path = private / ('recovery-audit.json' if args.recover else 'audit.json')
         def persist():
             require(len(records) <= 1024, 'identity_audit_count')
@@ -698,7 +725,7 @@ def build_owner_bundle(service_source, owner_source):
     tail = ''.join(row for row in rows if row.rstrip('\r\n') not in remove).encode('utf-8')
     header = ('# Reviewed service SHA256 ' + digest(service_source) + '\n# Reviewed owner-entry SHA256 ' + digest(owner_source) + '\n').encode('ascii')
     bundle = header + service_source + b'\n\n' + tail
-    require(len(bundle) <= 65536, 'owner_bundle_size')
+    require(len(bundle) <= 98304, 'owner_bundle_size')
     compile(bundle, 'reviewed_task014_owner_bundle', 'exec')
     return bundle
 
