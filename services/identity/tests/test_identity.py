@@ -1,4 +1,9 @@
-"""Self-contained authentication lifecycle tests, no production DB/Keycloak."""
+"""File: services/identity/tests/test_identity.py
+Purpose: Isolated confidential OIDC lifecycle, security and cache-control tests;
+    no production database, Keycloak, or browser secrets are used.
+Related: services/identity/identity_bff/{views,oidc,issuer}.py,
+    services/identity/config/settings.py.
+"""
 import os
 import time
 import unittest
@@ -81,6 +86,20 @@ class IdentityRouteTests(SimpleTestCase):
         self.assertTrue(result.cookies["__Host-sumlaude_session"]["secure"])
         self.assertTrue(result.cookies["__Host-sumlaude_session"]["httponly"])
         self.assertEqual(result.cookies["__Host-sumlaude_session"]["samesite"], "Lax")
+
+    def test_all_identity_routes_set_no_store(self):
+        """Keep identity, CSRF, OIDC callbacks and login status out of caches."""
+        responses = [
+            self.get("/auth/csrf"),
+            self.get("/auth/session"),
+            self.get("/auth/login"),
+            self.get("/auth/callback?state=invalid&code=invalid"),
+            self.post("/auth/refresh"),
+            self.post("/auth/logout"),
+        ]
+        for response in responses:
+            self.assertIn("no-store", response.headers.get("Cache-Control", ""))
+            self.assertIn("private", response.headers.get("Cache-Control", ""))
 
     def test_auth_responses_have_frame_protection(self):
         """Check production anti-embedding response headers."""
