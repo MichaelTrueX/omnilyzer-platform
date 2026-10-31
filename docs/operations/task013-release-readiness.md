@@ -162,6 +162,15 @@ automatic early check exists until it is actually merged and tested.
   waiver. Fix the vulnerable canary base through its owning security change,
   not by hiding the existing `release/**` security check or weakening the
   original vulnerability policy.
+- [ ] **Canary base refresh:** require a supplier-verifiable, immutable OCI
+  base digest usable by the existing network-none BuildKit release. Check the
+  exact non-root UID 10001, `/usr/bin/python` entrypoint, migration and
+  `/readyz` behavior, original OCI labels, full pinned Syft-to-Grype policy,
+  and repeated identical OCI digests. A local Docker image ID, a successful
+  sandbox scan, or two matching Docker build IDs is **not** a distributable
+  signed base. If vendor package installation still fetches mutable transitive
+  dependencies, independently lock and verify exact package bytes offline;
+  otherwise HOLD rather than enabling build-time network access silently.
 
 ## 5. GO / HOLD handoff, dispatch and postrelease evidence
 

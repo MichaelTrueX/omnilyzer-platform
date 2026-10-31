@@ -142,6 +142,8 @@ class WorkflowPolicyTests(unittest.TestCase):
             "release.tests.test_workflow_policy", "0 Critical / 0 High",
             "isDraft", "headRefOid", "baseRefName",
             "Open, draft or stacked PRs", "unprotected source `main`",
+            "network-none BuildKit", "mutable transitive", "signed base",
+            "repeated identical OCI digests",
         ):
             if item == "REGISTRY_PREFLIGHT":
                 # The preflight is referenced by Python module, not a log marker.
