@@ -1,0 +1,39 @@
+# File: deployment/systemd/rootless/omnilyzer-analytics-loopback.service
+# Purpose: Optional root-owned DEV system service supervising ONLY signed Analytics
+#          0.15.0 blue loopback 127.0.0.1:3141; never exposes public ingress.
+# Related: deployment/analytics_loopback_guard.py,
+#          docs/operations/task014-analytics-loopback-20261031.md.
+# Installation authority: reviewed owner-only host change, NOT Task014 dispatch.
+# The root-owned EnvironmentFile must pin the already reviewed 64-char
+# container ID as ANALYTICS_APPROVED_CONTAINER_ID. Do not inherit a mutable ID.
+[Unit]
+Description=Omnilyzer Analytics 0.15.0 private loopback admission
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=omnilyzer-executor
+Group=omnilyzer-executor
+ExecStart=/usr/bin/python3 -I -B /opt/omnilyzer/deployment/analytics-loopback/analytics_loopback_guard.py --serve
+ExecStopPost=/usr/bin/python3 -I -B /opt/omnilyzer/deployment/analytics-loopback/analytics_loopback_guard.py --cleanup
+EnvironmentFile=/etc/omnilyzer/deployment/analytics-loopback.env
+Restart=always
+RestartSec=5s
+TimeoutStopSec=10s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=localhost
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
