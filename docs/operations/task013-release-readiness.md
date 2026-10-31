@@ -59,6 +59,16 @@ automatic early check exists until it is actually merged and tested.
   (`MichaelTrueX/omnilyzer` for Analytics) and the reviewed commit exists.
   Confirm required product CI, source manifest, critical-file hashes, Docker
   runtime profile and source-to-OCI binding for that exact commit.
+- [ ] Identify the **actual reviewed private-source PR head and ancestry**,
+  not just the repository's default `main`. Read the current PR state,
+  `isDraft`, `headRefOid`, `baseRefName`, inherited PRs and compare the exact
+  candidate SHA against private `main`. **Open, draft or stacked PRs are not
+  proof of merge approval.** Record the owner-approved immutable source SHA
+  and independent product acceptance; do not infer authorization from a public
+  platform release, a mutable PR branch, or unprotected source `main`.
+  Historical warning: Analytics `0.15.0` was signed from a reviewed PR
+  head rather than private `main`. Reverify live ancestry and PR state at
+  every release; historical branch status never grants future approval.
 - [ ] **Known current blocker for the next changed Analytics commit:**
   `release/products/analytics-source.json`, the release build candidate and
   two workflow checkouts still pin PR52 SHA

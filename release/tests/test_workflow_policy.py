@@ -140,6 +140,8 @@ class WorkflowPolicyTests(unittest.TestCase):
             "ANALYTICS_SOURCE_DEPLOY_KEY", "ANALYTICS_HANDOFF_DECRYPT_KEY",
             "analytics-registry-preflight", "REGISTRY_PREFLIGHT", "HTTP 404",
             "release.tests.test_workflow_policy", "0 Critical / 0 High",
+            "isDraft", "headRefOid", "baseRefName",
+            "Open, draft or stacked PRs", "unprotected source `main`",
         ):
             if item == "REGISTRY_PREFLIGHT":
                 # The preflight is referenced by Python module, not a log marker.
