@@ -5,6 +5,8 @@ Related: deployment/analytics_service_recovery.py; accept_task014_analytics_reco
 No live service, privileged path, credential, Docker or network operation.
 """
 import unittest
+import ast
+import runpy
 import os
 from pathlib import Path
 import subprocess
@@ -88,6 +90,17 @@ class StateRegressions(unittest.TestCase):
                 self.control.call('start', self.control.broker)
         self.assertEqual(caught.exception.operation, 'command_start')
         self.assertIs(caught.exception.result, result)
+
+    def test_native_fixture_imports_and_queries_only_supported_properties(self):
+        path = Path(__file__).with_name('accept_task014_analytics_recovery.py')
+        namespace = runpy.run_path(str(path), run_name='native_fixture_import_check')
+        self.assertIs(namespace['AnalyticsServiceControl'], recovery.AnalyticsServiceControl)
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute) and node.func.attr=='properties':
+                for value in node.args[1:]:
+                    if isinstance(value,ast.Constant) and isinstance(value.value,str):
+                        self.assertIn(value.value,recovery._PROPERTIES)
 
     def test_native_completion_property_is_explicitly_allowed(self):
         self.assertIn('ExecMainStatus', recovery._PROPERTIES)

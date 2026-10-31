@@ -1,7 +1,7 @@
 """File: deployment/tests/accept_task014_analytics_recovery.py
 
 Purpose: Native systemd255 recovery/socket/mount tests on an ephemeral CI VM.
-Related: release/task014_analytics_recovery.py; task014-c34d-review.yml.
+Related: deployment/analytics_service_recovery.py; task014-c34d-review.yml.
 Never runnable on omnilyzerdev; no DEV credentials, images, DB or network.
 Creates only uniquely named /run test units and cleans its own exact paths.
 """
@@ -23,7 +23,7 @@ import unittest
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from release.task014_analytics_recovery import AnalyticsServiceControl, resume_analytics
+from deployment.analytics_service_recovery import AnalyticsServiceControl, resume_analytics
 
 
 CHILD = r'''
