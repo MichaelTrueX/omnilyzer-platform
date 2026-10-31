@@ -164,7 +164,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Set up original pinned Analytics Buildx and BuildKit
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           name: m01-analytics-task013
           version: v0.36.1
@@ -596,7 +596,7 @@ jobs:
             --plan "$RUNNER_TEMP/release-plan.json" --output "$handoff" \
             --repository "$GITHUB_WORKSPACE"
       - name: Set up pinned Buildx and BuildKit
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           version: v0.36.1
           driver: docker-container
