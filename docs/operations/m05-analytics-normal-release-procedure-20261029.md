@@ -7,6 +7,29 @@ SECURITY: This document is not a deployment approval, signing identity or substi
 
 # M05 – Ordinary Analytics releases (Task013 → Task014)
 
+## Status update: 2026-10-31 (supersedes the historical 2026-10-29 snapshot)
+
+Actual original protected Task013 Analytics version `0.15.0` completed SUCCESS in
+[workflow run #40881693662](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/40881693662),
+Zot digest `sha256:6dbdc6319218b19257311d2885e9f697a75fc6066b4eef34068cc8ae6a51c1f1`;
+actual Syft/Grype zero-waiver policy, private GPG handoff, Zot publication,
+Cosign signature verification and Forgejo evidence publication PASS.
+This is **Task013 distribution acceptance only**. The old table below is
+retained as a dated historic snapshot, not the present release status.
+
+**Mandatory for every next Analytics Task013 dispatch:**
+[ChatGPT Task013 release-readiness checkfile](task013-release-readiness.md).
+The existing workflow still performs authenticated Zot/Forgejo version-absence
+preflight **immediately before publication**, after its BuildKit work. The
+suggested additional early read-only gate is NOT merged because current canary
+CI detected unrelated Critical/High vulnerabilities in the pinned canary base.
+Do not pretend that early automatic gate exists. **The dynamic Analytics source
+commit is still NOT reusable**: its PR52 SHA remains pinned in multiple source
+contracts and workflow checkouts. Any different product source commit requires a separately
+reviewed secure source-admission change; the checkfile MUST mark it HOLD until
+that capability is actually delivered. Task014 deployment and product smoke
+remain separate, and no production activation is implied.
+
 ## 1. Permanent operator contract
 
 Once the original protected Task013/014 product integration is accepted and installed, an ordinary change to the Analytics application **must not require a new platform PR, handwritten vulnerability report or new deployment code**. Product development occurs in `MichaelTrueX/omnilyzer`; the standard CI and protected release workflow must handle every new reviewed source commit. A protected production approval may be one click; no approval may bypass failed source, vulnerability, signature or runtime gates.
