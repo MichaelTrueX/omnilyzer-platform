@@ -3,7 +3,7 @@
 # Related: deployment/ci_oidc_diagnostics.py,
 # deployment/tests/test_ci_oidc_diagnostics.py, issue #182.
 # Permissions and authority: read-only pull-request CI, no environment secrets,
-# protected DEV dispatch, privileged host access, SSH or Docker mutation.
+# protected DEV dispatch, DEV host access, SSH or Docker mutation.
 
 name: Task 014 C34D review tests
 
@@ -130,3 +130,13 @@ jobs:
               release.tests.test_task014_dev_readonly_attestation
           )
           git worktree remove "$baseline"
+
+      # Native service-manager proof uses only disposable units in this CI VM.
+      # No DEV connection, credentials, registry, Docker daemon or app data.
+      - name: Test native Analytics service lifecycle and stopped recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest deployment.tests.test_analytics_service_recovery
+          sudo -n --preserve-env=GITHUB_ACTIONS /usr/bin/python3 -I -B \
+            deployment/tests/accept_task014_analytics_recovery.py
