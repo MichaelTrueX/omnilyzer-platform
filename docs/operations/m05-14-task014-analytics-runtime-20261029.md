@@ -67,7 +67,14 @@ writes. Detailed output remains in .analytics-pr269-resume-20261031/audit.json
 restoration compare exact known workflow bytes and fsync their publication.
 Any failed forward operation stops controls and restores the workflow metadata;
 it never restarts the known-broken prior service generation. Explicit --recover
-also requires no existing Analytics container, even if it is stopped. Its frozen\nrecovery intent is verified before stopping post-crash active controls. Normal\ninterrupted publication files, including empty files, are inventoried and\npreserved; restoration uses a separate exclusive temporary path. Unknown\nrecovery temporaries require manual review. SQL checks depend on verified\nPostgreSQL identity. Public authority remains unknown after failed restoration.\nNative CI compares the complete equivalent owner sandbox property formatting\nand exercises active-control recovery with interrupted publication files.
+also requires no existing Analytics container, even if it is stopped. Its frozen
+recovery intent is verified before stopping post-crash active controls. Normal
+interrupted publication files, including empty files, are inventoried and
+preserved; restoration uses a separate exclusive temporary path. Unknown
+recovery temporaries require manual review. SQL checks depend on verified
+PostgreSQL identity. Public authority remains unknown after failed restoration.
+Native CI compares the complete equivalent owner sandbox property formatting
+and exercises active-control recovery with interrupted publication files.
 
 The original root backup and its journal remain untouched. Success means
 ready_for_signed_task014, not application acceptance. Then submit one fresh
