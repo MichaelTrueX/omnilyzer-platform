@@ -274,4 +274,3 @@ use:
 - **Remaining:** unresolved risks/issues, or "none".
 
 Avoid long implementation narratives unless specifically requested.
-

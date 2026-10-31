@@ -52,4 +52,3 @@ Once the original protected Task013/014 product integration is accepted and inst
 Do not mark this integration complete until the following are evidenced by **one real protected GitHub Actions Analytics release** on the accepted source: actual source SHA not hardcoded into platform release infrastructure for future code revisions, automatic tests and real OCI scanner pass, original GitHub OIDC and Cosign signatures verified, immutable Zot/Forgejo exact digest readback, Task014 signed admission, installed isolated service with UID10001-mapped 0600 file secrets and least-privilege PostgreSQL, authenticated functional checks, real rollback, and one successful subsequent dry-run using a new approved product commit without editing platform release code.
 
 The required next work is **executable code and actual runtime validation**, not another generic review or an unverified owner assertion. Existing canary must remain operational and fail-closed throughout.
-
