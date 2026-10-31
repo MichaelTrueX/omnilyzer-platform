@@ -118,6 +118,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         uses = re.findall(r"uses:\s*([^\s#]+)", self.raw)
         self.assertEqual(uses, [
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         ])

@@ -188,8 +188,9 @@ def _get(
 def _zot_read_token(token: str, repository: str, factory: ConnectionFactory) -> str:
     """Exchange one GitHub OIDC credential at the fixed read-only Zot realm.
 
-    The raw GitHub JWT is not a registry Bearer token. Use the same oidc Basic
-    credential as the existing Docker pull path. Never follow a server-provided
+    Use the same oidc Basic credential as the existing Docker pull path.
+    Zot v2.1.20 intentionally returns its validated OIDC JWT unchanged; a
+    different registry-issued Bearer is also accepted. Never follow a server-provided
     realm, request push access, persist credentials or log either token.
     """
     try:
@@ -215,7 +216,6 @@ def _zot_read_token(token: str, repository: str, factory: ConnectionFactory) -> 
         if (type(registry_token) is not str or not 1 <= len(registry_token) <= 8192
                 or not registry_token.isascii()
                 or any(ord(c) < 33 or ord(c) > 126 for c in registry_token)
-                or registry_token == token
                 or "access_token" in value and value["access_token"] != registry_token
                 or "expires_in" in value and (type(value["expires_in"]) is not int or value["expires_in"] <= 0)
                 or "issued_at" in value and (type(value["issued_at"]) is not str or not value["issued_at"])):

@@ -108,9 +108,9 @@ class ZotProvider:
 class ZotTokenExchangeTests(unittest.TestCase):
     """Real local TLS protocol plus fail-closed token response envelopes."""
 
-    def test_local_tls_oidc_basic_then_scoped_bearer_for_each_product(self):
+    def test_local_tls_zot_oidc_passthrough_for_each_product(self):
         oidc = "synthetic.github.oidc"
-        scoped = "synthetic.scoped.registry.token"
+        scoped = oidc
         body = canonical_bytes({"schemaVersion": 2})
         calls = []
         class Handler(BaseHTTPRequestHandler):
@@ -127,7 +127,7 @@ class ZotTokenExchangeTests(unittest.TestCase):
                     if scope not in (["repository:" + REPOSITORY + ":pull"], ["repository:omnilyzer/analytics:pull"]):
                         self.send_error(403);return
                     calls.append(("token", scope[0]))
-                    payload = canonical_bytes({"token": scoped, "access_token": scoped, "expires_in": 300})
+                    payload = canonical_bytes({"token": scoped, "access_token": scoped, "expires_in": 300, "issued_at": "2026-10-31T04:00:00Z"})
                     media = "application/json; charset=utf-8"
                 else:
                     if self.headers.get("Authorization") != "Bearer " + scoped:
@@ -180,7 +180,6 @@ class ZotTokenExchangeTests(unittest.TestCase):
         for raw, status, extra in (
             (b'{"token":"a","token":"b"}', 200, ()),
             (b'{"token":"a","access_token":"b"}', 200, ()),
-            (canonical_bytes({"token": TOKEN}), 200, ()),
             (b'{"token":"a b"}', 200, ()),
             (b'{"token":"a","expires_in":true}', 200, ()),
             (b'{"token":"a","expires_in":0}', 200, ()),

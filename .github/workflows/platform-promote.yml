@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       auth_probe:
-        description: Read-only private Zot Docker authentication check; NEVER promote
+        description: Read-only registry/evidence diagnostic; NEVER promote
         required: false
         type: boolean
         default: false
@@ -88,10 +88,16 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Probe private Zot Docker authentication without deployment
+      - name: Install original pinned Cosign for Analytics read-only verification
+        if: ${{ inputs.product_id == 'analytics' }}
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.0
+        with:
+          cosign-release: v3.1.2
+      - name: Probe private registry evidence without deployment
         shell: bash
         env:
           DIAGNOSTIC_TARGET_STAGE: ${{ inputs.target_stage }}
+          DIAGNOSTIC_PRODUCT_ID: ${{ inputs.product_id }}
         run: |
           set -euo pipefail
           umask 077

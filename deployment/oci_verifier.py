@@ -85,7 +85,7 @@ def _revalidate_chain(chain: _DirectoryChain) -> None:
 def _auth(directory: int, token: str, broker: tuple[int, int], owned: list[int],
           cleanup: list[tuple[int, str, tuple[int, ...], bool]]) -> tuple[int, ...]:
     # Reuse Docker's oidc Basic-to-scoped-Bearer exchange, as private_registry_pull
-    # does. RegistryToken would incorrectly send the GitHub JWT as registry JWT.
+    # does. Zot may return the validated OIDC JWT itself as the Bearer token.
     # Never load/merge ambient configuration or permit credential helper fields.
     auth = _base64.b64encode(("oidc:" + token).encode("ascii")).decode("ascii")
     raw = _json.dumps({"auths": {_HOST: {"auth": auth}}},
