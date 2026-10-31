@@ -18,6 +18,64 @@ Authorization: This document cannot grant root source installation, activate
 
 # M05-14 — Analytics signed 0.15.0 via existing Task014 (current handover)
 
+
+## Current owner recovery: stopped coherent PR269 generation (2026-10-31)
+
+The owner-captured durable phase is workflow_only_authority_published.
+The separate owner script598e1a74 is WITHDRAWN: its reset-failed handling
+can block rollback after services are already stopped. New0b8342 source
+and all service assets are installed; the broker and Analytics controls are
+stopped. Do not repeat that installer or rerun the database bootstrap.
+
+The version-controlled deployment/analytics_service_recovery.py now separates
+native stopped-state safety from failure-counter bookkeeping, reloads/verifies
+the manager before activation, checks application absence after stopping,
+retains primary/native command evidence separately from recovery failures,
+and recovers to stopped controls. The existing C34D workflow executes actual
+systemd255 tests on its disposable VM, with no DEV credentials or connection.
+Those tests cover unloading, stale configuration, FD3/private mounts,
+Canary-style directory cleanup, failed and delayed startup, restoration
+failure, and final result publication failure. This is component/runtime
+mechanics evidence, not Analytics application acceptance.
+
+deployment/analytics_task014_resume.py is a deliberately narrow owner entry
+for the already coherent0b8342 generation. It loads only the existing pinned
+root readiness helper02af57b8, verifies retained manifestf811cba3/all8 assets,
+the closed70 source files, original43 Canary hashes and authorities,
+signer/secrets metadata and read-only PostgreSQL prerequisites. It changes
+only the separately owner-approved workflow SHA, and keeps exact75091ed2
+workflow preimage bytes for stopped recovery. No source installation,
+application image operation, bootstrap, secret read or replay reset occurs.
+
+The explicit root operator must approve BOTH the exact standalone bundle
+SHA256 and the merged workflow SHA argument. build_owner_bundle combines
+exact reviewed service/entry bytes with no logic substitution and embeds both
+source hashes; CI checks that its lifecycle implementation is unchanged.
+Neither raw unprivileged input nor the builder grants administrative authority.
+
+On the actual host, the resume checks the executor's exact frozen sandbox,
+root-controlled source loading, private mount/socket inodes and DockerGET_ping
+under its service identity. It also exercises the REAL installed FD3 entrypoint
+with an intentionally missing credential, requiring rejection at
+sealed_fd_receive before any replay/application action. That deliberate negative
+probe is not signed deployment acceptance. Its failed counter is cleared
+separately; no valid request is synthesized.
+
+Bounded native command results are buffered before root-private durable audit
+writes. Detailed output remains in .analytics-pr269-resume-20261031/audit.json
+(root0600). Only closed status/error codes are published. Preparation and
+restoration compare exact known workflow bytes and fsync their publication.
+Any failed forward operation stops controls and restores the workflow metadata;
+it never restarts the known-broken prior service generation. Explicit --recover
+also requires no existing Analytics container, even if it is stopped.
+
+The original root backup and its journal remain untouched. Success means
+ready_for_signed_task014, not application acceptance. Then submit one fresh
+original signed Task014 request for immutable Analytics0.15.0, followed by the
+real readiness/login/collector/persistence/tenant-deny/coexistence/rollback
+journey. Future ordinary version automation is still an open requirement.
+
+
 ## Current runtime correction: private mount duplicate (2026-10-31)
 
 Signed Task014 run 41172418361 reached the Analytics executor, but systemd255

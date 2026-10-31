@@ -41,7 +41,7 @@ class ServiceFailure(Exception):
 
 
 _UNIT = re.compile(r'(?:omnilyzer-deployment-(?:broker\.service|analytics-executor\.(?:service|socket))|omnilyzer-task014-ci-[0-9a-f]{12}-(?:broker\.service|analytics\.(?:service|socket)))\Z')
-_PROPERTIES = frozenset(('ActiveState', 'MainPID', 'Job', 'NeedDaemonReload', 'ExecStart', 'ExecStartPost', 'ExecMainStatus', 'User', 'Group', 'FragmentPath', 'DropInPaths', 'NoNewPrivileges', 'PrivateTmp', 'PrivateDevices', 'ProtectHome', 'ProtectSystem', 'ReadWritePaths', 'TemporaryFileSystem', 'BindReadOnlyPaths', 'CapabilityBoundingSet', 'AmbientCapabilities', 'SupplementaryGroups', 'WorkingDirectory', 'RestrictAddressFamilies', 'RestrictNamespaces', 'SocketUser', 'SocketGroup', 'SocketMode'))
+_PROPERTIES = frozenset(('ActiveState', 'MainPID', 'Job', 'NeedDaemonReload', 'ExecStart', 'ExecStartPost', 'ExecMainStatus', 'InvocationID', 'User', 'Group', 'FragmentPath', 'DropInPaths', 'NoNewPrivileges', 'PrivateTmp', 'PrivateDevices', 'ProtectHome', 'ProtectSystem', 'ReadWritePaths', 'TemporaryFileSystem', 'BindReadOnlyPaths', 'CapabilityBoundingSet', 'AmbientCapabilities', 'SupplementaryGroups', 'WorkingDirectory', 'RestrictAddressFamilies', 'RestrictNamespaces', 'SocketUser', 'SocketGroup', 'SocketMode'))
 
 
 def systemctl(operation: str, *arguments: str, timeout: float = 30) -> CommandResult:
@@ -299,6 +299,7 @@ def resume_analytics(
     checkpoint: Callable[[str], None],
     restored_expected: dict[str, dict[str, str]] | None = None,
     broker_ready: Callable[[], None] | None = None,
+    complete: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     """Resume a separately verified coherent generation; recover stopped.
 
@@ -328,8 +329,11 @@ def resume_analytics(
         if broker_ready is not None:
             broker_ready()
         checkpoint('ready_for_signed_task014')
-        return {'status': 'ready_for_signed_task014', 'primary_error': None,
-                'recovery_errors': [], 'application_acceptance': False}
+        result = {'status': 'ready_for_signed_task014', 'primary_error': None,
+                  'recovery_errors': [], 'application_acceptance': False}
+        if complete is not None:
+            complete(result)  # Final audit/result publication is inside recovery.
+        return result
     except BaseException as error:
         primary = error
         try:

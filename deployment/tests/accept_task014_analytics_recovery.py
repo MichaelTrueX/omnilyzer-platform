@@ -21,6 +21,7 @@ import threading
 import time
 import unittest
 import uuid
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from deployment.analytics_service_recovery import AnalyticsServiceControl, resume_analytics
@@ -285,6 +286,36 @@ RestrictNamespaces=yes
         self.assertEqual(result['status'], 'stopped_recovered', result)
         self.assertIn('broker_not_stable', result['primary_error'])
         self.control.require_stopped()
+
+    def test_final_result_publication_failure_recovers_stopped(self):
+        def complete(value):raise RuntimeError('injected_final_audit_failure')
+        result = resume_analytics(
+            self.control, no_application=lambda: None, prepare=lambda: None,
+            restore=lambda: None, expected=self.expected, probe=self.native_probe,
+            checkpoint=lambda phase: None, complete=complete,
+        )
+        self.assertEqual(result['status'], 'stopped_recovered', result)
+        self.assertIn('injected_final_audit_failure', result['primary_error'])
+        self.control.require_stopped()
+
+    def test_owner_metadata_publication_and_exact_restore_are_durable(self):
+        from deployment.analytics_task014_resume import atomic_file, ServiceFailure
+        def read(path, maximum, *, owner, group, mode):
+            m = Path(path).lstat()
+            self.assertTrue(stat.S_ISREG(m.st_mode))
+            self.assertEqual((m.st_uid, m.st_gid, stat.S_IMODE(m.st_mode), m.st_nlink), (owner, group, mode, 1))
+            data = Path(path).read_bytes();self.assertLessEqual(len(data), maximum);return data
+        helper = SimpleNamespace(bounded_file=read)
+        path = self.base / 'broker-metadata.json'
+        atomic_file(helper, path, b'old\n', group=0, mode=0o640)
+        atomic_file(helper, path, b'new\n', group=0, mode=0o640, expected=b'old\n')
+        self.assertEqual(read(path, 100, owner=0, group=0, mode=0o640), b'new\n')
+        with self.assertRaisesRegex(ServiceFailure, 'target_preimage_changed'):
+            atomic_file(helper, path, b'unknown\n', group=0, mode=0o640, expected=b'old\n')
+        self.assertEqual(path.read_bytes(), b'new\n')
+        atomic_file(helper, path, b'old\n', group=0, mode=0o640, expected=b'new\n')
+        self.assertEqual(path.read_bytes(), b'old\n')
+        self.assertFalse(path.with_name(path.name+'.resume-next').exists())
 
 
 if __name__ == '__main__':
