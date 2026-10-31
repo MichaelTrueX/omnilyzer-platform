@@ -25,14 +25,14 @@ read-only investigations or copy logs between chats. Ask for owner action only
 when a required privileged operation or protected approval cannot be completed
 with the available authorized tools.
 
-**Two separate decisions:** Sections 0-3 and the presence of the live
-preflight job in Section 4 must be **PASS** before **GO_TO_DISPATCH**.
-Any **FAIL**, **UNKNOWN**, mismatched source, wrong registry server, unknown
-ownership or competing release means **HOLD: DO NOT DISPATCH**. The authenticated
-live absence proof cannot exist until GitHub issues a short-lived OIDC token:
-the **first** Task013 job then runs this proof **before** the expensive build.
-Only its actual PASS permits **GO_TO_BUILD**. No previous run's result may
-substitute for the current version and current workload identity.
+**Decision rule:** Complete the pre-dispatch checks below with current
+read-only evidence, and write one **GO / HOLD** decision. Any **FAIL**,
+**UNKNOWN**, mismatched source, wrong server, unexpected ACL or competing run
+means **HOLD: DO NOT DISPATCH**. GitHub-only OIDC proof cannot be substituted
+with a local unauthenticated GET. The current Task013 publisher runs its live
+authenticated absence check **after** the costly build. That is a remaining
+operational limitation, not a verified early preflight. Never assert that an
+automatic early check exists until it is actually merged and tested.
 
 ## 0. Begin with the authoritative source
 
@@ -125,23 +125,33 @@ substitute for the current version and current workload identity.
   maintenance impact assessment, verified restart and rollback. A routine
   product release should require **no** infrastructure mutation.
 
-## 4. Automatic no-write gate before the expensive build
+## 4. Confirm live registry readiness without inventing early OIDC proof
 
-- [ ] The current Task013 workflow includes
-  `analytics-registry-preflight` **before**
-  `analytics-source-admission`, and runs the existing
-  `release.registry_absence_preflight` with exact short-lived OIDC tokens
-  against **both** actual remote registries. A missing job or failed job is
-  **HOLD**; do not skip it just because the previous release succeeded.
-- [ ] Forgejo's authenticated package check and Zot's authenticated
-  `/v2/` plus exact `HEAD /v2/omnilyzer/analytics/manifests/VERSION`
-  must prove the proposed version absent. **Only verified HTTP 404 after
-  authentication is absence**. Any 401, 403, 5xx, redirect, timeout,
-  inconsistent read, occupied tag/package or unknown result is **HOLD**.
-  The existing publisher must repeat authenticated absence checks
-  immediately **before** any registry write (race and immutability safety).
-- [ ] Failures in this early registry gate stop the expensive BuildKit/Grype
-  work. Do not weaken the registry's authorization to make a check pass.
+- [ ] Verify the existing Task013 Zot publisher still invokes
+  `release.registry_absence_preflight` with short-lived OIDC for Forgejo and
+  Zot and refuses publication unless BOTH destinations confirm version absent.
+  Confirm `/v2/` authenticated first and only exact manifest HTTP 404 means
+  absent; any 401, 403, 5xx, timeout, redirect or occupied version is HOLD.
+  The publisher check occurs after OCI build; do not describe it as pre-build.
+- [ ] Before dispatch, use all available authorized read-only evidence:
+  actual DNS destination and host, exact live-host repository ACL, service
+  status, current registry inventory, previous attempts and immutable tags.
+  If a former run may have partially published, **HOLD** until authenticated
+  reconciliation proves that the candidate version is genuinely unused.
+- [ ] **Known automation gap, October 2026:** a protected read-only
+  `analytics-registry-preflight` job preceding the expensive build has NOT
+  been merged. The job was prepared on the PR branch but withdrawn when
+  the mandatory canary security review uncovered one Critical and one High in
+  its existing pinned image on 2026-10-31. Do not bypass that security gate.
+  For changed product source, new registry destinations, permissions, OIDC
+  policy, credential rotation or a previously failed 401/403, **HOLD** pending
+  an approved live pre-build check. For a repeat release of the same reviewed
+  source with unchanged proven registry authorities, disclose the remaining
+  potential wasted-build risk; do not claim it is eliminated.
+- [ ] Current repo CI and required scanning must pass without Critical/High
+  waiver. Fix the vulnerable canary base through its owning security change,
+  not by hiding the existing `release/**` security check or weakening the
+  original vulnerability policy.
 
 ## 5. GO / HOLD handoff, dispatch and postrelease evidence
 
@@ -153,19 +163,17 @@ credentials metadata | private artifact encryption | resolved actual Zot
 host and ACL | registry preflight design | pending/active/partial versions |
 required product test status | release approval | GO or HOLD + blockers`.
 
-- [ ] **GO_TO_DISPATCH only** with Sections 0-3 and the Section 4 workflow
-  design verified on protected main. If an optional fresh privileged ACL
-  inspection is not needed, cite current unchanged actual-host evidence.
-  If registry state cannot be trusted, choose HOLD. Never treat the proposed
-  early OIDC check as already completed before it runs.
+- [ ] **GO only** when Sections 0-4 show current evidence with no HOLD
+  blocker. If no fresh privileged ACL inspection is needed, cite existing
+  unchanged actual-host evidence. Explicitly record the late-registry-gate
+  limitation rather than treating an unexecuted future check as PASS.
 - [ ] Dispatch **once** from protected `main`:
   `product=analytics`, `version=<fresh-X.Y.Z>`,
   `source_sha=<exact-platform-main-SHA>`, `auth_probe=false`.
   Never dispatch on behalf of an owner without release authorization.
-- [ ] Watch all four actual Analytics jobs:
-  `analytics-registry-preflight`, `analytics-source-admission`,
-  `analytics-publish-zot`, `analytics-publish-forgejo`.
-  `analytics-registry-preflight` must be PASS before the build begins.
+- [ ] Watch all three current Analytics jobs:
+  `analytics-source-admission`, `analytics-publish-zot`,
+  `analytics-publish-forgejo`.
   Legacy canary jobs being skipped in Analytics mode is expected.
 - [ ] At completion require **real** source binding, pinned OCI BuildKit,
   current Syft/Grype SBOM and **0 Critical / 0 High with no waivers**,

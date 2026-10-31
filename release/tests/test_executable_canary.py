@@ -429,9 +429,8 @@ class ImageAndPipelineTests(unittest.TestCase):
         workflow = yaml.safe_load((ROOT / ".github/workflows/platform-release.yml").read_text())
         capable = [name for name, job in workflow["jobs"].items()
                    if job.get("permissions", {}).get("id-token") == "write"]
-        self.assertEqual(capable, ["forgejo-auth-probe", "analytics-registry-preflight",
-                                   "analytics-publish-zot", "analytics-publish-forgejo",
-                                   "publish-zot", "publish-forgejo"])
+        self.assertEqual(capable, ["forgejo-auth-probe", "analytics-publish-zot",
+                                   "analytics-publish-forgejo", "publish-zot", "publish-forgejo"])
         # Existing package builders/publishers are semantically byte-unchanged.
         for name, expected_hash in LEGACY_RELEASE_JOB_SHA256.items():
             with self.subTest(legacy_job=name):

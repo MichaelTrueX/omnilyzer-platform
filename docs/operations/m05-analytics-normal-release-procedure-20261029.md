@@ -19,11 +19,13 @@ retained as a dated historic snapshot, not the present release status.
 
 **Mandatory for every next Analytics Task013 dispatch:**
 [ChatGPT Task013 release-readiness checkfile](task013-release-readiness.md).
-The existing workflow now performs authenticated Zot/Forgejo version-absence
-preflight before the expensive private source BuildKit job, and repeats it
-immediately before publication. **The dynamic Analytics source commit is still
-NOT reusable**: its PR52 SHA remains pinned in multiple source contracts and
-workflow checkouts. Any different product source commit requires a separately
+The existing workflow still performs authenticated Zot/Forgejo version-absence
+preflight **immediately before publication**, after its BuildKit work. The
+suggested additional early read-only gate is NOT merged because current canary
+CI detected unrelated Critical/High vulnerabilities in the pinned canary base.
+Do not pretend that early automatic gate exists. **The dynamic Analytics source
+commit is still NOT reusable**: its PR52 SHA remains pinned in multiple source
+contracts and workflow checkouts. Any different product source commit requires a separately
 reviewed secure source-admission change; the checkfile MUST mark it HOLD until
 that capability is actually delivered. Task014 deployment and product smoke
 remain separate, and no production activation is implied.
