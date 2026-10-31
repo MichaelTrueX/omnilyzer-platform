@@ -95,7 +95,7 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         for path, digest in parsed["source_sha256"]:
             with self.subTest(path=path):
                 self.assertEqual(hashlib.sha256(entries[path]).hexdigest(), digest)
-        self.assertEqual(len(entries), 31)
+        self.assertEqual(len(entries), 32)
         self.assertNotIn("deployment/analytics_dev_activation_inputs.py", entries)
         self.assertNotIn("deployment/analytics_isolated_source_install.py", entries)
 
@@ -304,3 +304,4 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

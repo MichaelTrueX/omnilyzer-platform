@@ -3,7 +3,7 @@
 Purpose: Construct exact UNSIGNED Task014 Analytics 0.15.0 DEV review
          inputs from the previously reviewed immutable Git source archive,
          including the original C32ZF rootless socket source contract.
-Related: deployment/analytics_source_handoff.py (31 Git objects),
+Related: deployment/analytics_source_handoff.py (32 Git objects),
          deployment/analytics_source_archive.py (canonical USTAR),
          deployment/analytics_isolated_source_install.py (root approval),
          deployment/analytics_executor_service_config.py (20 source hashes),
@@ -45,7 +45,7 @@ BROKER_CONFIG = "/etc/omnilyzer/deployment/broker/analytics.json"
 DESTINATION = "/opt/omnilyzer/deployment/analytics-app"
 _CLOSED_PATHS = (SOURCE_ARCHIVE, SOURCE_APPROVAL, EXECUTOR_CONFIG, BROKER_CONFIG)
 # These systemd objects remain inert until separately installed by root.
-# Exactly three are already bound in the canonical 31-object reviewed archive.
+# Exactly three are already bound in the canonical 32-object reviewed archive.
 _SERVICE_SOURCES = (
     ("deployment/systemd/dev/analytics-broker-enabled.conf",
      "/etc/systemd/system/omnilyzer-deployment-broker.service.d/analytics-enabled.conf"),
@@ -118,7 +118,7 @@ def build_unsigned_analytics_activation_inputs(
             for item in metadata["source_entries"]
         }
         if (
-            len(contents) != 31 or len(entries) != 31
+            len(contents) != 32 or len(entries) != 32
             or len(ANALYTICS_INSTALLED_FILES) != 20
             or not set(ANALYTICS_INSTALLED_FILES).issubset(entries)
             or not set(_INSTALLED_RUNTIME_FILES).issubset(entries)
@@ -211,7 +211,7 @@ def build_unsigned_analytics_service_inputs(
             expected_manifest_sha256=approval["manifest_sha256"],
             reviewed_commit=reviewed_commit,
         ))
-        if len(selected) != 31 or len(_SERVICE_SOURCES) != 3:
+        if len(selected) != 32 or len(_SERVICE_SOURCES) != 3:
             raise ValueError
         result = {
             destination: selected[source]
@@ -301,3 +301,4 @@ __all__ = (
     "SOURCE_ARCHIVE", "SOURCE_APPROVAL", "EXECUTOR_CONFIG", "BROKER_CONFIG",
     "build_unsigned_analytics_service_inputs",
 )
+

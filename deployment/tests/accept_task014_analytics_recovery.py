@@ -394,24 +394,24 @@ RestrictNamespaces=yes
 
     def test_source_crash_before_rename_preserves_empty_and_partial_evidence(self):
         from deployment import analytics_task014_resume as owner
-        for index, interrupted in enumerate((b'', b'partial-new-source')):
+        for index, (source_name, interrupted) in enumerate(((owner.IDENTITY_SOURCE,b''),(owner.IDENTITY_SOURCE,b'partial-new-source'),(owner.TRANSPORT_SOURCE,b''),(owner.TRANSPORT_SOURCE,b'partial-new-source'))):
             root = self.base / ('source-' + str(index));root.mkdir(mode=0o755)
             (root / 'deployment').mkdir(mode=0o755)
             private = self.base / ('evidence-' + str(index));private.mkdir(mode=0o700)
             expected = {}
-            for name in [owner.IDENTITY_SOURCE] + ['deployment/fixture-' + str(i) + '.py' for i in range(69)]:
+            for name in [source_name] + ['deployment/fixture-' + str(i) + '.py' for i in range(69)]:
                 path = root / name;path.write_bytes(b'old-source');path.chmod(0o644)
                 expected[name] = owner.digest(b'old-source')
             def installed(root, name, sha):
                 self.assertEqual(owner.digest(self.read_root_fixture(root / name, 1048576, owner=0, group=0, mode=0o644)), sha)
             helper = SimpleNamespace(SOURCE_ROOT=root, bounded_file=self.read_root_fixture, installed_source=installed)
-            source = root / owner.IDENTITY_SOURCE;temporary = source.with_name(source.name + '.resume-next')
+            source = root / source_name;temporary = source.with_name(source.name + '.resume-next')
             temporary.write_bytes(interrupted);temporary.chmod(0o600);inode = temporary.stat().st_ino
             self.control.start(self.units[1]);self.control.start(self.units[0])
             inventory = owner.recovery_temporaries(helper, [(source,0,0o644,1048576)])
-            owner.closed_tree(helper, root, expected, preserved_temporaries=[owner.IDENTITY_SOURCE + '.resume-next'])
+            owner.closed_tree(helper, root, expected, preserved_temporaries=[source_name + '.resume-next'])
             self.control.stop_and_confirm()
-            owner.preserve_identity_source_temporary(helper, private, inventory)
+            owner.preserve_identity_source_temporary(helper, private, inventory, source_name=source_name)
             owner.closed_tree(helper, root, expected)
             saved = private / 'interrupted-source.resume-next'
             self.assertEqual((saved.stat().st_ino, saved.read_bytes()), (inode, interrupted))
@@ -420,5 +420,82 @@ RestrictNamespaces=yes
 
 
 
+    def test_actual_analytics_sender_and_pid1_listener_transfer_sealed_fd(self):
+        # The production path is intentionally exact: accepting a random test
+        # path would weaken the very systemd peer exception this case proves.
+        from deployment.tests.test_analytics_execution import EXPECTED, fixture
+        from deployment.policy import canonical_bytes
+        fixed_parent = Path('/run/omnilyzer/deployment')
+        fixed_socket = fixed_parent / 'analytics-executor.sock'
+        self.assertFalse(Path('/run/omnilyzer').exists(), 'foreign_runtime_in_ephemeral_vm')
+        fixed_parent.mkdir(parents=True, mode=0o755)
+        Path('/run/omnilyzer').chmod(0o755)
+        def remove_fixed():
+            self.control.stop_and_confirm()
+            fixed_parent.rmdir();Path('/run/omnilyzer').rmdir()
+        self.addCleanup(remove_fixed)
+        package = self.base / 'package';package.mkdir(mode=0o755)
+        shutil.copytree(Path(__file__).resolve().parents[1], package / 'deployment', ignore=shutil.ignore_patterns('tests', '__pycache__'))
+        request = self.base / 'request.json';request.write_bytes(canonical_bytes(fixture()));request.chmod(0o644)
+        policy = self.base / 'expected.json';policy.write_text(json.dumps(EXPECTED));policy.chmod(0o644)
+        worker = self.base / 'sealed-worker.py'
+        worker.write_text(r'''import os,sys,socket
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from deployment.private_registry_fd import receive_sealed_header,read_sealed_credential
+assert os.getuid()==os.geteuid()==991 and os.getgid()==991
+listener=socket.socket(fileno=3);listener.set_inheritable(False)
+client,_=listener.accept();client.settimeout(5);fd=None
+try:
+ header,fd=receive_sealed_header(client);length=int.from_bytes(header,'big');assert 0<length<=16384
+ body=b''
+ while len(body)<length:
+  part=client.recv(length-len(body));assert part;body+=part
+ assert body==Path(sys.argv[2]).read_bytes() and client.recv(1)==b''
+ value=read_sealed_credential(fd,canonical_request=body,image='oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:6dbdc6319218b19257311d2885e9f697a75fc6066b4eef34068cc8ae6a51c1f1',product_id='analytics')
+ assert value.token=='inert-native-test-token'
+ reply=b'native-sealed-reply';client.sendall(len(reply).to_bytes(4,'big')+reply);client.shutdown(socket.SHUT_WR)
+ print('NATIVE_SEALED_RECEIVER_PASS',flush=True)
+finally:
+ if fd is not None:os.close(fd)
+ client.close();listener.close()
+''');worker.chmod(0o644)
+        broker = self.base / 'sealed-broker.py'
+        broker.write_text(r'''import os,sys,json,time
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from deployment.analytics_unix_boundary import AnalyticsUnixExecutorTransport
+from deployment.private_registry_fd import create_sealed_credential
+body=Path(sys.argv[2]).read_bytes();expected=json.loads(Path(sys.argv[3]).read_text())
+os.setgroups([993]);os.setgid(990);os.setuid(990)
+assert os.getuid()==os.geteuid()==990 and os.getgid()==990
+fd=create_sealed_credential('inert-native-test-token',expires_at=int(time.time())+270,image='oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:6dbdc6319218b19257311d2885e9f697a75fc6066b4eef34068cc8ae6a51c1f1',canonical_request=body,product_id='analytics')
+try:
+ transport=AnalyticsUnixExecutorTransport(expected_executor_uid=991,expected_executor_gid=991,expected_socket_group_gid=993,reviewed_installed_source=expected)
+ assert transport._send_analytics_private(body,credential_fd=fd)==b'native-sealed-reply'
+ print('NATIVE_SEALED_BROKER_PASS',flush=True)
+finally:os.close(fd)
+''');broker.chmod(0o644)
+        self.paths[self.units[1]].write_text(self.socket_bytes.replace(str(self.parent / 'analytics.sock'), str(fixed_socket)).replace('SocketUser=65534','SocketUser=991').replace('SocketGroup=65534','SocketGroup=993'))
+        service = self.executor_bytes.replace('User=65534','User=991').replace('Group=65534','Group=991').replace('SupplementaryGroups=65534','SupplementaryGroups=992').replace('/usr/bin/python3 -I -B ' + str(self.child), '/usr/bin/python3 -I -B ' + str(worker) + ' ' + str(package) + ' ' + str(request)).replace(str(self.parent / 'analytics.sock'), str(fixed_socket))
+        self.paths[self.units[2]].write_text(service)
+        expected = copy.deepcopy(self.expected)
+        expected[self.units[2]].update(User='991',Group='991',SupplementaryGroups='992',ExecStart='/usr/bin/python3 -I -B ' + str(worker) + ' ' + str(package) + ' ' + str(request),BindReadOnlyPaths=f'{self.base}/docker.sock:{self.leaf}/docker.sock:rbind {fixed_socket}:{fixed_socket}:rbind')
+        self.control.reload_and_verify(expected);self.control.start(self.units[1])
+        self.assertEqual((fixed_socket.stat().st_uid,fixed_socket.stat().st_gid,stat.S_IMODE(fixed_socket.stat().st_mode)),(991,993,0o660))
+        result = subprocess.run(['/usr/bin/python3','-I','-B',str(broker),str(package),str(request),str(policy)],capture_output=True,text=True,timeout=15)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout,'NATIVE_SEALED_BROKER_PASS\n')
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline:
+            status=self.control.properties(self.units[2],'ActiveState','ExecMainStatus')
+            if status['ActiveState']=='inactive':break
+            time.sleep(0.05)
+        self.assertEqual(status,{'ActiveState':'inactive','ExecMainStatus':'0'})
+        self.control.stop_and_confirm()
+
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
