@@ -44,8 +44,9 @@ MARKER = "OMNILYZER-BESZEL-20261031"
 UNITS = ("beszel-omnilyzer-proxy.service", "beszel-omnilyzer-agent.service")
 SOURCE_HASHES = {
     "README.md": "c251ec972c3dc1c81a7c5f1a8837bd9b469587afcea59469bc443fc6b9725c9b",
-    "metrics_proxy.py": "5129b211c8fe19f39d99dc0bdcd4cf1f64481e103bef6f0f242523c12137397c",
+    "metrics_proxy.py": "114e0be8843e0b9bcb7c0c252078aad10a14b7aa8458ef7a53524360370222c0",
     "test_metrics_proxy.py": "2064552c072a4565a5e3c508b73046068229d8603befd98b9ce2507e94793a85",
+    "test_install.py": "605f6d98fd0ce75653e9075a104764063fc649724fe73dc872df6e6ee9d37e84",
     "beszel-omnilyzer-proxy.service": "2436014474a7a6b3e19c621230e42b5e549ab80e2e7396444d6733d07675c1fc",
     "beszel-omnilyzer-agent.service": "5f5d5543243b8e800f57c97a92e783663e49a383cd5748ee58f4118f74aabc46",
 }
