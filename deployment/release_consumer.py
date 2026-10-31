@@ -17,6 +17,7 @@ Sections: strict fixed registry endpoints/HTTP envelope, bounded archive
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import base64
 import gzip
 import hashlib
 import http.client
@@ -26,6 +27,7 @@ import sys
 import tarfile
 import time
 from typing import Any, Callable, Protocol
+from urllib.parse import urlencode
 
 from .broker import IDENTITY_FIELDS, _normalize_identity
 from .execution import (
@@ -67,6 +69,8 @@ MAX_HEADER_BYTES = 16 * 1024
 CONNECT_TIMEOUT = 3.0
 READ_TIMEOUT = 3.0
 ERROR = "release consumer evidence is unavailable or invalid"
+_TOKEN_MEDIA_TYPES = ("application/json", "application/json; charset=utf-8")
+_MAX_REGISTRY_TOKEN_BYTES = 16384
 
 EVIDENCE_NAMES = frozenset({
     "release-manifest.json", "release-provenance.json",
@@ -163,6 +167,7 @@ def _get(
         repository = REPOSITORY if product == "canary" else ANALYTICS_REPOSITORY
         path = f"/v2/{repository}/manifests/{validate_digest(reference)}"
         media_type, limit = OCI_MEDIA_TYPE, MAX_MANIFEST_BYTES
+        authorization = "Bearer " + _zot_read_token(token, repository, factory)
     elif route == "forgejo":
         host = FORGEJO_HOST
         package = ("task013-release-evidence" if product == "canary"
@@ -174,8 +179,57 @@ def _get(
         media_type = ARCHIVE_MEDIA_TYPE
         limit = (MAX_ARCHIVE_BYTES if product == "canary"
                  else MAX_ANALYTICS_ARCHIVE_BYTES)
+        authorization = "Bearer " + token
     else:
         raise ReleaseConsumerError(ERROR)
+    return _bounded_get(host, path, authorization, (media_type,), limit, factory)
+
+
+def _zot_read_token(token: str, repository: str, factory: ConnectionFactory) -> str:
+    """Exchange one GitHub OIDC credential at the fixed read-only Zot realm.
+
+    The raw GitHub JWT is not a registry Bearer token. Use the same oidc Basic
+    credential as the existing Docker pull path. Never follow a server-provided
+    realm, request push access, persist credentials or log either token.
+    """
+    try:
+        if (repository not in (REPOSITORY, ANALYTICS_REPOSITORY)
+                or type(token) is not str or not 1 <= len(token) <= 8192
+                or not token.isascii() or any(ord(c) < 33 or ord(c) > 126 for c in token)):
+            raise ValueError
+        query = urlencode({"service": ZOT_HOST, "scope": "repository:" + repository + ":pull",
+                           "account": "oidc"})
+        authorization = "Basic " + base64.b64encode(("oidc:" + token).encode("ascii")).decode("ascii")
+        raw, _headers = _bounded_get(
+            ZOT_HOST, "/zot/auth/token?" + query, authorization,
+            _TOKEN_MEDIA_TYPES, _MAX_REGISTRY_TOKEN_BYTES, factory,
+        )
+        value = parse_bounded_json(
+            raw, maximum_bytes=_MAX_REGISTRY_TOKEN_BYTES, maximum_root_members=4,
+            maximum_depth=1, maximum_nodes=8, maximum_array=0, maximum_string=8192,
+        )
+        if (type(value) is not dict or not set(value) <= {"token", "access_token", "expires_in", "issued_at"}
+                or not ("token" in value or "access_token" in value)):
+            raise ValueError
+        registry_token = value.get("token", value.get("access_token"))
+        if (type(registry_token) is not str or not 1 <= len(registry_token) <= 8192
+                or not registry_token.isascii()
+                or any(ord(c) < 33 or ord(c) > 126 for c in registry_token)
+                or registry_token == token
+                or "access_token" in value and value["access_token"] != registry_token
+                or "expires_in" in value and (type(value["expires_in"]) is not int or value["expires_in"] <= 0)
+                or "issued_at" in value and (type(value["issued_at"]) is not str or not value["issued_at"])):
+            raise ValueError
+        return registry_token
+    except Exception:
+        raise ReleaseConsumerError(ERROR) from None
+
+
+def _bounded_get(
+    host: str, path: str, authorization: str, media_types: tuple[str, ...],
+    limit: int, factory: ConnectionFactory,
+) -> tuple[bytes, dict[str, str]]:
+    """Existing strict TLS/status/header/size/cleanup envelope for fixed GETs."""
     connection = response = None
     failed = False
     close_failed = False
@@ -189,7 +243,7 @@ def _get(
         started = time.monotonic()
         connection = factory(host, 443, CONNECT_TIMEOUT, context)
         connection.request("GET", path, None, {
-            "Host": host, "Accept": media_type, "Authorization": "Bearer " + token,
+            "Host": host, "Accept": media_types[0], "Authorization": authorization,
         })
         response = connection.getresponse()
         headers = response.getheaders()
@@ -212,7 +266,7 @@ def _get(
             if key in normalized:
                 raise ValueError
             normalized[key] = value
-        if (normalized.get("content-type") != media_type
+        if (normalized.get("content-type") not in media_types
                 or "transfer-encoding" in normalized
                 or "content-encoding" in normalized
                 or "location" in normalized
