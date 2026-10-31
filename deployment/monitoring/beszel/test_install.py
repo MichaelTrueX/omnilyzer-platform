@@ -55,6 +55,9 @@ class InstallerTests(unittest.TestCase):
             patcher = mock.patch.object(MODULE, name, val)
             patcher.start()
             self.addCleanup(patcher.stop)
+        # Preserve a reference to the actual startup implementation before
+        # fixture mocks replace it for the filesystem-only tests.
+        self.real_start_and_check = MODULE.start_and_check
         for name, func in [
             ("preflight", lambda: None),
             ("start_and_check", lambda: None),
@@ -73,6 +76,32 @@ class InstallerTests(unittest.TestCase):
         self.prefix, self.state, self.unitdir = prefix, state, unitdir
         self.old_umask = os.umask(0o077)
         self.addCleanup(os.umask, self.old_umask)
+
+    def test_proxy_and_agent_units_keep_runtime_visible_and_homes_masked(self):
+        """Prevent systemd ProtectHome from masking the private UID991 runtime."""
+        from pathlib import Path
+        base = Path(__file__).parent
+        for name in MODULE.UNITS:
+            content = (base / name).read_text()
+            self.assertIn("ProtectHome=no", content)
+            self.assertNotIn("ProtectHome=yes\\n", content)
+            self.assertIn("InaccessiblePaths=/home /root", content)
+            self.assertIn("User=omnilyzer-executor", content)
+            self.assertIn("Group=omnilyzer-executor", content)
+        proxy = (base / MODULE.UNITS[0]).read_text()
+        self.assertIn("ReadWritePaths=/run/user/991", proxy)
+        self.assertIn("RestrictAddressFamilies=AF_UNIX", proxy)
+        agent = (base / MODULE.UNITS[1]).read_text()
+        self.assertIn("--ro-bind /run/user/991/beszel-metrics.sock /var/tmp/docker.sock", agent)
+        self.assertNotIn("--ro-bind /run/user/991/docker.sock", agent)
+
+    def test_missing_proxy_socket_stops_before_agent(self):
+        """Report a clear fail-closed error when systemd masks the socket."""
+        self.assertFalse(MODULE.SOCKET.exists())
+        with mock.patch.object(MODULE.time, "sleep", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "Private metrics socket absent"):
+                self.real_start_and_check()
+        self.assertFalse((self.unitdir / MODULE.UNITS[1]).exists())
 
     def test_new_private_services_and_manifest(self):
         """First install has two services, root-owned source and 0700 data."""
