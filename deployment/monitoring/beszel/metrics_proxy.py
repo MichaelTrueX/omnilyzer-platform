@@ -183,8 +183,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(body)
-        self.close_connection = True
+        # A client that disconnects early must not produce a traceback
+        # containing untrusted HTTP input or flood service logs.
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            self.close_connection = True
 
     def do_GET(self):
         """Route only version, list, info and running-container counters."""
@@ -233,8 +239,15 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
     do_PUT = do_POST
     do_PATCH = do_POST
     do_DELETE = do_POST
-    do_HEAD = do_POST
     do_OPTIONS = do_POST
+
+    def do_HEAD(self):
+        """Deny HEAD without a response body, as HTTP requires."""
+        self.send_response(405)
+        self.send_header("Content-Length", "0")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
 
 
 class UnixMetricsServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
