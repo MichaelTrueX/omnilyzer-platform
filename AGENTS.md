@@ -181,6 +181,14 @@ small edit. The repository and current deployment evidence are authoritative
 over remembered chat summaries. Do not claim an asynchronous personal-memory
 update or infer that a file was deployed merely because it was committed.
 
+## Before Task014 promotion
+
+For Analytics release preparation or promotion, read
+[the Task014 pre-release checklist](docs/operations/task014-pre-release-checklist.md)
+before dispatch. Reconcile its evidence against current source and installed
+state, distinguish ordinary releases from platform setup, and keep unsupported
+release versions blocked. Reuse existing qualification for unchanged boundaries.
+
 ## Before editing and context discipline
 
 - Understand the affected execution flow. Search for the owning implementation
@@ -266,3 +274,4 @@ use:
 - **Remaining:** unresolved risks/issues, or "none".
 
 Avoid long implementation narratives unless specifically requested.
+

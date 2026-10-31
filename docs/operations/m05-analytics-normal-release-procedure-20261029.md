@@ -7,6 +7,19 @@ SECURITY: This document is not a deployment approval, signing identity or substi
 
 # M05 – Ordinary Analytics releases (Task013 → Task014)
 
+## 31 October 2026: operational entry checklist
+
+Before preparing or dispatching Task014, use the
+[Task014 pre-release checklist](task014-pre-release-checklist.md). It separates
+ordinary-release checks from platform qualification and defines the evidence
+needed before execution. The dated implementation table below records the
+29 October assessment, not current installed state. Task013 Analytics 0.15.0
+publication has since succeeded, and the owner-reported transport transition
+reached `ready_for_signed_task014` on 31 October. Signed application acceptance
+remains pending in this record. Current promotion code still contains fixed
+0.15.0/source/run pins; subsequent-version repeatability remains unproven.
+
+
 ## 1. Permanent operator contract
 
 Once the original protected Task013/014 product integration is accepted and installed, an ordinary change to the Analytics application **must not require a new platform PR, handwritten vulnerability report or new deployment code**. Product development occurs in `MichaelTrueX/omnilyzer`; the standard CI and protected release workflow must handle every new reviewed source commit. A protected production approval may be one click; no approval may bypass failed source, vulnerability, signature or runtime gates.
@@ -39,3 +52,4 @@ Once the original protected Task013/014 product integration is accepted and inst
 Do not mark this integration complete until the following are evidenced by **one real protected GitHub Actions Analytics release** on the accepted source: actual source SHA not hardcoded into platform release infrastructure for future code revisions, automatic tests and real OCI scanner pass, original GitHub OIDC and Cosign signatures verified, immutable Zot/Forgejo exact digest readback, Task014 signed admission, installed isolated service with UID10001-mapped 0600 file secrets and least-privilege PostgreSQL, authenticated functional checks, real rollback, and one successful subsequent dry-run using a new approved product commit without editing platform release code.
 
 The required next work is **executable code and actual runtime validation**, not another generic review or an unverified owner assertion. Existing canary must remain operational and fail-closed throughout.
+
