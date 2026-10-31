@@ -41,8 +41,8 @@ tenant isolation, provenance, reproducibility, rollback and recovery.
 Near-term work is prioritized: (1) isolate and resolve the existing Task
 014 DEV promotion blocker; (2) independently verify one approved
 end-to-end DEV deployment; (3) integrate one real SaaS product workflow.
-The successful Task 013 release 0.14.5 is distribution acceptance,
-not production application acceptance. Never conflate successful CI,
+The successful Task013 Analytics release 0.15.0 (and earlier canary releases)
+is distribution acceptance, not production application acceptance. Never conflate successful CI,
 a signed package or a synthetic test with live deployment readiness.
 
 ## Development orchestration
@@ -105,6 +105,10 @@ existing platform, with the existing security boundaries intact.
    not require new Task 013/014 implementation. Static-only changes may use
    their existing approved static publishing path where applicable. A material
    new runtime or trust boundary is an exception requiring explicit review.
+   **Before any Task013 dispatch**, follow the canonical ChatGPT GO/HOLD
+   checkfile at [docs/operations/task013-release-readiness.md](docs/operations/task013-release-readiness.md);
+   do not guess from previous release success or skip its real-host checks.
+
 7. **Batch work; ask the owner only for real decisions.** Progress through safe
    reads, edits, tests and review in one delivery stream. Pause for privileged
    operations, approval-required merges/deployments, changed scope, or an
