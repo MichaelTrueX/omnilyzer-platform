@@ -119,14 +119,18 @@ class FinalDevWorkflowTests(unittest.TestCase):
         self.assertEqual(diagnostic["permissions"], {
             "contents": "read", "id-token": "write",
         })
-        self.assertEqual(len(diagnostic["steps"]), 2)
-        self.assertIn("release.private_zot_auth_probe", diagnostic["steps"][1]["run"])
+        self.assertEqual(len(diagnostic["steps"]), 3)
+        self.assertEqual(diagnostic["steps"][1]["if"], "${{ inputs.product_id == 'analytics' }}")
+        self.assertEqual(diagnostic["steps"][1]["uses"], "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6")
+        self.assertEqual(diagnostic["steps"][1]["with"], {"cosign-release": "v3.1.2"})
+        self.assertIn("release.private_zot_auth_probe", diagnostic["steps"][2]["run"])
         self.assertEqual(
-            diagnostic["steps"][1]["env"],
-            {"DIAGNOSTIC_TARGET_STAGE": "${{ inputs.target_stage }}"},
+            diagnostic["steps"][2]["env"],
+            {"DIAGNOSTIC_TARGET_STAGE": "${{ inputs.target_stage }}",
+             "DIAGNOSTIC_PRODUCT_ID": "${{ inputs.product_id }}"},
         )
         self.assertIn('test "$DIAGNOSTIC_TARGET_STAGE" = dev',
-                      diagnostic["steps"][1]["run"])
+                      diagnostic["steps"][2]["run"])
         self.assertNotIn("deployment.promotion", str(diagnostic))
         self.assertNotIn("deployment.controller", str(diagnostic))
         self.assertNotIn("secrets.", str(diagnostic))

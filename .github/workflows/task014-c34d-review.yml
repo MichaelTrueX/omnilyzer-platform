@@ -100,6 +100,7 @@ jobs:
           set -euo pipefail
           python3 -m unittest -q \
             release.tests.test_private_zot_auth_probe \
+            release.tests.test_analytics_task014_readonly_probe \
             deployment.tests.test_final_dev_workflow
       # Section 7: isolated Docker CLI authentication regression.
       # Mock HTTPS listener on loopback with synthetic credentials only.
