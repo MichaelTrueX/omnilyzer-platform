@@ -4,7 +4,7 @@ Purpose: Owner-local recovery and fixed Analytics source corrections.
 Related: analytics_service_recovery.py; original root readiness helper02af57b8;
          Task014 issue27; docs/operations/m05-14-task014-analytics-runtime-20261029.md.
 
-No import-time action. Each source correction replaces one frozen module
+No import-time action. Each correction replaces only its frozen modules
 and its exact source/config authority. Never rebuilds a release, accepts an
 unsigned deployment, reads application secrets or writes a database. The exact
 owner-reviewed bundle and explicit workflow SHA are the administrative grant.
@@ -134,7 +134,7 @@ def atomic_file(helper, path, raw, *, group, mode, expected=None, temporary_suff
 
 
 def closed_tree(helper, root, expected, *, preserved_temporaries=()):
-    require(set(preserved_temporaries).issubset({'deployment/analytics_executor_service_config.py.resume-next','deployment/unix_transport.py.resume-next'}), 'invalid_preserved_source_temporary')
+    require(set(preserved_temporaries).issubset({IDENTITY_SOURCE+'.resume-next',TRANSPORT_SOURCE+'.resume-next',*(p+'.resume-next' for p in STREAM_SOURCES)}), 'invalid_preserved_source_temporary')
     actual = set();directories = set()
     allowed_dirs = {str(p) for name in expected for p in Path(name).parents if str(p) != '.'}
     for base, children, files in os.walk(root, followlinks=False):
@@ -170,9 +170,12 @@ def no_application(helper):
     require(not output.strip(), 'application_present_no_metadata_recovery')
 
 
-def inspect_generation(helper, control, target, *, recovering=False, transport_baseline=False):
+def inspect_generation(helper, control, target, *, recovering=False, transport_baseline=False, stream_baseline=False):
     """Continue all independent checks; never adopt observed values as pins."""
     stage, manifest_sha, product_commit, current_workflow = (BASE / '.analytics-pr271-identity-20261031/new-inputs', IDENTITY_MANIFEST, IDENTITY_TARGET, TRANSPORT_WORKFLOW) if transport_baseline else (STAGE, MANIFEST_SHA, PRODUCT_COMMIT, CURRENT_WORKFLOW)
+    if stream_baseline:
+        require(not transport_baseline, 'ambiguous_baseline')
+        stage,manifest_sha,product_commit,current_workflow = (BASE / '.analytics-pr272-transport-20261031/new-inputs',TRANSPORT_MANIFEST,TRANSPORT_TARGET,STREAM_WORKFLOW)
     checks = [];assets = {};model = None;base = None
     def check(name, action):
         try:
@@ -195,7 +198,7 @@ def inspect_generation(helper, control, target, *, recovering=False, transport_b
                 assets[i] = raw
                 check('installed_asset_' + str(i), lambda i=i,b=raw: require(helper.bounded_file(Path(helper.DESTINATIONS[i]), 1048576, owner=0, group=helper.GROUPS[i], mode=helper.MODES[i]) == b, 'installed_asset_changed'))
     if 7 in assets:
-        pair = check('closed_source_archive', lambda: helper.source_model(assets[7], product_commit))
+        pair = check('closed_source_archive', lambda: current_stream_source_model(helper,assets[7]) if stream_baseline else helper.source_model(assets[7], product_commit))
         if pair is not None:
             model, expected = pair
             for name, sha in sorted(expected.items()):
@@ -218,7 +221,7 @@ def inspect_generation(helper, control, target, *, recovering=False, transport_b
         check('trusted_root', lambda: (require(0 < root.lstat().st_size <= 1048576, 'trusted_root_size'), signer_file(root, base['sigstore_trusted_root_sha256'], root.lstat().st_size, 0o640)))
     check('original_executor_unchanged', lambda: require(digest(helper.bounded_file(helper.EXECUTOR_CONFIG, 4096, owner=0, group=991, mode=0o640)) == ORIGINAL_EXECUTOR_SHA, 'original_executor_changed'))
     check('original_broker_unit', lambda: require(digest(helper.bounded_file(Path('/etc/systemd/system/' + BROKER), 16384, owner=0, group=0, mode=0o644)) == BROKER_UNIT_SHA, 'broker_unit_changed'))
-    if transport_baseline and not recovering:
+    if (transport_baseline or stream_baseline) and not recovering:
         for unit in control.units:
             def idle(u=unit):
                 keys = ('ActiveState','MainPID','Job') if u.endswith('.service') else ('ActiveState','Job')
@@ -228,7 +231,7 @@ def inspect_generation(helper, control, target, *, recovering=False, transport_b
                 elif u == BROKER:require(state['MainPID'].isdigit() and (int(state['MainPID']) > 0 if state['ActiveState'] == 'active' else state['MainPID'] == '0'), 'broker_process_state')
             check('control_state:' + unit,idle)
     else:check('stopped_control_plane', control.require_stopped)
-    if transport_baseline and len(assets) == 8:
+    if (transport_baseline or stream_baseline) and len(assets) == 8:
         for unit, values in expected_runtime(assets).items():
             wanted = {**values,'NeedDaemonReload':'no'}
             check('loaded_unit:' + unit, lambda u=unit,w=wanted: require(control.properties(u,*w) == w,'unexpected_loaded_unit'))
@@ -527,10 +530,27 @@ TRANSPORT_MANIFEST = 'eafe71e5085fd9f04e46a649b843e6ec7802e1a711f55ddc1fbecbb813
 TRANSPORT_SOURCE = 'deployment/unix_transport.py'
 TRANSPORT_PREIMAGE = '8488bad2876df513c1aa3ddda626c8e9cb85e0ed905357561a3e004ee2bf6904'
 TRANSPORT_SOURCE_SHA = 'f1475f63270419f1dd75655ecf3b5b4787947fb44f84725fb60b33ba70d41ed3'
+STREAM_TARGET = '8ebf7422e5c3ac6c2f7a171e45127046b6113621'
+STREAM_WORKFLOW = '2654c66ccc906baced9c17a5dfca260bef900ab3'
+STREAM_STAGE = Path('/home/omnigpt/repos/omnilyzer-platform/.m05-14-release-review/analytics-task014-stream-8ebf7422-20261031')
+STREAM_MANIFEST = '2ff417e2ee6ab0a92947da86a9a0876fdc56c2bb2040f5bad5d616a74b6a3f8f'
+STREAM_PREIMAGES = {
+    'deployment/analytics_first_install.py':'6d1faaa0cbe8116b902f19ec62d90f8d44d09318714eaee3e1feda5be1f0a35a',
+    'deployment/analytics_private_registry.py':'e21381e625292c974faad5ac8fecfb72b36082cc5f682f415ce9b51a2fbaf081',
+    'deployment/analytics_unix_boundary.py':'625100414f8317ad90419c1fa1dfd58426e1bed12e6e12d8b40652d00167acfd',
+}
+STREAM_HASHES = {
+    'deployment/analytics_first_install.py':'ae2977b5860e67c5f49affd1626a980ef9ec007c55dc66e59b983eebba7ba108',
+    'deployment/analytics_private_registry.py':'c146722208bfeaead0f5331cf40fcf5d24bdb85eeeb325959bd9b0246b94e427',
+    'deployment/analytics_unix_boundary.py':'991d8e604f71081a40da55ace7fc99af4442114fa65e426ee00e4c6ba34a5839',
+}
+STREAM_SOURCES = tuple(sorted(STREAM_HASHES))
 
 
-def transport_source_model(helper, raw, old_model):
+def transport_source_model(helper, raw, old_model, *, stream=False):
     """Exactly one reviewed reclassification: old31/39 to new32/38, still70."""
+    require(type(stream) is bool, 'invalid_source_generation_selector')
+    target_commit = STREAM_TARGET if stream else TRANSPORT_TARGET
     expected_paths = {row['path'] for row in old_model['source_entries']} | {TRANSPORT_SOURCE}
     require(len(expected_paths) == 32 and old_model['inherited_canary_sha256'].get(TRANSPORT_SOURCE) == TRANSPORT_PREIMAGE, 'transport_historical_preimage')
     require(type(raw) is bytes and 0 < len(raw) <= 1048576, 'transport_archive_bound')
@@ -545,7 +565,7 @@ def transport_source_model(helper, raw, old_model):
         require(type(model) is dict and set(model) == set(old_model) and canonical(model) == manifest, 'transport_manifest_schema')
         changed = {'source_commit','source_file_count','source_entries','inherited_canary_sha256','shared_patch_paths','shared_preimage_sha256','shared_preimage_commits'}
         require(all(model[key] == old_model[key] for key in set(old_model) - changed), 'transport_unchanged_source_authority')
-        require(model['source_commit'] == TRANSPORT_TARGET and type(model['source_file_count']) is int and model['source_file_count'] == 32 and type(model['schema_version']) is int and model['schema_version'] == 1 and model['deployment_authorized'] is False and model['signed_release_authorized'] is False, 'transport_source_identity')
+        require(model['source_commit'] == target_commit and type(model['source_file_count']) is int and model['source_file_count'] == 32 and type(model['schema_version']) is int and model['schema_version'] == 1 and model['deployment_authorized'] is False and model['signed_release_authorized'] is False, 'transport_source_identity')
         inherited = {p: sha for p,sha in old_model['inherited_canary_sha256'].items() if p != TRANSPORT_SOURCE}
         require(len(inherited) == 38 and model['inherited_canary_sha256'] == inherited, 'transport_inherited_boundary')
         require(model['shared_patch_paths'] == old_model['shared_patch_paths'] + [TRANSPORT_SOURCE] and model['shared_preimage_sha256'] == {**old_model['shared_preimage_sha256'],TRANSPORT_SOURCE:TRANSPORT_PREIMAGE} and model['shared_preimage_commits'] == {**old_model['shared_preimage_commits'],TRANSPORT_SOURCE:'b9e22e745ecbaf96dc15998e91d1a74f70e5ad77'}, 'transport_exact_compatibility_delta')
@@ -572,10 +592,12 @@ def transport_source_model(helper, raw, old_model):
     return model, expected
 
 
-def identity_inputs(helper, folder, *, protected, transport=False):
+def identity_inputs(helper, folder, *, protected, transport=False, stream=False):
     """Frozen unsigned inputs are data, never self-authorizing source."""
     checks = [];assets = {}
     manifest_sha, commit = (TRANSPORT_MANIFEST, TRANSPORT_TARGET) if transport else (IDENTITY_MANIFEST, IDENTITY_TARGET)
+    require(type(stream) is bool and not (stream and transport), 'ambiguous_input_generation')
+    if stream:manifest_sha,commit = STREAM_MANIFEST,STREAM_TARGET
     manifest = helper.stage_manifest(folder, manifest_sha, commit)
     for i, row in enumerate(manifest['assets']):
         try:
@@ -590,8 +612,50 @@ def identity_inputs(helper, folder, *, protected, transport=False):
     return assets, raw
 
 
-def identity_delta(helper, old, new, *, transport=False):
+def historical_model31(helper):
+    """Retained protected31 generation, never a widened historical helper."""
+    assets,_ = identity_inputs(helper,BASE / '.analytics-pr271-identity-20261031/new-inputs',protected=True)
+    return helper.source_model(assets[7],IDENTITY_TARGET)[0]
+
+
+def current_stream_source_model(helper,raw):
+    return transport_source_model(helper,raw,historical_model31(helper))
+
+
+def stream_delta(helper,old,new):
+    """Exact32-to32 correction: three modules and their source authorities."""
+    historical = historical_model31(helper)
+    before,old_hashes = transport_source_model(helper,old[7],historical)
+    after,new_hashes = transport_source_model(helper,new[7],historical,stream=True)
+    require(set(old_hashes)==set(new_hashes) and sorted(p for p in old_hashes if old_hashes[p]!=new_hashes[p])==list(STREAM_SOURCES),'stream_exact_source_delta')
+    require({k:v for k,v in before.items() if k not in ('source_commit','source_entries')} == {k:v for k,v in after.items() if k not in ('source_commit','source_entries')},'stream_unchanged_source_authority')
+    require({p:old_hashes[p] for p in STREAM_SOURCES}==STREAM_PREIMAGES and {p:new_hashes[p] for p in STREAM_SOURCES}==STREAM_HASHES,'stream_frozen_module_hashes')
+    require(all(old[i]==new[i] for i in (3,4,5,6)),'stream_unit_delta')
+    config=json.loads(old[0],object_pairs_hook=helper.unique)
+    require(old[0]==old[1] and config['reviewed_installed_commit']==TRANSPORT_TARGET,'stream_old_configuration')
+    config['reviewed_installed_commit']=STREAM_TARGET
+    for name in STREAM_SOURCES:
+        require(config['source_sha256'][name]==old_hashes[name],'stream_old_source_pin')
+        config['source_sha256'][name]=new_hashes[name]
+    require(new[0]==new[1]==canonical(config),'stream_configuration_delta')
+    approval=json.loads(old[2],object_pairs_hook=helper.unique)
+    with tarfile.open(fileobj=io.BytesIO(new[7]),mode='r:') as archive:
+        manifest=archive.extractfile('.omnilyzer-analytics-source-review.json').read(16385)
+    approval.update(reviewed_commit=STREAM_TARGET,archive_sha256=digest(new[7]),manifest_sha256=digest(manifest))
+    require(new[2]==canonical(approval),'stream_approval_delta')
+    payloads=[]
+    for raw,expected in ((old[7],STREAM_PREIMAGES),(new[7],STREAM_HASHES)):
+        with tarfile.open(fileobj=io.BytesIO(raw),mode='r:') as archive:
+            selected={p:archive.extractfile(p).read(1048577) for p in STREAM_SOURCES}
+        require(all(digest(selected[p])==expected[p] for p in STREAM_SOURCES),'stream_payload_pin')
+        payloads.append(selected)
+    return old_hashes,new_hashes,*payloads
+
+
+def identity_delta(helper, old, new, *, transport=False, stream=False):
     """Only one platform loader changes; immutable application stays fixed."""
+    require(type(stream) is bool and not (stream and transport), 'ambiguous_delta_generation')
+    if stream:return stream_delta(helper,old,new)
     old_commit, new_commit, source_name = (IDENTITY_TARGET, TRANSPORT_TARGET, TRANSPORT_SOURCE) if transport else (PRODUCT_COMMIT, IDENTITY_TARGET, IDENTITY_SOURCE)
     old_model, old_hashes = helper.source_model(old[7], old_commit)
     new_model, new_hashes = transport_source_model(helper, new[7], old_model) if transport else helper.source_model(new[7], new_commit)
@@ -636,13 +700,13 @@ def publish_identity_files(helper, entries, *, forward, checkpoint):
 
 def preserve_identity_source_temporary(helper, private, inventory, *, source_name=IDENTITY_SOURCE):
     """Keep the one interrupted source write as private evidence, not code."""
-    require(source_name in (IDENTITY_SOURCE,TRANSPORT_SOURCE), 'unknown_repair_source')
+    require(source_name in (IDENTITY_SOURCE,TRANSPORT_SOURCE,*STREAM_SOURCES), 'unknown_repair_source')
     source = helper.SOURCE_ROOT / source_name
     temporary = source.with_name(source.name + '.resume-next')
     selected = [row for row in inventory if row['path'] == str(temporary)]
     if not selected:return
     require(recovery_temporaries(helper, [(source, 0, 0o644, 1048576)]) == selected, 'identity_source_temporary_changed')
-    destination = private / 'interrupted-source.resume-next'
+    destination = private / (('interrupted-'+source.name+'.resume-next') if source_name in STREAM_SOURCES else 'interrupted-source.resume-next')
     safe_parent(destination);m = private.lstat()
     require((m.st_uid, m.st_gid, stat.S_IMODE(m.st_mode)) == (0, 0, 0o700), 'identity_evidence_directory')
     require(not destination.exists() and not destination.is_symlink(), 'identity_source_evidence_exists')
@@ -666,31 +730,36 @@ def identity_completion_verified(value, verify):
     return True
 
 
-def repair_identity(args, *, transport=False):
+def repair_identity(args, *, transport=False, stream=False):
     """Fixed one-file source correction through the reviewed lifecycle core."""
     os.umask(0o077);helper = load_helper();records = [];phase = 'identity_preflight';outcome = None
     private, input_stage, old_stage, old_manifest_sha, old_commit, new_commit, current_workflow, source_name, result_name = (BASE / '.analytics-pr272-transport-20261031', TRANSPORT_STAGE, BASE / '.analytics-pr271-identity-20261031/new-inputs', IDENTITY_MANIFEST, IDENTITY_TARGET, TRANSPORT_TARGET, TRANSPORT_WORKFLOW, TRANSPORT_SOURCE, 'analytics-task014-transport-result.json') if transport else (IDENTITY_PRIVATE, IDENTITY_STAGE, STAGE, MANIFEST_SHA, PRODUCT_COMMIT, IDENTITY_TARGET, CURRENT_WORKFLOW, IDENTITY_SOURCE, 'analytics-task014-identity-result.json')
+    require(type(stream) is bool and not (stream and transport),'ambiguous_repair_generation')
+    if stream:
+        private,input_stage,old_stage,old_manifest_sha,old_commit,new_commit,current_workflow,source_name,result_name = (BASE / '.analytics-pr276-stream-20261031',STREAM_STAGE,BASE / '.analytics-pr272-transport-20261031/new-inputs',TRANSPORT_MANIFEST,TRANSPORT_TARGET,STREAM_TARGET,STREAM_WORKFLOW,STREAM_SOURCES[0],'analytics-task014-stream-result.json')
+    source_names = STREAM_SOURCES if stream else (source_name,)
     require(args.workflow_sha != current_workflow, 'repair_workflow_noop')
     retained = private / 'new-inputs'
     with provisioning_lock():
         control = AnalyticsServiceControl(BROKER, LISTENER, EXECUTOR, audit=records.append)
         if not args.recover:
-            old, before, after = inspect_generation(helper, control, args.workflow_sha, transport_baseline=transport)
-            new, manifest = identity_inputs(helper, input_stage, protected=False, transport=transport)
+            old, before, after = inspect_generation(helper, control, args.workflow_sha, transport_baseline=transport,stream_baseline=stream)
+            new, manifest = identity_inputs(helper, input_stage, protected=False, transport=transport,stream=stream)
         else:
             safe_parent(private / 'child');m = private.lstat()
             require((m.st_uid, m.st_gid, stat.S_IMODE(m.st_mode)) == (0, 0, 0o700), 'identity_recovery_directory')
             old_manifest = helper.stage_manifest(old_stage, old_manifest_sha, old_commit)
             old = {i: helper.bounded_file(old_stage / row['name'], 1048576, owner=0, group=0, mode=0o600) for i, row in enumerate(old_manifest['assets'])}
             require(all(digest(old[i]) == row['sha256'] and len(old[i]) == row['size'] for i, row in enumerate(old_manifest['assets'])), 'identity_old_stage_hash')
-            new, manifest = identity_inputs(helper, retained, protected=True, transport=transport)
+            new, manifest = identity_inputs(helper, retained, protected=True, transport=transport,stream=stream)
             original = helper.bounded_file(ORIGINAL_BROKER, 4096, owner=0, group=0, mode=0o600)
             require(digest(original) == ORIGINAL_BROKER_SHA, 'identity_original_authority')
             base = json.loads(original, object_pairs_hook=helper.unique)
             before = canonical({**base, 'expected_workflow_sha': current_workflow})
             after = canonical({**base, 'expected_workflow_sha': args.workflow_sha})
-        old_hashes, new_hashes, old_source, new_source = identity_delta(helper, old, new, transport=transport)
-        entries = [(helper.SOURCE_ROOT / source_name, 0, 0o644, old_source, new_source)]
+        old_hashes, new_hashes, old_source, new_source = identity_delta(helper, old, new, transport=transport,stream=stream)
+        old_sources,new_sources = (old_source,new_source) if stream else ({source_name:old_source},{source_name:new_source})
+        entries = [(helper.SOURCE_ROOT / name, 0, 0o644, old_sources[name], new_sources[name]) for name in source_names]
         entries += [(Path(helper.DESTINATIONS[i]), helper.GROUPS[i], helper.MODES[i], old[i], new[i]) for i in (0, 1, 2, 7)]
         entries.append((helper.BROKER_CONFIG, 990, 0o640, before, after))
         if args.recover:
@@ -700,13 +769,13 @@ def repair_identity(args, *, transport=False):
                 current = helper.bounded_file(_path, 1048576, owner=0, group=_group, mode=_mode)
                 require(current in (prior, following), 'identity_unknown_live_generation')
             partial = dict(old_hashes)
-            partial[source_name] = digest(helper.bounded_file(entries[0][0], 1048576, owner=0, group=0, mode=0o644))
+            for name in source_names:partial[name] = digest(helper.bounded_file(helper.SOURCE_ROOT/name,1048576,owner=0,group=0,mode=0o644))
             inventory = recovery_temporaries(helper, [(p, g, m, 1048576) for p,g,m,_b,_a in entries] + [(private / name, 0, 0o600, 8 << 20) for name in ('audit.json', 'recovery-audit.json')] + [(BASE / result_name, 0, 0o644, 16384)])
             records.append(CommandResult('preserved_interrupted_identity_publications', (), 0, canonical(inventory).decode(), ''))
-            allowed = [source_name + '.resume-next'] if any(row['path'] == str(entries[0][0]) + '.resume-next' for row in inventory) else []
+            allowed = [name+'.resume-next' for name in source_names if any(row['path']==str(helper.SOURCE_ROOT/name)+'.resume-next' for row in inventory)]
             closed_tree(helper, helper.SOURCE_ROOT, partial, preserved_temporaries=allowed)
             no_application(helper);control.stop_and_confirm();no_application(helper)
-            preserve_identity_source_temporary(helper, private, inventory, source_name=source_name)
+            for name in source_names:preserve_identity_source_temporary(helper,private,inventory,source_name=name)
         else:
             require(not private.exists() and not private.is_symlink(), 'identity_repair_already_attempted')
             safe_parent(private);private.mkdir(mode=0o700);retained.mkdir(mode=0o700)
@@ -718,12 +787,12 @@ def repair_identity(args, *, transport=False):
             atomic_file(helper, retained / 'manifest.json', manifest, group=0, mode=0o600)
             for i, (_path, _group, _mode, prior, _following) in enumerate(entries):
                 atomic_file(helper, private / ('before-' + str(i)), prior, group=0, mode=0o600)
-            verified, _manifest = identity_inputs(helper, retained, protected=True, transport=transport)
+            verified, _manifest = identity_inputs(helper, retained, protected=True, transport=transport,stream=stream)
             require(verified == new, 'identity_retained_inputs_changed')
         audit_path = private / ('recovery-audit.json' if args.recover else 'audit.json')
         def persist():
             require(len(records) <= 1024, 'identity_audit_count')
-            raw = canonical({'operation': 'task014_transport_repair' if transport else 'task014_identity_repair', 'phase': phase, 'workflow_sha': args.workflow_sha, 'records': [r.__dict__ for r in records], 'outcome': outcome})
+            raw = canonical({'operation': 'task014_stream_repair' if stream else 'task014_transport_repair' if transport else 'task014_identity_repair', 'phase': phase, 'workflow_sha': args.workflow_sha, 'records': [r.__dict__ for r in records], 'outcome': outcome})
             require(len(raw) <= 8 << 20, 'identity_audit_size')
             current = helper.bounded_file(audit_path, 8 << 20, owner=0, group=0, mode=0o600) if audit_path.exists() else None
             atomic_file(helper, audit_path, raw, group=0, mode=0o600, expected=current, temporary_suffix='.resume-recovery-next' if args.recover else '.resume-next')
@@ -761,13 +830,13 @@ def repair_identity(args, *, transport=False):
             print(raw.decode(), end='', flush=True)
         expected = expected_runtime(old)
         if args.recover:
-            restore();inspect_generation(helper, control, args.workflow_sha, recovering=True, transport_baseline=transport);control.reload_and_verify(expected)
+            restore();inspect_generation(helper, control, args.workflow_sha, recovering=True, transport_baseline=transport,stream_baseline=stream);control.reload_and_verify(expected)
             outcome = {'status': 'stopped_recovered', 'primary_error': None, 'recovery_errors': []}
             checkpoint('identity_restored_control_plane_stopped')
         else:
             def probe():
                 native_probe(helper, control, new, checkpoint, records, product_commit=new_commit)
-                if transport:native_transport_rejection(helper, control, new, checkpoint, records)
+                if transport or stream:native_transport_rejection(helper, control, new, checkpoint, records)
             outcome = resume_analytics(control, no_application=lambda: no_application(helper), prepare=prepare, restore=restore, expected=expected, probe=probe, checkpoint=checkpoint, broker_ready=broker_http_ready, complete=complete)
         if outcome['status'] != 'ready_for_signed_task014':complete(outcome)
         return 0 if outcome['status'] == 'ready_for_signed_task014' or args.recover and outcome['status'] == 'stopped_recovered' else 1
@@ -781,11 +850,13 @@ def main(argv=None):
     repairs = parser.add_mutually_exclusive_group()
     repairs.add_argument('--repair-identity', action='store_true')
     repairs.add_argument('--repair-transport', action='store_true')
+    repairs.add_argument('--repair-stream', action='store_true')
     args = parser.parse_args(argv)
     require(os.getuid() == os.geteuid() == 0 and socket.gethostname().split('.')[0] == 'omnilyzerdev', 'owner_local_dev_root_required')
     require(re.fullmatch(r'[a-f0-9]{40}', args.workflow_sha) and args.workflow_sha not in (CURRENT_WORKFLOW, '0' * 40), 'explicit_reviewed_workflow_required')
     if args.repair_identity:return repair_identity(args)
     if args.repair_transport:return repair_identity(args, transport=True)
+    if args.repair_stream:return repair_identity(args,stream=True)
     os.umask(0o077);helper = load_helper();records = [];phase = 'preflight';outcome = None
     with provisioning_lock():
         control = AnalyticsServiceControl(BROKER, LISTENER, EXECUTOR, audit=records.append)
