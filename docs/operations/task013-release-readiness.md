@@ -59,6 +59,16 @@ automatic early check exists until it is actually merged and tested.
   (`MichaelTrueX/omnilyzer` for Analytics) and the reviewed commit exists.
   Confirm required product CI, source manifest, critical-file hashes, Docker
   runtime profile and source-to-OCI binding for that exact commit.
+- [ ] Identify the **actual reviewed private-source PR head and ancestry**,
+  not just the repository's default `main`. Read the current PR state,
+  `isDraft`, `headRefOid`, `baseRefName`, inherited PRs and compare the exact
+  candidate SHA against private `main`. **Open, draft or stacked PRs are not
+  proof of merge approval.** Record the owner-approved immutable source SHA
+  and independent product acceptance; do not infer authorization from a public
+  platform release, a mutable PR branch, or unprotected source `main`.
+  Historical warning: Analytics `0.15.0` was signed from a reviewed PR
+  head rather than private `main`. Reverify live ancestry and PR state at
+  every release; historical branch status never grants future approval.
 - [ ] **Known current blocker for the next changed Analytics commit:**
   `release/products/analytics-source.json`, the release build candidate and
   two workflow checkouts still pin PR52 SHA
@@ -152,6 +162,15 @@ automatic early check exists until it is actually merged and tested.
   waiver. Fix the vulnerable canary base through its owning security change,
   not by hiding the existing `release/**` security check or weakening the
   original vulnerability policy.
+- [ ] **Canary base refresh:** require a supplier-verifiable, immutable OCI
+  base digest usable by the existing network-none BuildKit release. Check the
+  exact non-root UID 10001, `/usr/bin/python` entrypoint, migration and
+  `/readyz` behavior, original OCI labels, full pinned Syft-to-Grype policy,
+  and repeated identical OCI digests. A local Docker image ID, a successful
+  sandbox scan, or two matching Docker build IDs is **not** a distributable
+  signed base. If vendor package installation still fetches mutable transitive
+  dependencies, independently lock and verify exact package bytes offline;
+  otherwise HOLD rather than enabling build-time network access silently.
 
 ## 5. GO / HOLD handoff, dispatch and postrelease evidence
 
