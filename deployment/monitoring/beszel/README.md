@@ -32,6 +32,22 @@ environment variables, labels, commands, images, mounts, private IPs,
 interface names, secret data and nonessential Docker API fields. All mutations,
 logs, inspect and arbitrary requests are rejected before forwarding.
 
+### First-install correction (2026-10-31)
+
+The initial owner-authorized installation passed preflight but its proxy exited
+with `PermissionError` on `/run/user/991` because `ProtectHome=yes` in a
+systemd **system** service hides `/run/user` as well as home directories.
+The manifest-scoped failure rollback removed both new monitor services and
+all new installation files, while original Docker, Task014 and Beszel stayed
+online. This revision uses `ProtectHome=no` **only** for the two dedicated
+monitoring units and explicitly makes `/home`, `/root` and protected
+deployment directories inaccessible. The owner-private UID991 runtime
+remains 0700 and the filtered socket remains 0600. The agent still receives
+only a filtered socket in its independent Bubblewrap mount namespace.
+A regression check rejects reintroduction of `ProtectHome=yes` on either
+unit. The installer now reports a bounded, specific proxy-socket startup
+error instead of a raw `FileNotFoundError` if the proxy cannot start.
+
 The proxy process runs **as UID 991** with a Unix socket at
 `/run/user/991/beszel-metrics.sock` mode `0600`. The separate Beszel v0.21.1
 agent also runs as UID 991, but **inside a fresh bubblewrap filesystem and
