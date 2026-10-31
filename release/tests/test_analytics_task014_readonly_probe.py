@@ -6,6 +6,8 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -32,12 +34,12 @@ class ReadonlyAnalyticsProbeTests(unittest.TestCase):
                 return body, {'docker-content-digest':digest}
             self.assertEqual((route,reference,credential),('forgejo',probe.PINNED_VERSION,forgejo))
             return b'fixed-private-package', {}
-        def run(argv, **kwargs):
+        def run(argv, environment):
+            kwargs={'env':environment}
             self.assertNotIn(token,repr(argv));self.assertNotIn(token,repr(kwargs['env']))
             self.assertNotIn(forgejo,repr(argv));self.assertNotIn(forgejo,repr(kwargs['env']))
-            self.assertIn('--certificate-identity',argv);self.assertIn(probe.EXPECTED_CERTIFICATE_IDENTITY,argv)
-            self.assertIn('--certificate-oidc-issuer',argv);self.assertIn(probe.EXPECTED_CERTIFICATE_ISSUER,argv)
-            self.assertEqual(kwargs['stdout'],subprocess.DEVNULL);self.assertEqual(kwargs['stderr'],subprocess.DEVNULL)
+            self.assertIn(probe.EXPECTED_CERTIFICATE_IDENTITY,argv)
+            self.assertIn(probe.EXPECTED_CERTIFICATE_ISSUER,argv)
             home=Path(kwargs['env']['HOME']);directories.append(home)
             config=home/'.docker/config.json'
             self.assertEqual(home.stat().st_mode&0o777,0o700)
@@ -45,7 +47,8 @@ class ReadonlyAnalyticsProbeTests(unittest.TestCase):
             data=json.loads(config.read_bytes());encoded=data['auths'][probe.consumer.ZOT_HOST]['auth']
             self.assertEqual(base64.b64decode(encoded).decode(),'oidc:'+token)
             if argv[1]=='verify':self.assertEqual(argv[-1],probe.PINNED_IMAGE)
-            return subprocess.CompletedProcess(argv,1 if blob_failure and argv[1]=='verify-blob' and 'release-manifest.json' in argv[-1] else 0)
+            return (1 if blob_failure and argv[1]=='verify-blob' and 'release-manifest.json' in argv[-1] else 0,
+                    ('PRIVATE '+token).encode())
         output=io.StringIO()
         with patch.object(probe.time,'time',return_value=NOW), \
              patch.object(probe,'PINNED_DIGEST',digest), \
@@ -54,7 +57,7 @@ class ReadonlyAnalyticsProbeTests(unittest.TestCase):
              patch.object(probe,'_analytics_archive',side_effect=ValueError('PRIVATE '+forgejo) if archive_failure else None,return_value=(evidence,{})), \
              patch.object(probe,'_signed_fields',return_value=({},{})), \
              patch.object(probe.shutil,'which',return_value='/ci/cosign' if tool else None), \
-             patch.object(probe.subprocess,'run',side_effect=run) as process,redirect_stdout(output):
+             patch.object(probe,'_run_cosign',side_effect=run) as process,redirect_stdout(output):
             result=probe.run(ENVIRONMENT,token)
         issue.assert_called_once_with(ENVIRONMENT,audience=probe.original.FORGEJO_AUDIENCE)
         text=output.getvalue();self.assertNotIn(token,text);self.assertNotIn(forgejo,text);self.assertNotIn('PRIVATE',text)
@@ -102,6 +105,33 @@ class ReadonlyAnalyticsProbeTests(unittest.TestCase):
             with self.assertRaises(probe.original.ProbeUnavailableError):
                 probe.original._claims_preflight(synthetic_jwt(),ENVIRONMENT,NOW,audience='https://other.invalid')
         opener.assert_not_called()
+
+    def test_actual_child_stderr_is_bounded_during_capture(self):
+        with tempfile.TemporaryDirectory() as home:
+            with self.assertRaisesRegex(probe.CheckFailed,'COMMAND_OUTPUT_LIMIT'):
+                probe._run_cosign([sys.executable,'-c',"import sys;sys.stderr.buffer.write(b'x'*70000)"],
+                                  {'HOME':home})
+
+    def test_actual_child_error_is_classified_without_emitting_raw_text(self):
+        output=io.StringIO()
+        with tempfile.TemporaryDirectory() as home,redirect_stdout(output):
+            with self.assertRaisesRegex(probe.CheckFailed,'REGISTRY_ACCESS_DENIED'):
+                probe._cosign(sys.executable,['-c',"import sys;sys.stderr.write('UNAUTHORIZED PRIVATE_TOKEN');sys.exit(1)"],
+                              {'HOME':home})
+        self.assertEqual(output.getvalue(),'')
+
+    def test_expired_deadline_kills_and_reaps_actual_child(self):
+        actual=probe.subprocess.Popen;children=[]
+        def start(*args,**kwargs):
+            child=actual(*args,**kwargs);children.append(child);return child
+        with tempfile.TemporaryDirectory() as home, \
+             patch.object(probe.subprocess,'Popen',side_effect=start), \
+             patch.object(probe,'time') as clock:
+            clock.monotonic.side_effect=[0,91]
+            with self.assertRaisesRegex(probe.CheckFailed,'COMMAND_TIMEOUT'):
+                probe._run_cosign([sys.executable,'-c','import time;time.sleep(30)'],{'HOME':home})
+        self.assertEqual(len(children),1)
+        self.assertIsNotNone(children[0].returncode);self.assertTrue(children[0].stderr.closed)
 
 
 if __name__=='__main__':

@@ -462,7 +462,7 @@ class AnalyticsSignedReleaseConsumerTests(unittest.TestCase):
                 SyntheticBlobSignatureVerifier(), SyntheticOCISignatureVerifier(),
                 received_at=1700000000, zot_factory=zot,
             )
-        self.assertEqual(zot.calls[3][1],
+        self.assertEqual(zot.calls[1][1],
                          f"/v2/omnilyzer/analytics/manifests/{PINNED_DIGEST}")
 
     def test_bounded_gzip_decompression_includes_trailing_data(self):
@@ -493,11 +493,11 @@ class AnalyticsSignedReleaseConsumerTests(unittest.TestCase):
         })
         factory = Factory(Response(body, OCI_MEDIA_TYPE))
         _get("zot", PINNED_DIGEST, "synthetic", factory, product="analytics")
-        self.assertEqual(factory.calls[3][1],
+        self.assertEqual(factory.calls[1][1],
                          f"/v2/omnilyzer/analytics/manifests/{PINNED_DIGEST}")
         factory = Factory(Response(body, OCI_MEDIA_TYPE))
         _get("zot", PINNED_DIGEST, "synthetic", factory)
-        self.assertEqual(factory.calls[3][1],
+        self.assertEqual(factory.calls[1][1],
                          f"/v2/omnilyzer/task013-release-canary/manifests/{PINNED_DIGEST}")
         factory = Factory(Response(b"archive", "application/octet-stream"))
         _get("forgejo", PINNED_VERSION, "synthetic", factory, product="analytics")

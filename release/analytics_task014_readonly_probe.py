@@ -9,8 +9,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path
+import selectors
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -59,14 +62,69 @@ def _observed_factory(records: list[dict[str, object]], registry: str):
     return Connection
 
 
+class CheckFailed(Exception):
+    """Internal fixed diagnostic code, never external exception text."""
+
+
+def _run_cosign(argv: list[str], environment: dict[str, str]) -> tuple[int, bytes]:
+    """Reuse the original verifier's bounded pipe/deadline and pinned-PID cleanup."""
+    child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.PIPE, env=environment, cwd=environment['HOME'],
+                             start_new_session=True, close_fds=True)
+    output = bytearray()
+    deadline = time.monotonic() + 90
+    try:
+        os.set_blocking(child.stderr.fileno(), False)
+        with selectors.DefaultSelector() as selector:
+            selector.register(child.stderr, selectors.EVENT_READ)
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise CheckFailed('COMMAND_TIMEOUT')
+                for key, _event in selector.select(remaining):
+                    block = os.read(key.fileobj.fileno(), min(4096, 65537 - len(output)))
+                    output.extend(block)
+                    if len(output) > 65536:
+                        raise CheckFailed('COMMAND_OUTPUT_LIMIT')
+                    if not block:
+                        selector.unregister(key.fileobj)
+        # WNOWAIT preserves the child PID until its process group is cleaned.
+        while True:
+            state = os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+            if state is not None:
+                code = state.si_status if state.si_code == os.CLD_EXITED else -state.si_status
+                return code, bytes(output)
+            if time.monotonic() >= deadline:
+                raise CheckFailed('COMMAND_TIMEOUT')
+            time.sleep(0.01)
+    finally:
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            child.wait(timeout=2)
+        finally:
+            child.stderr.close()
+
+
 def _cosign(executable: str, args: list[str], environment: dict[str, str]) -> None:
-    """Use the existing pinned CI installer and original read-only Cosign flags."""
-    result = subprocess.run(
-        [executable, *args], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL, timeout=90, check=False, env=environment,
+    """Emit only fixed categories from bounded in-memory stderr; never raw text."""
+    code, stderr = _run_cosign([executable, *args], environment)
+    if code == 0:
+        return
+    lowered = stderr.lower()
+    categories = (
+        ('REGISTRY_ACCESS_DENIED', (b'unauthorized', b'forbidden', b'authentication required', b'denied')),
+        ('SIGNATURE_NOT_FOUND_OR_MATCHING', (b'no signatures found', b'no matching signatures')),
+        ('SIGNATURE_IDENTITY_MISMATCH', (b'certificate identity', b'certificate subject', b'oidc issuer')),
+        ('TRUST_MATERIAL_UNAVAILABLE', (b'tuf', b'trusted root', b'trust material')),
+        ('COMMAND_NETWORK_TIMEOUT', (b'deadline exceeded', b'timed out', b'timeout')),
     )
-    if result.returncode != 0:
-        raise original.ProbeUnavailableError('private Analytics diagnostic unavailable')
+    for label, markers in categories:
+        if any(marker in lowered for marker in markers):
+            raise CheckFailed(label)
+    raise CheckFailed('SIGNATURE_COMMAND_FAILED')
 
 
 def run(environment: Mapping[str, str], zot_token: str) -> int:
@@ -81,8 +139,11 @@ def run(environment: Mapping[str, str], zot_token: str) -> int:
             value = operation()
             checks.append({'name': name, 'status': 'PASS'})
             return value
-        except Exception:
-            checks.append({'name': name, 'status': 'HOLD'})
+        except Exception as error:
+            entry = {'name': name, 'status': 'HOLD'}
+            if type(error) is CheckFailed:
+                entry['code'] = str(error)
+            checks.append(entry)
             return None
 
     def blocked(name):
