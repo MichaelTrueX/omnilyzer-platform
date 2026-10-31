@@ -646,3 +646,43 @@ approved original Task014 root installation must verify and apply these
 exact service inputs, preserve the existing broker/canary and test the mount
 inside the real activated Analytics executor. Neither passing unit review
 nor the owner's earlier read-only root audit authorizes active deployment.
+
+
+## 2026-10-31: owner activation verified; authenticated metadata handoff
+
+The owner-local reviewed transition completed with
+`BROKER_AND_SOCKET_READY_FOR_SIGNED_TASK014`. Independent read-only checks
+verified all 70 installed Analytics source hashes at
+`b42bf8a804ebda94879776d0aa1d5221fa45bba3`, all four installed systemd assets,
+all 43 unchanged original Canary files, the active Analytics broker and socket,
+and HTTP 200 from the existing private Canary. Both root-controlled rollback
+backups remain retained. This is activation evidence, not application acceptance.
+PostgreSQL bootstrap is already complete and MUST NOT be rerun.
+
+The original signed Analytics 0.15.0 evidence remains the immutable private
+Forgejo package from Task013 run `40881693662`; do not rebuild or republish it.
+Task014 previously required three hashes before it could authenticate to read
+that package. For Analytics only, leave `release_manifest_sha256`,
+`provenance_sha256`, and `analytics_source_claim_sha256` ALL empty to resolve
+those request inputs inside the existing protected DEV job after its original
+three-audience OIDC diagnostic. The resolver reuses the exact private package
+GET, closed archive parser, and schema/scanner linkage checks. It never prints
+tokens or archive contents. A partial empty set is rejected; the existing
+complete explicit-hash path remains available. Canary input requirements and
+all broker signature/source/OIDC/replay verification remain unchanged.
+
+Dispatch still pins `product_id=analytics`, `target_stage=dev`,
+`release_version=0.15.0`,
+`source_sha=b9e22e745ecbaf96dc15998e91d1a74f70e5ad77`,
+`manifest_digest=sha256:6dbdc6319218b19257311d2885e9f697a75fc6066b4eef34068cc8ae6a51c1f1`,
+`originating_release_run_id=40881693662`, and
+`analytics_installed_commit=b42bf8a804ebda94879776d0aa1d5221fa45bba3`.
+The package-derived hashes remain UNTRUSTED request values until the root-owned
+broker independently downloads and cryptographically verifies the same release.
+This runner-only change does not replace the installed closed source generation.
+
+Before dispatch after this change merges, the broker's separately reviewed
+workflow-only authority must bind the exact new merged main SHA. Preserve its
+original Canary `reviewed_commit`, executor configuration, runtime/ingress pins,
+replay, database and secrets. Do not dispatch against the prior workflow pin or
+interpret this code fix as live functional/security/rollback acceptance.

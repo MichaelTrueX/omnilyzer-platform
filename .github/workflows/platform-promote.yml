@@ -28,7 +28,7 @@ on:
         type: string
         default: ""
       analytics_source_claim_sha256:
-        description: Signed external-source claim SHA256 (broker verified)
+        description: Signed source claim SHA256; leave all three hashes empty for authenticated lookup
         required: false
         type: string
         default: ""
@@ -54,12 +54,12 @@ on:
         type: string
         default: ""
       release_manifest_sha256:
-        description: Exact release-manifest.json SHA-256
+        description: Exact manifest SHA256; all three hashes may be empty for Analytics lookup
         required: false
         type: string
         default: ""
       provenance_sha256:
-        description: Exact release-provenance.json SHA-256
+        description: Exact provenance SHA256; all three hashes may be empty for Analytics lookup
         required: false
         type: string
         default: ""
@@ -128,18 +128,18 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "MichaelTrueX/omnilyzer-platform"
-          # Input fields can be empty only when the isolated diagnostic job
-          # is selected; a real promotion still requires every exact field.
+          # Analytics may resolve all three package hashes only AFTER the
+          # existing Forgejo OIDC issuance. Canary still requires all fields.
           test -n "$RELEASE_VERSION"
           test -n "$SOURCE_SHA"
           test -n "$MANIFEST_DIGEST"
-          test -n "$RELEASE_MANIFEST_SHA256"
-          test -n "$PROVENANCE_SHA256"
           test -n "$ORIGINATING_RELEASE_RUN_ID"
           test "$GITHUB_REF" = "refs/heads/main"
           if [ "$TASK014_PRODUCT" = analytics ]; then
             python3 -m deployment.analytics_ci_request --preflight
           elif [ "$TASK014_PRODUCT" = canary ]; then
+            test -n "$RELEASE_MANIFEST_SHA256"
+            test -n "$PROVENANCE_SHA256"
             request="$RUNNER_TEMP/task014-promotion-request.json"
           python3 -m deployment.promotion \
             --release-version "$RELEASE_VERSION" \
@@ -512,9 +512,14 @@ jobs:
           # creates schema-v2 bytes after GitHub issues the ephemeral OIDC JWT.
           # The original root-owned broker still verifies all actual authority.
           if os.environ.get("TASK014_PRODUCT") == "analytics":
-              from deployment.analytics_ci_request import build_analytics_ci_request
+              from deployment.analytics_ci_request import (
+                  build_analytics_ci_request, resolve_analytics_ci_release_inputs,
+              )
+              analytics_environment = resolve_analytics_ci_release_inputs(
+                  environment=os.environ, forgejo_oidc_token=forgejo_jwt,
+              )
               body = build_analytics_ci_request(
-                  deployment_oidc_token=deployment_jwt, environment=os.environ,
+                  deployment_oidc_token=deployment_jwt, environment=analytics_environment,
               )
           elif os.environ.get("TASK014_PRODUCT") in ("canary", None):
               path = Path(os.environ["RUNNER_TEMP"]) / "task014-dev-promotion-request.json"

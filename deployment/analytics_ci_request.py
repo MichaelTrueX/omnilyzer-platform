@@ -8,14 +8,15 @@ Related: .github/workflows/platform-promote.yml (original canary default),
          deployment/analytics_signed_release_consumer.py (pinned release),
          deployment/tests/test_analytics_ci_request.py.
 
-Sections: exact dispatch input preflight; unverified but bounded CI identity
-          field projection; canonical Analytics request creation; inert CLI.
+Sections: exact dispatch preflight; optional authenticated private metadata
+          lookup; unverified bounded identity projection; canonical request.
 
 SECURITY: CI decoding of a JWT NEVER authenticates it or grants a deployment.
 Only the existing protected Task014 broker independently verifies three OIDC
 audiences, signed Zot/Forgejo/Cosign release, root-owned source and replay.
-This module does not send a request, read secrets, install source or expose
-a new route. The original canary request creator is unchanged.
+The optional metadata lookup reuses only the existing short-lived Forgejo
+audience to read one pinned package. It does not send a broker request, read
+host secrets, install source or expose a route. Canary creation is unchanged.
 """
 from __future__ import annotations
 
@@ -64,6 +65,10 @@ _REQUIRED_INPUTS = (
     "ORIGINATING_RELEASE_RUN_ID", "ANALYTICS_INSTALLED_COMMIT",
     "ANALYTICS_SOURCE_CLAIM_SHA256",
 )
+_METADATA_INPUTS = (
+    "RELEASE_MANIFEST_SHA256", "PROVENANCE_SHA256",
+    "ANALYTICS_SOURCE_CLAIM_SHA256",
+)
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 
 
@@ -93,7 +98,9 @@ def _hash(value: object, length: int = 64) -> str:
     return value
 
 
-def validate_analytics_ci_inputs(environment: Mapping[str, str]) -> dict[str, str]:
+def validate_analytics_ci_inputs(
+    environment: Mapping[str, str], *, allow_metadata_resolution: bool = False,
+) -> dict[str, str]:
     """Check only selected release/runner input shape, not signed authority.
 
     The workflow has no product-wide allowlist: the sole supported Analytics
@@ -102,7 +109,7 @@ def validate_analytics_ci_inputs(environment: Mapping[str, str]) -> dict[str, st
     them with the signed release and actual root-controlled config.
     """
     try:
-        if not isinstance(environment, Mapping):
+        if not isinstance(environment, Mapping) or type(allow_metadata_resolution) is not bool:
             raise ValueError
         data = {key: environment.get(key) for key in _REQUIRED_INPUTS}
         if (
@@ -117,13 +124,67 @@ def validate_analytics_ci_inputs(environment: Mapping[str, str]) -> dict[str, st
             or _decimal(data["ORIGINATING_RELEASE_RUN_ID"]) != PINNED_RUN_ID
         ):
             raise ValueError
-        for key in (
-            "RELEASE_MANIFEST_SHA256", "PROVENANCE_SHA256",
-            "ANALYTICS_SOURCE_CLAIM_SHA256",
-        ):
-            _hash(data[key])
+        unresolved = all(data[key] == "" for key in _METADATA_INPUTS)
+        if not (allow_metadata_resolution and unresolved):
+            for key in _METADATA_INPUTS:
+                _hash(data[key])
         _hash(data["ANALYTICS_INSTALLED_COMMIT"], 40)
         return data
+    except _CONTROL:
+        raise
+    except Exception:
+        raise AnalyticsCIDispatchError(_ERROR) from None
+
+
+def resolve_analytics_ci_release_inputs(
+    *, environment: Mapping[str, str], forgejo_oidc_token: str,
+) -> dict[str, str]:
+    """Read exact private release metadata using the existing Forgejo audience.
+
+    These hashes are UNTRUSTED request inputs, not signature or deployment
+    authority. The original broker still independently downloads/verifies the
+    immutable package, signatures, source, OIDC and replay before deployment.
+    Preserve explicit manual inputs; only the all-empty three-hash mode reads
+    the one pinned Analytics package. Never print tokens or archive contents.
+    """
+    try:
+        selected = validate_analytics_ci_inputs(
+            environment, allow_metadata_resolution=True,
+        )
+        resolved = dict(environment)
+        if all(selected[key] for key in _METADATA_INPUTS):
+            return resolved
+        if (
+            type(forgejo_oidc_token) is not str
+            or not 1 <= len(forgejo_oidc_token) <= 8192
+            or not forgejo_oidc_token.isascii()
+            or any(ord(c) < 33 or ord(c) > 126 for c in forgejo_oidc_token)
+            or _decode_untrusted(forgejo_oidc_token).get("aud")
+            != "u:3:d4f50b90-f001-4b9f-ad1e-487080ec44fb"
+        ):
+            raise ValueError
+        from .release_consumer import _get, _connection
+        from .analytics_signed_release_consumer import _analytics_archive, _signed_fields
+
+        archive, _headers = _get(
+            "forgejo", PINNED_VERSION, forgejo_oidc_token, _connection,
+            product="analytics",
+        )
+        evidence, scanner_hashes = _analytics_archive(archive)
+        manifest, _provenance = _signed_fields(evidence, scanner_hashes)
+        resolved.update({
+            "RELEASE_MANIFEST_SHA256": hashlib.sha256(
+                evidence["release-manifest.json"],
+            ).hexdigest(),
+            "PROVENANCE_SHA256": hashlib.sha256(
+                evidence["release-provenance.json"],
+            ).hexdigest(),
+            "ANALYTICS_SOURCE_CLAIM_SHA256": hashlib.sha256(
+                canonical_bytes(manifest["external_source"]),
+            ).hexdigest(),
+        })
+        validate_analytics_ci_inputs(resolved)
+        return resolved
     except _CONTROL:
         raise
     except Exception:
@@ -264,7 +325,7 @@ def main() -> int:
     """Read-only workflow gate, no OIDC token, network, files or privileges."""
     if sys.argv[1:] != ["--preflight"]:
         return 2
-    validate_analytics_ci_inputs(os.environ)
+    validate_analytics_ci_inputs(os.environ, allow_metadata_resolution=True)
     print("analytics_task014_preflight_ok")
     return 0
 
