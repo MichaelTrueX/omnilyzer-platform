@@ -71,6 +71,32 @@ class OwnerAuthority(unittest.TestCase):
             self.assertEqual(checks[name]['status'], 'BLOCKED')
             self.assertEqual(checks[name]['dependency'], 'postgres_identity')
 
+    def test_changed_manifest_second_read_cannot_poison_retained_authority(self):
+        raw = b'reviewed-asset'
+        rows = [{'name': 'asset-' + str(i).zfill(2), 'size': len(raw), 'sha256': owner.digest(raw)} for i in range(8)]
+        helper = SimpleNamespace(stage_manifest=Mock(return_value={'assets': rows}), bounded_file=Mock(side_effect=lambda path, maximum, **kwargs: b'changed-manifest' if path.name == 'manifest.json' else raw))
+        with redirect_stdout(io.StringIO()), self.assertRaisesRegex(owner.ServiceFailure, 'identity_manifest_changed'):
+            owner.identity_inputs(helper, Path('/synthetic-unread-stage'), protected=False)
+
+    def test_failed_recovery_readback_cannot_report_success(self):
+        failure = OSError('simulated_readback_io_failure')
+        verify = Mock(side_effect=failure)
+        value = {'status': 'stopped_recovered', 'primary_error': 'ServiceFailure:original_probe_error', 'recovery_errors': []}
+        self.assertFalse(owner.identity_completion_verified(value, verify))
+        self.assertEqual(value['status'], 'manual_recovery_required')
+        self.assertEqual(value['primary_error'], 'ServiceFailure:original_probe_error')
+        self.assertEqual(value['recovery_errors'], ['OSError:simulated_readback_io_failure'])
+        with self.assertRaises(OSError) as caught:
+            owner.identity_completion_verified({'status': 'ready_for_signed_task014'}, verify)
+        self.assertIs(caught.exception, failure)
+
+    def test_probe_public_errors_use_only_closed_observed_phases(self):
+        with self.assertRaisesRegex(owner.ServiceFailure, '^executor_bootstrap_installed_source$'):
+            owner.require_credential_rejection(b'TASK014_ANALYTICS_BOOTSTRAP_DENIED phase=installed_source\n')
+        with self.assertRaisesRegex(owner.ServiceFailure, '^actual_executor_credential_boundary_not_reached$'):
+            owner.require_credential_rejection(b'untrusted-log-secret-example')
+        self.assertIsNone(owner.require_credential_rejection(b'TASK014_EXECUTOR_FAILURE boundary=handler phase=sealed_fd_receive\n'))
+
     def test_bundled_owner_keeps_the_reviewed_service_logic_unchanged(self):
         from deployment import analytics_service_recovery as services
         service_source = Path(services.__file__).read_bytes()

@@ -19,6 +19,60 @@ Authorization: This document cannot grant root source installation, activate
 # M05-14 — Analytics signed 0.15.0 via existing Task014 (current handover)
 
 
+
+## Current correction: loader/startup identity handoff (2026-10-31)
+
+The owner executed bundlee43bc2a8 against workflow78436960. All162 independent
+preflight checks and actual executor context/source/private-mount/Docker-ping
+checks passed. Actual FD3 activation failed with
+TASK014_ANALYTICS_BOOTSTRAP_DENIED phase=installed_source. The root-private audit
+and actual journal agreed; this was not a missing journal marker. Recovery
+restored workflow75091ed2 with no recovery errors and stopped controls.
+The existing application stayed healthy. No signed request was dispatched.
+
+The original installation contract returns eight Canary composition identities,
+including two state-owner fields. The Analytics loader expanded that mapping
+and added two executor fields, producing ten. Analytics bootstrap/composition
+accept exactly eight. The corrected loader selects six shared identities and
+adds the verified executor pair. A regression uses the real original producer
+and loader, enters unchanged bootstrap and binds composition arguments to its
+real signature. It fails before the fix at the observed phase. Earlier isolated
+startup tests supplied eight identities directly and missed this handoff.
+
+The fixed product source is4a6cae5fb81eed894dee406c45dbd3417448b0d5.
+The existing immutable-Git input builder produced manifest
+e2f23bbecd900178391fc9574e5acd137df511b05626089c60cd8d40b4bd9374.
+Exactly one of70 installed files changes:
+deployment/analytics_executor_service_config.py. Original Canary43, other69
+Analytics files, all unit bytes, signed application0.15.0 and release evidence
+are preserved. Four source-authority assets are updated coherently with it.
+
+The reviewed owner entrypoint's explicit --repair-identity mode uses the same
+tested lifecycle core. It first verifies the complete installed0b8342 baseline
+and fixed new inputs, retains all six exact preimages and new input bytes
+under .analytics-pr271-identity-20261031, and publishes only the loader,
+broker/executor product configs, source approval/archive and separately approved
+workflow field. Native CI injects failure after each of those six publications
+and requires complete restoration with controls stopped. Unknown preimages block
+all writes. Explicit recovery qualifies retained intent and known partial
+generation before stopping active controls. It preserves the qualified source
+temporary under root-private evidence before enforcing strict closed70 again,
+preserves other normal crash temporaries and refuses interrupted recovery
+publications for manual inspection. The retained manifest hash is rechecked on
+every read; all protected retained inputs are reverified before cutover.
+
+Actual context now validates the loader's exact eight-field result too. The
+real installed FD3 entrypoint must still reject the uncredentialed probe at
+sealed_fd_receive before readiness is reported. Detailed evidence remains
+root-private; the separate analytics-task014-identity-result.json reports only
+safe status and verified source/workflow identity. Known executor failures use
+closed phase codes without exposing journal text. Failed final recovery readback
+reports manual_recovery_required with unknown identities and a nonzero exit.
+Root execution binds the
+exact bundle hash AND eventual merged workflow SHA. No database bootstrap,
+secret changes, replay reset, image rebuild or production action is involved.
+Control-plane readiness is not signed deployment or application acceptance.
+
 ## Current owner recovery: stopped coherent PR269 generation (2026-10-31)
 
 The owner-captured durable phase is workflow_only_authority_published.
