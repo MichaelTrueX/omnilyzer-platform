@@ -354,5 +354,43 @@ RestrictNamespaces=yes
 
 
 
+    def test_identity_publication_failure_at_each_file_restores_whole_generation(self):
+        from deployment import analytics_task014_resume as owner
+        helper = SimpleNamespace(bounded_file=self.read_root_fixture)
+        entries = []
+        for i, (group, mode) in enumerate(((0,0o644),(990,0o640),(991,0o640),(0,0o600),(0,0o600),(990,0o640))):
+            path = self.base / ('generation-' + str(i))
+            before, after = ('old-' + str(i)).encode(), ('new-' + str(i)).encode()
+            owner.atomic_file(helper, path, before, group=group, mode=mode)
+            entries.append((path, group, mode, before, after))
+        real_atomic = owner.atomic_file
+        for failed_index in range(6):
+            armed = True
+            def interrupted(helper, path, raw, **kwargs):
+                nonlocal armed
+                real_atomic(helper, path, raw, **kwargs)
+                if armed and path == entries[failed_index][0] and raw == entries[failed_index][4]:
+                    armed = False
+                    raise OSError('injected_after_file_' + str(failed_index))
+            with patch.object(owner, 'atomic_file', side_effect=interrupted):
+                result = resume_analytics(
+                    self.control, no_application=lambda: None,
+                    prepare=lambda: owner.publish_identity_files(helper, entries, forward=True, checkpoint=lambda phase: None),
+                    restore=lambda: owner.publish_identity_files(helper, entries, forward=False, checkpoint=lambda phase: None),
+                    expected=self.expected, probe=lambda: self.fail('partial_source_must_not_activate'), checkpoint=lambda phase: None,
+                )
+            self.assertEqual(result['status'], 'stopped_recovered', result)
+            self.assertIn('injected_after_file_' + str(failed_index), result['primary_error'])
+            self.control.require_stopped()
+            for path, group, mode, before, _after in entries:
+                self.assertEqual(self.read_root_fixture(path, 100, owner=0, group=group, mode=mode), before)
+        # Qualify every preimage before publishing even the first file.
+        entries[-1][0].write_bytes(b'unknown')
+        with self.assertRaisesRegex(owner.ServiceFailure, 'identity_live_preimage'):
+            owner.publish_identity_files(helper, entries, forward=True, checkpoint=lambda phase: None)
+        self.assertEqual(entries[0][0].read_bytes(), entries[0][3])
+
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

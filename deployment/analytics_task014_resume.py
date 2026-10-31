@@ -4,7 +4,8 @@ Purpose: Owner-local resume of the already installed PR269 Analytics generation.
 Related: analytics_service_recovery.py; original root readiness helper02af57b8;
          Task014 issue27; docs/operations/m05-14-task014-analytics-runtime-20261029.md.
 
-No import-time action. Never installs source, rebuilds a release, accepts an
+No import-time action. Identity repair replaces only the frozen loader source
+and its exact source/config authority. Never rebuilds a release, accepts an
 unsigned deployment, reads application secrets or writes a database. The exact
 owner-reviewed bundle and explicit workflow SHA are the administrative grant.
 """
@@ -14,6 +15,7 @@ import argparse
 from contextlib import contextmanager
 import fcntl
 import hashlib
+import io
 import importlib.util
 import json
 import os
@@ -24,6 +26,7 @@ import stat
 import subprocess
 import sys
 import time
+import tarfile
 from urllib import request, error
 
 from deployment.analytics_service_recovery import AnalyticsServiceControl, CommandResult, ServiceFailure, resume_analytics, _capture_command
@@ -265,8 +268,9 @@ assert os.getuid()==os.geteuid()==991 and os.getgid()==991
 sys.path.insert(0,'/opt/omnilyzer/deployment/analytics-app')
 from deployment.analytics_executor_service_config import load_analytics_executor_service_config
 source,identities=load_analytics_executor_service_config()
-assert source['reviewed_installed_commit']=='0b8342c63dff6375004d979e8cfdf0d815f214d9'
-expected=json.loads(sys.argv[1]);parent='/run/omnilyzer/deployment';leaf=parent+'/rootless-docker'
+expected=json.loads(sys.argv[1]);assert source['reviewed_installed_commit']==expected.pop('product_commit')
+assert set(identities)=={'expected_replay_directory_uid','expected_replay_directory_gid','expected_broker_uid','expected_broker_gid','expected_executor_uid','expected_executor_gid','expected_socket_owner_uid','expected_socket_group_gid'}
+parent='/run/omnilyzer/deployment';leaf=parent+'/rootless-docker'
 mounts={}
 for line in open('/proc/self/mountinfo'):
     left,right=line.split(' - ',1);a=left.split();b=right.split();mounts[a[4]]=(a[5].split(','),b[0])
@@ -313,11 +317,11 @@ def native_command(argv, label, records, timeout=30):
     return record.stdout.encode('utf-8')
 
 
-def native_probe(helper, control, assets, checkpoint, records):
+def native_probe(helper, control, assets, checkpoint, records, *, product_commit=PRODUCT_COMMIT):
     """Actual executor context plus real FD3 entrypoint rejection, no release."""
     probe_state = helper.command(('/usr/bin/systemctl', 'show', PROBE, '-p', 'LoadState')).strip()
     require(probe_state == b'LoadState=not-found', 'probe_unit_already_present')
-    expected = {}
+    expected = {'product_commit': product_commit}
     for name, path, uid, gid, mode in (
         ('listener', Path('/run/omnilyzer/deployment/analytics-executor.sock'), 991, 993, 0o660),
         ('daemon', Path('/run/user/991/docker.sock'), 991, 991, 0o1660),
@@ -388,11 +392,12 @@ def native_probe(helper, control, assets, checkpoint, records):
     checkpoint('actual_fd3_credential_rejection_passed')
 
 
-def recovery_temporaries(helper):
+def recovery_temporaries(helper, targets=None):
     """Preserve interrupted normal writes; never adopt or remove their bytes."""
     inventory = []
-    targets = [(helper.BROKER_CONFIG, 990, 0o640, 4096), (PUBLIC, 0, 0o644, 16384)]
-    targets += [(PRIVATE / name, 0, 0o600, 8 << 20) for name in ('broker-before.json', 'broker-target.json', 'audit.json', 'recovery-audit.json')]
+    if targets is None:
+        targets = [(helper.BROKER_CONFIG, 990, 0o640, 4096), (PUBLIC, 0, 0o644, 16384)]
+        targets += [(PRIVATE / name, 0, 0o600, 8 << 20) for name in ('broker-before.json', 'broker-target.json', 'audit.json', 'recovery-audit.json')]
     for path, group, mode, limit in targets:
         for suffix in ('.resume-next', '.resume-recovery-next'):
             temporary = path.with_name(path.name + suffix)
@@ -431,13 +436,179 @@ def recovery_intent(helper, control, target):
     return inventory
 
 
+IDENTITY_TARGET = '4a6cae5fb81eed894dee406c45dbd3417448b0d5'
+IDENTITY_STAGE = Path('/home/omnigpt/repos/omnilyzer-platform/.m05-14-release-review/analytics-task014-identity-4a6cae5f-20261031')
+IDENTITY_MANIFEST = 'e2f23bbecd900178391fc9574e5acd137df511b05626089c60cd8d40b4bd9374'
+IDENTITY_PRIVATE = BASE / '.analytics-pr271-identity-20261031'
+IDENTITY_SOURCE = 'deployment/analytics_executor_service_config.py'
+
+
+def identity_inputs(helper, folder, *, protected):
+    """Frozen unsigned inputs are data, never self-authorizing source."""
+    checks = [];assets = {}
+    manifest = helper.stage_manifest(folder, IDENTITY_MANIFEST, IDENTITY_TARGET)
+    for i, row in enumerate(manifest['assets']):
+        try:
+            raw = helper.bounded_file(folder / row['name'], 1048576, **({'owner': 0, 'group': 0, 'mode': 0o600} if protected else {}))
+            require(len(raw) == row['size'] and digest(raw) == row['sha256'], 'identity_input_hash')
+            assets[i] = raw
+        except Exception:checks.append(i)
+    print(json.dumps({'operation': 'read_only_identity_inputs', 'mismatched_asset_indices': checks}), flush=True)
+    require(not checks and len(assets) == 8, 'identity_inputs_incomplete')
+    return assets, helper.bounded_file(folder / 'manifest.json', 16384, **({'owner': 0, 'group': 0, 'mode': 0o600} if protected else {}))
+
+
+def identity_delta(helper, old, new):
+    """Only one platform loader changes; immutable application stays fixed."""
+    old_model, old_hashes = helper.source_model(old[7], PRODUCT_COMMIT)
+    new_model, new_hashes = helper.source_model(new[7], IDENTITY_TARGET)
+    require(set(old_hashes) == set(new_hashes) and sorted(p for p in old_hashes if old_hashes[p] != new_hashes[p]) == [IDENTITY_SOURCE], 'identity_source_delta')
+    for key in ('inherited_canary_sha256', 'shared_preimage_sha256', 'shared_preimage_commits'):
+        require(old_model[key] == new_model[key], 'identity_canary_delta')
+    require(all(old[i] == new[i] for i in (3, 4, 5, 6)), 'identity_unit_delta')
+    config = json.loads(old[0], object_pairs_hook=helper.unique)
+    config['reviewed_installed_commit'] = IDENTITY_TARGET
+    config['source_sha256'][IDENTITY_SOURCE] = new_hashes[IDENTITY_SOURCE]
+    require(new[0] == new[1] == canonical(config), 'identity_configuration_delta')
+    approval = json.loads(old[2], object_pairs_hook=helper.unique)
+    with tarfile.open(fileobj=io.BytesIO(new[7]), mode='r:') as tar:
+        source_manifest = tar.extractfile('.omnilyzer-analytics-source-review.json').read(16385)
+    approval.update(reviewed_commit=IDENTITY_TARGET, archive_sha256=digest(new[7]), manifest_sha256=digest(source_manifest))
+    require(new[2] == canonical(approval), 'identity_approval_delta')
+    def payload(archive):
+        with tarfile.open(fileobj=io.BytesIO(archive), mode='r:') as tar:
+            return tar.extractfile(IDENTITY_SOURCE).read(1048577)
+    old_source, new_source = payload(old[7]), payload(new[7])
+    require(digest(old_source) == old_hashes[IDENTITY_SOURCE] and digest(new_source) == new_hashes[IDENTITY_SOURCE], 'identity_loader_hash')
+    return old_hashes, new_hashes, old_source, new_source
+
+
+def publish_identity_files(helper, entries, *, forward, checkpoint):
+    """Validate the whole six-file preimage before any atomic publication."""
+    currents = []
+    for path, group, mode, before, after in entries:
+        current = helper.bounded_file(path, 1048576, owner=0, group=group, mode=mode)
+        require(current == before if forward else current in (before, after), 'identity_live_preimage')
+        currents.append(current)
+    for i, ((path, group, mode, before, after), current) in enumerate(zip(entries, currents, strict=True)):
+        wanted = after if forward else before
+        if current != wanted:
+            atomic_file(helper, path, wanted, group=group, mode=mode, expected=current, temporary_suffix='.resume-next' if forward else '.resume-recovery-next')
+        checkpoint(('published_' if forward else 'restored_') + str(i))
+    for path, group, mode, before, after in entries:
+        require(helper.bounded_file(path, 1048576, owner=0, group=group, mode=mode) == (after if forward else before), 'identity_publication_readback')
+
+
+def repair_identity(args):
+    """Fixed one-file source correction through the reviewed lifecycle core."""
+    os.umask(0o077);helper = load_helper();records = [];phase = 'identity_preflight';outcome = None
+    private = IDENTITY_PRIVATE;retained = private / 'new-inputs'
+    with provisioning_lock():
+        control = AnalyticsServiceControl(BROKER, LISTENER, EXECUTOR, audit=records.append)
+        if not args.recover:
+            old, before, after = inspect_generation(helper, control, args.workflow_sha)
+            new, manifest = identity_inputs(helper, IDENTITY_STAGE, protected=False)
+        else:
+            safe_parent(private / 'child');m = private.lstat()
+            require((m.st_uid, m.st_gid, stat.S_IMODE(m.st_mode)) == (0, 0, 0o700), 'identity_recovery_directory')
+            old_manifest = helper.stage_manifest(STAGE, MANIFEST_SHA, PRODUCT_COMMIT)
+            old = {i: helper.bounded_file(STAGE / row['name'], 1048576, owner=0, group=0, mode=0o600) for i, row in enumerate(old_manifest['assets'])}
+            require(all(digest(old[i]) == row['sha256'] and len(old[i]) == row['size'] for i, row in enumerate(old_manifest['assets'])), 'identity_old_stage_hash')
+            new, manifest = identity_inputs(helper, retained, protected=True)
+            original = helper.bounded_file(ORIGINAL_BROKER, 4096, owner=0, group=0, mode=0o600)
+            require(digest(original) == ORIGINAL_BROKER_SHA, 'identity_original_authority')
+            base = json.loads(original, object_pairs_hook=helper.unique)
+            before = canonical({**base, 'expected_workflow_sha': CURRENT_WORKFLOW})
+            after = canonical({**base, 'expected_workflow_sha': args.workflow_sha})
+        old_hashes, new_hashes, old_source, new_source = identity_delta(helper, old, new)
+        entries = [(helper.SOURCE_ROOT / IDENTITY_SOURCE, 0, 0o644, old_source, new_source)]
+        entries += [(Path(helper.DESTINATIONS[i]), helper.GROUPS[i], helper.MODES[i], old[i], new[i]) for i in (0, 1, 2, 7)]
+        entries.append((helper.BROKER_CONFIG, 990, 0o640, before, after))
+        if args.recover:
+            # Qualify retained intent and every known live byte BEFORE stopping.
+            for i, (_path, _group, _mode, prior, following) in enumerate(entries):
+                require(helper.bounded_file(private / ('before-' + str(i)), 1048576, owner=0, group=0, mode=0o600) == prior, 'identity_backup_preimage')
+                current = helper.bounded_file(_path, 1048576, owner=0, group=_group, mode=_mode)
+                require(current in (prior, following), 'identity_unknown_live_generation')
+            partial = dict(old_hashes)
+            partial[IDENTITY_SOURCE] = digest(helper.bounded_file(entries[0][0], 1048576, owner=0, group=0, mode=0o644))
+            closed_tree(helper, helper.SOURCE_ROOT, partial)
+            inventory = recovery_temporaries(helper, [(p, g, m, 1048576) for p,g,m,_b,_a in entries] + [(private / name, 0, 0o600, 8 << 20) for name in ('audit.json', 'recovery-audit.json')] + [(BASE / 'analytics-task014-identity-result.json', 0, 0o644, 16384)])
+            records.append(CommandResult('preserved_interrupted_identity_publications', (), 0, canonical(inventory).decode(), ''))
+            no_application(helper);control.stop_and_confirm();no_application(helper)
+        else:
+            require(not private.exists() and not private.is_symlink(), 'identity_repair_already_attempted')
+            safe_parent(private);private.mkdir(mode=0o700);retained.mkdir(mode=0o700)
+            for parent in (BASE, private):
+                fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+                try:os.fsync(fd)
+                finally:os.close(fd)
+            for i, raw in new.items():atomic_file(helper, retained / ('asset-' + str(i).zfill(2)), raw, group=0, mode=0o600)
+            atomic_file(helper, retained / 'manifest.json', manifest, group=0, mode=0o600)
+            for i, (_path, _group, _mode, prior, _following) in enumerate(entries):
+                atomic_file(helper, private / ('before-' + str(i)), prior, group=0, mode=0o600)
+        audit_path = private / ('recovery-audit.json' if args.recover else 'audit.json')
+        def persist():
+            require(len(records) <= 1024, 'identity_audit_count')
+            raw = canonical({'operation': 'task014_identity_repair', 'phase': phase, 'workflow_sha': args.workflow_sha, 'records': [r.__dict__ for r in records], 'outcome': outcome})
+            require(len(raw) <= 8 << 20, 'identity_audit_size')
+            current = helper.bounded_file(audit_path, 8 << 20, owner=0, group=0, mode=0o600) if audit_path.exists() else None
+            atomic_file(helper, audit_path, raw, group=0, mode=0o600, expected=current, temporary_suffix='.resume-recovery-next' if args.recover else '.resume-next')
+        def audit(record):records.append(record);persist()
+        control.audit = audit
+        def checkpoint(value):
+            nonlocal phase
+            phase = value;persist();print('IDENTITY_PHASE', phase, flush=True)
+        def generation(wanted, hashes):
+            closed_tree(helper, helper.SOURCE_ROOT, hashes)
+            for i, raw in wanted.items():
+                require(helper.bounded_file(Path(helper.DESTINATIONS[i]), 1048576, owner=0, group=helper.GROUPS[i], mode=helper.MODES[i]) == raw, 'identity_generation_readback')
+        def restore():
+            publish_identity_files(helper, entries, forward=False, checkpoint=checkpoint)
+            generation(old, old_hashes)
+        def prepare():
+            publish_identity_files(helper, entries, forward=True, checkpoint=checkpoint)
+            generation(new, new_hashes)
+        def complete(value):
+            nonlocal outcome
+            outcome = value;persist()
+            product = None;workflow = None
+            try:
+                if value['status'] == 'ready_for_signed_task014':
+                    generation(new, new_hashes);wanted = after;product = IDENTITY_TARGET;workflow = args.workflow_sha
+                elif value['status'] == 'stopped_recovered':
+                    generation(old, old_hashes);wanted = before;product = PRODUCT_COMMIT;workflow = CURRENT_WORKFLOW
+                else:wanted = None
+                if wanted is not None:require(helper.bounded_file(helper.BROKER_CONFIG, 4096, owner=0, group=990, mode=0o640) == wanted, 'identity_workflow_readback')
+            except Exception:
+                if value['status'] == 'ready_for_signed_task014':raise
+                product = None;workflow = None
+            raw = canonical({'status': value['status'], 'phase': phase, 'error_code': public_error(value), 'product_commit': product, 'workflow_sha': workflow, 'requested_workflow_sha': args.workflow_sha, 'application_acceptance': 'NOT_YET_VERIFIED', 'signed_task014_dispatch': False, 'database_or_secret_changes': False})
+            result = BASE / 'analytics-task014-identity-result.json'
+            current = helper.bounded_file(result, 16384, owner=0, group=0, mode=0o644) if result.exists() else None
+            atomic_file(helper, result, raw, group=0, mode=0o644, expected=current, temporary_suffix='.resume-recovery-next' if args.recover else '.resume-next')
+            print(raw.decode(), end='', flush=True)
+        expected = expected_runtime(old)
+        if args.recover:
+            restore();inspect_generation(helper, control, args.workflow_sha);control.reload_and_verify(expected)
+            outcome = {'status': 'stopped_recovered', 'primary_error': None, 'recovery_errors': []}
+            checkpoint('identity_restored_control_plane_stopped')
+        else:
+            outcome = resume_analytics(control, no_application=lambda: no_application(helper), prepare=prepare, restore=restore, expected=expected, probe=lambda: native_probe(helper, control, new, checkpoint, records, product_commit=IDENTITY_TARGET), checkpoint=checkpoint, broker_ready=broker_http_ready, complete=complete)
+        if outcome['status'] != 'ready_for_signed_task014':complete(outcome)
+        return 0 if outcome['status'] == 'ready_for_signed_task014' or args.recover and outcome['status'] == 'stopped_recovered' else 1
+
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Owner-local frozen Analytics resume')
     parser.add_argument('--workflow-sha', required=True)
     parser.add_argument('--recover', action='store_true')
+    parser.add_argument('--repair-identity', action='store_true')
     args = parser.parse_args(argv)
     require(os.getuid() == os.geteuid() == 0 and socket.gethostname().split('.')[0] == 'omnilyzerdev', 'owner_local_dev_root_required')
     require(re.fullmatch(r'[a-f0-9]{40}', args.workflow_sha) and args.workflow_sha not in (CURRENT_WORKFLOW, '0' * 40), 'explicit_reviewed_workflow_required')
+    if args.repair_identity:return repair_identity(args)
     os.umask(0o077);helper = load_helper();records = [];phase = 'preflight';outcome = None
     with provisioning_lock():
         control = AnalyticsServiceControl(BROKER, LISTENER, EXECUTOR, audit=records.append)
