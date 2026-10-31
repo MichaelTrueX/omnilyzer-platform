@@ -22,6 +22,7 @@ import time
 import unittest
 import uuid
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from deployment.analytics_service_recovery import AnalyticsServiceControl, resume_analytics
@@ -118,6 +119,8 @@ After={self.units[1]}
 Type=exec
 User=65534
 Group=65534
+SupplementaryGroups=65534
+WorkingDirectory={self.base}
 ExecStart=/usr/bin/python3 -I -B {self.child}
 NoNewPrivileges=yes
 PrivateTmp=yes
@@ -135,9 +138,9 @@ RestrictNamespaces=yes
         for unit, data in zip(self.units, (self.broker_bytes, self.socket_bytes, self.executor_bytes), strict=True):
             self.paths[unit].write_text(data);self.paths[unit].chmod(0o644)
         self.expected = {
-            self.units[0]: {'User': '65534', 'ExecStart': '/usr/bin/sleep infinity', 'ExecStartPost': '', 'NoNewPrivileges': 'yes'},
+            self.units[0]: {'FragmentPath': str(self.paths[self.units[0]]), 'DropInPaths': '', 'Group': '65534', 'User': '65534', 'ExecStart': '/usr/bin/sleep infinity', 'ExecStartPost': '', 'NoNewPrivileges': 'yes'},
             self.units[1]: {'FragmentPath': str(self.paths[self.units[1]])},
-            self.units[2]: {'User': '65534', 'ExecStart': '/usr/bin/python3 -I -B ' + str(self.child), 'ProtectSystem': 'strict', 'ReadWritePaths': str(self.base / 'state')},
+            self.units[2]: {'FragmentPath': str(self.paths[self.units[2]]), 'DropInPaths': '', 'WorkingDirectory': str(self.base), 'User': '65534', 'Group': '65534', 'SupplementaryGroups': '65534', 'ExecStart': '/usr/bin/python3 -I -B ' + str(self.child), 'NoNewPrivileges': 'yes', 'PrivateTmp': 'yes', 'PrivateDevices': 'yes', 'ProtectHome': 'yes', 'ProtectSystem': 'strict', 'ReadWritePaths': str(self.base / 'state'), 'TemporaryFileSystem': f'{self.parent}:mode=0755,uid=0,gid=0 {self.leaf}:mode=0700,uid=65534,gid=65534', 'BindReadOnlyPaths': f'{self.base}/docker.sock:{self.leaf}/docker.sock:rbind {self.parent}/analytics.sock:{self.parent}/analytics.sock:rbind', 'CapabilityBoundingSet': '', 'AmbientCapabilities': ''},
         }
         self.addCleanup(self.clean)
         self.control.reload_and_verify(self.expected)
@@ -298,13 +301,15 @@ RestrictNamespaces=yes
         self.assertIn('injected_final_audit_failure', result['primary_error'])
         self.control.require_stopped()
 
+    def read_root_fixture(self, path, maximum, *, owner, group, mode):
+        m = Path(path).lstat()
+        self.assertTrue(stat.S_ISREG(m.st_mode))
+        self.assertEqual((m.st_uid, m.st_gid, stat.S_IMODE(m.st_mode), m.st_nlink), (owner, group, mode, 1))
+        data = Path(path).read_bytes();self.assertLessEqual(len(data), maximum);return data
+
     def test_owner_metadata_publication_and_exact_restore_are_durable(self):
         from deployment.analytics_task014_resume import atomic_file, ServiceFailure
-        def read(path, maximum, *, owner, group, mode):
-            m = Path(path).lstat()
-            self.assertTrue(stat.S_ISREG(m.st_mode))
-            self.assertEqual((m.st_uid, m.st_gid, stat.S_IMODE(m.st_mode), m.st_nlink), (owner, group, mode, 1))
-            data = Path(path).read_bytes();self.assertLessEqual(len(data), maximum);return data
+        read = self.read_root_fixture
         helper = SimpleNamespace(bounded_file=read)
         path = self.base / 'broker-metadata.json'
         atomic_file(helper, path, b'old\n', group=0, mode=0o640)
@@ -316,6 +321,37 @@ RestrictNamespaces=yes
         atomic_file(helper, path, b'old\n', group=0, mode=0o640, expected=b'new\n')
         self.assertEqual(path.read_bytes(), b'old\n')
         self.assertFalse(path.with_name(path.name+'.resume-next').exists())
+
+
+    def test_owner_recovery_stops_active_controls_and_preserves_crash_temporary(self):
+        from deployment import analytics_task014_resume as owner
+        private = self.base / 'owner-recovery';private.mkdir(mode=0o700)
+        original = self.base / 'original.json';original.write_bytes(owner.canonical({'fixture': True}));original.chmod(0o600)
+        target = 'a' * 40
+        before = owner.canonical({'fixture': True, 'expected_workflow_sha': owner.CURRENT_WORKFLOW})
+        after = owner.canonical({'fixture': True, 'expected_workflow_sha': target})
+        helper = SimpleNamespace(bounded_file=self.read_root_fixture, BROKER_CONFIG=self.base / 'broker-config.json', unique=lambda rows: dict(rows))
+        owner.atomic_file(helper, private / 'broker-before.json', before, group=0, mode=0o600)
+        owner.atomic_file(helper, private / 'broker-target.json', after, group=0, mode=0o600)
+        owner.atomic_file(helper, helper.BROKER_CONFIG, after, group=990, mode=0o640)
+        temporary = helper.BROKER_CONFIG.with_name(helper.BROKER_CONFIG.name + '.resume-next')
+        temporary.write_bytes(b'interrupted partial');temporary.chmod(0o600)
+        identity = temporary.stat().st_ino
+        empty = private / 'audit.json.resume-next';empty.touch(mode=0o600)
+        empty_identity = empty.stat().st_ino
+        self.control.start(self.units[1]);self.control.start(self.units[0])
+        self.assertEqual(self.control.properties(self.units[0], 'ActiveState')['ActiveState'], 'active')
+        with patch.object(owner, 'PRIVATE', private), patch.object(owner, 'PUBLIC', self.base / 'public.json'), patch.object(owner, 'ORIGINAL_BROKER', original), patch.object(owner, 'ORIGINAL_BROKER_SHA', owner.digest(original.read_bytes())), patch.object(owner, 'no_application') as absent:
+            inventory = owner.recovery_intent(helper, self.control, target)
+        self.assertEqual(absent.call_count, 2)
+        self.control.require_stopped()
+        self.assertEqual(inventory, [{'path': str(temporary), 'size': 19, 'sha256': owner.digest(b'interrupted partial')}, {'path': str(empty), 'size': 0, 'sha256': owner.digest(b'')}])
+        owner.atomic_file(helper, helper.BROKER_CONFIG, before, group=990, mode=0o640, expected=after, temporary_suffix='.resume-recovery-next')
+        self.assertEqual(helper.BROKER_CONFIG.read_bytes(), before)
+        self.assertEqual((temporary.stat().st_ino, temporary.read_bytes()), (identity, b'interrupted partial'))
+        self.assertEqual((empty.stat().st_ino, empty.read_bytes()), (empty_identity, b''))
+        self.control.reload_and_verify(self.expected)
+
 
 
 if __name__ == '__main__':

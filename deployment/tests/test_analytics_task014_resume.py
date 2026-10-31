@@ -5,9 +5,13 @@ Related: deployment/analytics_task014_resume.py; native recovery acceptance.
 No root/DEV action, secret access, Docker, database or service mutation.
 """
 import ast
+import io
+import json
+from contextlib import redirect_stdout
+from types import SimpleNamespace
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 from deployment import analytics_task014_resume as owner
 
@@ -49,6 +53,23 @@ class OwnerAuthority(unittest.TestCase):
         for unit, properties in runtime.items():
             self.assertTrue(set(properties).issubset(_PROPERTIES))
         self.assertEqual(set(runtime), {owner.BROKER, owner.LISTENER, owner.EXECUTOR})
+
+    def test_failed_postgres_identity_blocks_sql_and_keeps_network_independent(self):
+        helper = SimpleNamespace(
+            postgres_state=Mock(side_effect=RuntimeError('container_identity_failed')),
+            postgres_network=Mock(return_value=True), postgres_count=Mock(),
+            bounded_file=Mock(side_effect=RuntimeError('fixture_no_host_files')),
+            service_state=Mock(), secret_directory_metadata=Mock(),
+            secret_file_metadata=Mock(), command=Mock(return_value=b''), DOCKER=('fixture-docker',),
+        )
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaisesRegex(owner.ServiceFailure, 'complete_preflight_failed'):
+            owner.inspect_generation(helper, SimpleNamespace(require_stopped=lambda: None), 'a' * 40)
+        helper.postgres_count.assert_not_called();helper.postgres_network.assert_called_once()
+        checks = {row['name']: row for row in json.loads(output.getvalue())['checks']}
+        for name in ('postgres_force_rls', 'postgres_restricted_roles'):
+            self.assertEqual(checks[name]['status'], 'BLOCKED')
+            self.assertEqual(checks[name]['dependency'], 'postgres_identity')
 
     def test_bundled_owner_keeps_the_reviewed_service_logic_unchanged(self):
         from deployment import analytics_service_recovery as services

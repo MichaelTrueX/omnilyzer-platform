@@ -26,7 +26,7 @@ import sys
 import time
 from urllib import request, error
 
-from deployment.analytics_service_recovery import AnalyticsServiceControl, CommandResult, ServiceFailure, resume_analytics
+from deployment.analytics_service_recovery import AnalyticsServiceControl, CommandResult, ServiceFailure, resume_analytics, _capture_command
 
 BASE = Path('/opt/omnilyzer/deployment')
 HELPER = BASE / '.analytics-db-review/analytics-task014-readiness-a0022a79.py'
@@ -98,14 +98,15 @@ def provisioning_lock():
         os.close(fd)
 
 
-def atomic_file(helper, path, raw, *, group, mode, expected=None):
+def atomic_file(helper, path, raw, *, group, mode, expected=None, temporary_suffix='.resume-next'):
     """Publish only a fixed root target; reject unknown existing/temp bytes."""
     safe_parent(path)
     if expected is None:
         require(not path.exists() and not path.is_symlink(), 'unexpected_existing_target')
     else:
         require(helper.bounded_file(path, 8 << 20, owner=0, group=group, mode=mode) == expected, 'target_preimage_changed')
-    temporary = path.with_name(path.name + '.resume-next')
+    require(temporary_suffix in ('.resume-next', '.resume-recovery-next'), 'invalid_atomic_scope')
+    temporary = path.with_name(path.name + temporary_suffix)
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     identity = os.fstat(fd)
     try:
@@ -222,8 +223,10 @@ def inspect_generation(helper, control, target, *, recovering=False):
     check('secret_directory_metadata', helper.secret_directory_metadata)
     for name in ('COLLECTOR_DATABASE_URL', 'DATABASE_URL', 'JWT_REFRESH_SECRET', 'JWT_SECRET'):
         check('secret_metadata:' + name, lambda n=name: helper.secret_file_metadata(n))
-    check('postgres_identity', helper.postgres_state);check('postgres_internal_network', helper.postgres_network)
-    for kind in ('force_rls', 'restricted_roles'):check('postgres_' + kind, lambda k=kind: helper.postgres_count(k))
+    pg = check('postgres_identity', helper.postgres_state);check('postgres_internal_network', helper.postgres_network)
+    for kind in ('force_rls', 'restricted_roles'):
+        if pg is not None:check('postgres_' + kind, lambda k=kind: helper.postgres_count(k))
+        else:checks.append({'name': 'postgres_' + kind, 'status': 'BLOCKED', 'dependency': 'postgres_identity'})
     check('no_application', lambda: no_application(helper))
     def legacy_phase():
         raw = helper.bounded_file(STAGE.parent / 'journal.json', 4096, owner=0, group=0, mode=0o600)
@@ -239,9 +242,9 @@ def inspect_generation(helper, control, target, *, recovering=False):
 def expected_runtime(assets):
     """Disk bytes are already frozen; compare their effective native settings."""
     return {
-        BROKER: {'WorkingDirectory': str(BASE / 'analytics-app'), 'User': 'omnilyzer-broker', 'Group': 'omnilyzer-broker', 'ExecStart': str(BASE / 'venv/bin/python') + ' -m deployment.analytics_broker_service_entrypoint', 'NoNewPrivileges': 'yes', 'ProtectSystem': 'strict', 'DropInPaths': '/etc/systemd/system/' + BROKER + '.d/analytics-enabled.conf'},
+        BROKER: {'FragmentPath': '/etc/systemd/system/' + BROKER, 'WorkingDirectory': str(BASE / 'analytics-app'), 'User': 'omnilyzer-broker', 'Group': 'omnilyzer-broker', 'ExecStart': str(BASE / 'venv/bin/python') + ' -m deployment.analytics_broker_service_entrypoint', 'NoNewPrivileges': 'yes', 'ProtectSystem': 'strict', 'DropInPaths': '/etc/systemd/system/' + BROKER + '.d/analytics-enabled.conf'},
         LISTENER: {'FragmentPath': '/etc/systemd/system/' + LISTENER, 'DropInPaths': ''},
-        EXECUTOR: {'WorkingDirectory': str(BASE / 'analytics-app'), 'User': 'omnilyzer-executor', 'Group': 'omnilyzer-executor', 'ExecStart': str(BASE / 'venv/bin/python') + ' -m deployment.analytics_executor_service_entrypoint', 'NoNewPrivileges': 'yes', 'PrivateTmp': 'yes', 'PrivateDevices': 'yes', 'ProtectHome': 'yes', 'ProtectSystem': 'strict', 'ReadWritePaths': '/var/lib/omnilyzer/deployment', 'TemporaryFileSystem': '/run/omnilyzer/deployment:mode=0755,uid=0,gid=0 /run/omnilyzer/deployment/rootless-docker:mode=0700,uid=991,gid=991', 'BindReadOnlyPaths': '/run/user/991/docker.sock:/run/omnilyzer/deployment/rootless-docker/docker.sock:rbind /run/omnilyzer/deployment/analytics-executor.sock:/run/omnilyzer/deployment/analytics-executor.sock:rbind', 'CapabilityBoundingSet': '', 'AmbientCapabilities': '', 'SupplementaryGroups': 'omnilyzer-replay', 'DropInPaths': '/etc/systemd/system/' + EXECUTOR + '.d/rootless-runtime.conf'},
+        EXECUTOR: {'FragmentPath': '/etc/systemd/system/' + EXECUTOR, 'WorkingDirectory': str(BASE / 'analytics-app'), 'User': 'omnilyzer-executor', 'Group': 'omnilyzer-executor', 'ExecStart': str(BASE / 'venv/bin/python') + ' -m deployment.analytics_executor_service_entrypoint', 'NoNewPrivileges': 'yes', 'PrivateTmp': 'yes', 'PrivateDevices': 'yes', 'ProtectHome': 'yes', 'ProtectSystem': 'strict', 'ReadWritePaths': '/var/lib/omnilyzer/deployment', 'TemporaryFileSystem': '/run/omnilyzer/deployment:mode=0755,uid=0,gid=0 /run/omnilyzer/deployment/rootless-docker:mode=0700,uid=991,gid=991', 'BindReadOnlyPaths': '/run/user/991/docker.sock:/run/omnilyzer/deployment/rootless-docker/docker.sock:rbind /run/omnilyzer/deployment/analytics-executor.sock:/run/omnilyzer/deployment/analytics-executor.sock:rbind', 'CapabilityBoundingSet': '', 'AmbientCapabilities': '', 'SupplementaryGroups': 'omnilyzer-replay', 'DropInPaths': '/etc/systemd/system/' + EXECUTOR + '.d/rootless-runtime.conf'},
     }
 
 
@@ -299,21 +302,15 @@ print('INVALID_CREDENTIAL_CLOSED',flush=True)
 
 
 def native_command(argv, label, records, timeout=30):
-    """Fixed owner-probe programs only; no tokens or application arguments.
-
-    These literal programs emit one fixed line, or a bounded Python startup
-    traceback. They never print Docker/secret/configuration response bodies.
-    """
+    """Capture only fixed reviewed probe commands with the tested pipe bounds."""
     try:
-        result = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, env={'PATH': '/usr/bin:/bin', 'LANG': 'C', 'HOME': '/root'})
-        record = CommandResult(label, tuple(argv), result.returncode, result.stdout[:32768].decode('utf-8', 'replace'), result.stderr[:32768].decode('utf-8', 'replace'))
-    except subprocess.TimeoutExpired as failure:
-        record = CommandResult(label, tuple(argv), -9, (failure.stdout or b'')[:32768].decode('utf-8', 'replace'), (failure.stderr or b'')[:32768].decode('utf-8', 'replace'))
-        records.append(record);raise ServiceFailure(label + '_timeout', record) from None
+        record = _capture_command(label, tuple(argv), timeout)
+    except ServiceFailure as failure:
+        if failure.result is not None:records.append(failure.result)
+        raise
     records.append(record)
-    require(len(result.stdout) <= 32768 and len(result.stderr) <= 32768, label + '_output_limit')
     if record.returncode:raise ServiceFailure(label, record)
-    return result.stdout
+    return record.stdout.encode('utf-8')
 
 
 def native_probe(helper, control, assets, checkpoint, records):
@@ -362,6 +359,7 @@ def native_probe(helper, control, assets, checkpoint, records):
     if primary is not None:raise primary
     checkpoint('actual_executor_context_passed')
     negative_error = None
+    prior_invocation = control.properties(EXECUTOR, 'InvocationID')['InvocationID']
     try:
         require(native_command(('/usr/bin/python3', '-I', '-B', '-c', NEGATIVE_CLIENT), 'actual_fd3_invalid_credential_probe', records, timeout=10) == b'INVALID_CREDENTIAL_CLOSED\n', 'invalid_credential_response')
     except BaseException as failure:
@@ -374,8 +372,12 @@ def native_probe(helper, control, assets, checkpoint, records):
                 if values['ActiveState'] != 'active' or time.monotonic() >= deadline:break
                 time.sleep(0.05)
             invocation = values['InvocationID']
-            require(re.fullmatch(r'[a-f0-9]{32}', invocation), 'executor_invocation_missing')
-            logs = native_command(('/usr/bin/journalctl', '--no-pager', '-n', '30', '-o', 'cat', '_SYSTEMD_INVOCATION_ID=' + invocation), 'actual_executor_probe_journal', records)
+            require(re.fullmatch(r'[a-f0-9]{32}', invocation) and invocation != prior_invocation, 'executor_invocation_not_fresh')
+            journal_deadline = time.monotonic() + 3
+            while True:
+                logs = native_command(('/usr/bin/journalctl', '--no-pager', '-n', '30', '-o', 'cat', '_SYSTEMD_INVOCATION_ID=' + invocation), 'actual_executor_probe_journal', records, timeout=3)
+                if b'TASK014_EXECUTOR_FAILURE boundary=handler phase=sealed_fd_receive\n' in logs or time.monotonic() >= journal_deadline:break
+                time.sleep(0.1)
         except BaseException as observation_error:
             if negative_error is None:negative_error = observation_error
             else:negative_error.add_note('probe_observation_failed:' + type(observation_error).__name__)
@@ -384,6 +386,49 @@ def native_probe(helper, control, assets, checkpoint, records):
     require(values['ActiveState'] == 'failed' and values['ExecMainStatus'] == '1', 'invalid_credential_not_closed')
     control.clear_failed_counters()
     checkpoint('actual_fd3_credential_rejection_passed')
+
+
+def recovery_temporaries(helper):
+    """Preserve interrupted normal writes; never adopt or remove their bytes."""
+    inventory = []
+    targets = [(helper.BROKER_CONFIG, 990, 0o640, 4096), (PUBLIC, 0, 0o644, 16384)]
+    targets += [(PRIVATE / name, 0, 0o600, 8 << 20) for name in ('broker-before.json', 'broker-target.json', 'audit.json', 'recovery-audit.json')]
+    for path, group, mode, limit in targets:
+        for suffix in ('.resume-next', '.resume-recovery-next'):
+            temporary = path.with_name(path.name + suffix)
+            if not temporary.exists() and not temporary.is_symlink():continue
+            safe_parent(temporary);m = temporary.lstat()
+            require(stat.S_ISREG(m.st_mode) and m.st_nlink == 1 and (m.st_uid, m.st_gid, stat.S_IMODE(m.st_mode)) in ((0, 0, 0o600), (0, group, mode)), 'unsafe_interrupted_publication')
+            if m.st_size:
+                raw = helper.bounded_file(temporary, limit, owner=0, group=m.st_gid, mode=stat.S_IMODE(m.st_mode))
+            else:
+                fd = os.open(temporary, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+                try:
+                    raw = os.read(fd, 1);after = os.fstat(fd);named = temporary.lstat()
+                    require(raw == b'' and (m.st_dev, m.st_ino, m.st_size, m.st_mtime_ns, m.st_ctime_ns) == (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) == (named.st_dev, named.st_ino, named.st_size, named.st_mtime_ns, named.st_ctime_ns), 'interrupted_publication_changed')
+                finally:os.close(fd)
+            inventory.append({'path': str(temporary), 'size': len(raw), 'sha256': digest(raw)})
+            require(suffix == '.resume-next', 'interrupted_recovery_requires_manual_review')
+    return inventory
+
+
+def recovery_intent(helper, control, target):
+    """Own the frozen recovery before stopping active post-crash controls."""
+    safe_parent(PRIVATE / 'child');m = PRIVATE.lstat()
+    require(stat.S_ISDIR(m.st_mode) and (m.st_uid, m.st_gid, stat.S_IMODE(m.st_mode)) == (0, 0, 0o700), 'private_recovery_directory')
+    raw = helper.bounded_file(ORIGINAL_BROKER, 4096, owner=0, group=0, mode=0o600)
+    require(digest(raw) == ORIGINAL_BROKER_SHA, 'original_broker_authority_hash')
+    base = json.loads(raw, object_pairs_hook=helper.unique)
+    before = canonical({**base, 'expected_workflow_sha': CURRENT_WORKFLOW})
+    after = canonical({**base, 'expected_workflow_sha': target})
+    require(helper.bounded_file(PRIVATE / 'broker-before.json', 4096, owner=0, group=0, mode=0o600) == before, 'retained_workflow_preimage')
+    require(helper.bounded_file(PRIVATE / 'broker-target.json', 4096, owner=0, group=0, mode=0o600) == after, 'retained_workflow_target')
+    require(helper.bounded_file(helper.BROKER_CONFIG, 4096, owner=0, group=990, mode=0o640) in (before, after), 'unknown_workflow_during_recovery')
+    inventory = recovery_temporaries(helper)
+    no_application(helper)
+    control.stop_and_confirm()
+    no_application(helper)
+    return inventory
 
 
 def main(argv=None):
@@ -396,6 +441,9 @@ def main(argv=None):
     os.umask(0o077);helper = load_helper();records = [];phase = 'preflight';outcome = None
     with provisioning_lock():
         control = AnalyticsServiceControl(BROKER, LISTENER, EXECUTOR, audit=records.append)
+        if args.recover:
+            inventory = recovery_intent(helper, control, args.workflow_sha)
+            records.append(CommandResult('preserved_interrupted_publications', (), 0, canonical(inventory).decode(), ''))
         assets, before, after = inspect_generation(helper, control, args.workflow_sha, recovering=args.recover)
         if args.recover:
             m = PRIVATE.lstat();require((m.st_uid, m.st_gid, stat.S_IMODE(m.st_mode)) == (0, 0, 0o700), 'private_recovery_directory')
@@ -414,9 +462,9 @@ def main(argv=None):
             require(len(records) <= 1024, 'audit_record_limit')
             raw = canonical({'operation': 'task014_pr269_resume', 'phase': phase, 'workflow_sha': args.workflow_sha, 'records': [entry.__dict__ for entry in records], 'outcome': outcome})
             require(len(raw) <= 8 << 20, 'audit_size_limit')
-            path = PRIVATE / 'audit.json'
+            path = PRIVATE / ('recovery-audit.json' if args.recover else 'audit.json')
             previous = helper.bounded_file(path, 8 << 20, owner=0, group=0, mode=0o600) if path.exists() else None
-            atomic_file(helper, path, raw, group=0, mode=0o600, expected=previous)
+            atomic_file(helper, path, raw, group=0, mode=0o600, expected=previous, temporary_suffix='.resume-recovery-next' if args.recover else '.resume-next')
         def audit(result):
             records.append(result)  # Buffer native evidence BEFORE durable I/O.
             persist()
@@ -427,15 +475,18 @@ def main(argv=None):
         def restore():
             current = helper.bounded_file(helper.BROKER_CONFIG, 4096, owner=0, group=990, mode=0o640)
             require(current in (before, after), 'unknown_workflow_during_restore')
-            if current != before:atomic_file(helper, helper.BROKER_CONFIG, before, group=990, mode=0o640, expected=after)
+            if current != before:atomic_file(helper, helper.BROKER_CONFIG, before, group=990, mode=0o640, expected=after, temporary_suffix='.resume-recovery-next')
             require(helper.bounded_file(helper.BROKER_CONFIG, 4096, owner=0, group=990, mode=0o640) == before, 'restored_workflow_not_exact')
         expected = expected_runtime(assets)
         def complete(value):
             nonlocal outcome
             outcome = value;persist()
-            public = {'status': value['status'], 'phase': phase, 'product_commit': PRODUCT_COMMIT, 'workflow_sha': args.workflow_sha if value['status'] == 'ready_for_signed_task014' else CURRENT_WORKFLOW, 'application_acceptance': 'NOT_YET_VERIFIED', 'signed_task014_dispatch': False, 'database_or_secret_changes': False, 'error_code': public_error(value)}
+            current = helper.bounded_file(helper.BROKER_CONFIG, 4096, owner=0, group=990, mode=0o640)
+            workflow = args.workflow_sha if value['status'] == 'ready_for_signed_task014' and current == after else CURRENT_WORKFLOW if value['status'] == 'stopped_recovered' and current == before else None
+            require(value['status'] != 'ready_for_signed_task014' or workflow == args.workflow_sha, 'ready_workflow_readback_mismatch')
+            public = {'status': value['status'], 'phase': phase, 'product_commit': PRODUCT_COMMIT, 'workflow_sha': workflow, 'requested_workflow_sha': args.workflow_sha, 'application_acceptance': 'NOT_YET_VERIFIED', 'signed_task014_dispatch': False, 'database_or_secret_changes': False, 'error_code': public_error(value)}
             raw = canonical(public);previous = helper.bounded_file(PUBLIC, 16384, owner=0, group=0, mode=0o644) if PUBLIC.exists() else None
-            atomic_file(helper, PUBLIC, raw, group=0, mode=0o644, expected=previous)
+            atomic_file(helper, PUBLIC, raw, group=0, mode=0o644, expected=previous, temporary_suffix='.resume-recovery-next' if args.recover else '.resume-next')
             print(raw.decode(), end='', flush=True)
         if args.recover:
             no_application(helper);control.stop_and_confirm();no_application(helper);restore();control.reload_and_verify(expected)
@@ -469,7 +520,7 @@ def build_owner_bundle(service_source, owner_source):
     text = owner_source.decode('utf-8')
     remove = {
         'from __future__ import annotations',
-        'from deployment.analytics_service_recovery import AnalyticsServiceControl, CommandResult, ServiceFailure, resume_analytics',
+        'from deployment.analytics_service_recovery import AnalyticsServiceControl, CommandResult, ServiceFailure, resume_analytics, _capture_command',
     }
     rows = text.splitlines(keepends=True)
     require(all(sum(row.rstrip('\r\n') == line for row in rows) == 1 for line in remove), 'bundle_import_contract')

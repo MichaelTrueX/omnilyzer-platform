@@ -63,7 +63,13 @@ def systemctl(operation: str, *arguments: str, timeout: float = 30) -> CommandRe
             raise ValueError('unapproved_service_properties')
     elif len(arguments) != 1:
         raise ValueError('invalid_service_arguments')
-    argv = ('/usr/bin/systemctl', operation, *arguments)
+    return _capture_command(operation, ('/usr/bin/systemctl', operation, *arguments), timeout)
+
+
+def _capture_command(operation: str, argv: tuple[str, ...], timeout: float) -> CommandResult:
+    """Bounded internal transport shared by fixed owner probe programs."""
+    if type(argv) is not tuple or not argv or not all(type(item) is str for item in argv) or sum(len(item) for item in argv) > 32768:
+        raise ValueError('invalid_fixed_command')
     output = [bytearray(), bytearray()]
     process = subprocess.Popen(
         argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
