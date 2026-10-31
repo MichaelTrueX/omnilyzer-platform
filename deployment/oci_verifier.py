@@ -13,6 +13,7 @@ read-only zot credentials; this boundary never mints them or chooses a clock.
 Shared C32G snapshots/process cleanup execute only sealed, hashed tool bytes.
 """
 
+import base64 as _base64
 import json as _json
 import os as _os
 import stat as _stat
@@ -83,9 +84,11 @@ def _revalidate_chain(chain: _DirectoryChain) -> None:
 
 def _auth(directory: int, token: str, broker: tuple[int, int], owned: list[int],
           cleanup: list[tuple[int, str, tuple[int, ...], bool]]) -> tuple[int, ...]:
-    # Reviewed DefaultKeychain -> Docker config.Load -> AuthConfig.RegistryToken.
+    # Reuse Docker's oidc Basic-to-scoped-Bearer exchange, as private_registry_pull
+    # does. RegistryToken would incorrectly send the GitHub JWT as registry JWT.
     # Never load/merge ambient configuration or permit credential helper fields.
-    raw = _json.dumps({"auths": {_HOST: {"registrytoken": token}}},
+    auth = _base64.b64encode(("oidc:" + token).encode("ascii")).decode("ascii")
+    raw = _json.dumps({"auths": {_HOST: {"auth": auth}}},
                       sort_keys=True, separators=(",", ":"), ensure_ascii=True,
                       allow_nan=False).encode("ascii")
     descriptor = _os.open("config.json", _os.O_RDWR | _os.O_CREAT | _os.O_EXCL |

@@ -12,13 +12,28 @@ Sections: synthetic registry responses and credentials; immutable release
 from __future__ import annotations
 
 from dataclasses import replace
+import base64
+from datetime import datetime, timedelta, timezone
 import gzip
 import hashlib
 import io
+import http.client
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import tarfile
+import tempfile
+import threading
 import unittest
+from unittest.mock import patch
+from urllib.parse import urlsplit, parse_qs
+import ssl
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
+from deployment import release_consumer as rc
 
 from deployment.execution import IngressReference, RuntimeConfigurationReference, parse_canonical_request
 from deployment.identity import authorize_verified_github_oidc
@@ -62,15 +77,23 @@ class Factory:
     def __init__(self, response: Response):
         self.response = response
         self.calls = []
+        self.path = None
+        self.token_response = None
 
     def __call__(self, host, port, timeout, context):
         self.calls.append((host, port, timeout, context))
         return self
 
     def request(self, method, path, body, headers):
+        self.path = path
         self.calls.append((method, path, body, headers))
 
     def getresponse(self):
+        if self.path.startswith("/zot/auth/token?"):
+            return self.token_response or Response(
+                canonical_bytes({"token": "synthetic.registry.read.token", "expires_in": 300}),
+                "application/json",
+            )
         return self.response
 
     def close(self):
@@ -80,6 +103,110 @@ class Factory:
 class ZotProvider:
     def zot_read_credential(self):
         return ZotReadCredential(TOKEN, NOW + 100)
+
+
+class ZotTokenExchangeTests(unittest.TestCase):
+    """Real local TLS protocol plus fail-closed token response envelopes."""
+
+    def test_local_tls_oidc_basic_then_scoped_bearer_for_each_product(self):
+        oidc = "synthetic.github.oidc"
+        scoped = "synthetic.scoped.registry.token"
+        body = canonical_bytes({"schemaVersion": 2})
+        calls = []
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+            def do_GET(self):
+                parsed = urlsplit(self.path)
+                if parsed.path == "/zot/auth/token":
+                    query = parse_qs(parsed.query)
+                    expected = "Basic " + base64.b64encode(("oidc:" + oidc).encode()).decode()
+                    if self.headers.get("Authorization") != expected or query.get("service") != [ZOT_HOST] or query.get("account") != ["oidc"]:
+                        self.send_error(401);return
+                    scope = query.get("scope", [])
+                    if scope not in (["repository:" + REPOSITORY + ":pull"], ["repository:omnilyzer/analytics:pull"]):
+                        self.send_error(403);return
+                    calls.append(("token", scope[0]))
+                    payload = canonical_bytes({"token": scoped, "access_token": scoped, "expires_in": 300})
+                    media = "application/json; charset=utf-8"
+                else:
+                    if self.headers.get("Authorization") != "Bearer " + scoped:
+                        self.send_error(401);return
+                    calls.append(("manifest", parsed.path))
+                    payload, media = body, OCI_MEDIA_TYPE
+                self.send_response(200)
+                self.send_header("Content-Type", media)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers();self.wfile.write(payload)
+        with tempfile.TemporaryDirectory(prefix="zot-readonly-tls-") as directory:
+            root = Path(directory)
+            key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+            subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+            now = datetime.now(timezone.utc)
+            cert = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject)
+                    .public_key(key.public_key()).serial_number(x509.random_serial_number())
+                    .not_valid_before(now - timedelta(minutes=1)).not_valid_after(now + timedelta(hours=1))
+                    .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+                    .sign(key, hashes.SHA256()))
+            cert_file, key_file = root / "cert.pem", root / "key.pem"
+            cert_file.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+            key_file.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+            key_file.chmod(0o600)
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            tls.minimum_version = ssl.TLSVersion.TLSv1_2
+            tls.load_cert_chain(cert_file, key_file)
+            server.socket = tls.wrap_socket(server.socket, server_side=True)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                def connection(host, port, timeout, context):
+                    self.assertEqual((host, port), (ZOT_HOST, 443))
+                    self.assertTrue(context.check_hostname)
+                    self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+                    return http.client.HTTPSConnection("localhost", server.server_port, timeout=timeout, context=context)
+                with patch.object(rc, "SYSTEM_CA_BUNDLE", str(cert_file)):
+                    for product, repository in (("canary", REPOSITORY), ("analytics", "omnilyzer/analytics")):
+                        actual, _ = rc._get("zot", "sha256:" + "a" * 64, oidc, connection, product=product)
+                        self.assertEqual(actual, body)
+                        self.assertEqual(calls[-2:], [
+                            ("token", "repository:" + repository + ":pull"),
+                            ("manifest", "/v2/" + repository + "/manifests/sha256:" + "a" * 64),
+                        ])
+            finally:
+                server.shutdown();server.server_close();thread.join(timeout=2)
+
+    def test_bad_token_envelopes_never_reach_manifest_and_never_leak(self):
+        for raw, status, extra in (
+            (b'{"token":"a","token":"b"}', 200, ()),
+            (b'{"token":"a","access_token":"b"}', 200, ()),
+            (canonical_bytes({"token": TOKEN}), 200, ()),
+            (b'{"token":"a b"}', 200, ()),
+            (b'{"token":"a","expires_in":true}', 200, ()),
+            (b'{"token":"a","expires_in":0}', 200, ()),
+            (b'{"token":"a","other":"PRIVATE"}', 200, ()),
+            (b'PRIVATE' * 3000, 200, ()),
+            (b'PRIVATE', 401, ()),
+            (b'PRIVATE', 302, (("Location", "https://untrusted.invalid/token"),)),
+        ):
+            with self.subTest(status=status, size=len(raw)):
+                factory = Factory(Response(b"unused", OCI_MEDIA_TYPE))
+                response = Response(raw, "application/json", status=status, extra=extra)
+                factory.token_response = response
+                with self.assertRaises(ReleaseConsumerError) as error:
+                    rc._get("zot", "sha256:" + "a" * 64, TOKEN, factory, product="analytics")
+                self.assertEqual(str(error.exception), rc.ERROR)
+                requests = [call for call in factory.calls if call[0] == "GET"]
+                self.assertEqual(len(requests), 1)
+                self.assertTrue(requests[0][1].startswith("/zot/auth/token?"))
+                self.assertTrue(response.closed)
+
+    def test_product_or_token_cannot_select_another_host_or_push_scope(self):
+        for product in ("other", "analytics:push", "https://untrusted.invalid"):
+            factory = Factory(Response(b"unused", OCI_MEDIA_TYPE))
+            with self.assertRaises(ReleaseConsumerError):
+                rc._get("zot", "sha256:" + "a" * 64, TOKEN, factory, product=product)
+            self.assertEqual(factory.calls, [])
 
 
 class ForgejoProvider:
@@ -250,7 +377,12 @@ class ConsumerTests(unittest.TestCase):
         self.assertEqual(first.manifest_digest, request.manifest_digest)
         self.assertEqual(first.github_workflow_sha, identity.workflow_sha)
         self.assertEqual(zf.calls[0][:2], (ZOT_HOST, 443))
-        self.assertEqual(zf.calls[1][:3], ("GET", f"/v2/{REPOSITORY}/manifests/{request.manifest_digest}", None))
+        self.assertEqual(zf.calls[1][0], "GET")
+        self.assertTrue(zf.calls[1][1].startswith("/zot/auth/token?"))
+        self.assertEqual(zf.calls[1][3]["Authorization"],
+                         "Basic " + base64.b64encode(("oidc:" + TOKEN).encode()).decode())
+        self.assertEqual(zf.calls[3][:3], ("GET", f"/v2/{REPOSITORY}/manifests/{request.manifest_digest}", None))
+        self.assertEqual(zf.calls[3][3]["Authorization"], "Bearer synthetic.registry.read.token")
         self.assertEqual(ff.calls[0][:2], (FORGEJO_HOST, 443))
         self.assertEqual(ff.calls[1][:3], ("GET", f"/api/packages/omnilyzer/generic/task013-release-evidence/{VERSION}/release-evidence.tar.gz", None))
         self.assertFalse(any(hasattr(zot, name) or hasattr(forgejo, name) for name in ("put", "post", "delete", "upload")))

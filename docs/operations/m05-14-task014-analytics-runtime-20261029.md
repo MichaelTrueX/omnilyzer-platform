@@ -686,3 +686,42 @@ workflow-only authority must bind the exact new merged main SHA. Preserve its
 original Canary `reviewed_commit`, executor configuration, runtime/ingress pins,
 replay, database and secrets. Do not dispatch against the prior workflow pin or
 interpret this code fix as live functional/security/rollback acceptance.
+
+
+## 2026-10-31: live promotion reached registry authentication; scoped token correction
+
+Owner workflow-only update to merged main
+`a09ddd45579db1a3ff7873082a063af4c47d5a13` succeeded and was independently
+verified with unchanged installed Analytics70 and Canary43. One real original
+Task014 run `41162462416` passed its gate, three-audience OIDC diagnostic,
+Tailscale join and authenticated Forgejo metadata read, but the broker returned
+503. Analytics executor had no start timestamp and port3141 remained absent;
+the previous private application continued returning HTTP200. Do not report
+this as a deployment or rerun the PostgreSQL bootstrap.
+
+The existing read-only Zot diagnostic run `41163125919` passed its actual
+Docker OIDC authentication check without invoking the broker or deployment.
+The exact Analytics manifest's live 401 challenge names the fixed
+`https://oci-dev.omnilyzer.ai/zot/auth/token` realm and repository pull scope.
+The owning defect is protocol confusion: a GitHub OIDC JWT was sent directly
+as registry Bearer by the evidence reader and as `registrytoken` by Cosign.
+The existing approved Docker pull code already uses `Basic(oidc:GitHubJWT)`
+to obtain a registry-scoped Bearer token.
+
+The read-only HTTP consumer now uses that exact fixed same-host realm/service
+and a constructor-selected canary or Analytics `pull` scope, then requests the
+unchanged digest-addressed manifest with the returned registry token. Responses
+remain bounded, duplicate-free, nonredirecting and fail closed. Forgejo's
+existing OIDC Bearer path is unchanged. Cosign's private0600 Docker config now
+uses the same `auth` Basic-exchange convention as the existing Docker pull path;
+all descriptor/cleanup/ownership and signature checks remain in force.
+
+These two files belong to the separately reviewed31-file compatibility archive,
+not the inherited39. The current installed b42 generation still contains the
+old bytes until one reviewed owner-local source/config generation transition
+is applied. Generate exact new activation inputs from the reviewed fix commit,
+preserve the original Canary43 tree and its four fixed historical preimages,
+backup the complete current b42 generation and configs, and bind workflow
+identity to the exact eventual merged main SHA. A runner-only change or a
+workflow-only rotation cannot install these two host files. The immutable
+signed Analytics0.15.0 artifact/run40881693662 must not be rebuilt or republished.

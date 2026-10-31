@@ -5,6 +5,7 @@ import builtins
 from contextlib import ExitStack
 import fcntl
 import inspect
+import base64
 import json
 import os
 from pathlib import Path
@@ -77,7 +78,7 @@ class Runner:
         path = Path(docker_config) / 'config.json'
         self.assertion.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
         self.assertion.assertEqual(path.read_bytes(), json.dumps(
-            {'auths': {'oci-dev.omnilyzer.ai': {'registrytoken': TOKEN}}},
+            {'auths': {'oci-dev.omnilyzer.ai': {'auth': base64.b64encode(('oidc:' + TOKEN).encode('ascii')).decode('ascii')}}},
             sort_keys=True, separators=(',', ':')).encode('ascii'))
         if isinstance(self.result, BaseException):
             raise self.result
@@ -430,7 +431,7 @@ class VerifierTests(unittest.TestCase):
             def run(self, argv, blob, *, executable, descriptors, home, docker_config):
                 assertion = unittest.TestCase()
                 actual = json.loads(Path(docker_config, 'config.json').read_bytes())
-                assertion.assertEqual(actual, {'auths': {'oci-dev.omnilyzer.ai': {'registrytoken': token}}})
+                assertion.assertEqual(actual, {'auths': {'oci-dev.omnilyzer.ai': {'auth': base64.b64encode(('oidc:' + token).encode('ascii')).decode('ascii')}}})
                 assertion.assertNotIn(token, str((argv, executable, home, docker_config)))
                 return bv._ProcessResult(0, 0, 0)
         verifier, directory, *_ = self.sandbox(
@@ -545,7 +546,7 @@ class ProcessTests(unittest.TestCase):
         home = Path(directory.name)
         docker = home / '.docker'
         docker.mkdir(mode=0o700)
-        (docker / 'config.json').write_text(json.dumps({'auths': {'oci-dev.omnilyzer.ai': {'registrytoken': TOKEN}}}))
+        (docker / 'config.json').write_text(json.dumps({'auths': {'oci-dev.omnilyzer.ai': {'auth': base64.b64encode(('oidc:' + TOKEN).encode('ascii')).decode('ascii')}}}))
         (docker / 'config.json').chmod(0o600)
         executable = home / 'fake-cosign'
         executable.write_text('#!' + sys.executable + '\n' + body)
@@ -566,7 +567,7 @@ assert sys.argv[1:] == ['verify', '--offline', ''' + repr(REFERENCE) + ''']
 expected = {'HOME', 'DOCKER_CONFIG', 'XDG_RUNTIME_DIR', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'LANG', 'LC_ALL'}
 assert set(os.environ) == expected
 assert os.stat(os.environ['HOME'] + '/.docker').st_ino == os.stat(os.environ['DOCKER_CONFIG']).st_ino
-assert json.load(open(os.environ['DOCKER_CONFIG'] + '/config.json')) == {'auths': {'oci-dev.omnilyzer.ai': {'registrytoken': ''' + repr(TOKEN) + '''}}}
+assert json.load(open(os.environ['DOCKER_CONFIG'] + '/config.json')) == {'auths': {'oci-dev.omnilyzer.ai': {'auth': ''' + repr(base64.b64encode(('oidc:' + TOKEN).encode('ascii')).decode('ascii')) + '''}}}
 assert os.getcwd() == os.path.realpath(os.environ['HOME'])
 '''
         with patch.dict(os.environ, {key: TOKEN for key in ('PATH', 'HOME', 'DOCKER_CONFIG', 'HTTP_PROXY',
