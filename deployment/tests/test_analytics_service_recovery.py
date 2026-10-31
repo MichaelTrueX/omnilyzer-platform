@@ -69,6 +69,29 @@ class StateRegressions(unittest.TestCase):
             with self.assertRaises(ValueError):recovery.systemctl('daemon-reload', self.control.broker)
         spawn.assert_not_called()
 
+    def test_audit_write_failure_preserves_timeout_and_native_partial_result(self):
+        result = recovery.CommandResult('start', (), -9, 'partial', 'native diagnostic')
+        original = recovery.ServiceFailure('service_command_timeout', result)
+        self.control.audit = lambda result: (_ for _ in ()).throw(OSError('disk_full'))
+        with patch.object(recovery, 'systemctl', side_effect=original):
+            with self.assertRaises(recovery.ServiceFailure) as caught:
+                self.control.call('start', self.control.broker)
+        self.assertIs(caught.exception, original)
+        self.assertIs(caught.exception.result, result)
+        self.assertEqual(caught.exception.audit_failure, 'OSError')
+
+    def test_nonzero_command_survives_audit_write_failure(self):
+        result = recovery.CommandResult('start', (), 1, '', 'native start failure')
+        self.control.audit = lambda result: (_ for _ in ()).throw(OSError('disk_full'))
+        with patch.object(recovery, 'systemctl', return_value=result):
+            with self.assertRaises(recovery.ServiceFailure) as caught:
+                self.control.call('start', self.control.broker)
+        self.assertEqual(caught.exception.operation, 'command_start')
+        self.assertIs(caught.exception.result, result)
+
+    def test_native_completion_property_is_explicitly_allowed(self):
+        self.assertIn('ExecMainStatus', recovery._PROPERTIES)
+
 
 class RealProcessCapture(unittest.TestCase):
     """Real harmless child processes, no systemctl or privileged operation."""

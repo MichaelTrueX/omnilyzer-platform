@@ -37,10 +37,11 @@ class ServiceFailure(Exception):
         super().__init__(operation)
         self.operation = operation
         self.result = result
+        self.audit_failure = None
 
 
 _UNIT = re.compile(r'(?:omnilyzer-deployment-(?:broker\.service|analytics-executor\.(?:service|socket))|omnilyzer-task014-ci-[0-9a-f]{12}-(?:broker\.service|analytics\.(?:service|socket)))\Z')
-_PROPERTIES = frozenset(('ActiveState', 'MainPID', 'Job', 'NeedDaemonReload', 'ExecStart', 'ExecStartPost', 'User', 'Group', 'FragmentPath', 'DropInPaths', 'NoNewPrivileges', 'PrivateTmp', 'PrivateDevices', 'ProtectHome', 'ProtectSystem', 'ReadWritePaths', 'TemporaryFileSystem', 'BindReadOnlyPaths', 'CapabilityBoundingSet', 'AmbientCapabilities', 'SupplementaryGroups', 'WorkingDirectory', 'RestrictAddressFamilies', 'RestrictNamespaces', 'SocketUser', 'SocketGroup', 'SocketMode'))
+_PROPERTIES = frozenset(('ActiveState', 'MainPID', 'Job', 'NeedDaemonReload', 'ExecStart', 'ExecStartPost', 'ExecMainStatus', 'User', 'Group', 'FragmentPath', 'DropInPaths', 'NoNewPrivileges', 'PrivateTmp', 'PrivateDevices', 'ProtectHome', 'ProtectSystem', 'ReadWritePaths', 'TemporaryFileSystem', 'BindReadOnlyPaths', 'CapabilityBoundingSet', 'AmbientCapabilities', 'SupplementaryGroups', 'WorkingDirectory', 'RestrictAddressFamilies', 'RestrictNamespaces', 'SocketUser', 'SocketGroup', 'SocketMode'))
 
 
 def systemctl(operation: str, *arguments: str, timeout: float = 30) -> CommandResult:
@@ -169,10 +170,19 @@ class AnalyticsServiceControl:
             result = systemctl(operation, *arguments)
         except ServiceFailure as error:
             if error.result is not None and self.audit is not None:
-                self.audit(error.result)
+                try:
+                    self.audit(error.result)
+                except Exception as audit_error:
+                    error.audit_failure = type(audit_error).__name__
+                    error.add_note('private_audit_failed:' + error.audit_failure)
             raise
         if self.audit is not None:
-            self.audit(result)
+            try:
+                self.audit(result)
+            except Exception as audit_error:
+                error = ServiceFailure('command_' + operation if result.returncode else 'private_audit_failed', result)
+                error.audit_failure = type(audit_error).__name__
+                raise error from audit_error
         return result
 
     def properties(self, unit: str, *keys: str) -> dict[str, str]:
