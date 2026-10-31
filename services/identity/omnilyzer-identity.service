@@ -1,0 +1,62 @@
+# File: services/identity/omnilyzer-identity.service
+# Purpose: Existing platform Django/Authlib confidential Keycloak BFF on a
+# private loopback port; inactive source template for truexmainserver.
+# Linked files: services/identity/config/{settings,wsgi}.py,
+# services/identity/requirements.txt,
+# services/identity/nginx-auth-location.conf.review and
+# docs/operations/p0-shared-keycloak-sumlaude-identity-20261029.md.
+#
+# Section 1 - Existing PostgreSQL-backed identity BFF dependencies.
+# No password service, Redis, Docker, or other new identity system.
+[Unit]
+Description=Omnilyzer shared Keycloak confidential BFF (Sumlaude product)
+After=network-online.target postgresql.service
+Wants=network-online.target
+StartLimitIntervalSec=90
+StartLimitBurst=2
+# Section 2 - Fail closed if an operator deploys this unit before explicit
+# owner approval. This is a host-local approval file, NOT a substitute for
+# lawful S03 learner/guardian admission or production change authorization.
+AssertPathExists=/etc/omnilyzer/identity/owner-approved-go
+
+[Service]
+Type=simple
+User=omnilyzer-identity
+Group=omnilyzer-identity
+WorkingDirectory=/opt/omnilyzer/identity/current/services/identity
+# Section 3 - Root-readable host configuration outside Git. Credentials are
+# never passed on the command line, embedded in this unit or sent to a browser.
+EnvironmentFile=/etc/omnilyzer/identity/identity.env
+Environment=DJANGO_SETTINGS_MODULE=config.settings
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=/opt/omnilyzer/identity/current/.venv/bin/python manage.py check --deploy
+# Section 4 - Original Django WSGI entrypoint; no public network listener.
+# Gunicorn access logs are intentionally disabled to avoid logging OIDC
+# callback authorization codes and state query parameters.
+ExecStart=/opt/omnilyzer/identity/current/.venv/bin/gunicorn --bind 127.0.0.1:18740 --workers 2 --timeout 30 --graceful-timeout 15 config.wsgi:application
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=45
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+# Section 5 - Dedicated nonroot service process and read-only filesystem.
+# Outbound HTTPS to existing Keycloak and local PostgreSQL remain permitted.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitNOFILE=8192
+
+# Section 6 - Must be operator-installed and enabled ONLY after specific GO.
+[Install]
+WantedBy=multi-user.target
