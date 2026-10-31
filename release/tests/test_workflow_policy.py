@@ -85,6 +85,68 @@ class WorkflowPolicyTests(unittest.TestCase):
                                  "source.tar" in step.get("with", {}).get("path", "")
                                  for step in steps))
 
+    def test_analytics_live_registry_preflight_precedes_private_build(self) -> None:
+        """Detect wrong registry ACL or an occupied version before OCI work."""
+        job = self.jobs["analytics-registry-preflight"]
+        self.assertEqual(job["if"],
+                         "${{ inputs.product == 'analytics' && inputs.auth_probe == false }}")
+        self.assertEqual(job["environment"], "task013-dev-release")
+        self.assertEqual(job["permissions"], {"contents": "read", "id-token": "write"})
+        self.assertEqual(job["timeout-minutes"], 5)
+        self.assertNotIn("needs", job)
+        self.assertNotIn("secrets.", str(job))
+        self.assertEqual(len(job["steps"]), 3)
+        checkout, identity, preflight = job["steps"]
+        self.assertEqual(checkout["with"]["ref"], "${{ github.sha }}")
+        self.assertIs(checkout["with"]["persist-credentials"], False)
+        for exact in (
+            "test \"$RELEASE_REPOSITORY\" = 'MichaelTrueX/omnilyzer-platform'",
+            "test \"$RELEASE_REF\" = 'refs/heads/main'",
+            'test "$REQUESTED_SHA" = "$RELEASE_SHA"',
+            'test "$(git rev-parse HEAD)" = "$RELEASE_SHA"',
+            "platform-release.yml@refs/heads/main",
+        ):
+            self.assertIn(exact, identity["run"])
+        self.assertIn("release.request_oidc", preflight["run"])
+        self.assertIn("--audience https://oci-dev.omnilyzer.ai", preflight["run"])
+        self.assertIn("--audience u:2:316bec9a-53e4-4807-9557-7febdc979d0a",
+                      preflight["run"])
+        self.assertIn("release.registry_absence_preflight --product analytics",
+                      preflight["run"])
+        self.assertIn('--version "$RELEASE_VERSION"', preflight["run"])
+        self.assertIn("trap 'rm -f", preflight["run"])
+        self.assertEqual(preflight["env"]["RELEASE_VERSION"], "${{ inputs.version }}")
+        for prohibited in ("publish_zot", "publish_forgejo", "cosign sign", "upload-artifact",
+                           "docker push", "docker login", "--method POST", "--method PUT"):
+            self.assertNotIn(prohibited, str(job))
+        self.assertEqual(self.jobs["analytics-source-admission"]["needs"],
+                         ["analytics-registry-preflight"])
+        self.assertEqual(self.jobs["analytics-publish-zot"]["needs"],
+                         ["analytics-source-admission"])
+        # Keep final authoritative pre-write preflight, not a stale early check.
+        final_publish = next(step for step in self.jobs["analytics-publish-zot"]["steps"]
+                             if step["name"].startswith("Verify source, registry absence"))
+        self.assertIn("release.registry_absence_preflight --product analytics",
+                      final_publish["run"])
+
+    def test_chatgpt_release_checkfile_is_required_and_exposes_source_pin_gap(self) -> None:
+        """Instructions must not let the owner mistake 0.15.0 for reusable source admission."""
+        guide = (ROOT / "docs/operations/task013-release-readiness.md").read_text()
+        agent = (ROOT / "AGENTS.md").read_text()
+        self.assertIn("docs/operations/task013-release-readiness.md", agent)
+        for item in (
+            "HOLD: DO NOT DISPATCH", "4cdda7faeba57abb3388f9be5c450fe6afb1140d",
+            "Task014", "truexdevelopment", "truexmainserver",
+            "ANALYTICS_SOURCE_DEPLOY_KEY", "ANALYTICS_HANDOFF_DECRYPT_KEY",
+            "analytics-registry-preflight", "REGISTRY_PREFLIGHT", "HTTP 404",
+            "release.tests.test_workflow_policy", "0 Critical / 0 High",
+        ):
+            if item == "REGISTRY_PREFLIGHT":
+                # The preflight is referenced by Python module, not a log marker.
+                self.assertIn("registry_absence_preflight", guide)
+            else:
+                self.assertIn(item, guide)
+
     def test_manual_trigger_and_global_permissions_are_closed(self) -> None:
         self.assertEqual(self.workflow["permissions"], {})
         self.assertIn("workflow_dispatch", self.raw)
@@ -157,8 +219,9 @@ class WorkflowPolicyTests(unittest.TestCase):
         """Do not grant id-token permission to the ordinary gate or build."""
         capable = [name for name, job in self.jobs.items()
                    if job.get("permissions", {}).get("id-token") == "write"]
-        self.assertEqual(capable, ["forgejo-auth-probe", "analytics-publish-zot",
-                                   "analytics-publish-forgejo", "publish-zot", "publish-forgejo"])
+        self.assertEqual(capable, ["forgejo-auth-probe", "analytics-registry-preflight",
+                                   "analytics-publish-zot", "analytics-publish-forgejo",
+                                   "publish-zot", "publish-forgejo"])
         for name in capable:
             self.assertEqual(self.jobs[name]["permissions"],
                              {"contents": "read", "id-token": "write"})
@@ -210,7 +273,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(source_job["permissions"], {"contents": "read"})
         self.assertEqual(source_job["timeout-minutes"], 45)
         self.assertNotIn("environment", source_job)
-        self.assertNotIn("needs", source_job)
+        self.assertEqual(source_job["needs"], ["analytics-registry-preflight"])
         self.assertEqual(source_job["if"],
                          "${{ inputs.product == 'analytics' && inputs.auth_probe == false }}")
         self.assertEqual(self.jobs["gate"]["if"],

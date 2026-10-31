@@ -2,7 +2,8 @@
 # Purpose: Preserve the original protected canary release and add a separate
 #          Analytics OCI-only Task013 signing/publication path, after pinned
 #          Syft/Grype scanning and authenticated registry absence checks.
-# Related: release/registry_absence_preflight.py, release/request_oidc.py,
+# Related: docs/operations/task013-release-readiness.md,
+#          release/registry_absence_preflight.py, release/request_oidc.py,
 #          release/analytics_publish_zot.py, release/analytics_release_evidence.py,
 #          release/analytics_forgejo_evidence.py, release/tests/test_workflow_policy.py.
 # Authority: Both product paths require the protected main SHA and original
@@ -99,12 +100,66 @@ jobs:
             --output "$token_file"
           python3 -m release.forgejo_oidc_probe --token-file "$token_file"
 
+  # Section 1a: cheap fail-closed LIVE two-registry OIDC preflight BEFORE the
+  # private Analytics checkout, expensive BuildKit build or Syft/Grype scan.
+  # This is read-only; the protected publisher repeats the same absence checks
+  # immediately before writing, so the version-race and immutability gate stays.
+  analytics-registry-preflight:
+    if: ${{ inputs.product == 'analytics' && inputs.auth_probe == false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: task013-dev-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout protected platform workflow source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate the exact protected release identity BEFORE OIDC
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.source_sha }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_REPOSITORY" = 'MichaelTrueX/omnilyzer-platform'
+          test "$RELEASE_REF" = 'refs/heads/main'
+          test "$REQUESTED_SHA" = "$RELEASE_SHA"
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$RELEASE_WORKFLOW_REF" = 'MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main'
+      - name: Prove both Analytics release versions absent at LIVE registries
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          umask 077
+          forgejo_token="$RUNNER_TEMP/analytics-early-forgejo.jwt"
+          zot_token="$RUNNER_TEMP/analytics-early-zot.jwt"
+          trap 'rm -f "$forgejo_token" "$zot_token"' EXIT
+          python3 -m release.request_oidc \
+            --audience u:2:316bec9a-53e4-4807-9557-7febdc979d0a \
+            --output "$forgejo_token"
+          python3 -m release.request_oidc \
+            --audience https://oci-dev.omnilyzer.ai --output "$zot_token"
+          python3 -m release.registry_absence_preflight --product analytics \
+            --version "$RELEASE_VERSION" --forgejo-token-file "$forgejo_token" \
+            --zot-token-file "$zot_token"
+          echo 'TASK013_ANALYTICS_EARLY_LIVE_REGISTRY_PREFLIGHT_PASS'
+
   # Section 1b: independently verify the exact Analytics source INSIDE the
   # existing protected workflow, without granting publication or promotion.
   # This read-only path is intentionally NOT the signed product release job:
   # existing canary publishers remain separate; Analytics publishers require
   # the completed scanner job and the same protected release environment.
   analytics-source-admission:
+    needs: [analytics-registry-preflight]
     if: ${{ inputs.product == 'analytics' && inputs.auth_probe == false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
