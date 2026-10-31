@@ -1,0 +1,39 @@
+# File: /etc/systemd/system/beszel-omnilyzer-agent.service
+# Purpose: Separate sandboxed Beszel agent for Omnilyzer containers on port 45878.
+# Related: beszel-omnilyzer-proxy.service, /opt/omnilyzer-beszel-monitor/beszel-agent,
+#          /var/lib/omnilyzer-beszel-monitor/data/hub-public-key.
+[Unit]
+Description=Omnilyzer isolated Beszel container metrics agent
+Requires=beszel-omnilyzer-proxy.service
+After=beszel-omnilyzer-proxy.service
+
+[Service]
+Type=simple
+User=omnilyzer-executor
+Group=omnilyzer-executor
+WorkingDirectory=/var/lib/omnilyzer-beszel-monitor/data
+# Empty mount root; no host /home, /run, /var/lib, /etc/private or Task014 files.
+# Only static agent, host /proc and public /sys metrics, own data and filtered socket.
+ExecStart=/usr/bin/bwrap --unshare-user --unshare-pid --share-net --tmpfs / --dir /opt --dir /var --dir /var/tmp --dir /proc --dir /dev --dir /sys --dir /run --dir /etc --ro-bind /sys /sys --proc /proc --dev /dev --ro-bind /etc/os-release /etc/os-release --ro-bind /opt/omnilyzer-beszel-monitor/beszel-agent /opt/beszel-agent --bind /var/lib/omnilyzer-beszel-monitor/data /var/tmp --ro-bind /run/user/991/beszel-metrics.sock /var/tmp/docker.sock --chdir /var/tmp --clearenv --setenv PATH /usr/bin:/bin --setenv KEY_FILE /var/tmp/hub-public-key --setenv DATA_DIR /var/tmp --setenv LISTEN 127.0.0.1:45878 --setenv DOCKER_HOST unix:///var/tmp/docker.sock --setenv DOCKER_IMAGE_CHECK false --setenv SKIP_SYSTEMD true --setenv SKIP_SYSTEMD_LOGS true --setenv FILESYSTEM / -- /opt/beszel-agent
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectProc=invisible
+ReadWritePaths=/var/lib/omnilyzer-beszel-monitor/data
+UMask=0077
+MemoryMax=256M
+TasksMax=128
+TimeoutStopSec=6
+LogRateLimitIntervalSec=60s
+LogRateLimitBurst=20
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=beszel-omnilyzer-agent
+
+[Install]
+WantedBy=multi-user.target
