@@ -1,0 +1,39 @@
+# File: /etc/systemd/system/beszel-omnilyzer-proxy.service
+# Purpose: Read-only, UID 991 Docker metrics adapter; never runs as root.
+# Related: /opt/omnilyzer-beszel-monitor/metrics_proxy.py,
+#          /run/user/991/docker.sock, /run/user/991/beszel-metrics.sock.
+[Unit]
+Description=Omnilyzer isolated Beszel Docker metrics proxy
+Wants=user@991.service
+After=user@991.service
+
+[Service]
+Type=simple
+User=omnilyzer-executor
+Group=omnilyzer-executor
+ExecStart=/usr/bin/python3 -I -B /opt/omnilyzer-beszel-monitor/metrics_proxy.py --docker-socket /run/user/991/docker.sock --listen-socket /run/user/991/beszel-metrics.sock
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+InaccessiblePaths=/var/lib/omnilyzer/deployment /etc/omnilyzer /opt/omnilyzer
+ReadWritePaths=/run/user/991
+UMask=0077
+MemoryMax=128M
+TasksMax=32
+TimeoutStopSec=6
+LogRateLimitIntervalSec=60s
+LogRateLimitBurst=20
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=beszel-omnilyzer-proxy
+
+[Install]
+WantedBy=multi-user.target
