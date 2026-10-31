@@ -43,12 +43,12 @@ MANIFEST = PREFIX / "install-manifest.json"
 MARKER = "OMNILYZER-BESZEL-20261031"
 UNITS = ("beszel-omnilyzer-proxy.service", "beszel-omnilyzer-agent.service")
 SOURCE_HASHES = {
-    "README.md": "c251ec972c3dc1c81a7c5f1a8837bd9b469587afcea59469bc443fc6b9725c9b",
+    "README.md": "6e5609ea9f1a67332682483073f295c6c947c3f19b9a8792bfaf4634fbe7c4a5",
     "metrics_proxy.py": "114e0be8843e0b9bcb7c0c252078aad10a14b7aa8458ef7a53524360370222c0",
     "test_metrics_proxy.py": "2064552c072a4565a5e3c508b73046068229d8603befd98b9ce2507e94793a85",
-    "test_install.py": "605f6d98fd0ce75653e9075a104764063fc649724fe73dc872df6e6ee9d37e84",
-    "beszel-omnilyzer-proxy.service": "2436014474a7a6b3e19c621230e42b5e549ab80e2e7396444d6733d07675c1fc",
-    "beszel-omnilyzer-agent.service": "5f5d5543243b8e800f57c97a92e783663e49a383cd5748ee58f4118f74aabc46",
+    "test_install.py": "4bab1c1fa856c4134b219e5db22aea18efbede324aef4d18233783b054590057",
+    "beszel-omnilyzer-proxy.service": "d5eb97a09c437224cb3ba82cbd8502bffd66a7af9c9ce9e7bfa842c23ba5d47b",
+    "beszel-omnilyzer-agent.service": "fd37214a7c2936808d327492ca56cace473b9180d7e6c39936e0c74b13bb2e6f",
 }
 AGENT_SHA256 = "5c84416b63028f7ad86ebafa4c8a7a27977d485a838de357216ded3ab844b2b5"
 PUBLIC_SHA256 = "8d2d96cf101d2aac642d280df74ee5af83bb5dd7db16223cae26a90a6c3abe54"
@@ -225,6 +225,14 @@ def start_and_check() -> None:
         if SOCKET.is_socket():
             break
         time.sleep(0.25)
+    if not SOCKET.is_socket():
+        # A failed systemd sandbox must not appear as an unhelpful
+        # FileNotFoundError from the next socket lstat or Unix connect.
+        # Keep journal contents out of stdout; only identify our own unit.
+        raise RuntimeError(
+            "Private metrics socket absent after starting "
+            + UNITS[0] + "; inspect its systemd journal"
+        )
     acceptance()
     systemctl("enable", "--now", UNITS[1])
     for _ in range(30):
