@@ -80,7 +80,7 @@ class OriginalC26ArchiveTests(unittest.TestCase):
     def test_real_git_archive_roundtrip_and_rebuild_is_deterministic(self):
         """Original immutable Git blobs survive exact canonical TAR transport."""
         source = self.inspect()
-        self.assertEqual(len(source), 31)
+        self.assertEqual(len(source), 32)
         self.assertEqual(
             tuple(name for name, _ in source),
             tuple(sorted(name for name, _ in source)),
@@ -95,7 +95,7 @@ class OriginalC26ArchiveTests(unittest.TestCase):
             ).read_bytes()), source,
         )
         with tarfile.open(fileobj=io.BytesIO(self.archive), mode="r:") as tar:
-            self.assertEqual(len(tar.getmembers()), 32)
+            self.assertEqual(len(tar.getmembers()), 33)
             self.assertEqual(
                 tar.getmembers()[0].name,
                 ".omnilyzer-analytics-source-review.json",
@@ -107,7 +107,7 @@ class OriginalC26ArchiveTests(unittest.TestCase):
             ))
 
     def test_disposable_70_file_four_shared_upgrade_and_full_rollback(self):
-        """Prove 39 immutable originals + four bounded compatibility patches.
+        """Prove 38 immutable originals + five bounded compatibility patches.
 
         Four real installed DEV SHA-256 preimages are pinned to original
         protected Git objects (promotion.py is from an older historical
@@ -337,3 +337,4 @@ class OriginalC26ArchiveTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

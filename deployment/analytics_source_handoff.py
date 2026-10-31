@@ -1,7 +1,7 @@
 """File: deployment/analytics_source_handoff.py
 
 Purpose: Produce a read-only, deterministic Git-object handoff for the EXACT
-         Analytics Task014 DEV source, including four explicit shared-file updates. This is the missing input to
+         Analytics Task014 DEV source, including five explicit shared-file updates. This is the missing input to
          an independently authorized root-owned application installation.
 Related: deployment/application_manifest.py (original closed Git-object reader),
          deployment/application_source_set.py (original canary source boundary),
@@ -49,11 +49,11 @@ _ADDITIVE_UNITS = (
     "deployment/systemd/dev/omnilyzer-deployment-analytics-executor.service",
     "deployment/systemd/dev/omnilyzer-deployment-analytics-executor.socket",
 )
-# Four pre-existing ORIGINAL C32V Task014 modules must be updated to let
+# Five pre-existing ORIGINAL C32V Task014 modules must be updated to let
 # the new Analytics broker use scoped registry GET, OCI signature, sealed
 # credential APIs and SIGNED external-source parsing. Three match the
 # protected platform base; the fourth (promotion.py) is a genuine older
-# installed source from ba4fd3. All FOUR preimage hashes were independently
+# installed source from ba4fd3. All FIVE preimage hashes were independently
 # verified against the LIVE DEV host and exact historical Git objects on
 # 2026-10-30. This explicit closed
 # compatibility patch is NOT a generic canary source allowlist expansion.
@@ -63,6 +63,7 @@ _SHARED_COMPATIBILITY_FILES = (
     "deployment/private_registry_fd.py",
     "deployment/promotion.py",
     "deployment/release_consumer.py",
+    "deployment/unix_transport.py",
 )
 _PROMOTION_INSTALLED_COMMIT = "ba4fd3cacb33f71a626eeb3877a886f0fe31c82a"
 _SHARED_PREIMAGE_COMMITS = {
@@ -70,8 +71,11 @@ _SHARED_PREIMAGE_COMMITS = {
     "deployment/private_registry_fd.py": _SHARED_BASE_COMMIT,
     "deployment/promotion.py": _PROMOTION_INSTALLED_COMMIT,
     "deployment/release_consumer.py": _SHARED_BASE_COMMIT,
+    "deployment/unix_transport.py": _SHARED_BASE_COMMIT,
 }
 _SHARED_PREIMAGE_SHA256 = {
+    "deployment/unix_transport.py":
+        "8488bad2876df513c1aa3ddda626c8e9cb85e0ed905357561a3e004ee2bf6904",
     "deployment/oci_verifier.py":
         "caf85eb39585ce35d5b3e5528401f78e7abe98cdcb470af55ee4dd6bdbbc30c2",
     "deployment/private_registry_fd.py":
@@ -124,7 +128,7 @@ def review_analytics_source_handoff(
             *_ADDITIVE_UNITS, *_SHARED_COMPATIBILITY_FILES,
         )))
         if (
-            len(selected) != 31 or len(set(selected)) != 31
+            len(selected) != 32 or len(set(selected)) != 32
             or set(selected) & original != set(_SHARED_COMPATIBILITY_FILES)
             or set(_SHARED_PREIMAGE_SHA256) != set(_SHARED_COMPATIBILITY_FILES)
             or set(_SHARED_PREIMAGE_COMMITS) != set(_SHARED_COMPATIBILITY_FILES)
@@ -200,13 +204,13 @@ def review_analytics_source_handoff(
                 or hashlib.sha256(found[path]).hexdigest() == _SHARED_PREIMAGE_SHA256[path]
             ):
                 raise ValueError
-        # The 39 unchanged protected canary files are COPIED from the already
+        # The 38 unchanged protected canary files are COPIED from the already
         # root-owned original application into a separate Analytics source
         # generation. Pin their raw Git preimage hashes here so a future
         # privileged installer can reject altered host bytes before staging.
         inherited = tuple(item.repository_path for item in base.files
                           if item.repository_path not in _SHARED_COMPATIBILITY_FILES)
-        if len(inherited) != 39:
+        if len(inherited) != 38:
             raise ValueError
         inherited_records = _git._tree(_git._output(
             repository_root, ("ls-tree", "-r", "-z", "--full-tree",
@@ -246,7 +250,7 @@ def review_analytics_source_handoff(
             "purpose": "analytics-task014-additive-source-review-only",
             "source_commit": reviewed_commit,
             "source_repository": "MichaelTrueX/omnilyzer-platform",
-            "source_file_count": 31,
+            "source_file_count": 32,
             "source_entries": entries,
             "shared_base_source_commit": _SHARED_BASE_COMMIT,
             "shared_patch_paths": list(_SHARED_COMPATIBILITY_FILES),
@@ -278,3 +282,4 @@ def review_analytics_source_handoff(
 __all__ = (
     "AnalyticsSourceHandoffError", "review_analytics_source_handoff",
 )
+

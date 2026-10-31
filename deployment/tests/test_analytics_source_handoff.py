@@ -58,7 +58,7 @@ class AdditiveSourceHandoffTests(unittest.TestCase):
         )
         manifest = json.loads(raw)
         self.assertEqual(manifest["source_commit"], source_commit())
-        self.assertEqual(manifest["source_file_count"], 31)
+        self.assertEqual(manifest["source_file_count"], 32)
         self.assertIs(manifest["signed_release_authorized"], False)
         self.assertIs(manifest["deployment_authorized"], False)
         self.assertEqual(
@@ -74,10 +74,10 @@ class AdditiveSourceHandoffTests(unittest.TestCase):
             },
         )
         entries = manifest["source_entries"]
-        self.assertEqual(len(entries), 31)
+        self.assertEqual(len(entries), 32)
         self.assertEqual(manifest["isolation_target"],
                          "/opt/omnilyzer/deployment/analytics-app")
-        self.assertEqual(len(manifest["inherited_canary_sha256"]), 39)
+        self.assertEqual(len(manifest["inherited_canary_sha256"]), 38)
         self.assertEqual(
             set(manifest["inherited_canary_sha256"]),
             {x.repository_path for x in DevApplicationSourceSet().files}
@@ -203,3 +203,4 @@ class AdditiveSourceHandoffTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

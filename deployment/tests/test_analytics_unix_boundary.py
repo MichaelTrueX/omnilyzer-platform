@@ -278,6 +278,39 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
         self.addCleanup(self.clock1.stop)
         self.addCleanup(self.clock2.stop)
 
+    def test_systemd_analytics_listener_transfers_descriptor_after_exact_peer_check(self):
+        """Join the real Analytics sender to the real shared PID1 decision."""
+        from deployment import unix_transport as wire
+        from deployment.tests.test_unix_transport import FakeSocket, metadata, Clock, RESPONSE, PEER
+        fd = credential()
+        try:
+            for pid, uid, gid in ((1,0,0),(2,0,0),(1,1,0),(1,0,1)):
+                fake = FakeSocket(peer=PEER.pack(pid,uid,gid))
+                with patch.object(wire.os, 'lstat', side_effect=[metadata(uid=991,gid=993),metadata(uid=991,gid=993)]), patch.object(wire.socket, 'socket', return_value=fake), patch.object(wire.time, 'monotonic', Clock()), patch.object(wire, 'send_sealed_header') as send:
+                    transport = AnalyticsUnixExecutorTransport(expected_executor_uid=991,expected_executor_gid=991,expected_socket_group_gid=993,reviewed_installed_source=EXPECTED)
+                    if (pid,uid,gid)==(1,0,0):
+                        self.assertEqual(transport._send_analytics_private(REQUEST,credential_fd=fd), RESPONSE)
+                        send.assert_called_once_with(fake,len(REQUEST).to_bytes(4,'big'),fd)
+                    else:
+                        with self.assertRaises(ExecutorTransportUnavailableError):transport._send_analytics_private(REQUEST,credential_fd=fd)
+                        send.assert_not_called()
+                self.assertTrue(fake.closed)
+        finally:os.close(fd)
+
+    def test_systemd_peer_does_not_approve_foreign_paths_or_replaced_inodes(self):
+        from deployment import unix_transport as wire
+        from deployment.tests.test_unix_transport import FakeSocket, metadata, Clock, PEER
+        fd = credential()
+        try:
+            for path, after in (('/tmp/unreviewed-analytics.sock', metadata(uid=991,gid=993)), (analytics_boundary.ANALYTICS_EXECUTOR_SOCKET_PATH, metadata(uid=991,gid=993,inode=999))):
+                fake = FakeSocket(peer=PEER.pack(1,0,0))
+                with patch.object(analytics_boundary,'ANALYTICS_EXECUTOR_SOCKET_PATH',path), patch.object(wire.os,'lstat',side_effect=[metadata(uid=991,gid=993),after]), patch.object(wire.socket,'socket',return_value=fake), patch.object(wire.time,'monotonic',Clock()), patch.object(wire,'send_sealed_header') as send:
+                    transport=AnalyticsUnixExecutorTransport(expected_executor_uid=991,expected_executor_gid=991,expected_socket_group_gid=993,reviewed_installed_source=EXPECTED)
+                    with self.assertRaises(ExecutorTransportUnavailableError):transport._send_analytics_private(REQUEST,credential_fd=fd)
+                    send.assert_not_called()
+                self.assertTrue(fake.closed)
+        finally:os.close(fd)
+
     def test_real_analytics_unix_socket_and_sealed_fd_roundtrip(self):
         """Reuse original metadata, peer, expiry, framing and response checks."""
         with tempfile.TemporaryDirectory(prefix="m05-14-analytics-unix-") as root:
@@ -605,3 +638,4 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

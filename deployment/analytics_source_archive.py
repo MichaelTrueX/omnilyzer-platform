@@ -1,7 +1,7 @@
 """File: deployment/analytics_source_archive.py
 
 Purpose: Build and verify ONE deterministic unsigned Task014 Analytics additive
-         source archive containing the reviewed 31-file Git-object handoff (27 new + 4 shared patches).
+         source archive containing the reviewed 32-file Git-object handoff (27 new + 5 shared patches).
 Related: deployment/analytics_source_handoff.py (original C26 Git-object
          evidence), deployment/analytics_executor_service_config.py (closed
          exact service source set), deployment/application_manifest.py (Git
@@ -40,7 +40,7 @@ _META_PATH = ".omnilyzer-analytics-source-review.json"
 _MAX_TOTAL = 14 * 1024 * 1024
 _MAX_FILE = 1024 * 1024
 _MAX_MANIFEST = 16 * 1024
-_SOURCE_TOTAL = 31
+_SOURCE_TOTAL = 32
 _SHA_RE = re.compile(r"[0-9a-f]{64}")
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 
@@ -88,7 +88,7 @@ def _validate_manifest(raw: bytes, expected_sha: str, commit: str) -> dict:
         or value["shared_preimage_commits"] != _SHARED_PREIMAGE_COMMITS
         or value["isolation_target"] != "/opt/omnilyzer/deployment/analytics-app"
         or type(value["inherited_canary_sha256"]) is not dict
-        or len(value["inherited_canary_sha256"]) != 39
+        or len(value["inherited_canary_sha256"]) != 38
         or any(type(key) is not str or type(digest) is not str
                or _SHA_RE.fullmatch(digest) is None
                for key, digest in value["inherited_canary_sha256"].items())
@@ -192,7 +192,7 @@ def build_analytics_source_archive(
 def verify_analytics_source_archive(
     raw: bytes, *, expected_manifest_sha256: str, reviewed_commit: str,
 ) -> tuple[tuple[str, bytes], ...]:
-    """Verify exact 32-member canonical USTAR and return 31 inert raw blobs (27 new, 4 patches).
+    """Verify exact 33-member canonical USTAR and return 32 inert raw blobs (27 new, 5 patches).
 
     The caller must derive expected_manifest_sha256 from separately reviewed
     ROOT-OWNED authority, never from the archive or HTTP request. The return
@@ -204,7 +204,7 @@ def verify_analytics_source_archive(
         with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as tar:
             # tar.getmembers() can allocate memory for every header in a
             # malicious small-input zero-length-file TAR. Cap iteration at
-            # the exact 32 legitimate members plus ONE unexpected header.
+            # the exact 33 legitimate members plus ONE unexpected header.
             members = []
             for _ in range(_SOURCE_TOTAL + 2):
                 member = tar.next()
@@ -283,3 +283,4 @@ __all__ = (
     "AnalyticsSourceArchiveError", "build_analytics_source_archive",
     "verify_analytics_source_archive",
 )
+

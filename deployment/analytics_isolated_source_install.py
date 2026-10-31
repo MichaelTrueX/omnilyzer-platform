@@ -2,8 +2,8 @@
 
 Purpose: Prepare ONE approved Analytics Task014 root-owned source generation
          without modifying the original protected canary application.
-Related: deployment/analytics_source_archive.py (31 exact review objects),
-         deployment/analytics_source_handoff.py (39 historical inherited
+Related: deployment/analytics_source_archive.py (32 exact review objects),
+         deployment/analytics_source_handoff.py (38 historical inherited
          source hashes), deployment/dev_host_provisioning_mechanics.py (C31B
          protected FD/file verification), deployment/application_source_set.py,
          deployment/analytics_executor_service_config.py and
@@ -217,7 +217,7 @@ def _review_and_combine(
     old: dict[str, bytes], archive: bytes, *,
     manifest_sha: str, reviewed_commit: str,
 ) -> tuple[tuple[str, bytes], ...]:
-    """Require exact 43 host preimages + 31 reviewed Git blobs, yielding 70."""
+    """Require exact 43 host preimages + 32 reviewed Git blobs, yielding 70."""
     updated = verify_analytics_source_archive(
         archive, expected_manifest_sha256=manifest_sha,
         reviewed_commit=reviewed_commit,
@@ -238,7 +238,7 @@ def _review_and_combine(
         raise ValueError
     union = {**old, **dict(updated)}
     if (
-        len(union) != 70 or len(updated) != 31
+        len(union) != 70 or len(updated) != 32
         or sum(len(blob) for blob in union.values()) > _MAX_GENERATION
     ):
         raise ValueError
@@ -474,3 +474,4 @@ __all__ = (
     "AnalyticsIsolatedSourceInstallError",
     "install_approved_analytics_source_generation",
 )
+
