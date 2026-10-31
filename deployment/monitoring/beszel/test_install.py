@@ -63,45 +63,8 @@ class InstallerTests(unittest.TestCase):
             patcher = mock.patch.object(MODULE, name, func)
             patcher.start()
             self.addCleanup(patcher.stop)
-        # Test as a non-root user: remap only the root ownership assertions
-        # to the current fixture owner, without weakening the production code.
-        original_require_dir = MODULE.require_dir
-
-        def fixture_require_dir(path, uid, gid, mode=None):
-            """Assert ownership and mode against this test process's files."""
-            return original_require_dir(
-                path, os.getuid() if uid == 0 else uid,
-                os.getgid() if gid == 0 else gid, mode,
-            )
-
-        for target, replacement in (
-            ("require_dir", fixture_require_dir),
-        ):
-            patcher = mock.patch.object(MODULE, target, replacement)
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        for method in ("chown", "fchown"):
-            patcher = mock.patch.object(MODULE.os, method, lambda *args: None)
-            patcher.start()
-            self.addCleanup(patcher.stop)
-
-        # Test as a non-root user: remap only the root ownership assertions
-        # to the current fixture owner, without weakening the production code.
-        original_require_dir = MODULE.require_dir
-
-        def fixture_require_dir(path, uid, gid, mode=None):
-            """Assert ownership and mode against this test process's files."""
-            return original_require_dir(
-                path, os.getuid() if uid == 0 else uid,
-                os.getgid() if gid == 0 else gid, mode,
-            )
-
-        for target, replacement in (
-            ("require_dir", fixture_require_dir),
-        ):
-            patcher = mock.patch.object(MODULE, target, replacement)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        # Only privileged ownership calls are mocked. ROOT_UID/ROOT_GID
+        # are remapped to the fixture process owner in replacements above.
         for method in ("chown", "fchown"):
             patcher = mock.patch.object(MODULE.os, method, lambda *args: None)
             patcher.start()
