@@ -355,16 +355,22 @@ RestrictNamespaces=yes
 
 
     def test_identity_publication_failure_at_each_file_restores_whole_generation(self):
+        self.publication_failure_for_groups(((0,0o644),(990,0o640),(991,0o640),(0,0o600),(0,0o600),(990,0o640)))
+
+    def test_stream_publication_failure_at_each_of_eight_files_restores_generation(self):
+        self.publication_failure_for_groups(((0,0o644),(0,0o644),(0,0o644),(990,0o640),(991,0o640),(0,0o600),(0,0o600),(990,0o640)))
+
+    def publication_failure_for_groups(self,groups):
         from deployment import analytics_task014_resume as owner
         helper = SimpleNamespace(bounded_file=self.read_root_fixture)
         entries = []
-        for i, (group, mode) in enumerate(((0,0o644),(990,0o640),(991,0o640),(0,0o600),(0,0o600),(990,0o640))):
+        for i, (group, mode) in enumerate(groups):
             path = self.base / ('generation-' + str(i))
             before, after = ('old-' + str(i)).encode(), ('new-' + str(i)).encode()
             owner.atomic_file(helper, path, before, group=group, mode=mode)
             entries.append((path, group, mode, before, after))
         real_atomic = owner.atomic_file
-        for failed_index in range(6):
+        for failed_index in range(len(entries)):
             armed = True
             def interrupted(helper, path, raw, **kwargs):
                 nonlocal armed
@@ -394,7 +400,7 @@ RestrictNamespaces=yes
 
     def test_source_crash_before_rename_preserves_empty_and_partial_evidence(self):
         from deployment import analytics_task014_resume as owner
-        for index, (source_name, interrupted) in enumerate(((owner.IDENTITY_SOURCE,b''),(owner.IDENTITY_SOURCE,b'partial-new-source'),(owner.TRANSPORT_SOURCE,b''),(owner.TRANSPORT_SOURCE,b'partial-new-source'))):
+        for index, (source_name, interrupted) in enumerate((p,b) for p in (owner.IDENTITY_SOURCE,owner.TRANSPORT_SOURCE,*owner.STREAM_SOURCES) for b in (b'',b'partial-new-source')):
             root = self.base / ('source-' + str(index));root.mkdir(mode=0o755)
             (root / 'deployment').mkdir(mode=0o755)
             private = self.base / ('evidence-' + str(index));private.mkdir(mode=0o700)
@@ -413,7 +419,7 @@ RestrictNamespaces=yes
             self.control.stop_and_confirm()
             owner.preserve_identity_source_temporary(helper, private, inventory, source_name=source_name)
             owner.closed_tree(helper, root, expected)
-            saved = private / 'interrupted-source.resume-next'
+            saved = private / (('interrupted-'+source.name+'.resume-next') if source_name in owner.STREAM_SOURCES else 'interrupted-source.resume-next')
             self.assertEqual((saved.stat().st_ino, saved.read_bytes()), (inode, interrupted))
             self.assertFalse(temporary.exists());self.assertEqual(source.read_bytes(), b'old-source')
             self.control.require_stopped();self.control.reload_and_verify(self.expected)
@@ -498,4 +504,3 @@ finally:os.close(fd)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
-

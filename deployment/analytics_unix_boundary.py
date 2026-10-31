@@ -35,6 +35,11 @@ from .unix_transport import (
     PRODUCTION_EXECUTOR_SOCKET_PATH, UnixExecutorTransport, _validate_path,
     ExecutorTransportUnavailableError, TRANSPORT_UNAVAILABLE_MESSAGE,
 )
+
+#570s normal work +75s independent stop cleanup +30s manifest preflight and
+# replay/response margin fit here. The unchanged900s edge also covers the
+# original117s broker prefix:117+720=837s. Canary remains600s.
+ANALYTICS_RESPONSE_TIMEOUT_MS = 720_000
 from .policy import validate_sha256, validate_source_sha
 
 ANALYTICS_EXECUTOR_SOCKET_PATH = "/run/omnilyzer/deployment/analytics-executor.sock"
@@ -86,6 +91,7 @@ class AnalyticsUnixExecutorTransport(UnixExecutorTransport):
         # rather than replace arbitrary indices if its reviewed tuple changes.
         if (
             len(settings) != 28
+            or settings[4] != 600_000
             or settings[5] != PRODUCTION_EXECUTOR_SOCKET_PATH
             or settings[6] != _validate_path(PRODUCTION_EXECUTOR_SOCKET_PATH)[1]
         ):
@@ -93,6 +99,7 @@ class AnalyticsUnixExecutorTransport(UnixExecutorTransport):
         path, encoded = _validate_path(ANALYTICS_EXECUTOR_SOCKET_PATH)
         if path == PRODUCTION_EXECUTOR_SOCKET_PATH:
             raise TypeError("Analytics socket may not equal canary socket")
+        settings[4] = ANALYTICS_RESPONSE_TIMEOUT_MS
         settings[5], settings[6] = path, encoded
         object.__setattr__(self, "_configuration", tuple(settings))
         object.__setattr__(self, "_reviewed_source", source)

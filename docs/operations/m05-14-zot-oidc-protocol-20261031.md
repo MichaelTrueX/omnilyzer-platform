@@ -1,58 +1,35 @@
 <!--
 File: docs/operations/m05-14-zot-oidc-protocol-20261031.md
-Purpose: Record the evidenced Zot response compatibility fix and read-only verification boundary.
-Related: deployment/release_consumer.py, release/analytics_task014_readonly_probe.py,
-.github/workflows/platform-promote.yml and Omnilyzer issue27.
+Purpose: Document the exact installed Zot OIDC protocol and avoid false exchange assumptions.
+Related: deployment/private_registry_pull.py, deployment/release_consumer.py,
+         release/analytics_task014_readonly_probe.py, task014-registry-stream-deadline.md.
+Authority: Read-only protocol evidence, no authentication or deployment grant.
 -->
 
-# Task014 Zot OIDC response compatibility
+# Zot OIDC protocol at the installed2.1.20 revision
 
-The installed Zot is v2.1.20, commit 3b5796d. Its upstream
+The verified live binary is project-zot/zot commit3b5796d. Its
 [pkg/api/token_exchange.go](https://github.com/project-zot/zot/blob/3b5796d/pkg/api/token_exchange.go)
-returns the validated OIDC credential unchanged in both token and access_token.
-Its bearer middleware also accepts the OIDC JWT directly. PR266's assumption
-that the returned token must differ from the input was incorrect. Rejecting
-that equality prevents the real documented protocol from completing.
+returns the supplied OIDC token unchanged in both token/access_token, with
+expires_in derived from that token's original exp. This corrects the earlier
+assumption that this endpoint necessarily mints a separate scoped Bearer.
 
-Restore the original direct OIDC Bearer manifest GET, which Zot already
-authenticates. Remove the unnecessary token-endpoint round trip rather than
-expanding the original HTTP reader. Preserve fixed host/repository, strict
-bounded headers/body, TLS, redirects, exact digest and signature checks. Existing independent broker JWT,
-source, signature, replay and executor authorization remain mandatory.
+Docker answers the fixed registry challenge using the existing private0600
+Basic oidc credential configuration and then uses the returned token. The
+installed current HTTP evidence reader sends its verified OIDC token directly
+as Bearer. Live signed requests have passed that evidence stage. Registry
+repository permission is still independently necessary; authentication alone
+does not grant Analytics read access.
 
-The original a09ddd45 promotion failure has not been attributed to raw Bearer
-usage. The later 89b30c35 promotion run41166713056 also returned HTTP503 before
-executor activation. Correcting the newly introduced response rejection does
-not establish the earlier failure's cause or prove deployment readiness.
+Do not reintroduce the historical helper that rejected registry_token==token.
+Do not assume token exchange extends the300s GitHub/FD lifetime. Verify the
+actual deployed source and upstream version before changing either reader.
 
-Use the existing platform-promote.yml auth_probe=true with product_id=analytics
-and target_stage=dev for a read-only component matrix. It exercises the actual
-fixed Zot GET and strict OCI parser/digest, fixed Forgejo GET, existing closed
-archive and scanner/signed-field parsers, then real Cosign verification of both
-blobs and the immutable OCI signature using the original pinned CI installer.
-Independent checks continue after failures; stdout contains fixed status and
-HTTP-envelope metadata, never credentials, bodies or raw subprocess output.
-Private credential/evidence files and verification caches are temporary and
-removed. The canary diagnostic remains the default.
+The existing platform-promote.yml auth_probe=true, product_id=analytics path
+checks authenticated manifest/evidence and signatures without deployment.
+Its success is not proof that all image layers can stream completely or that
+an uncached image pull fits the runtime deadlines.
 
-This diagnostic has no Tailscale join, broker POST, replay operation, host
-provisioning, container, database, secret-file, signing or publication action.
-It does not prove the host broker's identity, descriptor snapshots, memfd
-sealing or service sandbox. Those remain separate live host acceptance checks.
-Do not rebuild or republish Analytics0.15.0/run40881693662, reset replay or rerun
-PostgreSQL bootstrap. Actual DEV acceptance remains pending.
-
-## Real read-only matrix result
-
-Run41168342282 on reviewed main60bc8f56 passed the actual Forgejo archive,
-scanner/signed-field checks and both real Cosign blob signatures. The added
-Zot token endpoint returned200 JSON with Transfer-Encoding:chunked and no
-Content-Length, so the strict reader stopped before the manifest GET. This
-response does not establish the manifest's envelope or the original failure.
-Restore the supported direct Bearer GET before changing its HTTP contract.
-Real OCI signature verification independently returned failure. The diagnostic
-now captures at most65537 stderr bytes with a90second deadline and pinned-PID
-process-group cleanup, emitting only fixed categories. Registry access denial
-is a diagnostic category, not a proven distinction between authentication and
-repository authorization. Never print raw stderr, credentials or bodies.
-The host remains unchanged until the full real matrix passes.
+For the31 October truncated-layer failure, configuration/digest/proxy evidence,
+native reproduction and the bounded completion policy, see
+[registry streaming and deadlines](task014-registry-stream-deadline.md).

@@ -23,6 +23,7 @@ a 0700 volatile runtime directory, removed on all paths.
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -41,13 +42,19 @@ from .docker_runtime import (
 from .private_registry_fd import read_sealed_credential
 from .private_registry_pull import (
     MIN_POST_PREFLIGHT_VALIDITY_SECONDS, MIN_VALIDITY_SECONDS,
-    PRIVATE_PULL_TIMEOUT_SECONDS, PROBE, PULL,
+    PROBE, PULL,
     _command, _private_runtime_directory, _write_config,
     current_private_zot_request,
 )
 
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 ERROR = "Analytics private Zot read is unavailable"
+# Analytics' cold image can outlive the original Canary pull window. This
+# bounds one already-admitted operation, not the OIDC/FD credential lifetime.
+# Zot still rejects every new HTTP request whose token has expired.
+# The225s preflight threshold remains a fresh-admission requirement here;
+# unlike Canary's180s path it is not a promise of whole-pull JWT validity.
+ANALYTICS_PULL_TIMEOUT_SECONDS = 500.0
 
 
 class AnalyticsPrivateRegistryError(Exception):
@@ -90,12 +97,18 @@ class AnalyticsPrivateZotPullAdapter:
             raise AnalyticsPrivateRegistryError(ERROR)
         return request
 
-    def _run_private(self, raw: bytes, credential_fd: int, operation: str) -> None:
+    def _run_private(
+        self, raw: bytes, credential_fd: int, operation: str,
+        *, pull_timeout: float = ANALYTICS_PULL_TIMEOUT_SECONDS,
+    ) -> None:
         """Use original rootless/volatile Docker controls and sealed scoped FD."""
         phase = "request_validation"
         try:
             if type(operation) is not str or operation not in (PROBE, PULL):
                 raise ValueError("unreviewed private operation")
+            if (type(pull_timeout) is not float or not math.isfinite(pull_timeout)
+                    or not 0 < pull_timeout <= ANALYTICS_PULL_TIMEOUT_SECONDS):
+                raise ValueError("invalid bounded Analytics pull duration")
             self._reviewed_request(raw)
             now = int(time.time())
             credential = read_sealed_credential(
@@ -131,7 +144,7 @@ class AnalyticsPrivateZotPullAdapter:
                         "HOME": str(workspace),
                     },
                     timeout=(
-                        PRIVATE_PULL_TIMEOUT_SECONDS
+                        pull_timeout
                         if operation == PULL else COMMAND_TIMEOUT_SECONDS
                     ),
                 )
@@ -158,7 +171,10 @@ class AnalyticsPrivateZotPullAdapter:
         """Authenticated manifest inspection before executor replay begins."""
         self._run_private(canonical_request, credential_fd, PROBE)
 
-    def pull_analytics(self, request: AnalyticsExecutorRequest) -> None:
+    def pull_analytics(
+        self, request: AnalyticsExecutorRequest,
+        *, timeout: float = ANALYTICS_PULL_TIMEOUT_SECONDS,
+    ) -> None:
         """Pull exact digest via the original executor's short-lived FD scope."""
         try:
             if type(request) is not AnalyticsExecutorRequest:
@@ -175,7 +191,7 @@ class AnalyticsPrivateZotPullAdapter:
             raise
         except Exception:
             raise AnalyticsPrivateRegistryError(ERROR) from None
-        self._run_private(raw, credential_fd, PULL)
+        self._run_private(raw, credential_fd, PULL, pull_timeout=timeout)
 
 
 __all__ = (

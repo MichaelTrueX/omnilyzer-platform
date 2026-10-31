@@ -64,7 +64,7 @@ class SyntheticRunner:
         assert TOKEN not in str(environment)
         assert set(environment) == {"PATH", "LANG", "ANALYTICS_IMAGE", "HOME"}
         assert environment["ANALYTICS_IMAGE"] == PINNED_IMAGE
-        assert timeout in (30.0, 180.0)
+        assert type(timeout) is float and 0 < timeout <= (500.0 if argv[5] == "pull" else 30.0)
         self.calls.append((argv, dict(environment), timeout))
         self.workspaces.append(workspace)
         return self.outcome
@@ -102,7 +102,7 @@ class RootlessAnalyticsZotTests(unittest.TestCase):
             self.addCleanup(item.stop)
 
     def test_manifest_then_scoped_private_pull_and_volatile_cleanup(self):
-        """Exact original 30s manifest + 180s pull; secret never in argv or env."""
+        """30s manifest and bounded500s Analytics work; no token lifetime change."""
         fd = make_fd()
         try:
             self.assertIsNone(self.adapter.preflight_analytics(REQUEST, fd))
@@ -115,7 +115,7 @@ class RootlessAnalyticsZotTests(unittest.TestCase):
             )
             self.assertIn("pull", self.runner.calls[1][0])
             self.assertEqual(
-                [call[2] for call in self.runner.calls], [30.0, 180.0],
+                [call[2] for call in self.runner.calls], [30.0, 500.0],
             )
             self.assertTrue(all(not path.exists() for path in self.runner.workspaces))
             self.assertEqual(list(Path(self.workdir.name).iterdir()), [])
