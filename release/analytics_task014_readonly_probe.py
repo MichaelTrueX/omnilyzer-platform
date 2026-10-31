@@ -15,6 +15,7 @@ import selectors
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from typing import Mapping
@@ -71,9 +72,9 @@ def _run_cosign(argv: list[str], environment: dict[str, str]) -> tuple[int, byte
     child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.PIPE, env=environment, cwd=environment['HOME'],
                              start_new_session=True, close_fds=True)
-    output = bytearray()
-    deadline = time.monotonic() + 90
     try:
+        output = bytearray()
+        deadline = time.monotonic() + 90
         os.set_blocking(child.stderr.fileno(), False)
         with selectors.DefaultSelector() as selector:
             selector.register(child.stderr, selectors.EVENT_READ)
@@ -98,14 +99,27 @@ def _run_cosign(argv: list[str], environment: dict[str, str]) -> tuple[int, byte
                 raise CheckFailed('COMMAND_TIMEOUT')
             time.sleep(0.01)
     finally:
-        try:
-            os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            child.wait(timeout=2)
-        finally:
-            child.stderr.close()
+        pending = sys.exception()
+        cleanup_failed = False
+        cleanup_control = None
+        controls = (KeyboardInterrupt, SystemExit, GeneratorExit)
+        def terminate():
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        for operation in (terminate, lambda: child.wait(timeout=2), child.stderr.close):
+            try:
+                operation()
+            except controls as error:
+                cleanup_control = cleanup_control or error
+            except Exception:
+                cleanup_failed = True
+        if not isinstance(pending, controls):
+            if cleanup_control is not None:
+                raise cleanup_control
+            if cleanup_failed:
+                raise CheckFailed('COMMAND_CLEANUP_FAILED')
 
 
 def _cosign(executable: str, args: list[str], environment: dict[str, str]) -> None:

@@ -133,6 +133,39 @@ class ReadonlyAnalyticsProbeTests(unittest.TestCase):
         self.assertEqual(len(children),1)
         self.assertIsNotNone(children[0].returncode);self.assertTrue(children[0].stderr.closed)
 
+    def test_cleanup_attempts_wait_and_close_after_kill_failure_or_control(self):
+        for failure,expected in ((OSError('PRIVATE'),probe.CheckFailed),(KeyboardInterrupt(),KeyboardInterrupt)):
+            with self.subTest(failure=type(failure).__name__):
+                events=[]
+                class Pipe:
+                    def fileno(self):return 123
+                    def close(self):events.append('close')
+                class Child:
+                    pid=12345
+                    stderr=Pipe()
+                    def wait(self,**kwargs):events.append('wait')
+                def kill(*args):events.append('kill');raise failure
+                with patch.object(probe.subprocess,'Popen',return_value=Child()), \
+                     patch.object(probe.os,'set_blocking',side_effect=ValueError('PRIVATE')), \
+                     patch.object(probe.os,'killpg',side_effect=kill):
+                    with self.assertRaises(expected):probe._run_cosign(['/synthetic'],{'HOME':'/unused'})
+                self.assertEqual(events,['kill','wait','close'])
+
+    def test_control_during_deadline_setup_still_cleans_child(self):
+        events=[]
+        class Pipe:
+            def close(self):events.append('close')
+        class Child:
+            pid=12345
+            stderr=Pipe()
+            def wait(self,**kwargs):events.append('wait')
+        with patch.object(probe.subprocess,'Popen',return_value=Child()), \
+             patch.object(probe.os,'killpg',side_effect=lambda *args:events.append('kill')), \
+             patch.object(probe,'time') as clock:
+            clock.monotonic.side_effect=KeyboardInterrupt
+            with self.assertRaises(KeyboardInterrupt):probe._run_cosign(['/synthetic'],{'HOME':'/unused'})
+        self.assertEqual(events,['kill','wait','close'])
+
 
 if __name__=='__main__':
     unittest.main()
