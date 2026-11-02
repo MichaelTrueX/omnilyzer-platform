@@ -6,6 +6,8 @@ Related: services/identity/identity_bff/{views,oidc,issuer}.py,
 """
 import os
 import time
+import subprocess
+import sys
 import unittest
 from unittest import mock
 
@@ -304,6 +306,40 @@ class ContractTests(unittest.TestCase):
                 signing_key.as_dict(is_private=False)]}):
             with self.assertRaises(oidc.IdentityError):
                 oidc.verify_id(token, "opaque-access", nonce="intended-nonce")
+
+
+
+class SettingsBoundaryTests(unittest.TestCase):
+    """Prove only the agreed canonical Sumlaude origin can bind this BFF."""
+
+    @staticmethod
+    def _load_origin(origin):
+        env = os.environ.copy()
+        env["PRODUCT_ORIGIN"] = origin
+        return subprocess.run(
+            [sys.executable, "-c",
+             "from config.settings import PRODUCT_ORIGIN; print(PRODUCT_ORIGIN)"],
+            env=env, capture_output=True, text=True, timeout=8,
+            check=False,
+        )
+
+    def test_only_canonical_sumlaude_origin_accepted(self):
+        """Prevent host confusion and redirect bindings to unintended sites."""
+        good = self._load_origin("https://app.sumlaude.com")
+        self.assertEqual(good.returncode, 0, good.stderr)
+        self.assertEqual(good.stdout.strip(), "https://app.sumlaude.com")
+        for bad in (
+            "https://not-sumlaude.example",
+            "https://app.sumlaude.com.evil.example",
+            "https://app.sumlaude.com:8443",
+            "https://user@app.sumlaude.com",
+            "http://app.sumlaude.com",
+            "https://app.sumlaude.com/auth",
+        ):
+            with self.subTest(origin=bad):
+                result = self._load_origin(bad)
+                self.assertNotEqual(result.returncode, 0,
+                                    f"unexpectedly accepted {bad}")
 
 
 if __name__ == "__main__":
