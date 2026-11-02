@@ -159,13 +159,10 @@ class PublicKeycloakTests(unittest.TestCase):
                      mock.patch.object(MOD, "UNIT", unit), \
                      mock.patch.object(MOD, "metrics_repair_plan", return_value=[]), \
                      mock.patch.object(MOD, "call") as call:
-                    # A duplicated line would be caught in root preflight, not in
-                    # this mock; test this specific no-match guard independently.
-                    if bad.count(b"KC_METRICS_ENABLED=false\n") == 0:
-                        with self.assertRaisesRegex(RuntimeError,
-                                                    "metrics value did not match"):
-                            MOD.repair_metrics_only()
-                        call.assert_not_called()
+                    with self.assertRaisesRegex(RuntimeError,
+                                                "metrics value must appear exactly once"):
+                        MOD.repair_metrics_only()
+                    call.assert_not_called()
 
 
 if __name__ == "__main__":
