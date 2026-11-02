@@ -308,7 +308,6 @@ class ContractTests(unittest.TestCase):
                 oidc.verify_id(token, "opaque-access", nonce="intended-nonce")
 
 
-
 class SettingsBoundaryTests(unittest.TestCase):
     """Prove only the agreed canonical Sumlaude origin can bind this BFF."""
 
