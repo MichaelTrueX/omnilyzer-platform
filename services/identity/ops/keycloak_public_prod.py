@@ -384,6 +384,8 @@ def repair_metrics_only():
     prepare_metrics_repair()
     before = ENV.read_bytes()
     original_unit = UNIT.read_bytes()
+    if before.count(b"KC_METRICS_ENABLED=false\n") != 1:
+        raise RuntimeError("metrics value must appear exactly once")
     updated = before.replace(b"KC_METRICS_ENABLED=false\n", b"")
     if len(updated) >= len(before):
         raise RuntimeError("metrics value did not match exact expected line")
