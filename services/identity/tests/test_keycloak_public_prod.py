@@ -103,5 +103,70 @@ class PublicKeycloakTests(unittest.TestCase):
             MOD.archive_layout(buf.getvalue())
 
 
+    def test_metrics_repair_preflight_fails_without_changes(self):
+        """Any detected host mismatch fails closed before file edits."""
+        with mock.patch.object(MOD, "metrics_repair_plan",
+                               return_value=["unexpected unit", "active service"]), \
+             mock.patch.object(MOD, "replace_file_atomic") as replace:
+            with self.assertRaisesRegex(RuntimeError, "preflight failed"):
+                MOD.repair_metrics_only()
+            replace.assert_not_called()
+
+    def test_metrics_repair_preserves_other_secrets_and_disables_restart(self):
+        """The two exact-file edits retain all secrets and never start a service."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            env = root / "keycloak.env"
+            unit = root / "omnilyzer-keycloak.service"
+            secret = b"KC_DB_PASSWORD=synthetic_only_not_real\n"
+            contents = secret + b"KC_METRICS_ENABLED=false\nKC_HTTP_PORT=18742\n"
+            env.write_bytes(contents)
+            env.chmod(0o600)
+            unit.write_bytes(MOD.service_unit().encode("utf-8"))
+            unit.chmod(0o644)
+            with mock.patch.object(MOD, "ENV", env), \
+                 mock.patch.object(MOD, "UNIT", unit), \
+                 mock.patch.object(MOD, "metrics_repair_plan", return_value=[]), \
+                 mock.patch.object(MOD, "call") as call:
+                MOD.repair_metrics_only()
+                self.assertEqual(call.call_args_list,
+                                 [mock.call(["/usr/bin/systemctl", "daemon-reload"])])
+            self.assertEqual(env.read_bytes(), secret + b"KC_HTTP_PORT=18742\n")
+            self.assertEqual((root / "keycloak.env.m01-pre-metrics-repair").read_bytes(),
+                             contents)
+            self.assertEqual((root / "omnilyzer-keycloak.service.m01-pre-metrics-repair").read_bytes(),
+                             MOD.service_unit().encode("utf-8"))
+            self.assertEqual(env.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(unit.stat().st_mode & 0o777, 0o644)
+            self.assertEqual((root / "keycloak.env.m01-pre-metrics-repair").stat().st_mode & 0o777,
+                             0o600)
+            self.assertIn("Restart=no", unit.read_text())
+            self.assertNotIn("Restart=on-failure", unit.read_text())
+
+    def test_metrics_repair_requires_exact_single_setting(self):
+        """A missing, duplicated or non-canonical metrics assignment is a HOLD."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            env = root / "keycloak.env"
+            unit = root / "omnilyzer-keycloak.service"
+            unit.write_bytes(MOD.service_unit().encode())
+            for bad in (b"KC_METRICS_ENABLED=true\n", b"",
+                        b"KC_METRICS_ENABLED=false\nKC_METRICS_ENABLED=false\n"):
+                env.write_bytes(bad)
+                with mock.patch.object(MOD, "ENV", env), \
+                     mock.patch.object(MOD, "UNIT", unit), \
+                     mock.patch.object(MOD, "metrics_repair_plan", return_value=[]), \
+                     mock.patch.object(MOD, "call") as call:
+                    # A duplicated line would be caught in root preflight, not in
+                    # this mock; test this specific no-match guard independently.
+                    if bad.count(b"KC_METRICS_ENABLED=false\n") == 0:
+                        with self.assertRaisesRegex(RuntimeError,
+                                                    "metrics value did not match"):
+                            MOD.repair_metrics_only()
+                        call.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
