@@ -48,6 +48,35 @@ class RegistryAbsenceTests(unittest.TestCase):
         self.assertEqual(urls[-2:], ["/v2/", "/v2/omnilyzer/task013-release-canary/manifests/0.14.5"])
         self.assertEqual(request.call_args_list[-1].kwargs["method"], "HEAD")
 
+    def test_analytics_exact_generic_and_oci_absence(self) -> None:
+        """Analytics checks ONLY its own immutable Generic evidence and OCI tag."""
+        results = [(200, b"[]"), (404, b""), (200, b"[]"),
+                   (200, b""), (404, b"")]
+        with patch("release.registry_absence_preflight._status", side_effect=results) as request:
+            check_absence("0.14.5", FAKE_JWT, FAKE_JWT, product="analytics")
+        paths = [call.args[2] for call in request.call_args_list]
+        self.assertEqual(paths, [
+            "/api/v1/packages/omnilyzer?type=pypi&limit=1",
+            "/api/v1/packages/omnilyzer/generic/analytics-release-evidence/0.14.5",
+            "/api/v1/packages/omnilyzer?type=generic&limit=50&page=1",
+            "/v2/", "/v2/omnilyzer/analytics/manifests/0.14.5",
+        ])
+        self.assertEqual(request.call_args_list[-1].kwargs["method"], "HEAD")
+
+    def test_analytics_rejects_occupied_evidence_and_oci(self) -> None:
+        """Never publish over either occupied Analytics destination."""
+        for index, expected in ((1, "GENERIC_VERSION_OCCUPIED"), (4, "OCI_TAG_OCCUPIED")):
+            with self.subTest(index=index):
+                responses = [(200,b"[]"),(404,b""),(200,b"[]"),(200,b""),(404,b"")]
+                responses[index] = (200,b"{}")
+                with patch("release.registry_absence_preflight._status", side_effect=responses):
+                    with self.assertRaisesRegex(PreflightError, expected):
+                        check_absence("0.14.5", FAKE_JWT, FAKE_JWT, product="analytics")
+        with patch("release.registry_absence_preflight._status") as request:
+            with self.assertRaisesRegex(PreflightError, "UNKNOWN_PRODUCT"):
+                check_absence("0.14.5", FAKE_JWT, FAKE_JWT, product="any")
+            request.assert_not_called()
+
     def test_denied_forgejo_auth_never_probes_destinations(self) -> None:
         """A masked unauthorized response cannot be treated as absent."""
         for status in (401, 403, 404, 429, 500):

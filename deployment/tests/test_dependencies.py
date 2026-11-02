@@ -15,8 +15,8 @@ DOCUMENTATION = ROOT / "deployment/DEPENDENCIES.md"
 
 EXPECTED = {
     "PyJWT[crypto]": (
-        "2.13.0", "pyjwt-2.13.0-py3-none-any.whl",
-        "66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728",
+        "2.14.0", "pyjwt-2.14.0-py3-none-any.whl",
+        "ad0cef71c756a56e74863c2919cf0985f72decbcfcb550ee2f422e7c62b5eedc",
     ),
     "cryptography": (
         "50.0.1", "cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl",
@@ -59,7 +59,7 @@ class DependencyBoundaryTests(unittest.TestCase):
         self.assertEqual(project["requires-python"], ">=3.12,<3.13")
         self.assertEqual(
             project["dependencies"],
-            ["PyJWT[crypto]==2.13.0", "cryptography==50.0.1"],
+            ["PyJWT[crypto]==2.14.0", "cryptography==50.0.1"],
         )
 
     def test_complete_lock_is_exact_hashed_and_expected(self) -> None:
@@ -99,7 +99,7 @@ class DependencyBoundaryTests(unittest.TestCase):
     def test_focused_environment_uses_reviewed_versions(self) -> None:
         if sys.version_info[:2] != (3, 12):
             self.skipTest("lock is qualified only for CPython 3.12")
-        for distribution, expected in (("PyJWT", "2.13.0"), ("cryptography", "50.0.1"), ("cffi", "2.1.1"), ("pycparser", "3.0")):
+        for distribution, expected in (("PyJWT", "2.14.0"), ("cryptography", "50.0.1"), ("cffi", "2.1.1"), ("pycparser", "3.0")):
             with self.subTest(distribution=distribution):
                 self.assertEqual(importlib.metadata.version(distribution), expected)
 

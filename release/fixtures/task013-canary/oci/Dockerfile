@@ -1,4 +1,4 @@
-FROM cgr.dev/chainguard/python@sha256:d0a0ef8759e4da134c9848b9bba9aa9b7fec345427f093f1a37ca02434e685d8
+FROM cgr.dev/chainguard/python@sha256:549f3ba5e588ebab80dcf5a5a3536aa7f4b5c384bc6955c0347d372414197386
 
 ARG RELEASE_VERSION
 ARG SOURCE_SHA
@@ -8,7 +8,7 @@ LABEL org.opencontainers.image.title="$OCI_REPOSITORY" \
       org.opencontainers.image.version="$RELEASE_VERSION" \
       org.opencontainers.image.revision="$SOURCE_SHA" \
       ai.omnilyzer.canary="true" \
-      ai.omnilyzer.base.digest="sha256:d0a0ef8759e4da134c9848b9bba9aa9b7fec345427f093f1a37ca02434e685d8"
+      ai.omnilyzer.base.digest="sha256:549f3ba5e588ebab80dcf5a5a3536aa7f4b5c384bc6955c0347d372414197386"
 
 ENV CANARY_RELEASE_VERSION="$RELEASE_VERSION" \
     CANARY_SOURCE_SHA="$SOURCE_SHA" \

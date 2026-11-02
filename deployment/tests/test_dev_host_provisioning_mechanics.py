@@ -467,7 +467,7 @@ class SnapshotAndProcessTests(unittest.TestCase):
                 lock = module._open_lock(authority, repository_fd, owned)
                 self.assertEqual(
                     lock.sha256,
-                    "13c7b3f0050f9aff0a94ab324a66276638f8b1b9dd0c62232ec205b24d874d0d",
+                    "8466e0fca40b070d25710168094e6d52099ec3e2c65ef67f0ae0d26e1a20fc86",
                 )
             finally:
                 module._close(owned)

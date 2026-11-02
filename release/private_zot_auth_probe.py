@@ -37,6 +37,7 @@ WORKFLOW_REF = (
 )
 ENVIRONMENT = "task014-dev"
 AUDIENCE = "https://oci-dev.omnilyzer.ai"
+FORGEJO_AUDIENCE = "u:3:d4f50b90-f001-4b9f-ad1e-487080ec44fb"
 OCI_HOST = "oci-dev.omnilyzer.ai"
 CANARY_IMAGE = (
     OCI_HOST + "/omnilyzer/task013-release-canary@sha256:"
@@ -82,8 +83,10 @@ def _read_json_unique(raw: bytes) -> dict[str, object]:
     return value
 
 
-def _oidc_token(environment: Mapping[str, str]) -> str:
+def _oidc_token(environment: Mapping[str, str], *, audience: str = AUDIENCE) -> str:
     """Issue one exact-audience JWT using the protected GitHub Actions endpoint."""
+    if audience not in (AUDIENCE, FORGEJO_AUDIENCE):
+        raise ProbeUnavailableError("private Zot diagnostic unavailable")
     raw_url = environment.get("ACTIONS_ID_TOKEN_REQUEST_URL", "")
     runner_token = environment.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
     url = parse.urlsplit(raw_url)
@@ -99,7 +102,7 @@ def _oidc_token(environment: Mapping[str, str]) -> str:
     ):
         raise ProbeUnavailableError("private Zot diagnostic unavailable")
     target = raw_url + ("&" if url.query else "?") + parse.urlencode(
-        {"audience": AUDIENCE}
+        {"audience": audience}
     )
     http = request.Request(
         target, headers={"Authorization": "Bearer " + runner_token}
@@ -137,12 +140,15 @@ def _workflow_context_preflight(environment: Mapping[str, str]) -> str:
     return sha
 
 
-def _claims_preflight(token: str, environment: Mapping[str, str], now: int) -> None:
+def _claims_preflight(token: str, environment: Mapping[str, str], now: int,
+                      *, audience: str = AUDIENCE) -> None:
     """Only request private registry reads for the approved DEV main workflow.
 
     Decoded claims are untrusted preflight metadata. Zot must independently
     authenticate the GitHub JWT signature before returning a registry Bearer.
     """
+    if audience not in (AUDIENCE, FORGEJO_AUDIENCE):
+        raise ProbeUnavailableError("private Zot diagnostic unavailable")
     sha = _workflow_context_preflight(environment)
     try:
         padded = token.split(".")[1]
@@ -152,7 +158,7 @@ def _claims_preflight(token: str, environment: Mapping[str, str], now: int) -> N
         raise ProbeUnavailableError("private Zot diagnostic unavailable") from None
     expected = {
         "iss": "https://token.actions.githubusercontent.com",
-        "aud": AUDIENCE,
+        "aud": audience,
         "repository": REPOSITORY,
         "repository_id": "1350104356",
         "repository_owner_id": "130741173",
@@ -232,9 +238,15 @@ def _docker_manifest_probe(token: str) -> None:
 def main() -> int:
     """Print no JWT, token endpoint response, credentials or raw Docker output."""
     try:
+        product = os.environ.get("DIAGNOSTIC_PRODUCT_ID", "canary")
+        if product not in ("canary", "analytics"):
+            raise ProbeUnavailableError("private Zot diagnostic unavailable")
         _workflow_context_preflight(os.environ)
         token = _oidc_token(os.environ)
         _claims_preflight(token, os.environ, int(time.time()))
+        if product == "analytics":
+            from .analytics_task014_readonly_probe import run
+            return run(os.environ, token)
         _docker_manifest_probe(token)
     except (KeyboardInterrupt, SystemExit, GeneratorExit):
         raise

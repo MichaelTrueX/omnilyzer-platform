@@ -30,9 +30,9 @@ _API = (
 )
 _ERROR = "DEV installation integrity contract is invalid"
 _LOCK_PATH = "deployment/requirements-linux-x86_64-py312.lock"
-_LOCK_HASH = "13c7b3f0050f9aff0a94ab324a66276638f8b1b9dd0c62232ec205b24d874d0d"
+_LOCK_HASH = "8466e0fca40b070d25710168094e6d52099ec3e2c65ef67f0ae0d26e1a20fc86"
 _WHEELS = (
-    ("pyjwt-2.13.0-py3-none-any.whl", "66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728"),
+    ("pyjwt-2.14.0-py3-none-any.whl", "ad0cef71c756a56e74863c2919cf0985f72decbcfcb550ee2f422e7c62b5eedc"),
     ("cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl", "51afcfceb15597cf2635068e4ac9a56b2abde622edde17f37d85fd7b5306497a"),
     ("cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", "c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf"),
     ("pycparser-3.0-py3-none-any.whl", "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"),

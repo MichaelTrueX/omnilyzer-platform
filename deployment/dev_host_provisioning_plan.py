@@ -29,9 +29,9 @@ _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _RUNTIME_MANIFEST_PATH = (
     "deployment/provenance/python-runtime-py312-linux-x86_64-installed.json"
 )
-_RUNTIME_MANIFEST_SIZE = 57824
+_RUNTIME_MANIFEST_SIZE = 57825
 _RUNTIME_MANIFEST_SHA256 = (
-    "3966c1f4075e2813131f249eb02a473acf0e4d11be61b05f858678b668d2766b"
+    "0ca874d1ebe3f61ea1356bc20d40a1afb30d1ddb515a68b09b486c48f8471be5"
 )
 _RUNTIME_ENTRY_COUNT = 237
 _BOUND_INSTALLER = "<identity-bound-pip-installer-wheel>"

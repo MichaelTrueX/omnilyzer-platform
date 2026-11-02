@@ -1,4 +1,14 @@
-"""Immutable promotion requests and Task 013 release-evidence binding."""
+"""File: deployment/promotion.py
+
+Purpose: Original Task013 signed release identity and immutable promotion
+requests. Additive Analytics external Git source claims are verified ONLY when
+present in BOTH original Cosign-verified release evidence blobs. This does NOT
+change the canary promotion allowlist or original Task014 installed executor.
+
+Related: deployment/policy.py, deployment/release_consumer.py,
+deployment/saas_product_contract.py,
+release/analytics_release_source_binding.py, release/provenance.py.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +21,7 @@ from typing import Any
 
 from .policy import (
     APPROVED_OCI_ORIGIN,
+    APPROVED_OCI_HOST,
     EXPECTED_CERTIFICATE_IDENTITY,
     EXPECTED_CERTIFICATE_ISSUER,
     EXPECTED_RELEASE_WORKFLOW,
@@ -93,8 +104,45 @@ class PromotionRequest:
         return hashlib.sha256(self.canonical_bytes()).hexdigest()
 
 
+# Section: immutable signed external-source claim. Values are only returned
+# AFTER the original Sigstore and OCI signature verification gates pass.
+ANALYTICS_REPOSITORY = "omnilyzer/analytics"
+ANALYTICS_SOURCE_REPOSITORY = "MichaelTrueX/omnilyzer"
+SIGNED_SOURCE_FIELDS = frozenset({
+    "schema_version", "product_id", "platform_source_commit", "platform_tree",
+    "source_repository", "source_commit", "source_tree",
+    "source_manifest_sha256", "source_binding_sha256", "source_files_verified",
+    "dockerfile_sha256", "dockerignore_sha256", "oci_test_source_sha256",
+    "build_context_sha256", "oci_repository", "oci_archive_sha256",
+    "oci_manifest_digest", "product_profile_sha256", "runtime_profile_sha256",
+    "readiness_path",
+})
+SIGNED_HASH_FIELDS = frozenset(name for name in SIGNED_SOURCE_FIELDS if name.endswith("_sha256"))
+SIGNED_GIT_FIELDS = frozenset({
+    "platform_source_commit", "platform_tree", "source_commit", "source_tree",
+})
+
+
+@dataclass(frozen=True)
+class SignedExternalSource:
+    """Immutable projection of a claim contained in verified signed blobs."""
+
+    product_id: str
+    source_repository: str
+    source_commit: str
+    source_tree: str
+    build_context_sha256: str
+    product_profile_sha256: str
+    runtime_profile_sha256: str
+    oci_archive_sha256: str
+    oci_manifest_digest: str
+    claim_sha256: str
+
+
 @dataclass(frozen=True)
 class TrustedRelease:
+    """A release bound to the original verified signer and OCI digest."""
+
     release_version: str
     source_sha: str
     oci_repository: str
@@ -103,6 +151,50 @@ class TrustedRelease:
     release_workflow: str
     certificate_identity: str
     certificate_issuer: str
+    external_source: SignedExternalSource | None = None
+
+
+def _verified_external_source_claim(
+    manifest: dict[str, Any], provenance: dict[str, Any], request: PromotionRequest,
+) -> SignedExternalSource | None:
+    """Parse a closed claim inside the ORIGINAL verified evidence only.
+
+    Presence alone is NOT proof of signature. The caller MUST complete the
+    original Sigstore+OCI signature and certificate identity verification
+    before returning a TrustedRelease containing this immutable claim.
+    """
+    if request.oci_repository != ANALYTICS_REPOSITORY:
+        if "external_source" in manifest or "external_source" in provenance:
+            raise DeploymentPolicyError("unexpected external source in canary evidence")
+        return None
+    claim = provenance.get("external_source")
+    mirror = manifest.get("external_source")
+    if (type(claim) is not dict or type(mirror) is not dict
+            or set(claim) != SIGNED_SOURCE_FIELDS or set(mirror) != SIGNED_SOURCE_FIELDS
+            or canonical_bytes(claim) != canonical_bytes(mirror)
+            or type(claim["schema_version"]) is not int or claim["schema_version"] != 1
+            or claim["product_id"] != "analytics"
+            or claim["source_repository"] != ANALYTICS_SOURCE_REPOSITORY
+            or claim["oci_repository"] != ANALYTICS_REPOSITORY
+            or type(claim["source_files_verified"]) is not int
+            or claim["source_files_verified"] != 78
+            or claim["readiness_path"] != "/readyz"
+            or claim["platform_source_commit"] != request.source_sha
+            or claim["oci_manifest_digest"] != request.manifest_digest):
+        raise DeploymentPolicyError("signed external-source claim is invalid")
+    for key in SIGNED_HASH_FIELDS:
+        validate_sha256(claim[key], key)
+    for key in SIGNED_GIT_FIELDS:
+        validate_source_sha(claim[key])
+    validate_digest(claim["oci_manifest_digest"])
+    return SignedExternalSource(
+        "analytics", ANALYTICS_SOURCE_REPOSITORY,
+        claim["source_commit"], claim["source_tree"],
+        claim["build_context_sha256"], claim["product_profile_sha256"],
+        claim["runtime_profile_sha256"], claim["oci_archive_sha256"],
+        claim["oci_manifest_digest"],
+        hashlib.sha256(canonical_bytes(claim)).hexdigest(),
+    )
 
 
 def _json_object(raw: bytes, context: str) -> dict[str, Any]:
@@ -136,10 +228,13 @@ def verify_release_evidence(
         raise DeploymentPolicyError("provenance hash differs from the promotion request")
     manifest = _json_object(release_manifest_bytes, "release manifest")
     provenance = _json_object(provenance_bytes, "release provenance")
-    closed_object(provenance, {
+    original_fields = {
         "schema_version", "statement_type", "claim", "platform_version",
         "source_commit", "execution", "subjects",
-    }, "release provenance")
+    }
+    if request.oci_repository == ANALYTICS_REPOSITORY:
+        original_fields.add("external_source")
+    closed_object(provenance, original_fields, "release provenance")
     execution = closed_object(provenance.get("execution"), RELEASE_EXECUTION_FIELDS,
                               "signed release execution")
     if (type(manifest.get("schema_version")) is not int or manifest["schema_version"] != 2
@@ -170,9 +265,17 @@ def verify_release_evidence(
         subjects = provenance["subjects"]
         if not isinstance(manifest_oci, dict) or not isinstance(subjects, dict):
             raise TypeError
-        manifest_reference = exact_image_reference(
-            manifest_oci["repository"], manifest_oci["manifest_digest"],
-        )
+        if request.oci_repository == ANALYTICS_REPOSITORY:
+            if manifest_oci["repository"] != ANALYTICS_REPOSITORY:
+                raise DeploymentPolicyError("signed product repository mismatch")
+            manifest_reference = (
+                f"{APPROVED_OCI_HOST}/{ANALYTICS_REPOSITORY}@"
+                f"{validate_digest(manifest_oci['manifest_digest'])}"
+            )
+        else:
+            manifest_reference = exact_image_reference(
+                manifest_oci["repository"], manifest_oci["manifest_digest"],
+            )
     except (KeyError, TypeError, DeploymentPolicyError) as exc:
         raise DeploymentPolicyError("release evidence lacks a valid immutable OCI identity") from exc
     expected = (
@@ -190,6 +293,9 @@ def verify_release_evidence(
     )
     if not expected:
         raise DeploymentPolicyError("release manifest or provenance disagrees with the candidate")
+    signed_source = _verified_external_source_claim(manifest, provenance, request)
+    if signed_source is not None and subjects.get("oci_archive_sha256") != signed_source.oci_archive_sha256:
+        raise DeploymentPolicyError("signed OCI archive differs from external source claim")
     sigstore = closed_object(
         sigstore_result,
         {"release_manifest_verified", "provenance_verified", "certificate_identity", "issuer"},
@@ -214,6 +320,7 @@ def verify_release_evidence(
         request.release_version, request.source_sha, request.oci_repository,
         request.manifest_digest, request.exact_image_reference, EXPECTED_RELEASE_WORKFLOW,
         EXPECTED_CERTIFICATE_IDENTITY, EXPECTED_CERTIFICATE_ISSUER,
+        signed_source,
     )
 
 

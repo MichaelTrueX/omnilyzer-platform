@@ -1,10 +1,12 @@
 """File: deployment/private_registry_fd.py
 
-Purpose: Linux-only, request-scoped, sealed-memory transfer of an already
-cryptographically verified Zot read credential from the broker to the executor.
+Purpose: Linux-only, request-scoped sealed-memory transfer of an already
+cryptographically verified Zot read credential from broker to executor.
+Original Task014 canary default is unchanged; explicitly scoped Analytics
+mode permits ONLY the one reviewed, immutable signed 0.15.0 digest.
 Related: deployment/registry_oidc_credentials.py, deployment/unix_transport.py,
-deployment/executor_server.py, deployment/docker_runtime.py and
-deployment/tests/test_private_registry_fd.py.
+deployment/executor_server.py, deployment/docker_runtime.py,
+deployment/analytics_promotion_broker.py and deployment/tests/test_private_registry_fd.py.
 
 Sections: exact credential policy; sealed FD lifecycle; SCM_RIGHTS framing.
 This low-level module neither verifies a JWT signature nor authorizes a
@@ -26,6 +28,11 @@ import stat
 import time
 
 OCI_PREFIX = "oci-dev.omnilyzer.ai/omnilyzer/task013-release-canary@sha256:"
+# Exact digest, not an Analytics repository prefix or tag/wildcard.
+ANALYTICS_IMAGE = (
+    "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:"
+    "6dbdc6319218b19257311d2885e9f697a75fc6066b4eef34068cc8ae6a51c1f1"
+)
 OCI_HOST = "oci-dev.omnilyzer.ai"
 MAX_TOKEN_BYTES = 8192
 MAX_ENVELOPE_BYTES = 9216
@@ -79,14 +86,23 @@ class ScopedReadCredential:
 
 # Section 1: exact schema, image, request digest and clock policy.
 def _normalize(token: object, expires_at: object, image: object,
-               request_sha256: object, now: object) -> ScopedReadCredential:
-    """Reject malformed, stale, overlong or unbound registry credentials."""
-    if (type(token) is not str or not 1 <= len(token) <= MAX_TOKEN_BYTES
+               request_sha256: object, now: object,
+               *, product_id: str = "canary") -> ScopedReadCredential:
+    """Reject all out-of-scope, stale, overlong or unbound credentials.
+
+    Original canary callers use the unmodified default. Analytics is a
+    separate, EXPLICIT version+digest, never a general repository allowlist.
+    """
+    canary = (type(product_id) is str and product_id == "canary"
+              and type(image) is str and image.startswith(OCI_PREFIX)
+              and _SHA256.fullmatch(image[len(OCI_PREFIX):]) is not None)
+    analytics = (type(product_id) is str and product_id == "analytics"
+                 and type(image) is str and image == ANALYTICS_IMAGE)
+    if (not (canary or analytics)
+            or type(token) is not str or not 1 <= len(token) <= MAX_TOKEN_BYTES
             or not token.isascii() or any(ord(x) < 33 or ord(x) > 126 for x in token)
             or type(expires_at) is not int or type(now) is not int
             or not _MIN_LIFETIME_SECONDS <= expires_at - now <= MAX_LIFETIME_SECONDS
-            or type(image) is not str or not image.startswith(OCI_PREFIX)
-            or _SHA256.fullmatch(image[len(OCI_PREFIX):]) is None
             or type(request_sha256) is not str
             or _SHA256.fullmatch(request_sha256) is None):
         raise PrivateRegistryTransferError("invalid private registry authority")
@@ -107,13 +123,20 @@ def _envelope(credential: ScopedReadCredential) -> bytes:
 
 # Section 2: create, seal, inspect, and close broker-owned ephemeral memfds.
 def create_sealed_credential(token: str, *, expires_at: int, image: str,
-                             canonical_request: bytes, now: int | None = None) -> int:
-    """Build one CLOEXEC sealed memfd; caller owns and must close the returned fd."""
+                             canonical_request: bytes, now: int | None = None,
+                             product_id: str = "canary") -> int:
+    """Build one CLOEXEC sealed memfd; original canary default unchanged.
+
+    Analytics requires an explicit product_id and the exact signed 0.15.0
+    digest. Creating a file descriptor does NOT authorize a deployment;
+    the root-owned executor must independently validate the signed request.
+    """
     if type(canonical_request) is not bytes or not canonical_request or len(canonical_request) > 65536:
         raise PrivateRegistryTransferError("invalid private registry authority")
     current = int(time.time()) if now is None else now
     credential = _normalize(token, expires_at, image,
-                            hashlib.sha256(canonical_request).hexdigest(), current)
+                            hashlib.sha256(canonical_request).hexdigest(), current,
+                            product_id=product_id)
     raw = _envelope(credential)
     if len(raw) > MAX_ENVELOPE_BYTES:
         raise PrivateRegistryTransferError("invalid private registry authority")
@@ -133,8 +156,12 @@ def create_sealed_credential(token: str, *, expires_at: int, image: str,
 
 
 def read_sealed_credential(fd: int, *, canonical_request: bytes,
-                            image: str, now: int | None = None) -> ScopedReadCredential:
-    """Validate sealed descriptor and one canonical request without consuming FD."""
+                            image: str, now: int | None = None,
+                            product_id: str = "canary") -> ScopedReadCredential:
+    """Validate sealed descriptor, exact product, digest and request binding.
+
+    The original canary-only default also refuses Analytics envelopes.
+    """
     try:
         if type(fd) is not int or fd < 0 or type(canonical_request) is not bytes                 or not canonical_request or len(canonical_request) > 65536:
             raise ValueError("invalid fd or request")
@@ -161,7 +188,8 @@ def read_sealed_credential(fd: int, *, canonical_request: bytes,
             raise ValueError("incorrect registry schema")
         current = int(time.time()) if now is None else now
         credential = _normalize(value["token"], value["expires_at"], value["image"],
-                                value["request_sha256"], current)
+                                value["request_sha256"], current,
+                                product_id=product_id)
         if (credential.image != image or
                 credential.request_sha256 != hashlib.sha256(canonical_request).hexdigest()
                 or _envelope(credential) != raw):

@@ -1,7 +1,13 @@
-"""Static C22 asset checks: no systemd invocation, host provisioning or sockets.
+"""File: deployment/tests/test_systemd_executor_units.py
 
-C21 supplies layout projections. C16 descriptor constants and C9's required
-/proc/self/net/unix inventory are inspected as repository source, never invoked.
+Purpose: Verify original Canary C22 systemd asset immutability and allow only
+         the three separately tested inert Analytics service review assets.
+Related: deployment/systemd/dev/ (Canary plus Analytics review bytes),
+         deployment/tests/test_analytics_dev_activation_inputs.py,
+         deployment/host_service_layout.py.
+
+Sections: original C21/C16/C9 layout and hash assertions; exact fixed asset
+          inventory; static no-mutation assertions; no live systemd actions.
 """
 
 import ast
@@ -19,6 +25,13 @@ from deployment.unix_transport import PRODUCTION_EXECUTOR_SOCKET_PATH
 _DEPLOYMENT = Path(__file__).absolute().parents[1]
 _ASSETS = _DEPLOYMENT / "systemd" / "dev"
 _BROKER_SERVICE_PATH = _ASSETS / "omnilyzer-deployment-broker.service"
+# Only these three separately validated Analytics assets may augment the
+# original Canary service/socket asset inventory; original bytes stay pinned.
+_ANALYTICS_REVIEW_ASSETS = {
+    _ASSETS / "analytics-broker-enabled.conf",
+    _ASSETS / "omnilyzer-deployment-analytics-executor.service",
+    _ASSETS / "omnilyzer-deployment-analytics-executor.socket",
+}
 _LAYOUT = DevHostServiceLayout()
 _SOCKET_HEADER = (
     "# deployment/systemd/dev/omnilyzer-deployment-executor.socket\n"
@@ -158,8 +171,11 @@ class SystemdExecutorUnitTests(unittest.TestCase):
                          "systemd/dev/omnilyzer-deployment-executor.socket")
         self.assertEqual(self.service_path.relative_to(_DEPLOYMENT).as_posix(),
                          "systemd/dev/omnilyzer-deployment-executor.service")
-        self.assertEqual(set(_ASSETS.iterdir()),
-                         {self.socket_path, self.service_path, _BROKER_SERVICE_PATH})
+        self.assertEqual(
+            set(_ASSETS.iterdir()),
+            {self.socket_path, self.service_path, _BROKER_SERVICE_PATH}
+            | _ANALYTICS_REVIEW_ASSETS,
+        )
 
     def test_b_text_hygiene_and_nonexecutable_modes(self):
         for path, raw in ((self.socket_path, self.socket_raw),
@@ -310,8 +326,11 @@ class SystemdExecutorUnitTests(unittest.TestCase):
 
     def test_u_no_installation_code(self):
         """Repository assets and test AST contain no installer or mutation code."""
-        self.assertEqual(set(_ASSETS.iterdir()),
-                         {self.socket_path, self.service_path, _BROKER_SERVICE_PATH})
+        self.assertEqual(
+            set(_ASSETS.iterdir()),
+            {self.socket_path, self.service_path, _BROKER_SERVICE_PATH}
+            | _ANALYTICS_REVIEW_ASSETS,
+        )
         tree = ast.parse(Path(__file__).read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):

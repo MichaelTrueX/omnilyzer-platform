@@ -41,8 +41,8 @@ tenant isolation, provenance, reproducibility, rollback and recovery.
 Near-term work is prioritized: (1) isolate and resolve the existing Task
 014 DEV promotion blocker; (2) independently verify one approved
 end-to-end DEV deployment; (3) integrate one real SaaS product workflow.
-The successful Task 013 release 0.14.5 is distribution acceptance,
-not production application acceptance. Never conflate successful CI,
+The successful Task013 Analytics release 0.15.0 (and earlier canary releases)
+is distribution acceptance, not production application acceptance. Never conflate successful CI,
 a signed package or a synthetic test with live deployment readiness.
 
 ## Development orchestration
@@ -66,6 +66,133 @@ need their authority or cannot be performed through connected tools. Normal work
 uses a dedicated branch, progressive validation, complete diff review, GitHub
 security/CI checks, and a final deployment.dev_handoff leaving DEV clean and
 synchronized to main.
+
+## Lean feature delivery (owner decision 2026-10-29)
+
+The owner is a solo operator. A normal product feature must not recreate the
+large multi-chat, multi-PR, multi-week process experienced during the initial
+Analytics integration. Optimize for a working user-visible capability on the
+existing platform, with the existing security boundaries intact.
+
+1. **One accountable delivery chat.** The owner describes the intended user
+   outcome, not the technical task breakdown. The delivery chat owns discovery,
+   implementation, integration, tests, release and final acceptance. Ask another
+   specialist chat for one bounded independent check only if necessary. Coordinate
+   directly through GitHub; do not require the owner to relay messages.
+2. **One short feature contract.** Before coding, define the user journey,
+   concrete acceptance criteria, explicit non-goals, affected product/repository,
+   and what constitutes a real working deployment. Confirm a material scope
+   trade-off once; do not demand approval at each implementation step.
+3. **Reuse before build.** Inspect existing platform capabilities, product code,
+   tests and infrastructure first. Prefer one cohesive feature PR per repository
+   and one integration handoff; avoid framework-building, generic policy
+   extensions, speculative security layers, duplicate evidence sets, micro-PRs,
+   and unrequested features. Separate changes only for a genuine independent
+   risk or required repository boundary.
+4. **Demonstrate the product early.** Deliver the smallest secure end-to-end
+   browser/API journey and actual persistence as soon as feasible. Evaluate
+   success in terms of the feature working for its intended users, not PR count,
+   test count, documentation count or release artifacts alone.
+5. **Proportionate validation.** Run focused tests while changing code and the
+   required integrated/security checks at the release boundary. Reuse previous
+   unaffected proofs; rerun when the relevant input, code, dependency, or
+   security boundary changes. Never skip mandatory security gates, tenant
+   isolation, authorization, data protections or recovery checks.
+6. **Task 013/014 are reusable automation, not new projects per feature.** For
+   deployable product versions, use the existing approved build, scan, SBOM,
+   provenance/sign, publish, verify, deploy, health and rollback workflows. Keep
+   required policy gates automatic and fail-closed. A normal product change must
+   not require new Task 013/014 implementation. Static-only changes may use
+   their existing approved static publishing path where applicable. A material
+   new runtime or trust boundary is an exception requiring explicit review.
+   **Before any Task013 dispatch**, follow the canonical ChatGPT GO/HOLD
+   checkfile at [docs/operations/task013-release-readiness.md](docs/operations/task013-release-readiness.md);
+   do not guess from previous release success or skip its real-host checks.
+
+7. **Batch work; ask the owner only for real decisions.** Progress through safe
+   reads, edits, tests and review in one delivery stream. Pause for privileged
+   operations, approval-required merges/deployments, changed scope, or an
+   actual blocking conflict. Never treat a time target as permission to bypass
+   required controls.
+8. **One concise handover.** Record exactly what works, the deployed version
+   and environment, real acceptance evidence, outstanding defects, rollback
+   path, and the single next action. A feature is DONE only after the agreed
+   real user journey works in the intended environment and required release
+   checks pass; a draft PR or synthetic test alone is not DONE.
+
+## Embedded QA and release readiness (owner decision 2026-10-30)
+
+Quality assurance and test management are integral to each feature delivery, not
+a late separate phase that first appears in Task 013/014. Apply **shift-left QA**
+using existing repository checks, CI and release/deployment contracts; do not
+create a separate QA organization, standing test chat, generic test framework or
+approval bureaucracy for ordinary product changes.
+
+1. **Accountability from day one.** The one accountable delivery chat owns
+   functional quality, security tests, release readiness, real user acceptance
+   and defect resolution. Request a narrow independent review only for a
+   material risk or required existing policy; do not hand a half-tested feature
+   to another chat at the end.
+2. **Definition of Done starts in the brief.** Alongside the user journey,
+   identify the few observable acceptance scenarios, negative/unauthorized and
+   cross-tenant cases as relevant, data migration/persistence implications,
+   operational prerequisites, and intended deployment/rollback path. Choose
+   checks in proportion to actual change risk; avoid expansive test plans for
+   simple changes.
+3. **Release-contract preflight before substantial implementation.** Identify
+   the current product's Task 013 build/runtime/dependency/security-policy
+   expectations and Task 014 identity, configuration, secrets, readiness,
+   deployment and rollback requirements. Check for missing contracts, vulnerable
+   dependencies, unsupported runtime assumptions, unavailable environment
+   prerequisites or incompatible ownership boundaries *early*, and fix the
+   owning cause before building more features. Do not assume the synthetic
+   canary proves the real product deploys.
+4. **Test continuously and progressively.** Add or adjust focused automated
+   tests with the changed functionality; exercise the actual browser/API/data
+   path and necessary security boundaries at integration milestones. Prefer
+   existing fixtures and test infrastructure. Run fast targeted tests during
+   iteration, required broader checks once stable; do not rerun unchanged large
+   suites or generate duplicate test evidence after every edit.
+5. **Surface release blockers before the final release.** Use existing PR/CI
+   checks for build reproducibility, locked dependencies, relevant SCA/image
+   vulnerability exposure, configuration, schema compatibility, readiness and
+   release-policy constraints as early as practical. Early scans are feedback,
+   not a substitute for the mandatory final immutable-artifact scan, verified
+   signature, provenance, authorization, and release gates.
+6. **Keep one current defect/readiness picture.** Record only actionable open
+   blockers in the canonical feature issue/PR, clearly distinguishing product
+   defects, environment prerequisites, security policy failures and approvals.
+   Resolve them in the owning delivery stream and record evidence once;
+   escalate a genuinely blocked decision rather than starting endless
+   cross-chat handoffs.
+7. **Ship only proven outcomes.** At release, run the existing required Task
+   013/014 controls and a small real-user smoke journey plus relevant failure
+   and rollback checks. Verify the exact deployed artifact, environment,
+   health, access control and data behavior. Automatic failure must stop
+   promotion or safely roll back; never weaken policy to meet a schedule.
+   Declare DONE only when the accepted user journey works on the intended
+   live environment, not when CI or isolated tests alone are green.
+
+## Cross-chat continuity and source of truth
+
+ChatGPT conversation memory is useful context but is not a complete or reliable
+repository state ledger. For each substantial new task, read this AGENTS.md,
+the current relevant GitHub issue/PR and exact source HEAD before proceeding.
+Keep one canonical feature issue/brief and one concise current-state handover,
+with links to the actual code, rather than multiplying coordination threads.
+Update the canonical issue at meaningful milestones and closure, not for every
+small edit. The repository and current deployment evidence are authoritative
+over remembered chat summaries. Do not claim an asynchronous personal-memory
+update or infer that a file was deployed merely because it was committed.
+
+## Before Task014 promotion
+
+For Analytics release preparation or promotion, read
+[the Task014 pre-release checklist](docs/operations/task014-pre-release-checklist.md)
+before dispatch. Reconcile evidence against current source and installed state,
+distinguish ordinary releases from platform setup, and keep unsupported releases
+blocked. Reuse qualification for unchanged boundaries; include blob streaming
+and coherent operation/credential/response deadlines when those boundaries change.
 
 ## Before editing and context discipline
 

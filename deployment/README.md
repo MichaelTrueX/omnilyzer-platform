@@ -2254,7 +2254,7 @@ Python environment requirements project C21's `/opt/omnilyzer/deployment/venv`
 and `/opt/omnilyzer/deployment/venv/bin/python`. The target is **CPython 3.12,
 Ubuntu 24.04, Linux x86_64, glibc**. The C1 dependency input is exactly
 `deployment/requirements-linux-x86_64-py312.lock`, pinned to SHA-256
-`13c7b3f0050f9aff0a94ab324a66276638f8b1b9dd0c62232ec205b24d874d0d`.
+`8466e0fca40b070d25710168094e6d52099ec3e2c65ef67f0ae0d26e1a20fc86`.
 Tests independently hash the repository lock and cross-check its four records.
 A future dependency change requires explicit coordinated C1/C24 review.
 
@@ -2262,7 +2262,7 @@ The exact ordered reviewed wheel closure is:
 
 | Wheel filename | SHA-256 |
 | --- | --- |
-| `pyjwt-2.13.0-py3-none-any.whl` | `66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728` |
+| `pyjwt-2.14.0-py3-none-any.whl` | `ad0cef71c756a56e74863c2919cf0985f72decbcfcb550ee2f422e7c62b5eedc` |
 | `cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl` | `51afcfceb15597cf2635068e4ac9a56b2abde622edde17f37d85fd7b5306497a` |
 | `cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl` | `c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf` |
 | `pycparser-3.0-py3-none-any.whl` | `b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992` |
@@ -2909,8 +2909,8 @@ The retained
 `provenance/python-runtime-py312-linux-x86_64-installed.json` manifest was
 derived by installing the four exact, hash-verified C24 wheels with the exact
 C31P pip 26.2.1 wheel in isolated temporary no-pip CPython 3.12 environments.
-Its canonical bytes are 57,824 bytes with SHA-256
-`3966c1f4075e2813131f249eb02a473acf0e4d11be61b05f858678b668d2766b`.
+Its canonical bytes are 57,825 bytes with SHA-256
+`0ca874d1ebe3f61ea1356bc20d40a1afb30d1ddb515a68b09b486c48f8471be5`.
 It closes 237 entries: 197 regular files, 36 directories and four symlinks.
 Wheel payload and metadata files retain their reviewed wheel-derived hashes;
 compiled extensions are regular hashed payload files. None of these wheels has
@@ -2928,7 +2928,7 @@ is rejected.
 The qualifier uses descriptor-relative no-follow traversal and requires exact
 root ownership, modes, entry set, regular-file sizes and SHA-256 values,
 symlink targets, named/opened identity and post-read identity. It also requires
-the exact four distribution identities (PyJWT 2.13.0, cryptography 50.0.1,
+the exact four distribution identities (PyJWT 2.14.0, cryptography 50.0.1,
 cffi 2.1.1 and pycparser 3.0), the exact `pyvenv.cfg`, no system site packages,
 the reviewed `/usr/bin/python3.12` relationship, and no installed pip or extra
 runtime package.
@@ -2995,7 +2995,7 @@ The source wheelhouse must still have exactly four entries and the installer
 staging directory exactly one. The fixed repository lock is opened beneath a
 retained repository descriptor with no-follow traversal and must match C24's
 SHA-256
-`13c7b3f0050f9aff0a94ab324a66276638f8b1b9dd0c62232ec205b24d874d0d`.
+`8466e0fca40b070d25710168094e6d52099ec3e2c65ef67f0ae0d26e1a20fc86`.
 Every snapshot file is streamed in bounded chunks, rehashed, fsynced, reopened
 read-only and retained by inode. C28/C31P source descriptors and directories
 are revalidated after copying. Immediately before venv construction, before

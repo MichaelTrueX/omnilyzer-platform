@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "product_id": "analytics",
+  "source": {
+    "repository": "MichaelTrueX/omnilyzer",
+    "commit": "4cdda7faeba57abb3388f9be5c450fe6afb1140d"
+  },
+  "artifact": {
+    "registry": "https://oci-dev.omnilyzer.ai",
+    "repository": "omnilyzer/analytics"
+  },
+  "runtime": {
+    "stage": "dev",
+    "app_port": 3000,
+    "readiness_path": "/readyz",
+    "database": "postgresql-private",
+    "secret_names": [
+      "COLLECTOR_DATABASE_URL",
+      "DATABASE_URL",
+      "JWT_REFRESH_SECRET",
+      "JWT_SECRET"
+    ]
+  }
+}

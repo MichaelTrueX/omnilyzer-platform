@@ -3,7 +3,7 @@
 # Related: deployment/ci_oidc_diagnostics.py,
 # deployment/tests/test_ci_oidc_diagnostics.py, issue #182.
 # Permissions and authority: read-only pull-request CI, no environment secrets,
-# protected DEV dispatch, privileged host access, SSH or Docker mutation.
+# protected DEV dispatch, DEV host access, SSH or Docker mutation.
 
 name: Task 014 C34D review tests
 
@@ -83,6 +83,15 @@ jobs:
             deployment.tests.test_rootless_docker_daemon_preflight \
             deployment.tests.test_dev_live_activation_policy \
             deployment.tests.test_dev_live_activation_contract
+      # Product source admission runs in the existing read-only test workflow.
+      # Synthetic fixtures only; no DEV access, signing or install permission.
+      - name: Test Analytics Task014 source and product security
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s deployment/tests -p 'test_analytics*.py'
+          python -m unittest \
+            deployment.tests.test_m05_14_analytics_compose_envfiles \
+            deployment.tests.test_m05_14_analytics_signed_admission
       # Section 6: Review-only private OCI OIDC diagnostic tests.
       # No id-token:write, workflow dispatch, registry or deployment access.
       - name: Test private Zot diagnostic isolation without issuing credentials
@@ -91,6 +100,7 @@ jobs:
           set -euo pipefail
           python3 -m unittest -q \
             release.tests.test_private_zot_auth_probe \
+            release.tests.test_analytics_task014_readonly_probe \
             deployment.tests.test_final_dev_workflow
       # Section 7: isolated Docker CLI authentication regression.
       # Mock HTTPS listener on loopback with synthetic credentials only.
@@ -120,3 +130,13 @@ jobs:
               release.tests.test_task014_dev_readonly_attestation
           )
           git worktree remove "$baseline"
+
+      # Native service-manager proof uses only disposable units in this CI VM.
+      # No DEV connection, credentials, registry, Docker daemon or app data.
+      - name: Test native Analytics service lifecycle and stopped recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest deployment.tests.test_analytics_service_recovery
+          sudo -n --preserve-env=GITHUB_ACTIONS /usr/bin/python3 -I -B \
+            deployment/tests/accept_task014_analytics_recovery.py

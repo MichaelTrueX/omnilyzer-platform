@@ -1,10 +1,19 @@
-"""C32N inert Cosign OCI boundary; only explicit verify calls use registry I/O.
+"""File: deployment/oci_verifier.py
+
+Purpose: Original Task014 readonly, root-controlled Cosign OCI verifier.
+         Constructor-authorized product scopes are explicit; default remains
+         the original canary repository and all installed Task014 callers are
+         unchanged. No change to deployment/policy.py canary allowlist.
+Related: deployment/blob_verifier.py, deployment/release_consumer.py,
+         deployment/analytics_signed_release_consumer.py,
+         deployment/promotion.py, deployment/tests/test_oci_verifier.py.
 
 Fixed future resources are not installed here. The injected provider supplies
 read-only zot credentials; this boundary never mints them or chooses a clock.
 Shared C32G snapshots/process cleanup execute only sealed, hashed tool bytes.
 """
 
+import base64 as _base64
 import json as _json
 import os as _os
 import stat as _stat
@@ -18,6 +27,7 @@ from .policy import (
     exact_image_reference as _reference, validate_digest as _digest,
     validate_sha256 as _sha256,
 )
+from .promotion import ANALYTICS_REPOSITORY as _ANALYTICS_REPOSITORY
 from .release_consumer import (
     ZotReadCredential as _Credential, ZotCredentialProvider as _CredentialProvider,
     _credential,
@@ -74,9 +84,11 @@ def _revalidate_chain(chain: _DirectoryChain) -> None:
 
 def _auth(directory: int, token: str, broker: tuple[int, int], owned: list[int],
           cleanup: list[tuple[int, str, tuple[int, ...], bool]]) -> tuple[int, ...]:
-    # Reviewed DefaultKeychain -> Docker config.Load -> AuthConfig.RegistryToken.
+    # Reuse Docker's oidc Basic-to-scoped-Bearer exchange, as private_registry_pull
+    # does. Zot may return the validated OIDC JWT itself as the Bearer token.
     # Never load/merge ambient configuration or permit credential helper fields.
-    raw = _json.dumps({"auths": {_HOST: {"registrytoken": token}}},
+    auth = _base64.b64encode(("oidc:" + token).encode("ascii")).decode("ascii")
+    raw = _json.dumps({"auths": {_HOST: {"auth": auth}}},
                       sort_keys=True, separators=(",", ":"), ensure_ascii=True,
                       allow_nan=False).encode("ascii")
     descriptor = _os.open("config.json", _os.O_RDWR | _os.O_CREAT | _os.O_EXCL |
@@ -126,8 +138,19 @@ class CosignOCISignatureVerifier:
 
     def __init__(self, *, expected_cosign_version: str, expected_binary_sha256: str,
                  expected_trusted_root_sha256: str, broker_uid: int, broker_gid: int,
-                 zot_credential_provider: _CredentialProvider, runner: object | None = None) -> None:
+                 zot_credential_provider: _CredentialProvider, runner: object | None = None,
+                 product_id: str = "canary") -> None:
+        """Capture exact immutable signer authority for one reviewed repository.
+
+        The original installed composition uses the unchanged default. Only
+        a separately reviewed Analytics consumer may explicitly request its
+        other read-only repository; no caller-supplied OCI path is accepted.
+        """
         try:
+            if type(product_id) is not str or product_id not in ("canary", "analytics"):
+                raise ValueError
+            repository = (_REPOSITORIES[0] if product_id == "canary"
+                          else _ANALYTICS_REPOSITORY)
             if type(expected_cosign_version) is not str or expected_cosign_version != _cosign.COSIGN_VERSION:
                 raise ValueError
             for value in (expected_binary_sha256, expected_trusted_root_sha256):
@@ -146,7 +169,7 @@ class CosignOCISignatureVerifier:
         object.__setattr__(self, "_run", operation)
         object.__setattr__(self, "_credential", credential)
         object.__setattr__(self, "_authority", (_cosign.COSIGN_PATH, _cosign.TRUSTED_ROOT_PATH,
-                           _RUNTIME_DIRECTORY, _HOST, _REPOSITORIES[0], _IDENTITY, _ISSUER))
+                           _RUNTIME_DIRECTORY, _HOST, repository, _IDENTITY, _ISSUER))
 
     def __setattr__(self, name: str, value: object) -> None:
         raise AttributeError("OCI verifier authority is immutable")
@@ -167,7 +190,15 @@ class CosignOCISignatureVerifier:
                     or type(now) is not int or now < 0):
                 raise ValueError
             digest = _digest(image_reference[len(prefix):])
-            if image_reference != _reference(repository, digest):
+            # The original default uses the exact unchanged global canary
+            # validator. The separate Analytics scope is constructor-bound,
+            # and thus cannot widen canary or the executor request policy.
+            canonical = (
+                _reference(repository, digest)
+                if repository == _REPOSITORIES[0]
+                else f"{_HOST}/{_ANALYTICS_REPOSITORY}@{digest}"
+            )
+            if image_reference != canonical:
                 raise ValueError
             broker = self._broker
             _process_identity(broker)

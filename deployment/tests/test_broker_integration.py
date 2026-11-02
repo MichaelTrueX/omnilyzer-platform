@@ -98,6 +98,9 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(result, transport.response)
         self.assertEqual(verifier.calls, [(TOKEN, NOW)])
         self.assertEqual(len(zot.calls), 2)
+        self.assertEqual(zot.calls[1][1],
+                         "/v2/omnilyzer/task013-release-canary/manifests/" + promotion.manifest_digest)
+        self.assertEqual(zot.calls[1][3]["Authorization"], "Bearer " + ZOT_TOKEN)
         self.assertEqual(len(forgejo.calls), 2)
         self.assertEqual(len(replay.calls), 1)
         self.assertEqual(len(transport.calls), 1)

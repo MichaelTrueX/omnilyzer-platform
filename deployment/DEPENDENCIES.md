@@ -1,12 +1,12 @@
 # Deployment control-plane dependencies
 
-Task 014 C1 has a dedicated dependency boundary for Ubuntu 24.04, Linux x86_64, CPython 3.12, and glibc. Python is bounded to `>=3.12,<3.13`. The direct dependencies are exactly `PyJWT[crypto]==2.13.0` and `cryptography==50.0.1`; the complete binary-wheel closure also pins `cffi==2.1.1` and `pycparser==3.0`. Gunicorn is not part of C1.
+Task 014 C1 has a dedicated dependency boundary for Ubuntu 24.04, Linux x86_64, CPython 3.12, and glibc. Python is bounded to `>=3.12,<3.13`. The direct dependencies are exactly `PyJWT[crypto]==2.14.0` and `cryptography==50.0.1`; the complete binary-wheel closure also pins `cffi==2.1.1` and `pycparser==3.0`. Gunicorn is not part of C1.
 
 ## Reviewed artifacts
 
 | Package | Relationship | Accepted wheel | SHA-256 | License | Upstream provenance |
 |---|---|---|---|---|---|
-| PyJWT 2.13.0 | direct | `pyjwt-2.13.0-py3-none-any.whl` | `66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728` | MIT | [PyJWT source](https://github.com/jpadilla/pyjwt), [PyPI project](https://pypi.org/project/PyJWT/2.13.0/) |
+| PyJWT 2.14.0 | direct | `pyjwt-2.14.0-py3-none-any.whl` | `ad0cef71c756a56e74863c2919cf0985f72decbcfcb550ee2f422e7c62b5eedc` | MIT | [PyJWT source](https://github.com/jpadilla/pyjwt), [PyPI project](https://pypi.org/project/PyJWT/2.14.0/) |
 | cryptography 50.0.1 | direct | `cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl` | `51afcfceb15597cf2635068e4ac9a56b2abde622edde17f37d85fd7b5306497a` | Apache-2.0 OR BSD-3-Clause | [cryptography source](https://github.com/pyca/cryptography), [PyPI project](https://pypi.org/project/cryptography/50.0.1/) |
 | cffi 2.1.1 | transitive | `cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl` | `c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf` | MIT-0 | [cffi source](https://github.com/python-cffi/cffi), [PyPI project](https://pypi.org/project/cffi/2.1.1/) |
 | pycparser 3.0 | transitive | `pycparser-3.0-py3-none-any.whl` | `b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992` | BSD-3-Clause | [pycparser source](https://github.com/eliben/pycparser), [PyPI project](https://pypi.org/project/pycparser/3.0/) |
@@ -57,9 +57,9 @@ snapshot and requirements lock must be identity-bound provisioning inputs; a
 qualified untrusted pathname may not simply be reopened later.
 
 The compact retained installed-tree model is
-`provenance/python-runtime-py312-linux-x86_64-installed.json` (57,824 bytes,
+`provenance/python-runtime-py312-linux-x86_64-installed.json` (57,825 bytes,
 SHA-256
-`3966c1f4075e2813131f249eb02a473acf0e4d11be61b05f858678b668d2766b`).
+`0ca874d1ebe3f61ea1356bc20d40a1afb30d1ddb515a68b09b486c48f8471be5`).
 It was derived from the four exact wheel bytes above after their filename,
 size and SHA-256 checks, using the separately reviewed pip wheel. It records
 wheel payload files, compiled extensions, distribution metadata, venv
@@ -72,3 +72,21 @@ provenance entry was 2,631 bytes with SHA-256
 `7f43cc4e11358f6468993deccf1bcd24bc451b7464deb7ea7b14e4fba361abdb`.
 Pip itself is absent from the accepted runtime distributions, and bytecode is
 suppressed with `--no-compile` and rejected by the exact-tree qualifier.
+
+
+## Security upgrade admission — PyJWT 2.14.0 (2026-10-30)
+
+This source candidate replaces the reviewed vulnerable PyJWT 2.13.0 wheel
+with patched 2.14.0. Upstream PyPI JSON and actual wheel SHA-256 equal
+the exact lock above. The original pip 26.2.1 direct-wheel bootstrap
+was executed with isolated Python 3.12, --require-hashes, --no-index,
+--only-binary=:all:, --no-deps and --no-compile. The OLD 2.13.0 RECORD
+and all 24 package paths reproduced the retained installed-tree hashes
+byte-for-byte BEFORE constructing the new manifest from the corresponding
+real isolated 2.14.0 installation. The other dependencies were unchanged.
+
+The new C31A manifest describes a FUTURE root-protected offline-built venv,
+not the current DEV installation. The current DEV venv remains PyJWT 2.13.0
+and must fail the upgraded source's qualification. Approval additionally
+requires the original complete C31A offline install and host preflight.
+Never run an unreviewed in-place pip upgrade on the protected DEV venv.

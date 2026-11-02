@@ -40,6 +40,10 @@ _PEER_CREDENTIALS = struct.Struct("=iII")
 _SYSTEMD_LISTENER_CREDENTIALS = (1, 0, 0)
 _SYSTEMD_EXECUTOR_EXPECTED_IDS = (991, 991, 993)
 _SYSTEMD_EXECUTOR_PATH = PRODUCTION_EXECUTOR_SOCKET_PATH
+_SYSTEMD_EXECUTOR_PATHS = frozenset((
+    _SYSTEMD_EXECUTOR_PATH,
+    "/run/omnilyzer/deployment/analytics-executor.sock",
+))
 
 
 class ExecutorTransportUnavailableError(Exception):
@@ -266,7 +270,7 @@ class UnixExecutorTransport:
                 (peer_pid, peer_uid, peer_gid) == _SYSTEMD_LISTENER_CREDENTIALS
                 and (expected_uid, expected_gid, socket_group_gid)
                 == _SYSTEMD_EXECUTOR_EXPECTED_IDS
-                and path == _SYSTEMD_EXECUTOR_PATH
+                and path in _SYSTEMD_EXECUTOR_PATHS
             )
             if not (direct_executor_peer or systemd_listener_peer):
                 raise OSError("unexpected peer credentials")
@@ -362,3 +366,4 @@ __all__ = (
     "TRANSPORT_UNAVAILABLE_MESSAGE",
     "UnixExecutorTransport",
 )
+
