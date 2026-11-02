@@ -5,6 +5,7 @@ Related: services/identity/ops/keycloak_prod_recovery.py,
     services/identity/ops/keycloak_public_prod.py, SECURITY.md.
 """
 import importlib.util
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -55,10 +56,14 @@ class KeycloakRecoveryTests(unittest.TestCase):
     """No network, no root and no real database mutations."""
 
     def test_unit_updates_only_restart_and_limit(self):
+        self.assertEqual(hashlib.sha256(ORIGINAL_UNIT.encode()).hexdigest(),
+                         MOD.APPROVED_UNIT_SHA256)
         updated = MOD.next_unit(ORIGINAL_UNIT)
         self.assertEqual(updated, ORIGINAL_UNIT.replace(
             "[Unit]\n", "[Unit]\nStartLimitIntervalSec=infinity\nStartLimitBurst=3\n",
-            1).replace("Restart=no\n", "Restart=on-failure\nRestartSec=20\n", 1))
+            1).replace("Restart=no\nRestartSec=15\n",
+                     "Restart=on-failure\nRestartSec=20\n", 1))
+        self.assertEqual(updated.count("RestartSec="), 1)
         self.assertIn("MemoryMax=1536M", updated)
         self.assertIn("ProtectSystem=strict", updated)
         self.assertIn("User=omnilyzer-keycloak", updated)
