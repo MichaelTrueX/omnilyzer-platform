@@ -100,7 +100,7 @@ class KeycloakOffhostReceiverTests(unittest.TestCase):
                                return_value=["wrong laptop identity"]), \
              mock.patch.object(RECEIVER.subprocess, "run") as command:
             with self.assertRaisesRegex(RuntimeError, "wrong laptop identity"):
-                RECEIVER.pull_verify("a" * 64)
+                RECEIVER.verify_remote_stream("a" * 64)
             command.assert_not_called()
 
     def test_age_authenticated_encrypted_roundtrip_with_synthetic_only(self):
@@ -129,6 +129,10 @@ class KeycloakOffhostReceiverTests(unittest.TestCase):
         self.assertIn('"StrictHostKeyChecking=yes"', source)
         self.assertIn('"BatchMode=yes"', source)
         self.assertIn('mode="r|"', source)
+        self.assertIn('"BatchMode=yes"', source)
+        self.assertNotIn("DEST_FILE", source)
+        self.assertNotIn("shutil.copyfileobj", source)
+        self.assertNotIn("scp", source)
         for forbidden in ("tar -xf", "tar xzf", "systemctl restart",
                           "pg_restore", "nginx -s reload", "sudo -n",
                           "CREATE DATABASE", "cloudflare.request"):
