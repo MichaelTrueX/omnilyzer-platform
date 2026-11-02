@@ -86,7 +86,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/login.omnilyzer.ai/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-    ssl_session_tickets off;
+    # Session tickets are disabled by the included Certbot SSL options.
 """ + ip_rules + """    deny all;
     server_tokens off;
     add_header X-Content-Type-Options "nosniff" always;
@@ -134,9 +134,16 @@ server {
 
 # Section: Run bounded, fixed host commands; enforce exact-state transitions.
 def run(argv, *, timeout=15):
-    """Execute a command without shell expansion or secret-bearing arguments."""
-    return subprocess.run(argv, check=True, capture_output=True, text=True,
-                          timeout=timeout)
+    """Run a fixed host command and retain bounded nonsecret error diagnostics."""
+    try:
+        return subprocess.run(argv, check=True, capture_output=True, text=True,
+                              timeout=timeout)
+    except subprocess.CalledProcessError as error:
+        command = Path(argv[0]).name
+        stderr = "\n".join((error.stderr or "").splitlines()[-10:])[:1800]
+        raise RuntimeError("M01_NGINX_COMMAND_FAILED command=" + command +
+                           " exit=" + str(error.returncode) +
+                           " stderr=" + (stderr or "[no diagnostic]")) from None
 
 
 def identity_check():
