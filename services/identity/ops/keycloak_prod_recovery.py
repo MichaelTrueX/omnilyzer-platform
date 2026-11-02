@@ -36,6 +36,7 @@ CLIENT_ENV = Path("/etc/omnilyzer/keycloak/sumlaude-bff-client.env")
 ORIGIN = "https://login.omnilyzer.ai"
 ISSUER = ORIGIN + "/realms/omnilyzer"
 BACKEND = "http://127.0.0.1:18742/realms/omnilyzer/.well-known/openid-configuration"
+APPROVED_UNIT_SHA256 = "2e8279c2faf6aa7cbe08256734690811797966eeeb94866910a956596f2af21f"
 PG_BIN = "/usr/bin"
 RUNUSER = "/usr/sbin/runuser"
 
@@ -54,17 +55,6 @@ def pg(*args, input_stream=None, output_stream=None, timeout=180):
                    input_stream=input_stream, output_stream=output_stream, timeout=timeout)
 
 
-def expected_unit():
-    """Match the exact local source unit after the reviewed metrics repair."""
-    # Use existing source rather than defining a different service architecture.
-    import importlib.util
-    source = Path(__file__).with_name("keycloak_public_prod.py")
-    # Executing a copied, root-only operator from /run has no sibling script;
-    # the original immutable installed unit is checked by safe structural
-    # constraints below rather than loading code from another location.
-    return None
-
-
 def next_unit(existing):
     """Preserve the installed non-root unit and allow at most 3 failure restarts."""
     required = (
@@ -81,13 +71,16 @@ def next_unit(existing):
     )
     if any(existing.count(x) != 1 for x in required):
         raise RuntimeError("installed identity unit differs from reviewed security contract")
+    if hashlib.sha256(existing.encode("utf-8")).hexdigest() != APPROVED_UNIT_SHA256:
+        raise RuntimeError("identity unit digest differs from reviewed installed source")
     if "StartLimitIntervalSec=" in existing or "StartLimitBurst=" in existing:
         raise RuntimeError("unit already has restart limits; reconcile manually")
     if not existing.startswith("# File: /etc/systemd/system/omnilyzer-keycloak.service\n"):
         raise RuntimeError("unexpected identity unit header")
     updated = existing.replace(
         "[Unit]\n", "[Unit]\nStartLimitIntervalSec=infinity\nStartLimitBurst=3\n", 1)
-    updated = updated.replace("Restart=no\n", "Restart=on-failure\nRestartSec=20\n", 1)
+    updated = updated.replace("Restart=no\nRestartSec=15\n",
+                              "Restart=on-failure\nRestartSec=20\n", 1)
     if len(updated) <= len(existing):
         raise RuntimeError("unexpected identity unit change")
     return updated
@@ -237,7 +230,9 @@ def enable_service():
             command(["/usr/bin/systemctl", "enable", "omnilyzer-keycloak.service"],
                     timeout=20)
         except (OSError, subprocess.SubprocessError):
-            # Restore the byte-exact previous unit and previous disabled state.
+            # Restore both the previous unit and disabled boot state.
+            command(["/usr/bin/systemctl", "disable", "omnilyzer-keycloak.service"],
+                    timeout=20)
             UNIT.write_bytes(before)
             UNIT.chmod(0o644)
             command(["/usr/bin/systemctl", "daemon-reload"], timeout=20)
