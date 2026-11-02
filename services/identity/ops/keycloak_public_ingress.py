@@ -184,6 +184,13 @@ def install_acme():
     WEBROOT.mkdir(parents=True, mode=0o755)
     (WEBROOT / ".well-known" / "acme-challenge").mkdir(
         parents=True, mode=0o755)
+    # Root's 0077 umask would otherwise make the ACME challenge unreadable
+    # by Nginx's unprivileged worker. Only this brand-new webroot is adjusted.
+    for directory in (WEBROOT, WEBROOT / ".well-known",
+                      WEBROOT / ".well-known" / "acme-challenge"):
+        if directory.is_symlink():
+            raise RuntimeError("new ACME webroot unexpectedly symlinked")
+        directory.chmod(0o755)
     file_created = False
     link_created = False
     try:
