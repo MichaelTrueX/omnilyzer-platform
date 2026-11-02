@@ -1,4 +1,9 @@
-"""Fail-closed settings for ONE existing shared Keycloak identity foundation."""
+"""File: services/identity/config/settings.py
+Purpose: Fail-closed configuration of the dedicated Sumlaude browser BFF using
+    the shared Keycloak issuer, separate PostgreSQL sessions and S03 admission.
+Related: services/identity/config/urls.py, services/identity/identity_bff/views.py,
+    services/identity/tests/test_identity.py, services/identity/omnilyzer-identity.service.
+"""
 import os
 from pathlib import Path
 from urllib.parse import urlparse
@@ -24,7 +29,12 @@ except (ValueError, TypeError) as exc:
     raise RuntimeError("invalid token encryption key") from exc
 
 DEBUG = False
+# Section: This first product BFF may mint cookies and an OIDC redirect ONLY
+# for its owner-approved exact public HTTPS origin. Never permit a second host,
+# a nonstandard port, credentials in the URL or a lookalike hostname.
 PRODUCT_ORIGIN = required("PRODUCT_ORIGIN").rstrip("/")
+if PRODUCT_ORIGIN != "https://app.sumlaude.com":
+    raise RuntimeError("product origin must equal approved Sumlaude HTTPS origin")
 parsed = urlparse(PRODUCT_ORIGIN)
 if parsed.scheme != "https" or not parsed.hostname or parsed.path or parsed.query or parsed.fragment:
     raise RuntimeError("product origin must be exact HTTPS host")
