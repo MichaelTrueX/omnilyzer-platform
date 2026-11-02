@@ -47,6 +47,33 @@ class KeycloakIngressTests(unittest.TestCase):
         self.assertNotIn("proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;", conf)
         self.assertIn('add_header Cache-Control "no-store" always;', conf)
 
+    def test_certbot_ssl_options_dont_duplicate_session_tickets(self):
+        """Certbot's installed SSL options already set ssl_session_tickets off."""
+        conf = MOD.https_vhost()
+        self.assertIn("include /etc/letsencrypt/options-ssl-nginx.conf;", conf)
+        self.assertNotIn("\n    ssl_session_tickets off;", conf)
+        self.assertEqual(conf.count("include /etc/letsencrypt/options-ssl-nginx.conf;"), 1)
+
+    def test_nginx_failure_reports_command_and_bounded_stderr(self):
+        """Retain useful diagnostics without leaking argv/environment contents."""
+        import subprocess
+        error = subprocess.CalledProcessError(
+            1, ["/usr/sbin/nginx", "-t"],
+            stderr='nginx: [emerg] duplicate "ssl_session_tickets" directive\n')
+        with mock.patch.object(MOD.subprocess, "run", side_effect=error):
+            with self.assertRaisesRegex(
+                    RuntimeError, 'command=nginx exit=1 stderr=.*duplicate') as result:
+                MOD.run(["/usr/sbin/nginx", "-t"])
+        self.assertNotIn("/etc/omnilyzer/keycloak/keycloak.env", str(result.exception))
+
+    def test_candidate_diagnostic_fails_before_changes_on_bad_preflight(self):
+        """No Nginx candidate parse without exact TLS and issuer preflight."""
+        with mock.patch.object(MOD, "tls_preflight", return_value=["issuer mismatch"]), \
+             mock.patch.object(MOD.subprocess, "run") as shell:
+            with self.assertRaisesRegex(RuntimeError, "DIAG_HOLD issuer mismatch"):
+                MOD.diagnose_https()
+            shell.assert_not_called()
+
     def test_preflight_fails_for_wrong_host_without_mutation(self):
         with mock.patch.object(MOD.os, "geteuid", return_value=1000), \
              mock.patch.object(MOD.socket, "gethostname", return_value="false-prod"), \
