@@ -42,6 +42,7 @@ RECEIVER_FINGERPRINT_SHA256 = (
     "d6955c0bbc8a74847aa464196ac516275561ce6a7306674c9a8dd39d5150a492"
 )
 AGE_VERSION = "1.1.1-1ubuntu0.24.04.3"
+AGE_BIN = Path("/usr/bin/age")
 FILES = (
     "keycloak.pgcustom",
     "keycloak.env",
@@ -88,8 +89,9 @@ def inspect_backup_directory(root=BACKUP_ROOT):
         if record.st_size <= 0:
             raise RuntimeError("empty Keycloak recovery file: " + name)
         checks[name] = {"sha256": file_digest(path), "bytes": record.st_size}
-    if (root / "keycloak.pgcustom").open("rb").read(5) != b"PGDMP":
-        raise RuntimeError("backup PostgreSQL archive signature invalid")
+    with (root / "keycloak.pgcustom").open("rb") as dump:
+        if dump.read(5) != b"PGDMP":
+            raise RuntimeError("backup PostgreSQL archive signature invalid")
     recorded = (root / "sha256sum.txt").read_text(encoding="ascii").strip()
     expected = checks["keycloak.pgcustom"]["sha256"] + "  keycloak.pgcustom"
     if recorded != expected:
@@ -159,7 +161,7 @@ def ensure_signed_age():
         capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
         raise RuntimeError("signed Ubuntu age package installation failed")
-    version = subprocess.run(["/usr/bin/age", "--version"],
+    version = subprocess.run([str(AGE_BIN), "--version"],
                              check=True, capture_output=True, text=True, timeout=10)
     if version.stdout.strip() != "1.1.1":
         raise RuntimeError("unexpected age crypto binary version")
@@ -206,7 +208,7 @@ def encrypt_to_root(checks):
     try:
         with os.fdopen(fd, "wb") as output:
             process = subprocess.Popen(
-                ["/usr/bin/age", "-R", str(RECIPIENT)],
+                [str(AGE_BIN), "-R", str(RECIPIENT)],
                 stdin=subprocess.PIPE, stdout=output, stderr=subprocess.PIPE)
             try:
                 create_tar_stream(process.stdin, checks)
