@@ -272,6 +272,137 @@ WantedBy=multi-user.target
 """
 
 
+# Section: Repair only the observed optimized-build mismatch, never reinstall.
+def metrics_repair_plan():
+    """Verify one installed/stopped provider and its exact root-owned boundaries.
+
+    Do not read, print, or alter any password values as a part of diagnosis.
+    Report all independently detected mismatches before permitting a repair.
+    """
+    import zipfile
+    problems = []
+    if os.geteuid() != 0:
+        problems.append("owner-root authorization required")
+    if socket.gethostname().split(".")[0] != "truexmainserver":
+        problems.append("unexpected hostname")
+    try:
+        status = call(["/usr/bin/systemctl", "show", "omnilyzer-keycloak.service",
+                       "-p", "ActiveState", "-p", "SubState", "-p", "UnitFileState",
+                       "--no-pager"]).stdout
+        for required in ("ActiveState=inactive", "SubState=dead",
+                         "UnitFileState=disabled"):
+            if required not in status.splitlines():
+                problems.append("service must remain stopped and disabled: " + required)
+    except subprocess.SubprocessError:
+        problems.append("cannot verify service state")
+    with socket.socket() as sock:
+        try:
+            sock.bind(("127.0.0.1", PORT))
+        except OSError:
+            problems.append("Keycloak private port is already occupied")
+    if not CURRENT.is_symlink() or CURRENT.resolve() != RELEASE or not RELEASE.is_dir():
+        problems.append("Keycloak release layout differs from approved installation")
+    try:
+        user = pwd.getpwnam(SERVICE_USER)
+        directory = ENV.parent.stat()
+        if (directory.st_uid != 0 or
+                stat.S_IMODE(directory.st_mode) != 0o700):
+            problems.append("secret directory ownership or permissions changed")
+        metadata = ENV.lstat()
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or
+                metadata.st_nlink != 1 or stat.S_IMODE(metadata.st_mode) != 0o600):
+            problems.append("secret file must be regular root-owned 0600")
+        if user.pw_uid == 0:
+            problems.append("Keycloak must not run as root")
+        raw = ENV.read_bytes() if "secret file must be regular root-owned 0600" not in problems else b""
+        if raw.count(b"KC_METRICS_ENABLED=false\\n") != 1:
+            problems.append("metrics line not the single expected false value")
+        installed_unit = UNIT.read_text(encoding="utf-8")
+        if installed_unit != service_unit():
+            problems.append("installed unit differs from reviewed exact original")
+        jar = RELEASE / "lib" / "quarkus" / "generated-bytecode.jar"
+        with zipfile.ZipFile(jar) as archive:
+            persisted = archive.read("META-INF/keycloak-persisted.properties")
+        keys = persisted.splitlines()
+        for required in (b"kc.db=postgres", b"kc.health-enabled=true"):
+            if required not in keys:
+                problems.append("approved optimized build is missing " + required.decode())
+        if any(line.startswith(b"kc.metrics-enabled=") for line in keys):
+            problems.append("optimized build already defines a metrics value")
+        if any((ENV.parent / name).exists() for name in
+               ("keycloak.env.m01-pre-metrics-repair",
+                "omnilyzer-keycloak.service.m01-pre-metrics-repair")):
+            problems.append("prior repair backup exists; do not repeat")
+    except (OSError, ValueError, zipfile.BadZipFile, KeyError) as exc:
+        problems.append("cannot verify installed identity content: " +
+                        type(exc).__name__)
+    return problems
+
+
+def prepare_metrics_repair():
+    """Read-only root preflight: list every issue without starting services."""
+    problems = metrics_repair_plan()
+    print("M01_KEYCLOAK_METRICS_REPAIR_" +
+          ("HOLD " + "; ".join(problems) if problems else
+           "PREFLIGHT_PASS installed_unit_exact=true persisted_metrics_absent=true"))
+    if problems:
+        raise RuntimeError("metrics repair preflight failed")
+
+
+def write_file_exclusive(path, payload, mode):
+    """Write one root-owned backup without replacing an existing pathname."""
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
+                         getattr(os, "O_NOFOLLOW", 0), mode)
+    with os.fdopen(descriptor, "wb") as output:
+        output.write(payload)
+        output.flush()
+        os.fsync(output.fileno())
+
+
+def replace_file_atomic(path, payload, mode):
+    """Replace one already-validated root file by same-filesystem atomic rename."""
+    descriptor, temporary = tempfile.mkstemp(prefix=".m01-metrics-", dir=str(path.parent))
+    try:
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
+
+
+def repair_metrics_only():
+    """Remove one runtime-only build mismatch and disable restart loops.
+
+    Preserve existing production database, hostname, administrator and all
+    other secrets. Keep root-only backups and do NOT start Keycloak or publish
+    DNS/TLS. The owner separately reviews and starts the corrected service.
+    """
+    prepare_metrics_repair()
+    before = ENV.read_bytes()
+    original_unit = UNIT.read_bytes()
+    updated = before.replace(b"KC_METRICS_ENABLED=false\\n", b"")
+    if len(updated) >= len(before):
+        raise RuntimeError("metrics value did not match exact expected line")
+    restricted_unit = original_unit.replace(
+        b"Restart=on-failure\\n", b"Restart=no\\n")
+    if restricted_unit == original_unit:
+        raise RuntimeError("existing restart policy differs from approved original")
+    write_file_exclusive(ENV.parent / "keycloak.env.m01-pre-metrics-repair",
+                         before, 0o600)
+    write_file_exclusive(ENV.parent / "omnilyzer-keycloak.service.m01-pre-metrics-repair",
+                         original_unit, 0o600)
+    replace_file_atomic(ENV, updated, 0o600)
+    replace_file_atomic(UNIT, restricted_unit, 0o644)
+    call(["/usr/bin/systemctl", "daemon-reload"])
+    print("M01_KEYCLOAK_METRICS_REPAIR_PASS " +
+          "one_build_setting_removed=true service_restart_disabled=true " +
+          "secrets_preserved=true backups_root_only=true no_service_start=true")
+
+
 # Section: Explicit, separate activation of *only* the local Keycloak service.
 def start_local():
     """Start only the preinstalled unit; never touch Nginx/DNS or other services."""
@@ -301,7 +432,7 @@ def start_local():
 def main(argv=None):
     """Choose read-only preflight, privileged offline installation or local start."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("preflight", "install", "start-local"))
+    parser.add_argument("action", choices=("preflight", "install", "start-local", "repair-preflight", "repair-metrics"))
     args = parser.parse_args(argv)
     if args.action == "preflight":
         problems = preflight()
@@ -311,6 +442,10 @@ def main(argv=None):
             sys.exit(2)
     elif args.action == "install":
         install()
+    elif args.action == "repair-preflight":
+        prepare_metrics_repair()
+    elif args.action == "repair-metrics":
+        repair_metrics_only()
     else:
         start_local()
 
