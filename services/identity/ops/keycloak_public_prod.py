@@ -315,7 +315,7 @@ def metrics_repair_plan():
         if user.pw_uid == 0:
             problems.append("Keycloak must not run as root")
         raw = ENV.read_bytes() if "secret file must be regular root-owned 0600" not in problems else b""
-        if raw.count(b"KC_METRICS_ENABLED=false\\n") != 1:
+        if raw.count(b"KC_METRICS_ENABLED=false\n") != 1:
             problems.append("metrics line not the single expected false value")
         installed_unit = UNIT.read_text(encoding="utf-8")
         if installed_unit != service_unit():
@@ -384,11 +384,11 @@ def repair_metrics_only():
     prepare_metrics_repair()
     before = ENV.read_bytes()
     original_unit = UNIT.read_bytes()
-    updated = before.replace(b"KC_METRICS_ENABLED=false\\n", b"")
+    updated = before.replace(b"KC_METRICS_ENABLED=false\n", b"")
     if len(updated) >= len(before):
         raise RuntimeError("metrics value did not match exact expected line")
     restricted_unit = original_unit.replace(
-        b"Restart=on-failure\\n", b"Restart=no\\n")
+        b"Restart=on-failure\n", b"Restart=no\n")
     if restricted_unit == original_unit:
         raise RuntimeError("existing restart policy differs from approved original")
     write_file_exclusive(ENV.parent / "keycloak.env.m01-pre-metrics-repair",
