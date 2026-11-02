@@ -39,7 +39,7 @@ os.environ.update({
     "DJANGO_SETTINGS_MODULE":"config.settings",
     "DJANGO_SECRET_KEY":"TESTONLY_KEYCLOAK_NATIVE_BROWSER_"+"x"*60,
     "TOKEN_FERNET_KEY":key.decode(),
-    "PRODUCT_ORIGIN":"https://testserver",
+    "PRODUCT_ORIGIN":"https://app.sumlaude.com",
     "OIDC_ISSUER":"https://127.0.0.1:18443/realms/omnilyzer-auth-spike",
     "OIDC_CLIENT_ID":"omnilyzer-bff-spike",
     "OIDC_CLIENT_SECRET":runtime["OMNILYZER_BFF_SECRET"],
@@ -55,6 +55,16 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import django
 django.setup()
 from django.conf import settings
+# Section: QA-only canonical-host override. Production settings MUST import
+# with the real approved product origin; the disposable Keycloak fixture is
+# explicitly registered for https://testserver/auth/callback and is never
+# deployed. These overrides are local to this disposable Python QA process.
+assert os.environ["PRODUCT_ORIGIN"] == "https://app.sumlaude.com"
+assert str(socket).startswith("/tmp/sumlaude-s03-pg16-qa.")
+settings.PRODUCT_ORIGIN = "https://testserver"
+settings.OIDC_REDIRECT_URI = "https://testserver/auth/callback"
+settings.ALLOWED_HOSTS = ["testserver"]
+settings.CSRF_TRUSTED_ORIGINS = ["https://testserver"]
 from django.test import Client
 from identity_bff import issuer
 
