@@ -243,6 +243,57 @@ def tls_preflight():
     return problems
 
 
+def diagnose_https():
+    """Read-only Nginx parser test against the exact proposed and existing sites.
+
+    Build a temporary alternative Nginx master config in root-only /run;
+    substitute only the login virtual-host include and never change the
+    live Nginx config, service, certificates, DNS, or Keycloak.
+    """
+    import re
+    import tempfile
+    problems = tls_preflight()
+    if problems:
+        raise RuntimeError("DIAG_HOLD " + "; ".join(problems))
+    master = Path("/etc/nginx/nginx.conf").read_text(encoding="utf-8")
+    needle = "include /etc/nginx/sites-enabled/*;"
+    if master.count(needle) != 1:
+        raise RuntimeError("NGINX_INCLUDE_LAYOUT_HOLD")
+    current_sites = sorted(Path("/etc/nginx/sites-enabled").iterdir())
+    if not current_sites or len(current_sites) > 64:
+        raise RuntimeError("NGINX_SITE_COUNT_HOLD")
+    if ENABLED not in current_sites:
+        raise RuntimeError("NGINX_LOGIN_SITE_NOT_ENABLED")
+    for site in current_sites:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", site.name) or not site.is_file():
+            raise RuntimeError("NGINX_UNEXPECTED_SITE_NAME_OR_FILE")
+    with tempfile.TemporaryDirectory(prefix="m01-nginx-diagnostic-", dir="/run") as directory:
+        scratch = Path(directory)
+        proposed = scratch / "login-proposed.conf"
+        proposed.write_text(https_vhost(), encoding="utf-8")
+        proposed.chmod(0o600)
+        all_includes = "".join(
+            "    include " + str(proposed if site == ENABLED else site) + ";\n"
+            for site in current_sites
+        )
+        alternate = scratch / "nginx.conf"
+        alternate.write_text(master.replace(needle, all_includes), encoding="utf-8")
+        alternate.chmod(0o600)
+        result = subprocess.run(
+            ["/usr/sbin/nginx", "-t", "-c", str(alternate),
+             "-p", "/etc/nginx/"],
+            capture_output=True, text=True, timeout=20)
+        # This output contains only Nginx diagnostics, not config or secrets.
+        # Limit its length so no large privileged log is copied into the chat.
+        output = "\n".join((result.stderr or "").splitlines()[-14:])
+        print("M01_NGINX_CANDIDATE_EXIT=" + str(result.returncode))
+        print("M01_NGINX_CANDIDATE_DIAGNOSTIC_BEGIN\n" +
+              output[:2400] + "\nM01_NGINX_CANDIDATE_DIAGNOSTIC_END")
+        if result.returncode:
+            raise RuntimeError("isolated Nginx candidate validation failed; existing config untouched")
+        print("M01_NGINX_CANDIDATE_PASS live_nginx_unchanged=true")
+
+
 def install_https():
     """Atomically upgrade only the dedicated identity vhost after cert checks."""
     problems = tls_preflight()
@@ -281,7 +332,8 @@ def main(argv=None):
     """One explicit phase per root command; no automatic public activation."""
     parser = argparse.ArgumentParser(description="Isolated Keycloak HTTPS ingress")
     parser.add_argument("action", choices=("acme-preflight", "prepare-acme",
-                                           "tls-preflight", "activate-https"))
+                                           "tls-preflight", "diagnose-https",
+                                           "activate-https"))
     name = parser.parse_args(argv).action
     if name == "acme-preflight":
         errors = acme_preflight()
@@ -295,6 +347,8 @@ def main(argv=None):
         return 2 if errors else 0
     if name == "prepare-acme":
         install_acme()
+    elif name == "diagnose-https":
+        diagnose_https()
     else:
         install_https()
     return 0
