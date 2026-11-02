@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """File: services/identity/ops/keycloak_offhost_receive.py
-Purpose: Pull and independently verify an age-encrypted production Keycloak
-    recovery snapshot on the already authorized small-laptop.
+Purpose: Independently decrypt and verify an age-encrypted Keycloak backup
+    directly from SSH on small-laptop without storing ciphertext or plaintext.
 Related: services/identity/ops/keycloak_offhost_backup.py,
     services/identity/tests/test_keycloak_offhost_receive.py, SECURITY.md.
 
-The production backup is downloaded only as ciphertext over an existing
-host-key-verified SSH connection. It is decrypted directly to a streaming
-in-memory integrity checker, with NO plaintext file written on the laptop.
+The production ciphertext streams from SSH to age decryption and the
+integrity checker. Neither ciphertext nor plaintext is written on this laptop.
 Private SSH decryption key stays on the laptop, never on production.
 A one-time encrypted copy is not a recurring offsite backup policy.
 """
 import argparse
 import hashlib
+import threading
 import json
 import os
 from pathlib import Path
@@ -33,8 +33,6 @@ REMOTE_PORT = 2222
 SOURCE_DIR = ("/home/trusthansen/.cache/omnilyzer-identity-production-preflight")
 CIPHERTEXT_NAME = "omnilyzer-keycloak-offhost-20261103.tar.age"
 REMOTE_PATH = SOURCE_DIR + "/" + CIPHERTEXT_NAME
-DEST_DIR = Path("/home/trust/.local/share/omnilyzer/identity-backups")
-DEST_FILE = DEST_DIR / CIPHERTEXT_NAME
 IDENTITY = Path("/home/trust/.ssh/id_ed25519_family_mesh")
 IDENTITY_PUB = Path("/home/trust/.ssh/id_ed25519_family_mesh.pub")
 AGE_BIN = Path("/home/trust/.cache/omnilyzer-identity-offhost/extracted/usr/bin/age")
@@ -84,16 +82,6 @@ def preflight():
             problems.append("SSH recipient no longer matches verified laptop")
     except OSError:
         problems.append("SSH key fingerprints unavailable")
-    if DEST_FILE.exists() or DEST_FILE.is_symlink():
-        problems.append("encrypted backup already exists; no overwrite")
-    if DEST_DIR.exists():
-        try:
-            state = DEST_DIR.lstat()
-            if (not stat.S_ISDIR(state.st_mode) or state.st_uid != os.geteuid()
-                    or stat.S_IMODE(state.st_mode) != 0o700):
-                problems.append("laptop encrypted backup directory not private0700")
-        except OSError:
-            problems.append("destination directory cannot be inspected")
     return problems
 
 
@@ -188,51 +176,89 @@ def verify_age_file(path):
     return dump_sha256
 
 
-# Section: Pull only ciphertext over the preexisting SSH transport.
-def pull_verify(expected_digest):
-    """One-time trusted-host SSH pull then authenticated streaming validation."""
+# Section: Independently decrypt real encrypted backup only in process streams.
+def verify_remote_stream(expected_digest):
+    """Stream production ciphertext through age and verify the exact manifest.
+
+    Keep the SSH transport authentication and age recipient key independently
+    pinned. No production data or plaintext is saved or logged on the laptop.
+    """
     errors = preflight()
     if errors:
-        raise RuntimeError("OFFHOST_RECEIVE_HOLD " + "; ".join(errors))
+        raise RuntimeError("OFFHOST_VERIFY_HOLD " + "; ".join(errors))
     if not re.fullmatch(r"[a-f0-9]{64}", expected_digest):
-        raise RuntimeError("expected ciphertext SHA256 must be supplied")
-    DEST_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    DEST_DIR.chmod(0o700)
-    fd, temporary = tempfile.mkstemp(prefix=".keycloak-offhost-", dir=DEST_DIR)
-    os.close(fd)
+        raise RuntimeError("expected ciphertext SHA256 required")
+    ssh = subprocess.Popen([
+        "/usr/bin/ssh", "-p", str(REMOTE_PORT),
+        "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=yes",
+        "-o", "ConnectTimeout=12",
+        "-o", "ServerAliveInterval=15",
+        "-o", "ServerAliveCountMax=3",
+        REMOTE_USER + "@" + REMOTE_IP,
+        "/usr/bin/cat", "--", REMOTE_PATH,
+    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    age = subprocess.Popen(
+        [str(AGE_BIN), "-d", "-i", str(IDENTITY)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    digest_result = hashlib.sha256()
+    transfer = {"bytes": 0, "error": None}
+
+    def pipe_ciphertext():
+        """Move only encrypted chunks between processes and calculate SHA256."""
+        try:
+            while True:
+                chunk = ssh.stdout.read(1024 * 1024)
+                if not chunk:
+                    break
+                transfer["bytes"] += len(chunk)
+                if transfer["bytes"] > MAX_ARCHIVE_MEMBER + 1024 * 1024:
+                    raise RuntimeError("encrypted recovery unexpectedly large")
+                digest_result.update(chunk)
+                age.stdin.write(chunk)
+            age.stdin.close()
+        except (OSError, RuntimeError, BrokenPipeError) as exc:
+            transfer["error"] = type(exc).__name__
+            if not age.stdin.closed:
+                age.stdin.close()
+
+    worker = threading.Thread(target=pipe_ciphertext, name="m01-age-ciphertext-pipe",
+                              daemon=True)
+    worker.start()
     try:
-        scp = subprocess.run([
-            "/usr/bin/scp", "-q", "-P", str(REMOTE_PORT),
-            "-o", "BatchMode=yes",
-            "-o", "StrictHostKeyChecking=yes",
-            "-o", "ConnectTimeout=12",
-            "-o", "ServerAliveInterval=15",
-            "-o", "ServerAliveCountMax=3",
-            REMOTE_USER + "@" + REMOTE_IP + ":" + REMOTE_PATH, temporary,
-        ], check=False, capture_output=True, timeout=180)
-        if scp.returncode:
-            raise RuntimeError("SSH ciphertext-only download did not complete")
-        if digest(Path(temporary)) != expected_digest:
-            raise RuntimeError("encrypted transfer SHA256 mismatch")
-        pg_sha256 = verify_age_file(Path(temporary))
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, DEST_FILE)
-        temporary = None
-        print("M01_OFFHOST_RECEIVE_VERIFY_PASS " +
-              "ssh_host_verified=true ciphertext_sha256_verified=true " +
-              "age_decrypt_authenticated=true manifest_and_pg_sha256_verified=true " +
-              "plaintext_saved_to_laptop=false existing_files_untouched=true " +
-              "production_not_modified=true encrypted_copy_present=true " +
-              "keycloak_pg_sha256=" + pg_sha256)
+        pg_sha256 = verify_tar_stream(age.stdout)
+        # Drain bounded tar padding before waiting for process authentication.
+        if len(age.stdout.read(1048577)) > 1048576:
+            raise RuntimeError("unexpected decrypted tar trailing bytes")
+        age.stdout.close()
+        worker.join(timeout=90)
+        if worker.is_alive():
+            raise RuntimeError("ciphertext transfer exceeded bounded deadline")
+        if transfer["error"]:
+            raise RuntimeError("encrypted SSH transfer failed: " + transfer["error"])
+        if age.wait(timeout=20) != 0 or ssh.wait(timeout=20) != 0:
+            raise RuntimeError("SSH or age decryption failed")
+        if digest_result.hexdigest() != expected_digest:
+            raise RuntimeError("encrypted transfer SHA256 differs from root export")
+        print("M01_OFFHOST_STREAM_VERIFY_PASS " +
+              "real_production_encrypted_stream_verified=true " +
+              "age_decrypt_authenticated=true pg_and_manifest_sha256_verified=true " +
+              "ciphertext_saved_to_key_laptop=false plaintext_saved=false " +
+              "production_not_modified=true keycloak_pg_sha256=" + pg_sha256)
     finally:
-        if temporary and os.path.exists(temporary):
-            os.unlink(temporary)
+        for process in (age, ssh):
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+            for stream in (process.stdout, process.stdin, process.stderr):
+                if stream and not stream.closed:
+                    stream.close()
 
 
 def main(argv=None):
-    """Read-only preflight or pull+verify ciphertext from production."""
+    """Read-only preflight or stream authenticated production backup."""
     parser = argparse.ArgumentParser(description="Protected off-host recovery receiver")
-    parser.add_argument("action", choices=("preflight", "pull-verify"))
+    parser.add_argument("action", choices=("preflight", "verify-stream"))
     parser.add_argument("--sha256", default="")
     args = parser.parse_args(argv)
     if args.action == "preflight":
@@ -240,7 +266,7 @@ def main(argv=None):
         print("M01_OFFHOST_RECEIVER_" +
               ("HOLD " + "; ".join(errors) if errors else "PREFLIGHT_PASS"))
         return 2 if errors else 0
-    pull_verify(args.sha256)
+    verify_remote_stream(args.sha256)
     return 0
 
 
