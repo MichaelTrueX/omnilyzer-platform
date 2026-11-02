@@ -149,28 +149,18 @@ def realm_document(client_secret):
 
 
 def provision():
-    """Create realm using localhost admin CLI with secrets never passed as argv."""
+    """Authenticate existing bootstrap admin first; then create one realm.
+
+    Never modify a real user, reset an admin credential or run twice.
+    The confidential client secret is preserved root-only for recovery.
+    """
     issues = preflight()
     if issues:
         raise RuntimeError("PROVISION_HOLD: " + "; ".join(issues))
     root_env = load_root_env()
-    secret = secrets.token_urlsafe(48)
-    # Write durable client credentials first: if CLI fails, preserve this
-    # recoverable secret and do not automatically create a second realm.
-    descriptor = os.open(str(CLIENT_ENV), os.O_WRONLY | os.O_CREAT | os.O_EXCL |
-                         getattr(os, "O_NOFOLLOW", 0), 0o600)
-    with os.fdopen(descriptor, "w", encoding="ascii") as output:
-        output.write("OIDC_ISSUER=" + ISSUER + "\n")
-        output.write("OIDC_CLIENT_ID=" + CLIENT + "\n")
-        output.write("OIDC_CLIENT_SECRET=" + secret + "\n")
-        output.flush()
-        os.fsync(output.fileno())
     with tempfile.TemporaryDirectory(prefix="m01-keycloak-admin-", dir="/run") as temp:
-        # All authorization data are exclusively within root-owned 0700 /run.
+        # Both CLI token and one-time realm JSON stay in root-owned 0700 /run.
         tempdir = Path(temp)
-        document = tempdir / "realm.json"
-        document.write_text(json.dumps(realm_document(secret)) + "\n", encoding="utf-8")
-        document.chmod(0o600)
         config = str(tempdir / "kcadm.config")
         env = dict(os.environ)
         env["KC_CLI_PASSWORD"] = root_env["KC_BOOTSTRAP_ADMIN_PASSWORD"]
@@ -184,6 +174,21 @@ def provision():
             env=env, capture_output=True, text=True, timeout=45)
         if login.returncode:
             raise RuntimeError("existing admin CLI authentication failed; no reset performed")
+
+        # Generate after admin login succeeds. Store a durable recovery copy
+        # BEFORE the API call: a partial realm is never silently re-created.
+        secret = secrets.token_urlsafe(48)
+        descriptor = os.open(str(CLIENT_ENV), os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                             getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(descriptor, "w", encoding="ascii") as output:
+            output.write("OIDC_ISSUER=" + ISSUER + "\n")
+            output.write("OIDC_CLIENT_ID=" + CLIENT + "\n")
+            output.write("OIDC_CLIENT_SECRET=" + secret + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        document = tempdir / "realm.json"
+        document.write_text(json.dumps(realm_document(secret)) + "\n", encoding="utf-8")
+        document.chmod(0o600)
         result = subprocess.run(
             [str(KCADM), "create", "realms", "--config", config, "-f", str(document)],
             env=env, capture_output=True, text=True, timeout=60)
@@ -193,7 +198,8 @@ def provision():
                                        "/.well-known/openid-configuration")
         if status != 200 or json.loads(response).get("issuer") != ISSUER:
             raise RuntimeError("realm created but canonical issuer not verified; public HOLD")
-        # Admin-only client readback, never log client JSON or token.
+
+        # Admin-only readback. Do not display client JSON or OAuth credentials.
         verified = subprocess.run(
             [str(KCADM), "get", "clients", "-r", REALM, "-q",
              "clientId=" + CLIENT, "--config", config],
@@ -213,7 +219,6 @@ def provision():
           " confidential_client=verified strict_PKCE_S256=true " +
           "public_registration=false credential_file=root0600 " +
           "real_users_created=0 public_ingress=false")
-
 
 def main(argv=None):
     """Only two operator actions: inspect state or provision the single realm."""
