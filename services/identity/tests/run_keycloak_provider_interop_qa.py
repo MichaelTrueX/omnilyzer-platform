@@ -20,7 +20,7 @@ os.environ.update({
     "DJANGO_SETTINGS_MODULE": "config.settings",
     "DJANGO_SECRET_KEY": "test_only_" + "a"*60,
     "TOKEN_FERNET_KEY": Fernet.generate_key().decode(),
-    "PRODUCT_ORIGIN": "https://testserver",
+    "PRODUCT_ORIGIN": "https://app.sumlaude.com",
     "OIDC_ISSUER": "https://127.0.0.1:18443/realms/omnilyzer-auth-spike",
     "OIDC_CLIENT_ID": "omnilyzer-bff-spike",
     "OIDC_CLIENT_SECRET": runtime["OMNILYZER_BFF_SECRET"],
@@ -33,6 +33,16 @@ os.environ.update({
 import django
 django.setup()
 from django.conf import settings
+# Section: Disposable Keycloak test fixture deliberately uses testserver.
+# Import the production module ONLY with approved app.sumlaude.com first;
+# then isolate the fixture's registered callback to this QA interpreter.
+# Never ship these overrides in application settings or deployment code.
+assert os.environ["PRODUCT_ORIGIN"] == "https://app.sumlaude.com"
+assert FIXTURE.as_posix().startswith("/tmp/sumlaude-keycloak-https-handoff-")
+settings.PRODUCT_ORIGIN = "https://testserver"
+settings.OIDC_REDIRECT_URI = "https://testserver/auth/callback"
+settings.ALLOWED_HOSTS = ["testserver"]
+settings.CSRF_TRUSTED_ORIGINS = ["https://testserver"]
 from django.test import Client
 from identity_bff import issuer
 import psycopg
