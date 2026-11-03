@@ -235,6 +235,37 @@ def restrict_runtime_role():
           "ddl_denied=true migration_history_denied=true")
 
 
+
+def verify_runtime_connection(password):
+    """Prove actual SCRAM login and session-table grants using runtime role.
+
+    The credential exists only in the local child process environment;
+    never pass it via argv, CLI, logs, a shell or browser JavaScript.
+    """
+    env = dict(os.environ)
+    env["PGPASSWORD"] = password
+    env["PGCONNECT_TIMEOUT"] = "5"
+    env["PGSSLMODE"] = "disable"  # localhost-only, not Internet transport
+    sql = (
+        "SELECT current_user, "
+        "has_database_privilege(current_user,current_database(),'CREATE')::int, "
+        "has_schema_privilege(current_user,'public','CREATE')::int, "
+        "has_table_privilege(current_user,'public.django_session','SELECT')::int, "
+        "has_table_privilege(current_user,'public.django_migrations','SELECT')::int, "
+        "(SELECT count(*) FROM public.django_session);"
+    )
+    result = call(
+        ["/usr/bin/psql", "-X", "-qAt", "-v", "ON_ERROR_STOP=1",
+         "-h", "127.0.0.1", "-p", str(DB_PORT),
+         "-U", RUNTIME_ROLE, "-d", DB, "-c", sql],
+        env=env, timeout=12)
+    if result != RUNTIME_ROLE + "|0|0|1|0|0":
+        raise RuntimeError("actual role-authenticated session isolation failed")
+    print("M01_BFF_SESSION_DB_RUNTIME_LOGIN_PASS "
+          "scram_connection=true owner=false ddl_denied=true "
+          "migration_read_denied=true session_table_empty=true")
+
+
 # Section 4: Leave a root-only password fragment for a later approved release.
 def prepare():
     """One-time new DB and role, no BFF runtime or product writes."""
@@ -253,6 +284,7 @@ def prepare():
         " WITH OWNER postgres ENCODING 'UTF8' TEMPLATE template0;")
     django_migrate()
     restrict_runtime_role()
+    verify_runtime_connection(password)
     proof = pgsql(
         "SELECT count(*) FROM public.django_session;", database=DB)
     if proof != "0":
