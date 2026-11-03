@@ -9,6 +9,8 @@ All tests use synthetic credentials and injected database results. These
 tests do NOT authorize production SQL, a new learner, or release activation.
 """
 import importlib.util
+from contextlib import redirect_stdout
+import io
 import os
 from pathlib import Path
 import tempfile
@@ -59,7 +61,7 @@ class BffSessionDbPrepareTests(unittest.TestCase):
             commands.append((sql, database))
             return "1|0|1|1|1|1|0|0"
 
-        with mock.patch.object(MOD, "pgsql", side_effect=fake_sql):
+        with mock.patch.object(MOD, "pgsql", side_effect=fake_sql), redirect_stdout(io.StringIO()):
             MOD.restrict_runtime_role()
         self.assertEqual(len(commands), 3)
         db_rights, object_rights, audit = commands
@@ -99,6 +101,22 @@ class BffSessionDbPrepareTests(unittest.TestCase):
         self.assertNotIn("SYNTHETIC_SECRET_SHOULD_NOT_BE_IN_ARGV", " ".join(args))
         self.assertIn("SYNTHETIC_SECRET_SHOULD_NOT_BE_IN_ARGV",
                       runner.call_args.kwargs["input"])
+
+    def test_unprivileged_preflight_never_probes_root_private_secret_files(self):
+        """A source-only owner cannot infer absent secrets inside root0700."""
+        class Forbidden:
+            def exists(self):
+                raise AssertionError("unprivileged code probed root private file")
+            def is_symlink(self):
+                raise AssertionError("unprivileged code probed root private file")
+        with mock.patch.multiple(
+                MOD, LIVE_ENV=Forbidden(), PARTIAL_ENV=Forbidden(),
+                APPROVAL=Forbidden()), \
+             mock.patch.object(MOD.os, "geteuid", return_value=1000), \
+             mock.patch.object(MOD, "call",
+                               return_value="ActiveState=inactive\nUnitFileState=disabled"):
+            problems = MOD.local_preflight()
+            self.assertIsInstance(problems, list)
 
     def test_postgres_migrations_use_dba_not_runtime_role(self):
         """Use old pinned Django migration code only under local postgres peer."""
@@ -144,7 +162,8 @@ class BffSessionDbPrepareTests(unittest.TestCase):
                  mock.patch.object(MOD, "django_migrate") as migrations, \
                  mock.patch.object(MOD, "restrict_runtime_role") as grants, \
                  mock.patch.object(MOD, "call",
-                      return_value="ActiveState=inactive\nUnitFileState=disabled"):
+                      return_value="ActiveState=inactive\nUnitFileState=disabled"), \
+                 redirect_stdout(io.StringIO()):
                 MOD.prepare()
                 self.assertEqual(fragment.stat().st_mode & 0o777, 0o600)
                 lines = fragment.read_text().splitlines()
