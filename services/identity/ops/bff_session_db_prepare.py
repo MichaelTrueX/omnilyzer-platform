@@ -113,9 +113,14 @@ def local_preflight():
     except (OSError, ValueError, KeyError) as exc:
         errors.append("reviewed Django source unavailable: " + type(exc).__name__)
 
-    for path in (LIVE_ENV, APPROVAL, PARTIAL_ENV):
-        if path.exists() or path.is_symlink():
-            errors.append(path.name + " exists; do not overwrite or activate")
+    # Only root may inspect children of the existing root0700 private
+    # directory. An unprivileged preflight is necessarily PRELIMINARY.
+    # Never relax directory access, follow symlinks or interpret EACCES
+    # as proof that a sensitive file is absent.
+    if os.geteuid() == 0:
+        for path in (LIVE_ENV, APPROVAL, PARTIAL_ENV):
+            if path.exists() or path.is_symlink():
+                errors.append(path.name + " exists; do not overwrite or activate")
     try:
         meta = PRIV_DIR.lstat()
         if (not stat.S_ISDIR(meta.st_mode) or meta.st_uid != 0 or
@@ -287,9 +292,18 @@ def main(argv=None):
     action = parser.parse_args(argv).action
     if action == "preflight":
         problems = local_preflight()
-        print("M01_BFF_SESSION_DB_" + (
-            "HOLD " + "; ".join(problems) if problems else "PREFLIGHT_PASS"))
-        return 2 if problems else 0
+        if problems:
+            print("M01_BFF_SESSION_DB_HOLD " + "; ".join(problems))
+            return 2
+        if os.geteuid() != 0:
+            print("M01_BFF_SESSION_DB_SOURCE_PREFLIGHT_PASS "
+                  "root_only_secret_and_database_checks_pending=true "
+                  "database_not_created=true service_not_started=true")
+        else:
+            print("M01_BFF_SESSION_DB_PREFLIGHT_PASS "
+                  "root_only_file_checks_passed=true "
+                  "database_collision_check_requires_prepare=true")
+        return 0
     prepare()
     return 0
 
