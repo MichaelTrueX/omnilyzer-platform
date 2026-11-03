@@ -10,6 +10,8 @@ import secrets
 import time
 
 from django.conf import settings
+from django.contrib.sessions.backends.base import UpdateError
+from django.db import DatabaseError
 from django.http import JsonResponse, HttpResponseRedirect
 from django.middleware.csrf import get_token
 from django.views.decorators.cache import never_cache
@@ -34,6 +36,20 @@ def _clear_product_cookie(response):
     return response
 
 
+def _unpaired_session_response():
+    """Invalidate both browser cookies after session persistence has failed.
+
+    The old S03 cookie has been revoked, or no new S03 session was issued.
+    A Django cookie must not continue displaying that identity as logged in
+    while its independent product authorization is no longer valid.
+    """
+    response = _clear_product_cookie(_fail(503))
+    response.delete_cookie(
+        settings.SESSION_COOKIE_NAME, path=settings.SESSION_COOKIE_PATH,
+        samesite=settings.SESSION_COOKIE_SAMESITE)
+    return response
+
+
 def _active(request):
     value = request.session.get("principal")
     now = int(time.time())
@@ -49,9 +65,31 @@ def _active(request):
 
 
 def _revoke_existing(request):
+    """Revoke the previously admitted S03 cookie before replacement."""
     old_digest = request.session.get("s03_digest")
     if old_digest:
         issuer.revoke(old_digest)
+
+
+def _persist_issued_session(request, digest):
+    """Persist the matching Django session before returning an S03 cookie.
+
+    Django's SessionMiddleware normally persists after a view returns.
+    Explicit persistence here prevents a newly issued S03 token from being
+    delivered if the independent Django session database cannot be updated.
+    Compensate by revoking the new S03 digest on persistence failure.
+    """
+    try:
+        request.session.save()
+    except (DatabaseError, UpdateError):
+        try:
+            issuer.revoke(digest)
+        except issuer.AdmissionError:
+            # Do not return a newly minted cookie even if revocation fails.
+            # S03's independently limited session will expire by itself.
+            pass
+        return False
+    return True
 
 
 @never_cache
@@ -94,10 +132,14 @@ def callback(request):
         # No product session is issued on unaudited identity/guardian data.
         # Existing session is revoked before another cookie is minted.
         _revoke_existing(request)
+        # Rotate the Django key BEFORE S03 issues a native cookie, so a
+        # failing Django key write cannot leave a newly issued S03 session.
+        request.session.cycle_key()
         product_cookie, digest = issuer.issue(principal)
     except (issuer.AdmissionError, oidc.IdentityError, KeyError, TypeError, ValueError):
         return _fail(403)
-    request.session.cycle_key()
+    except (DatabaseError, UpdateError):
+        return _unpaired_session_response()
     now = int(time.time())
     request.session.update({
         "principal": principal, "s03_digest": digest, "sealed_tokens": sealed,
@@ -105,6 +147,8 @@ def callback(request):
         "last_seen": now,
     })
     request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
+    if not _persist_issued_session(request, digest):
+        return _unpaired_session_response()
     return _product_cookie(HttpResponseRedirect("/start"), product_cookie)
 
 
@@ -164,6 +208,8 @@ def refresh(request):
     request.session["oauth_deadline"] = deadline
     request.session["last_seen"] = int(time.time())
     request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
+    if not _persist_issued_session(request, digest):
+        return _unpaired_session_response()
     return _product_cookie(JsonResponse({"authenticated": True, "refreshed": True,
         "csrfResetRequired": True}), product_cookie)
 

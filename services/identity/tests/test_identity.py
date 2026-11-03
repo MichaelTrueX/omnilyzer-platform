@@ -30,6 +30,8 @@ os.environ.update({
 import django
 django.setup()
 from django.conf import settings
+from django.contrib.sessions.backends.base import UpdateError
+from django.contrib.sessions.backends.cache import SessionStore
 from django.test import Client, SimpleTestCase, override_settings
 from identity_bff import oidc, issuer
 
@@ -140,6 +142,81 @@ class IdentityRouteTests(SimpleTestCase):
         self.assertGreaterEqual(self.mocks[6].call_count, 1)
         self.assertEqual(self.mocks[5].call_count, 2)
         self.assertEqual(self.get("/auth/session").json()["authenticated"], True)
+
+    def test_callback_django_persistence_failure_revokes_new_s03_cookie(self):
+        """Do not deliver S03 authorization when the Django write fails."""
+        self.assertEqual(self.get("/auth/login").status_code, 302)
+        state = self.client.session["transaction"]["state"]
+        original = SessionStore.save
+
+        def fail_update(store, must_create=False):
+            if must_create:
+                return original(store, must_create=True)
+            raise UpdateError("synthetic session storage outage")
+
+        with mock.patch.object(SessionStore, "save", fail_update):
+            result = self.get("/auth/callback?state=" + state + "&code=abc")
+        self.assertEqual(result.status_code, 503)
+        self.assertEqual(self.mocks[5].call_count, 1)
+        self.mocks[6].assert_called_once_with("c" * 64)
+        self.assertEqual(
+            result.cookies["__Host-omnilyzer_identity"]["max-age"], 0)
+        self.assertFalse(self.get("/auth/session").json()["authenticated"])
+        self.assertNotIn("bb", result.content.decode())
+        self.assertEqual(
+            result.cookies["__Host-sumlaude_session"]["max-age"], 0)
+
+    def test_callback_django_cycle_failure_precedes_s03_issue(self):
+        """No S03 session is minted if Django cannot rotate its key."""
+        self.assertEqual(self.get("/auth/login").status_code, 302)
+        state = self.client.session["transaction"]["state"]
+        with mock.patch.object(SessionStore, "create",
+                               side_effect=UpdateError("synthetic DB down")):
+            result = self.get("/auth/callback?state=" + state + "&code=abc")
+        self.assertEqual(result.status_code, 503)
+        self.assertEqual(self.mocks[5].call_count, 0)
+        self.assertEqual(
+            result.cookies["__Host-omnilyzer_identity"]["max-age"], 0)
+        self.assertEqual(
+            result.cookies["__Host-sumlaude_session"]["max-age"], 0)
+
+    def test_refresh_django_persistence_failure_revokes_rotated_s03(self):
+        """Revoke both native digests when a rotated BFF session cannot save."""
+        self.login()
+        csrf = self.csrf()
+        with mock.patch.object(SessionStore, "save",
+                               side_effect=UpdateError("synthetic DB down")):
+            result = self.client.post(
+                "/auth/refresh", secure=True,
+                HTTP_ORIGIN="https://app.sumlaude.com",
+                HTTP_X_CSRFTOKEN=csrf)
+        self.assertEqual(result.status_code, 503)
+        self.assertEqual(self.mocks[5].call_count, 2)
+        self.assertEqual(self.mocks[6].call_count, 2)
+        self.assertNotIn("bbbbbbbbbbbb", result.content.decode())
+        self.assertEqual(result.cookies["__Host-sumlaude_session"]["max-age"], 0)
+        self.assertEqual(result.cookies["__Host-omnilyzer_identity"]["max-age"], 0)
+        self.assertFalse(self.get("/auth/session").json()["authenticated"])
+
+    def test_callback_compensation_failure_does_not_expose_product_cookie(self):
+        """Even when S03 revocation is down, never expose an unpaired cookie."""
+        self.assertEqual(self.get("/auth/login").status_code, 302)
+        state = self.client.session["transaction"]["state"]
+        self.mocks[6].side_effect = issuer.AdmissionError("synthetic outage")
+        original = SessionStore.save
+
+        def fail_update(store, must_create=False):
+            if must_create:
+                return original(store, must_create=True)
+            raise UpdateError("synthetic session DB down")
+
+        with mock.patch.object(SessionStore, "save", fail_update):
+            result = self.get("/auth/callback?state=" + state + "&code=abc")
+        self.assertEqual(result.status_code, 503)
+        self.assertEqual(self.mocks[5].call_count, 1)
+        self.mocks[6].assert_called_once_with("c" * 64)
+        self.assertEqual(
+            result.cookies["__Host-sumlaude_session"]["max-age"], 0)
 
     def test_failed_refresh_revokes_session_and_rejects_user(self):
         self.login()
