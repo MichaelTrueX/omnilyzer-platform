@@ -15,9 +15,13 @@ offline Django code with an independently matched migration footprint.
 The runtime login role gets DML on django_session ONLY and no schema ownership,
 CREATE, privilege inheritance or membership. Distinct DBA remains schema owner.
 
-DO NOT run 'prepare' without separate owner-root approval. Preparation does
-not constitute permission to serve login or enroll users. It never enables
-or starts a service, modifies Nginx/DNS/Keycloak, or creates real student data.
+DO NOT run 'prepare' without separate owner-root approval. Privileged
+execution requires this exact complete script copied by the owner into the
+root-owned /run/omnilyzer-identity-db-prep/ directory (0700, script 0500)
+and SHA256-pinned against the approved Git file BEFORE execution. Never
+invoke root Python from the mutable /home/trusthansen source staging path.
+Preparation does not constitute permission to serve login or enroll users.
+It never starts a service or modifies Nginx/DNS/Keycloak or student data.
 BFF secrets and the production restricted S03 issuer DSN are still missing.
 """
 import argparse
@@ -50,6 +54,8 @@ APPROVAL = PRIV_DIR / "owner-approved-go"
 UNIT = "omnilyzer-identity.service"
 DB_PORT = 5432
 PG_SOCKET = "/var/run/postgresql"
+ROOT_OPERATOR_DIR = Path("/run/omnilyzer-identity-db-prep")
+ROOT_OPERATOR = ROOT_OPERATOR_DIR / "bff_session_db_prepare.py"
 
 # Section 1: Independently guard the existing host, code and disabled service.
 def digest(path):
@@ -142,7 +148,33 @@ def local_preflight():
     return errors
 
 
-# Section 2: Root-only DBA peer access for the new isolated session store.
+# Section 2: Privileged source custody and DBA peer access.
+def trusted_root_operator():
+    """Reject mutable home, symlink or unowned code before any root SQL.
+
+    The future operator first installs the exact Git-reviewed source file
+    into a dedicated root-owned /run directory and checks its SHA256 there.
+    Preflight remains safe to run from the original unprivileged staging.
+    """
+    if Path(__file__).absolute() != ROOT_OPERATOR:
+        raise RuntimeError("trusted root-owned operator path required")
+    try:
+        run = Path("/run").lstat()
+        directory = ROOT_OPERATOR_DIR.lstat()
+        script = ROOT_OPERATOR.lstat()
+    except OSError as exc:
+        raise RuntimeError("trusted root-owned operator staging missing") from exc
+    if (not stat.S_ISDIR(run.st_mode) or run.st_uid != 0 or
+            bool(run.st_mode & (stat.S_IWGRP | stat.S_IWOTH))):
+        raise RuntimeError("trusted root-owned /run directory required")
+    if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != 0 or
+            stat.S_IMODE(directory.st_mode) != 0o700):
+        raise RuntimeError("trusted root-owned operator directory required")
+    if (not stat.S_ISREG(script.st_mode) or script.st_uid != 0 or
+            script.st_nlink != 1 or stat.S_IMODE(script.st_mode) != 0o500):
+        raise RuntimeError("trusted root-owned operator file required")
+
+
 def pgsql(sql, *, database="postgres"):
     """Send SQL only via stdin to the OS postgres role, not shell or argv."""
     return call([
@@ -159,6 +191,7 @@ def root_guard():
     reasons = local_preflight()
     if reasons:
         raise RuntimeError("BFF_DB_PREP_HOLD: " + "; ".join(reasons))
+    trusted_root_operator()
     # PostgreSQL 16 target, exact no-collision role/database names only.
     output = pgsql(
         "SELECT current_setting('server_version_num')::int>=160000 AND "

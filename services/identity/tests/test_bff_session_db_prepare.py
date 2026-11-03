@@ -13,6 +13,8 @@ from contextlib import redirect_stdout
 import io
 import os
 from pathlib import Path
+import stat
+from types import SimpleNamespace
 import tempfile
 import unittest
 from unittest import mock
@@ -52,6 +54,50 @@ class BffSessionDbPrepareTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "existing production environment"):
                 MOD.root_guard()
             sql.assert_not_called()
+
+    def test_root_refuses_mutable_user_staging_before_database_access(self):
+        """Root must not execute this Python file from unprivileged source."""
+        with mock.patch.object(MOD.os, "geteuid", return_value=0), \
+             mock.patch.object(MOD, "local_preflight", return_value=[]), \
+             mock.patch.object(MOD, "pgsql") as sql:
+            with self.assertRaisesRegex(RuntimeError, "trusted root-owned operator path"):
+                MOD.root_guard()
+            sql.assert_not_called()
+
+    def test_root_operator_seal_rejects_wrong_owner_mode_and_symlink(self):
+        """Only exact /run root 0700 directory and root 0500 regular file pass."""
+        good = {
+            Path("/run"): SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0),
+            MOD.ROOT_OPERATOR_DIR: SimpleNamespace(
+                st_mode=stat.S_IFDIR | 0o700, st_uid=0),
+            MOD.ROOT_OPERATOR: SimpleNamespace(
+                st_mode=stat.S_IFREG | 0o500, st_uid=0, st_nlink=1),
+        }
+
+        def check(values):
+            with mock.patch.object(MOD, "__file__", str(MOD.ROOT_OPERATOR)), \
+                 mock.patch.object(MOD.Path, "lstat",
+                                   autospec=True, side_effect=lambda path: values[path]):
+                MOD.trusted_root_operator()
+
+        check(good)
+        for path, changed in (
+            (MOD.ROOT_OPERATOR_DIR,
+             SimpleNamespace(st_mode=stat.S_IFDIR | 0o770, st_uid=0)),
+            (MOD.ROOT_OPERATOR,
+             SimpleNamespace(st_mode=stat.S_IFREG | 0o500, st_uid=1000, st_nlink=1)),
+            (MOD.ROOT_OPERATOR,
+             SimpleNamespace(st_mode=stat.S_IFLNK | 0o500, st_uid=0, st_nlink=1)),
+            (MOD.ROOT_OPERATOR,
+             SimpleNamespace(st_mode=stat.S_IFREG | 0o500, st_uid=0, st_nlink=2)),
+            (Path("/run"),
+             SimpleNamespace(st_mode=stat.S_IFDIR | 0o777, st_uid=0)),
+        ):
+            with self.subTest(path=str(path), mode=changed.st_mode):
+                bad = dict(good)
+                bad[path] = changed
+                with self.assertRaisesRegex(RuntimeError, "trusted root-owned"):
+                    check(bad)
 
     def test_schema_grants_limit_runtime_to_session_table_dml(self):
         """Separate PostgreSQL DBA ownership from narrowly scoped Django user."""
