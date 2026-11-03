@@ -24,6 +24,8 @@ import argparse
 import hashlib
 import os
 from pathlib import Path
+import base64
+import pwd
 import re
 import secrets
 import shutil
@@ -48,7 +50,6 @@ APPROVAL = PRIV_DIR / "owner-approved-go"
 UNIT = "omnilyzer-identity.service"
 DB_PORT = 5432
 PG_SOCKET = "/var/run/postgresql"
-EXISTING_REQUIREMENTS_SHA256 = "5d337039d4b1de28f929d0a0d4d19c18ba8dbb5fe5240fb4dcce6023ff67fd62"
 
 # Section 1: Independently guard the existing host, code and disabled service.
 def digest(path):
@@ -84,7 +85,7 @@ def local_preflight():
         metadata = SOURCE.lstat()
         if (not stat.S_ISDIR(metadata.st_mode) or
                 stat.S_IMODE(metadata.st_mode) != 0o500 or
-                metadata.st_uid != __import__("pwd").getpwnam("trusthansen").pw_uid):
+                metadata.st_uid != pwd.getpwnam("trusthansen").pw_uid):
             errors.append("source staging not sealed owner-only")
         if not (STAGED_SOURCE / "manage.py").is_file():
             errors.append("new source Django entrypoint missing")
@@ -171,11 +172,10 @@ def root_guard():
 def django_migrate():
     """Initialize Django tables, without reusing the BFF runtime database role."""
     old = ORIGINAL_RELEASE / "services/identity"
-    from cryptography.fernet import Fernet  # pinned installed runtime library
     config = {
         "DJANGO_SETTINGS_MODULE": "config.settings",
         "DJANGO_SECRET_KEY": "synthetic-migration-signing-" + secrets.token_urlsafe(48),
-        "TOKEN_FERNET_KEY": Fernet.generate_key().decode("ascii"),
+        "TOKEN_FERNET_KEY": base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii"),
         "PRODUCT_ORIGIN": "https://app.sumlaude.com",
         "OIDC_ISSUER": "https://login.omnilyzer.ai/realms/omnilyzer",
         "OIDC_CLIENT_ID": "sumlaude-bff",
@@ -198,25 +198,16 @@ def django_migrate():
     call(command, env=env, timeout=100)
 
 
-def restrict_runtime_role(password):
+def restrict_runtime_role():
     """Grant existing session-table DML but no DDL or other Django tables."""
-    sql = (
-        "REVOKE ALL ON DATABASE " + DB + " FROM PUBLIC;\n" +
-        "GRANT CONNECT ON DATABASE " + DB + " TO " + RUNTIME_ROLE + ";\n" +
-        "REVOKE ALL ON SCHEMA public FROM PUBLIC;\n" +
-        "GRANT USAGE ON SCHEMA public TO " + RUNTIME_ROLE + ";\n" +
-        "GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.django_session TO " +
-        RUNTIME_ROLE + ";\n"
-    )
     # REVOKE/GRANT on the new DB needs a connection TO that database.
     pgsql("REVOKE ALL ON DATABASE " + DB + " FROM PUBLIC;\n" +
           "GRANT CONNECT ON DATABASE " + DB + " TO " + RUNTIME_ROLE + ";")
-    pgsql(sql.split("REVOKE ALL ON SCHEMA public FROM PUBLIC;\n")[1]
-          .join([]) if False else (
-          "REVOKE ALL ON SCHEMA public FROM PUBLIC;\n" +
-          "GRANT USAGE ON SCHEMA public TO " + RUNTIME_ROLE + ";\n" +
-          "GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.django_session TO " +
-          RUNTIME_ROLE + ";"), database=DB)
+    pgsql(
+        "REVOKE ALL ON SCHEMA public FROM PUBLIC;\n" +
+        "GRANT USAGE ON SCHEMA public TO " + RUNTIME_ROLE + ";\n" +
+        "GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.django_session TO " +
+        RUNTIME_ROLE + ";", database=DB)
     proof = pgsql(
         "SELECT "
         "has_database_privilege('" + RUNTIME_ROLE + "','" + DB + "','CONNECT')::int,"
@@ -256,7 +247,7 @@ def prepare():
         "CREATE DATABASE " + DB +
         " WITH OWNER postgres ENCODING 'UTF8' TEMPLATE template0;")
     django_migrate()
-    restrict_runtime_role(password)
+    restrict_runtime_role()
     proof = pgsql(
         "SELECT count(*) FROM public.django_session;", database=DB)
     if proof != "0":
