@@ -294,9 +294,38 @@ def verify_runtime_connection(password):
         env=env, timeout=12)
     if result != RUNTIME_ROLE + "|0|0|1|0|0":
         raise RuntimeError("actual role-authenticated session isolation failed")
+    # A successful TCP connection does NOT prove authentication happened:
+    # pg_hba.conf can permit host trust, silently ignoring PGPASSWORD.
+    # Ask the independent local DBA for only a boolean SCRAM verifier result,
+    # never the role's stored password or hash.
+    verifier = pgsql(
+        "SELECT rolcanlogin::int,rolinherit::int,rolsuper::int,"
+        "rolbypassrls::int,"
+        "(rolpassword LIKE 'SCRAM-SHA-256$%')::int "
+        "FROM pg_authid WHERE rolname='" + RUNTIME_ROLE + "';")
+    if verifier != "1|0|0|0|1":
+        raise RuntimeError("runtime role SCRAM verifier or role flags invalid")
+    # Confirm the *same* localhost route refuses an intentionally different
+    # password. LC_ALL makes the expected PostgreSQL diagnostic deterministic.
+    # No secret, hash, or raw server diagnostic is printed or logged.
+    bad_env = dict(env)
+    bad_env["PGPASSWORD"] = secrets.token_urlsafe(48)
+    bad_env["LC_ALL"] = "C"
+    try:
+        denied = subprocess.run(
+            ["/usr/bin/psql", "-X", "-qAt", "-v", "ON_ERROR_STOP=1",
+             "-h", "127.0.0.1", "-p", str(DB_PORT),
+             "-U", RUNTIME_ROLE, "-d", DB, "-c", sql],
+            env=bad_env, capture_output=True, text=True,
+            check=False, timeout=12)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("negative password-authentication check unavailable") from exc
+    if (denied.returncode == 0 or
+            "password authentication failed for user" not in denied.stderr):
+        raise RuntimeError("password authentication not positively enforced")
     print("M01_BFF_SESSION_DB_RUNTIME_LOGIN_PASS "
-          "scram_connection=true owner=false ddl_denied=true "
-          "migration_read_denied=true session_table_empty=true")
+          "scram_verifier=true wrong_password_denied=true owner=false "
+          "ddl_denied=true migration_read_denied=true session_table_empty=true")
 
 
 # Section 4: Leave a root-only password fragment for a later approved release.

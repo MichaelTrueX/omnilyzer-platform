@@ -231,10 +231,14 @@ class BffSessionDbPrepareTests(unittest.TestCase):
                     MOD.prepare()
 
     def test_runtime_scram_login_is_proved_without_argv_secret(self):
-        """Use localhost-only password auth with actual least privilege check."""
+        """Prove real role, server SCRAM verifier, and wrong-password denial."""
+        denied = mock.Mock(returncode=2, stderr=(
+            'psql: FATAL: password authentication failed for user "test"'))
         with mock.patch.object(
                 MOD, "call",
                 return_value=MOD.RUNTIME_ROLE + "|0|0|1|0|0") as call, \
+             mock.patch.object(MOD, "pgsql", return_value="1|0|0|0|1") as sql, \
+             mock.patch.object(MOD.subprocess, "run", return_value=denied) as run, \
              redirect_stdout(io.StringIO()):
             MOD.verify_runtime_connection("SYNTHETIC_PASSWORD_FOR_TESTS_ONLY")
         args, kwargs = call.call_args
@@ -248,10 +252,61 @@ class BffSessionDbPrepareTests(unittest.TestCase):
                          "SYNTHETIC_PASSWORD_FOR_TESTS_ONLY")
         self.assertEqual(kwargs["env"]["PGSSLMODE"], "disable")
         self.assertIn("django_migrations", " ".join(command))
+        self.assertEqual(sql.call_count, 1)
+        self.assertIn("pg_authid", sql.call_args.args[0])
+        self.assertIn("SCRAM-SHA-256", sql.call_args.args[0])
+        negative_argv, negative_options = run.call_args
+        self.assertEqual(negative_argv[0], command)
+        self.assertEqual(negative_options["env"]["LC_ALL"], "C")
+        self.assertNotEqual(negative_options["env"]["PGPASSWORD"],
+                            "SYNTHETIC_PASSWORD_FOR_TESTS_ONLY")
+        self.assertNotIn("SYNTHETIC_PASSWORD_FOR_TESTS_ONLY",
+                         " ".join(negative_argv[0]))
         with mock.patch.object(MOD, "call",
                                return_value=MOD.RUNTIME_ROLE + "|1|0|1|0|0"):
             with self.assertRaisesRegex(RuntimeError, "isolation failed"):
                 MOD.verify_runtime_connection("SYNTHETIC_PASSWORD_FOR_TESTS_ONLY")
+
+    def test_runtime_rejects_missing_scram_verifier_and_powerful_role(self):
+        """No PASS if role uses a non-SCRAM password or has elevated flags."""
+        for invalid in ("1|0|0|0|0", "1|1|0|0|1",
+                        "1|0|1|0|1", "1|0|0|1|1", ""):
+            with self.subTest(role=invalid), \
+                 mock.patch.object(
+                     MOD, "call",
+                     return_value=MOD.RUNTIME_ROLE + "|0|0|1|0|0"), \
+                 mock.patch.object(MOD, "pgsql", return_value=invalid), \
+                 mock.patch.object(MOD.subprocess, "run") as run:
+                with self.assertRaisesRegex(RuntimeError, "SCRAM verifier"):
+                    MOD.verify_runtime_connection("SYNTHETIC_ONLY")
+                run.assert_not_called()
+
+    def test_runtime_rejects_trust_and_unexpected_connection_failures(self):
+        """A trust server or unreachable host cannot masquerade as SCRAM."""
+        for outcome in (
+            mock.Mock(returncode=0, stderr=""),
+            mock.Mock(returncode=2, stderr="FATAL: no pg_hba.conf entry"),
+            mock.Mock(returncode=2, stderr="connection refused"),
+        ):
+            with self.subTest(outcome=outcome.stderr), \
+                 mock.patch.object(
+                     MOD, "call",
+                     return_value=MOD.RUNTIME_ROLE + "|0|0|1|0|0"), \
+                 mock.patch.object(MOD, "pgsql", return_value="1|0|0|0|1"), \
+                 mock.patch.object(MOD.subprocess, "run", return_value=outcome):
+                with self.assertRaisesRegex(RuntimeError, "not positively enforced"):
+                    MOD.verify_runtime_connection("SYNTHETIC_ONLY")
+
+    def test_runtime_rejects_unavailable_negative_authentication_check(self):
+        """Errors and timeouts in password-denial verification fail closed."""
+        with mock.patch.object(
+                MOD, "call",
+                return_value=MOD.RUNTIME_ROLE + "|0|0|1|0|0"), \
+             mock.patch.object(MOD, "pgsql", return_value="1|0|0|0|1"), \
+             mock.patch.object(MOD.subprocess, "run",
+                               side_effect=OSError("synthetic test-only failure")):
+            with self.assertRaisesRegex(RuntimeError, "check unavailable"):
+                MOD.verify_runtime_connection("SYNTHETIC_ONLY")
 
     def test_no_live_services_or_existing_product_changes(self):
         """Reject any Task014, S03, Keycloak or Nginx writes in this operator."""
