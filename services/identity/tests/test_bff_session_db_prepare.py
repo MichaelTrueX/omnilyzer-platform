@@ -161,6 +161,7 @@ class BffSessionDbPrepareTests(unittest.TestCase):
                  mock.patch.object(MOD, "pgsql", side_effect=fake_pgsql) as sql, \
                  mock.patch.object(MOD, "django_migrate") as migrations, \
                  mock.patch.object(MOD, "restrict_runtime_role") as grants, \
+                 mock.patch.object(MOD, "verify_runtime_connection") as runtime, \
                  mock.patch.object(MOD, "call",
                       return_value="ActiveState=inactive\nUnitFileState=disabled"), \
                  redirect_stdout(io.StringIO()):
@@ -177,10 +178,34 @@ class BffSessionDbPrepareTests(unittest.TestCase):
                 self.assertFalse((root / "owner-approved-go").exists())
                 migrations.assert_called_once()
                 grants.assert_called_once()
+                runtime.assert_called_once()
                 self.assertTrue(any("scram-sha-256" in c.args[0]
                                     for c in sql.call_args_list))
                 with self.assertRaises(FileExistsError):
                     MOD.prepare()
+
+    def test_runtime_scram_login_is_proved_without_argv_secret(self):
+        """Use localhost-only password auth with actual least privilege check."""
+        with mock.patch.object(
+                MOD, "call",
+                return_value=MOD.RUNTIME_ROLE + "|0|0|1|0|0") as call, \
+             redirect_stdout(io.StringIO()):
+            MOD.verify_runtime_connection("SYNTHETIC_PASSWORD_FOR_TESTS_ONLY")
+        args, kwargs = call.call_args
+        command = args[0]
+        self.assertEqual(command[0], "/usr/bin/psql")
+        self.assertIn("127.0.0.1", command)
+        self.assertIn(MOD.DB, command)
+        self.assertIn(MOD.RUNTIME_ROLE, command)
+        self.assertNotIn("SYNTHETIC_PASSWORD_FOR_TESTS_ONLY", " ".join(command))
+        self.assertEqual(kwargs["env"]["PGPASSWORD"],
+                         "SYNTHETIC_PASSWORD_FOR_TESTS_ONLY")
+        self.assertEqual(kwargs["env"]["PGSSLMODE"], "disable")
+        self.assertIn("django_migrations", " ".join(command))
+        with mock.patch.object(MOD, "call",
+                               return_value=MOD.RUNTIME_ROLE + "|1|0|1|0|0"):
+            with self.assertRaisesRegex(RuntimeError, "isolation failed"):
+                MOD.verify_runtime_connection("SYNTHETIC_PASSWORD_FOR_TESTS_ONLY")
 
     def test_no_live_services_or_existing_product_changes(self):
         """Reject any Task014, S03, Keycloak or Nginx writes in this operator."""
