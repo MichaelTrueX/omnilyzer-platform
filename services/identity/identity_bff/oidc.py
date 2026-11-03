@@ -1,4 +1,9 @@
-"""Production-bound adaptation of the ORIGINAL Task004 Django/Authlib protocol."""
+"""File: services/identity/identity_bff/oidc.py
+Purpose: Confidential Keycloak OIDC/PKCE and server-side token lifecycle.
+Related: services/identity/config/settings.py,
+    services/identity/identity_bff/views.py,
+    services/identity/tests/test_identity.py.
+"""
 import base64
 import hashlib
 import json
@@ -26,12 +31,37 @@ class _NoProviderRedirect(request.HTTPRedirectHandler):
     """Never forward confidential OAuth Authorization headers on a redirect."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """Reject redirect responses, including those changing TLS origins."""
         raise IdentityError("OIDC endpoint redirect refused")
 
 
+# Section: Only the existing product-approved Keycloak realm can handle secrets.
+# Verify exact paths, not prefixes, to reject host spoofing, foreign realms,
+# URL credentials, suffixes, query/fragment injection and path traversal.
+def _keycloak_endpoints():
+    """Return the four exact HTTPS protocol targets for the configured realm."""
+    realm = settings.OIDC_ISSUER
+    prefix = realm + "/protocol/openid-connect/"
+    return {
+        "discovery": realm + "/.well-known/openid-configuration",
+        "authorization_endpoint": prefix + "auth",
+        "token_endpoint": prefix + "token",
+        "jwks_uri": prefix + "certs",
+        "revocation_endpoint": prefix + "revoke",
+    }
+
+
+def _trusted_endpoint(url):
+    """Refuse any endpoint that differs from the configured Keycloak realm."""
+    if not isinstance(url, str) or url not in _keycloak_endpoints().values():
+        raise IdentityError("untrusted Keycloak endpoint")
+    return url
+
+
+# Section: Bounded confidential provider HTTP transport; no redirects.
 def _provider(url, *, form=None, authenticated=False, empty_ok=False):
-    if not isinstance(url, str) or not url.startswith("https://"):
-        raise IdentityError("insecure endpoint")
+    """Make one HTTPS JSON request only to an exact trusted realm endpoint."""
+    _trusted_endpoint(url)
     body = parse.urlencode(form).encode() if form is not None else None
     headers = {"Accept": "application/json"}
     if body is not None:
@@ -64,8 +94,8 @@ def metadata():
         if value.get("issuer") != settings.OIDC_ISSUER:
             raise IdentityError("issuer mismatch")
         for k in ("authorization_endpoint", "token_endpoint", "jwks_uri", "revocation_endpoint"):
-            if not str(value.get(k, "")).startswith("https://"):
-                raise IdentityError("missing HTTPS provider endpoint")
+            if value.get(k) != _keycloak_endpoints()[k]:
+                raise IdentityError("unexpected Keycloak realm endpoint")
         if "S256" not in value.get("code_challenge_methods_supported", []):
             raise IdentityError("missing PKCE S256")
         _META = value

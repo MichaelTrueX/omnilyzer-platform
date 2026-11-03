@@ -358,8 +358,58 @@ class RedirectTransportTests(unittest.TestCase):
         with mock.patch.object(oidc.request, 'build_opener') as build:
             build.return_value.open.side_effect = oidc.IdentityError('blocked')
             with self.assertRaises(oidc.IdentityError):
-                oidc._provider('https://issuer.example/token',
-                               form={'grant_type':'authorization_code'},
-                               authenticated=True)
+                oidc._provider(
+                    settings.OIDC_ISSUER + '/protocol/openid-connect/token',
+                    form={'grant_type':'authorization_code'},
+                    authenticated=True)
             self.assertIsInstance(build.call_args.args[0],
                                   oidc._NoProviderRedirect)
+
+    def test_confidential_provider_rejects_cross_realm_or_host_endpoint(self):
+        """Never send client secrets to an unapproved metadata-supplied URL."""
+        approved = settings.OIDC_ISSUER
+        candidates = (
+            "https://attacker.example/steal",
+            "https://login.omnilyzer.ai.evil.example/realms/main/protocol/openid-connect/token",
+            "https://login.omnilyzer.ai@attacker.example/realms/main/protocol/openid-connect/token",
+            "http://login.omnilyzer.ai/realms/main/protocol/openid-connect/token",
+            approved.replace("/realms/main", "/realms/other") +
+            "/protocol/openid-connect/token",
+            approved + "/protocol/openid-connect/../token",
+            approved + "/protocol/openid-connect/token?redirect=https://attacker.example",
+            approved + "/protocol/openid-connect/token#fragment",
+            approved + "/protocol/openid-connect/token/",
+        )
+        with mock.patch.object(oidc.request, "build_opener") as network:
+            for endpoint in candidates:
+                with self.subTest(endpoint=endpoint):
+                    with self.assertRaisesRegex(oidc.IdentityError, "untrusted"):
+                        oidc._provider(endpoint, form={"grant_type": "refresh_token"},
+                                       authenticated=True)
+            network.assert_not_called()
+
+    def test_discovery_rejects_malicious_https_token_or_key_url(self):
+        """Discovery content must never override the exact Keycloak realm."""
+        original = oidc._keycloak_endpoints()
+        for name in ("authorization_endpoint", "token_endpoint",
+                     "jwks_uri", "revocation_endpoint"):
+            with self.subTest(name=name):
+                metadata = dict(original)
+                metadata["issuer"] = settings.OIDC_ISSUER
+                metadata["code_challenge_methods_supported"] = ["S256"]
+                metadata[name] = "https://attacker.example/" + name
+                with mock.patch.object(oidc, "_META", None), \
+                     mock.patch.object(oidc, "_provider",
+                                       return_value=metadata) as provider:
+                    with self.assertRaisesRegex(oidc.IdentityError, "unexpected"):
+                        oidc.metadata()
+                    provider.assert_called_once_with(original["discovery"])
+
+    def test_discovery_accepts_current_keycloak_realm_exact_paths(self):
+        """Keep existing real Keycloak26 realm metadata and QA contract."""
+        metadata = dict(oidc._keycloak_endpoints())
+        metadata.update({"issuer": settings.OIDC_ISSUER,
+                         "code_challenge_methods_supported": ["plain", "S256"]})
+        with mock.patch.object(oidc, "_META", None), \
+             mock.patch.object(oidc, "_provider", return_value=metadata):
+            self.assertEqual(oidc.metadata(), metadata)
