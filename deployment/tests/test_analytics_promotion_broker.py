@@ -12,16 +12,19 @@ Related: deployment/analytics_promotion_broker.py,
          deployment/tests/test_analytics_execution.py,
          deployment/tests/test_analytics_review_composition.py.
 
-Sections: exact one-pass positive pipe; mandatory signer, OIDC, registry
-          and replay failures; token and FD redaction; canary transport isolation.
+Sections: exact original private one-pass positive pipe; mandatory
+          signer, OIDC, registry and replay failures, token/FD redaction,
+          canary isolation; read-only root broker first-successor review
+          using signed old/new releases and measured active image.
 
-No Docker, network, real secrets or installed executor.
+No actual Docker, network, real keys, secrets or installed executor.
 """
 from __future__ import annotations
 
 from dataclasses import replace
 import hashlib
 import os
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -92,6 +95,7 @@ def make_broker(
     verifier: Verifier | None = None,
     transport: PrivateAnalyticsTransport | None = None,
     expected: dict[str, str] | None = None,
+    owner_files: tuple[Path, Path] | None = None,
 ):
     """Create fully original OIDC+JWT verifiers with synthetic signed blob result."""
     chosen_replay = Replay() if replay is None else replay
@@ -99,7 +103,7 @@ def make_broker(
     broker = AnalyticsPrivatePromotionBroker(
         expected_workflow_sha=WORKFLOW_SHA,
         verifier=Verifier() if verifier is None else verifier,
-        signed_review_handler=handler(),
+        signed_review_handler=handler(owner_files=owner_files),
         replay_guard=chosen_replay,
         analytics_transport=chosen_transport,
         reviewed_installed_source=EXPECTED if expected is None else expected,
@@ -368,6 +372,168 @@ class AnalyticsSignedBrokerTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             call(broker, review_result=evidence())
         self.mocked.assert_not_called()
+        self.assertEqual(replay.calls, [])
+        self.assertEqual(transport.requests, [])
+
+
+# Section: first successor is a read-only ROOT broker review, not dispatch.
+class AnalyticsFirstSuccessorBrokerReviewTests(unittest.TestCase):
+    """Prove actual original OIDC+two signed reviews+live image integration."""
+
+    @staticmethod
+    def candidate():
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+        from deployment.tests.test_analytics_active_state_review import (
+            observed, _active_state,
+        )
+        data, context = AnalyticsSuccessorRequestTests().candidate()
+        live = _active_state(**observed(active_slot="blue"))
+        return canonical_bytes(data), context, live
+
+    @staticmethod
+    def kwargs(raw: bytes):
+        return {
+            "compact_token": TOKEN, "zot_token": ZOT_TOKEN,
+            "forgejo_token": FORGEJO_TOKEN, "canonical_request": raw,
+            "received_at": NOW,
+        }
+
+    def test_root_broker_checks_original_and_successor_without_side_effects(self):
+        from deployment.analytics_execution import AnalyticsSuccessorRequest
+        raw, context, live = self.candidate()
+        paths = (Path("/root/owner.json"), Path("/root/owner.json.sig"))
+        broker, replay, transport = make_broker(owner_files=paths)
+        before = set(os.listdir("/proc/self/fd"))
+        with (
+            patch("deployment.analytics_promotion_broker.time.time",
+                  return_value=NOW),
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_analytics_release",
+                  return_value=evidence()) as previous,
+            patch("deployment.analytics_registry_review_composition.load_and_verify_owner_signed_source",
+                  return_value=(context["selected"], context["owner_approval"])) as owner,
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release",
+                  return_value=context["signed_release"]) as successor,
+            patch("deployment.analytics_active_state_review.inspect_analytics_active_state",
+                  return_value=live) as inspector,
+            patch("deployment.analytics_promotion_broker.create_sealed_credential") as seal,
+        ):
+            result = broker.review_first_successor_without_forwarding(
+                **self.kwargs(raw),
+            )
+            self.assertIs(type(result), AnalyticsSuccessorRequest)
+            self.assertEqual(result.canonical_bytes(), raw)
+            self.assertEqual(result.rollback_reference["previous_digest"],
+                             live.active_digest)
+            previous.assert_called_once()
+            owner.assert_called_once_with(*paths)
+            successor.assert_called_once()
+            inspector.assert_not_called()
+            seal.assert_not_called()
+        self.assertEqual(before, set(os.listdir("/proc/self/fd")))
+        self.assertEqual(replay.calls, [])
+        self.assertEqual(transport.requests, [])
+
+    def test_wrong_oidc_request_owner_old_release_and_live_state_fail_closed(self):
+        from deployment.jwks import OIDCVerificationError
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+        from deployment.analytics_active_state_review import AnalyticsActiveState
+        raw, context, live = self.candidate()
+        paths = (Path("/root/owner.json"), Path("/root/owner.json.sig"))
+        broker, replay, transport = make_broker(owner_files=paths)
+
+        with (
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_analytics_release") as previous,
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release") as successor,
+        ):
+            for bad in (
+                b"{}", b"notjson",
+                raw + b" ",
+                raw.replace(
+                    b'"product_id":"analytics"',
+                    b'"product_id":"analytics","product_id":"analytics"',
+                ),
+                canonical_bytes({**AnalyticsSuccessorRequestTests().candidate()[0],
+                                 "schema_version": 2}),
+            ):
+                with self.subTest(raw=bad[:25]), self.assertRaises(
+                    BrokerRejectedError
+                ):
+                    broker.review_first_successor_without_forwarding(
+                        **self.kwargs(bad),
+                    )
+            previous.assert_not_called()
+            successor.assert_not_called()
+
+        denied, _replay, _transport = make_broker(
+            verifier=Verifier(error=OIDCVerificationError("synthetic denied")),
+            owner_files=paths,
+        )
+        with patch(
+            "deployment.analytics_registry_review_composition.acquire_and_review_analytics_release",
+        ) as previous, self.assertRaises(BrokerRejectedError):
+            denied.review_first_successor_without_forwarding(**self.kwargs(raw))
+            previous.assert_not_called()
+
+        for previous_receipt in (
+            replace(evidence(), image="oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "f" * 64),
+            replace(evidence(), deployment_authorized=True),
+        ):
+            with self.subTest(previous=previous_receipt), patch(
+                "deployment.analytics_registry_review_composition.acquire_and_review_analytics_release",
+                return_value=previous_receipt,
+            ), patch(
+                "deployment.analytics_registry_review_composition.load_and_verify_owner_signed_source",
+                return_value=(context["selected"], context["owner_approval"]),
+            ), patch(
+                "deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release",
+                return_value=context["signed_release"],
+            ), patch(
+                "deployment.analytics_active_state_review.inspect_analytics_active_state",
+                return_value=live,
+            ), self.assertRaises(BrokerUnavailableError):
+                broker.review_first_successor_without_forwarding(**self.kwargs(raw))
+
+        # Broker can cryptographically verify a first successor, but cannot
+        # inspect Docker sockets. A caller-supplied previous-image hint other
+        # than the original accepted 0.15.0 is rejected without invoking
+        # an unprivileged Docker workaround.
+        import json
+        bad_request = json.loads(raw)
+        bad_request["rollback_reference"]["previous_digest"] = "sha256:" + "a" * 64
+        with (
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_analytics_release",
+                  return_value=evidence()),
+            patch("deployment.analytics_registry_review_composition.load_and_verify_owner_signed_source",
+                  return_value=(context["selected"], context["owner_approval"])),
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release",
+                  return_value=context["signed_release"]),
+            patch("deployment.analytics_active_state_review.inspect_analytics_active_state") as inspector,
+            self.assertRaises(BrokerUnavailableError),
+        ):
+            broker.review_first_successor_without_forwarding(
+                **self.kwargs(canonical_bytes(bad_request)),
+            )
+        inspector.assert_not_called()
+        self.assertEqual(replay.calls, [])
+        self.assertEqual(transport.requests, [])
+
+    def test_missing_root_owner_key_has_no_registry_or_executor_side_effect(self):
+        raw, _context, _live = self.candidate()
+        broker, replay, transport = make_broker()
+        with (
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_analytics_release",
+                  return_value=evidence()),
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release") as successor,
+            patch("deployment.analytics_promotion_broker.create_sealed_credential") as sealed,
+        ):
+            with self.assertRaises(BrokerUnavailableError):
+                broker.review_first_successor_without_forwarding(**self.kwargs(raw))
+            successor.assert_not_called()
+            sealed.assert_not_called()
         self.assertEqual(replay.calls, [])
         self.assertEqual(transport.requests, [])
 

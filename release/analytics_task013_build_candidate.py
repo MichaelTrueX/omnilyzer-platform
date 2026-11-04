@@ -25,10 +25,15 @@ import re
 import subprocess
 import sys
 import tempfile
-from typing import Any
+from typing import Any, Mapping
 
 from deployment.policy import DeploymentPolicyError, canonical_bytes
-from release.analytics_task013_build_input import build_input
+from release.analytics_task013_build_input import (
+    ROOT, build_input, review_successor_build_input,
+)
+from release.analytics_owner_source_selection import (
+    AnalyticsOwnerSourceSelectionDenied, review_ci_owner_signed_source,
+)
 from release.analytics_oci_context import snapshot_committed_tree
 from release.analytics_oci_archive import verify_archive
 from release.builder_versions import (
@@ -108,14 +113,24 @@ def build_candidate(
     *,
     execute: bool = False,
     retain_verified_artifacts: Path | None = None,
+    owner_context: Mapping[str, str] | None = None,
+    owner_payload: Mapping[str, str] | None = None,
+    owner_signature_base64: str | None = None,
+    protected_owner_signers: bytes | None = None,
+    platform_root: Path = ROOT,
 ) -> dict[str, Any]:
     """Compile and validate a LOCAL OCI artifact using original platform tools.
 
     When execute=False, only source/profiles and builder identity are checked,
     so unit tests can fail closed without launching a build. When True, the
     already provisioned/pinned Buildx docker-container builder executes the
-    exact PR45 Dockerfile using source-only TAR on stdin. No tag, --push,
-    registry, credentials, publisher, signer or broker is called.
+    exact source Dockerfile using source-only TAR on stdin. The default
+    0.15.0 path remains statically pinned. The optional successor path
+    additionally verifies an owner-held detached signature against an
+    OUT-OF-REPOSITORY CI trust key before ANY BuildKit operation. The trusted
+    CI configuration and independent DEV root-owned key must be provisioned
+    and separately approved before enabling the protected workflow.
+    No tag, --push, registry, credentials, publisher or broker is called.
     """
     if type(execute) is not bool or not isinstance(analytics_checkout, Path):
         raise DeploymentPolicyError(ERROR)
@@ -127,9 +142,48 @@ def build_candidate(
         retained = _private_handoff_destination(retain_verified_artifacts)
     else:
         retained = None
-    receipt = build_input(analytics_checkout)
+    # Section 2: source authority must be checked BEFORE even inspecting
+    # the builder. Original 0.15.0 stays the default unchanged static gate.
+    # A future successor requires all four distinct owner-controlled inputs.
+    owner_inputs = (
+        owner_context, owner_payload,
+        owner_signature_base64, protected_owner_signers,
+    )
+    successor = any(value is not None for value in owner_inputs)
+    if successor:
+        if not all(value is not None for value in owner_inputs):
+            raise DeploymentPolicyError(ERROR)
+        try:
+            selected, owner_approval = review_ci_owner_signed_source(
+                owner_context, owner_payload, platform_root,
+                analytics_checkout, signature_base64=owner_signature_base64,
+                protected_signers=protected_owner_signers,
+            )
+            receipt = review_successor_build_input(
+                analytics_checkout, owner_context, owner_payload,
+                platform_root=platform_root,
+            )
+        except (AnalyticsOwnerSourceSelectionDenied, DeploymentPolicyError):
+            raise DeploymentPolicyError(ERROR) from None
+        if (
+            selected.source_commit != receipt.get("analytics_source_commit")
+            or selected.source_tree != receipt.get("analytics_tree")
+            or selected.platform_workflow_commit != receipt.get("platform_source_commit")
+            or selected.release_version != receipt.get("release_version")
+            or owner_approval.approval_sha256 != receipt.get("owner_approval_sha256")
+            or owner_approval.owner_signature_verified is not True
+            or owner_approval.release_authorized is not False
+            or owner_approval.deployment_authorized is not False
+            or receipt.get("owner_signature_verified") is not False
+            or receipt.get("release_signatures_verified") is not False
+        ):
+            raise DeploymentPolicyError(ERROR)
+    else:
+        receipt = build_input(analytics_checkout)
+    chosen_source = receipt.get("analytics_source_commit")
     if (
-        receipt.get("analytics_source_commit") != EXPECTED_SOURCE
+        (not successor and chosen_source != EXPECTED_SOURCE)
+        or (successor and chosen_source == EXPECTED_SOURCE)
         or receipt.get("oci_repository") != OCI_REPOSITORY
         or receipt.get("release_authorized") is not False
         or receipt.get("deployment_authorized") is not False
@@ -138,9 +192,9 @@ def build_candidate(
     _preflight_builder(builder)
     if not execute:
         return {
-            "schema_version": 1,
+            "schema_version": 2 if successor else 1,
             "status": "reviewed-build-input-only",
-            "source_commit": EXPECTED_SOURCE,
+            "source_commit": chosen_source,
             "release_authorized": False,
             "deployment_authorized": False,
         }
@@ -154,7 +208,14 @@ def build_candidate(
         context = snapshot_committed_tree(
             analytics_checkout, receipt["analytics_source_commit"], tar,
         )
-        if context["release_authorized"] is not False:
+        if (
+            context["release_authorized"] is not False
+            or (successor and (
+                context["source_commit"] != chosen_source
+                or context["context_sha256"] != receipt["build_context_sha256"]
+                or context["file_count"] != receipt["full_git_tree_file_count"]
+            ))
+        ):
             raise DeploymentPolicyError(ERROR)
         # Section 3: pass precisely verified Git objects, no checkout dir, no
         # mutable tag/secret, and never --push; a local OCI tar is the output.
@@ -183,7 +244,7 @@ def build_candidate(
         if (
             validated["release_authorized"] is not False
             or validated["deployment_authorized"] is not False
-            or validated["source_commit"] != EXPECTED_SOURCE
+            or validated["source_commit"] != chosen_source
             or validated["source_tree"] != receipt["analytics_tree"]
             or validated["oci_repository"] != OCI_REPOSITORY
         ):
@@ -192,9 +253,9 @@ def build_candidate(
         # successful verification. Optional explicit handoff retains exactly
         # the already-validated files, without a second Docker build.
         result: dict[str, Any] = {
-            "schema_version": 1,
+            "schema_version": 2 if successor else 1,
             "status": "verified-local-oci-unsigned",
-            "source_commit": EXPECTED_SOURCE,
+            "source_commit": chosen_source,
             "source_tree": receipt["analytics_tree"],
             "platform_source_commit": receipt.get("platform_source_commit"),
             "source_context_sha256": context["context_sha256"],
@@ -204,6 +265,9 @@ def build_candidate(
             "release_authorized": False,
             "deployment_authorized": False,
         }
+        if successor:
+            result["release_version"] = receipt["release_version"]
+            result["owner_approval_sha256"] = owner_approval.approval_sha256
         if retained is not None:
             # Check again after BuildKit finishes, under one private parent.
             _private_handoff_destination(retained)
@@ -229,21 +293,65 @@ def build_candidate(
         return result
 
 
+# Section 5: shared protected runner input for build and Zot publisher.
+# Never choose the public signer from a checkout or dispatch payload.
+def protected_ci_owner_inputs() -> dict[str, Any]:
+    """Load exact owner-approved Git source fields from protected CI context.
+
+    The caller must connect ANALYTICS_OWNER_ALLOWED_SIGNERS to a separately
+    managed protected setting, never to workflow_dispatch or Git. This
+    loader itself grants no authority, and signature validation happens at
+    each original build/publish boundary.
+    """
+    context_keys = (
+        "GITHUB_REPOSITORY", "GITHUB_ACTOR", "GITHUB_ACTOR_ID",
+        "GITHUB_EVENT_NAME", "GITHUB_REF", "GITHUB_WORKFLOW_REF",
+        "GITHUB_SHA",
+    )
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        raise DeploymentPolicyError(ERROR)
+    values = {
+        key: os.environ.get(key) for key in (
+            *context_keys, "ANALYTICS_SOURCE_COMMIT",
+            "ANALYTICS_RELEASE_VERSION",
+            "ANALYTICS_OWNER_SIGNATURE_BASE64",
+            "ANALYTICS_OWNER_ALLOWED_SIGNERS",
+        )
+    }
+    if any(type(value) is not str or not value for value in values.values()):
+        raise DeploymentPolicyError(ERROR)
+    return {
+        "owner_context": {key: values[key] for key in context_keys},
+        "owner_payload": {
+            "product": "analytics",
+            "source_repository": "MichaelTrueX/omnilyzer",
+            "source_commit": values["ANALYTICS_SOURCE_COMMIT"],
+            "release_version": values["ANALYTICS_RELEASE_VERSION"],
+        },
+        "owner_signature_base64": values["ANALYTICS_OWNER_SIGNATURE_BASE64"],
+        "protected_owner_signers": values["ANALYTICS_OWNER_ALLOWED_SIGNERS"].encode("ascii"),
+    }
+
+
 def main() -> int:
     """Read only an explicitly selected local Git checkout and CI builder."""
     parser = argparse.ArgumentParser(description="Unsigned original Task013 Analytics OCI candidate")
     parser.add_argument("--analytics-checkout", type=Path, required=True)
     parser.add_argument("--builder", required=True)
     parser.add_argument("--build", action="store_true")
+    parser.add_argument("--successor", action="store_true",
+                        help="Require detached owner source approval from protected CI input")
     parser.add_argument("--retain-verified-artifacts", type=Path,
                         help="New path beneath private 0700 parent for UNSIGNED Task013 handoff")
     args = parser.parse_args()
     try:
+        kwargs: dict[str, Any] = protected_ci_owner_inputs() if args.successor else {}
         value = build_candidate(
             args.analytics_checkout, args.builder, execute=args.build,
             retain_verified_artifacts=args.retain_verified_artifacts,
+            **kwargs,
         )
-    except (DeploymentPolicyError, OSError, ValueError) as exc:
+    except (DeploymentPolicyError, OSError, ValueError, UnicodeError) as exc:
         print(f"{ERROR}: {type(exc).__name__}", file=sys.stderr)
         return 1
     print(json.dumps(value, sort_keys=True, separators=(",", ":")))

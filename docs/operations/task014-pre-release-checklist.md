@@ -12,6 +12,12 @@ Authority: Operational instructions only. No install, deployment or bypass grant
 Read this before preparing any Analytics promotion, including a continuation in
 a new chat. Resolve release-contract gaps before substantial product work.
 Use the existing Task013/014 workflows, tests and canonical feature issue.
+For actual known DEV failure modes, run the single read-only matrix from
+[Task014 failure-prevention preflight](task014-failure-prevention-20261102.md).
+For a DIFFERENT Analytics source/version, review the
+[Task14B source/release identity impact matrix](task14b-release-identity-contract-20261102.md)
+and keep dispatch on HOLD until its independent source approval and original
+signed consumer contract are implemented and accepted.
 The delivery agent owns this checklist; the owner should not relay routine
 commands, collect test evidence or reconstruct the release inputs.
 

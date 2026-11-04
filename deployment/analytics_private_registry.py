@@ -1,10 +1,11 @@
 """File: deployment/analytics_private_registry.py
 
-Purpose: Product-specific original Task014 rootless Docker Zot read adapter
-         for the one immutable signed Analytics 0.15.0 image. Uses original
-         sealed Linux credential, mandatory original rootless socket/volatile
-         Docker config, isolated original subprocess runner and bound request.
+Purpose: Preserve original Task014 rootless Docker Zot read/pull
+         adapter for immutable signed Analytics 0.15.0 and add a separate
+         preflight-only exact schema-3 successor manifest inspection.
+         The same sealed FD, volatile credential and rootless CLI rules apply.
 Related: deployment/analytics_executor.py (preflight before replay),
+         deployment/analytics_execution.py (successor request),
          deployment/analytics_unix_boundary.py (root-reviewed source inputs),
          deployment/private_registry_pull.py (original canary implementation),
          deployment/private_registry_fd.py (product-scoped sealed FD),
@@ -39,7 +40,9 @@ from .docker_runtime import (
     COMMAND_TIMEOUT_SECONDS, CommandResult, WORKING_DIRECTORY,
     _candidate_command_run, _require_rootless_socket,
 )
-from .private_registry_fd import read_sealed_credential
+from .private_registry_fd import (
+    _successor_request_image, read_sealed_credential,
+)
 from .private_registry_pull import (
     MIN_POST_PREFLIGHT_VALIDITY_SECONDS, MIN_VALIDITY_SECONDS,
     PROBE, PULL,
@@ -100,8 +103,14 @@ class AnalyticsPrivateZotPullAdapter:
     def _run_private(
         self, raw: bytes, credential_fd: int, operation: str,
         *, pull_timeout: float = ANALYTICS_PULL_TIMEOUT_SECONDS,
+        successor_preflight: bool = False,
     ) -> None:
-        """Use original rootless/volatile Docker controls and sealed scoped FD."""
+        """Reuse original rootless Docker read, exact FD and bounded cleanup.
+
+        The successor option is deliberately PROBE-only. The installed
+        executor has no authorization/replay/rollback path for successor
+        PULL and must not accidentally invoke the original one.
+        """
         phase = "request_validation"
         try:
             if type(operation) is not str or operation not in (PROBE, PULL):
@@ -109,11 +118,21 @@ class AnalyticsPrivateZotPullAdapter:
             if (type(pull_timeout) is not float or not math.isfinite(pull_timeout)
                     or not 0 < pull_timeout <= ANALYTICS_PULL_TIMEOUT_SECONDS):
                 raise ValueError("invalid bounded Analytics pull duration")
-            self._reviewed_request(raw)
+            if type(successor_preflight) is not bool:
+                raise ValueError("invalid successor mode")
+            if successor_preflight:
+                if operation != PROBE:
+                    raise ValueError("successor pull is not authorized")
+                image = _successor_request_image(raw)
+                product_scope = "analytics-successor"
+            else:
+                self._reviewed_request(raw)
+                image = PINNED_IMAGE
+                product_scope = "analytics"
             now = int(time.time())
             credential = read_sealed_credential(
-                credential_fd, canonical_request=raw, image=PINNED_IMAGE,
-                product_id="analytics", now=now,
+                credential_fd, canonical_request=raw, image=image,
+                product_id=product_scope, now=now,
             )
             threshold = (
                 MIN_POST_PREFLIGHT_VALIDITY_SECONDS
@@ -133,14 +152,14 @@ class AnalyticsPrivateZotPullAdapter:
                 os.chmod(workspace, 0o700)
                 phase = "volatile_config"
                 _write_config(workspace, credential.token)
-                argv = _command(workspace, PINNED_IMAGE, operation)
+                argv = _command(workspace, image, operation)
                 phase = "docker_command"
                 output = object.__getattribute__(self, "_runner")(
                     argv, cwd=WORKING_DIRECTORY,
                     environment={
                         "PATH": "/usr/bin:/bin",
                         "LANG": "C.UTF-8",
-                        "ANALYTICS_IMAGE": PINNED_IMAGE,
+                        "ANALYTICS_IMAGE": image,
                         "HOME": str(workspace),
                     },
                     timeout=(
@@ -170,6 +189,20 @@ class AnalyticsPrivateZotPullAdapter:
     ) -> None:
         """Authenticated manifest inspection before executor replay begins."""
         self._run_private(canonical_request, credential_fd, PROBE)
+
+    def preflight_analytics_successor(
+        self, canonical_request: bytes, credential_fd: int,
+    ) -> None:
+        """Probe immutable successor manifest with scoped FD, without deploy.
+
+        This is a low-level read-only registry check. It does NOT prove
+        Ed25519, OIDC, Sigstore/Cosign, active state or replay, and it cannot
+        install, pull or switch any image. The installed executor does not
+        invoke this method until separately reviewed successor integration.
+        """
+        self._run_private(
+            canonical_request, credential_fd, PROBE, successor_preflight=True,
+        )
 
     def pull_analytics(
         self, request: AnalyticsExecutorRequest,

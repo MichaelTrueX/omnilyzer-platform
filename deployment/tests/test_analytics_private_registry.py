@@ -42,9 +42,10 @@ TOKEN = "synthetic-original-signed-JWT-for-tests-only"
 class SyntheticRunner:
     """Inspect the original Docker command and volatile config, never execute."""
 
-    def __init__(self, *, outcome=None):
+    def __init__(self, *, outcome=None, expected_image=PINNED_IMAGE):
         self.calls = []
         self.workspaces = []
+        self.expected_image = expected_image
         self.outcome = CommandResult(0, "", "") if outcome is None else outcome
 
     def run(self, argv, *, cwd, environment, timeout):
@@ -59,11 +60,11 @@ class SyntheticRunner:
         assert argv[3:5] == (
             "--host", "unix:///run/omnilyzer/deployment/rootless-docker/docker.sock",
         )
-        assert argv[-1] == PINNED_IMAGE
+        assert argv[-1] == self.expected_image
         assert TOKEN not in str(argv)
         assert TOKEN not in str(environment)
         assert set(environment) == {"PATH", "LANG", "ANALYTICS_IMAGE", "HOME"}
-        assert environment["ANALYTICS_IMAGE"] == PINNED_IMAGE
+        assert environment["ANALYTICS_IMAGE"] == self.expected_image
         assert type(timeout) is float and 0 < timeout <= (500.0 if argv[5] == "pull" else 30.0)
         self.calls.append((argv, dict(environment), timeout))
         self.workspaces.append(workspace)
@@ -225,6 +226,116 @@ class RootlessAnalyticsZotTests(unittest.TestCase):
             self.assertNotIn("401", str(captured.exception))
             self.assertEqual(len(self.runner.calls), 1)
             self.assertTrue(all(not path.exists() for path in self.runner.workspaces))
+        finally:
+            os.close(fd)
+
+    def test_successor_manifest_uses_exact_sealed_digest_and_original_rootless_path(self):
+        """Read-only new image probe; no successor pull, replay or deployment."""
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+        request_data, _ = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(request_data)
+        image = request_data["exact_image_reference"]
+        self.runner.expected_image = image
+        fd = create_sealed_credential(
+            TOKEN, expires_at=NOW + 270, image=image,
+            canonical_request=raw, now=NOW,
+            product_id="analytics-successor",
+        )
+        try:
+            self.assertIsNone(self.adapter.preflight_analytics_successor(raw, fd))
+            self.assertEqual(len(self.runner.calls), 1)
+            self.assertEqual(
+                self.runner.calls[0][0][-3:], ("manifest", "inspect", image),
+            )
+            self.assertEqual(self.runner.calls[0][2], 30.0)
+            self.assertTrue(
+                all(not path.exists() for path in self.runner.workspaces)
+            )
+            self.assertEqual(list(Path(self.workdir.name).iterdir()), [])
+            # No successor pull callback exists: the original pull is
+            # deliberately pinned to 0.15.0 and the original schema-2 type.
+            with scoped_private_zot_request(fd, raw):
+                with self.assertRaises(AnalyticsPrivateRegistryError):
+                    self.adapter.pull_analytics(request_data)
+            self.assertEqual(len(self.runner.calls), 1)
+        finally:
+            os.close(fd)
+
+    def test_successor_invalid_source_fd_or_rootless_denied_before_docker(self):
+        """Invalid successor cannot fall back to 0.15.0 or rootful Docker."""
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+        request_data, _ = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(request_data)
+        image = request_data["exact_image_reference"]
+        self.runner.expected_image = image
+        fd = create_sealed_credential(
+            TOKEN, expires_at=NOW + 270, image=image,
+            canonical_request=raw, now=NOW,
+            product_id="analytics-successor",
+        )
+        legacy_fd = make_fd()
+        try:
+            for broken, descriptor in (
+                (raw + b" ", fd),
+                (canonical_bytes({**request_data, "stage": "prod"}), fd),
+                (canonical_bytes({
+                    **request_data, "exact_image_reference": PINNED_IMAGE,
+                }), fd),
+                (raw, legacy_fd),
+            ):
+                with self.subTest(broken=broken[:25]), self.assertRaises(
+                    AnalyticsPrivateRegistryError
+                ):
+                    self.adapter.preflight_analytics_successor(
+                        broken, descriptor,
+                    )
+            self.assertEqual(self.runner.calls, [])
+            with patch(
+                "deployment.analytics_private_registry._require_rootless_socket",
+                side_effect=OSError("synthetic rootless unavailable"),
+            ):
+                with self.assertRaises(AnalyticsPrivateRegistryError):
+                    self.adapter.preflight_analytics_successor(raw, fd)
+            self.assertEqual(self.runner.calls, [])
+            self.assertEqual(list(Path(self.workdir.name).iterdir()), [])
+            with self.assertRaises(AnalyticsPrivateRegistryError):
+                self.adapter._run_private(
+                    raw, fd, "pull", successor_preflight=True,
+                )
+            self.assertEqual(self.runner.calls, [])
+        finally:
+            os.close(fd)
+            os.close(legacy_fd)
+
+    def test_original_executor_denies_future_fd_before_replay_or_docker(self):
+        """Partial upgrades must not consume replay on the old executor."""
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+        from deployment.tests.test_analytics_unix_boundary import receiver
+        from deployment.executor import ExecutorRejectedError
+        data, _ = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(data)
+        image = data["exact_image_reference"]
+        fd = create_sealed_credential(
+            TOKEN, expires_at=NOW + 270, image=image,
+            canonical_request=raw, now=NOW,
+            product_id="analytics-successor",
+        )
+        try:
+            original, replay, events = receiver()
+            with patch(
+                "deployment.analytics_executor.time.time", return_value=NOW,
+            ), self.assertRaises(ExecutorRejectedError):
+                original.execute_private(raw, credential_fd=fd)
+            self.assertEqual(replay.begin_calls, [])
+            self.assertEqual(replay.finish_calls, [])
+            self.assertEqual(events, [])
+            self.assertEqual(self.runner.calls, [])
         finally:
             os.close(fd)
 

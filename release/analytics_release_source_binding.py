@@ -12,7 +12,7 @@ Related complete files:
   release/analytics_oci_context.py (M01 immutable Git-only Docker context)
   release/analytics_oci_archive.py (M05 OCI manifest and layer validation)
   release/provenance.py (original Task013 evidence creator, unchanged)
-  deployment/promotion.py (original signed evidence verifier, unchanged)
+  deployment/promotion.py (original evidence verifier and successor schema 2 parser)
   deployment/release_consumer.py (original Task014 canary, unchanged)
   release/tests/test_analytics_release_source_binding.py
   .github/workflows/platform-release.yml (protected signer, unchanged)
@@ -35,9 +35,17 @@ import tempfile
 from typing import Any
 
 from deployment.policy import DeploymentPolicyError, canonical_bytes
-from release.analytics_task013_build_input import build_input
+from deployment.promotion import SIGNED_SUCCESSOR_SOURCE_FIELDS
+from release.analytics_task013_build_input import (
+    build_input, review_successor_build_input,
+)
 from release.analytics_oci_context import snapshot_committed_tree
 from release.analytics_oci_archive import verify_archive
+from release.analytics_task013_build_candidate import protected_ci_owner_inputs
+from release.analytics_owner_source_selection import (
+    review_ci_owner_signed_source, _bounded_file,
+    AnalyticsOwnerSourceSelectionDenied,
+)
 
 ERROR = "TASK013_ANALYTICS_SOURCE_BINDING_DENIED"
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -164,6 +172,135 @@ def prepare_source_claim(
         "runtime_profile_sha256": source["runtime_profile_sha256"],
         "readiness_path": source["readiness_path"],
     }
+
+
+# Section: successor pre-sign source claim, using only original OCI checks.
+# This is NOT permission to execute a successor Dockerfile in CI. The
+# protected workflow must verify the owner's detached signature FIRST.
+def prepare_successor_source_claim(
+    analytics_checkout: Path, immutable_context: Path, oci_archive: Path,
+    *, platform_root: Path, owner_context: dict[str, str],
+    owner_payload: dict[str, str],
+) -> dict[str, Any]:
+    """Bind one whole approved Git-tree, immutable builder TAR and OCI archive.
+
+    Recomputes independent source and OCI evidence from the same original
+    audited Git archive/OCI verifiers as the 0.15.0 path. The result is unsigned
+    and inert; a future protected Task013 producer needs its own real
+    detached-owner-signature pre-build gate and current scanner/signing steps.
+    """
+    if any(not isinstance(v, Path) for v in (
+        analytics_checkout, immutable_context, oci_archive, platform_root,
+    )) or type(owner_context) is not dict or type(owner_payload) is not dict:
+        raise DeploymentPolicyError(ERROR)
+    reviewed = review_successor_build_input(
+        analytics_checkout, owner_context, owner_payload,
+        platform_root=platform_root,
+    )
+    with tempfile.TemporaryDirectory(prefix="task14b-source-claim-") as root:
+        regenerated = Path(root) / "complete-git-context.tar"
+        context = snapshot_committed_tree(
+            analytics_checkout, reviewed["analytics_source_commit"], regenerated,
+        )
+        supplied_sha, supplied_size = _hash_existing_regular(immutable_context)
+        if (
+            supplied_sha != reviewed["build_context_sha256"]
+            or supplied_sha != context["context_sha256"]
+            or supplied_size != regenerated.stat().st_size
+            or context["source_commit"] != reviewed["analytics_source_commit"]
+            or context["file_count"] != reviewed["full_git_tree_file_count"]
+            or context["release_authorized"] is not False
+            or context["deployment_authorized"] is not False
+        ):
+            raise DeploymentPolicyError("successor builder context differs from exact Git source")
+
+    artifact = verify_archive(oci_archive, reviewed)
+    if (
+        artifact["source_commit"] != reviewed["analytics_source_commit"]
+        or artifact["source_tree"] != reviewed["analytics_tree"]
+        or artifact["oci_repository"] != reviewed["oci_repository"]
+        or artifact["release_authorized"] is not False
+        or artifact["deployment_authorized"] is not False
+    ):
+        raise DeploymentPolicyError("successor OCI digest differs from Git source")
+    claim = {
+        "schema_version": 2,
+        "product_id": "analytics",
+        "release_version": reviewed["release_version"],
+        "platform_source_commit": reviewed["platform_source_commit"],
+        "platform_tree": reviewed["platform_tree"],
+        "source_repository": reviewed["analytics_repository"],
+        "source_commit": reviewed["analytics_source_commit"],
+        "source_tree": reviewed["analytics_tree"],
+        "full_git_tree_file_count": reviewed["full_git_tree_file_count"],
+        "owner_approval_sha256": reviewed["owner_approval_sha256"],
+        "dockerfile_sha256": reviewed["dockerfile_sha256"],
+        "dockerignore_sha256": reviewed["dockerignore_sha256"],
+        "oci_test_source_sha256": reviewed["oci_test_source_sha256"],
+        "build_context_sha256": reviewed["build_context_sha256"],
+        "oci_repository": reviewed["oci_repository"],
+        "oci_archive_sha256": artifact["archive_sha256"],
+        "oci_manifest_digest": artifact["local_manifest_digest"],
+        "product_profile_sha256": reviewed["product_profile_sha256"],
+        "runtime_profile_sha256": reviewed["runtime_profile_sha256"],
+        "readiness_path": reviewed["readiness_path"],
+    }
+    if (
+        set(claim) != SIGNED_SUCCESSOR_SOURCE_FIELDS
+        or claim["schema_version"] != 2
+        or claim["release_version"] != owner_payload["release_version"]
+        or reviewed["owner_signature_verified"] is not False
+        or reviewed["release_authorized"] is not False
+        or reviewed["deployment_authorized"] is not False
+    ):
+        raise DeploymentPolicyError("successor source review did not remain inert")
+    return claim
+
+
+# Section: Protected publisher must independently authenticate the encrypted
+# handoff against the exact current Git objects BEFORE asking for OIDC.
+def verify_successor_publisher_handoff(
+    analytics_checkout: Path, immutable_context: Path, oci_archive: Path,
+    claim_file: Path, *, platform_root: Path,
+    owner_context: dict[str, str], owner_payload: dict[str, str],
+    owner_signature_base64: str, protected_owner_signers: bytes,
+) -> dict[str, Any]:
+    """Recheck owner-signed successor source and all immutable handoff bytes.
+
+    A publicly transported encrypted archive is NOT itself release authority.
+    This re-verifies exact owner Ed25519 source selection, regenerates the
+    committed sanitized Git TAR, validates original OCI hardening, and compares
+    the entire canonical transported claim. No registry, token or signer use.
+    The active protected workflow still needs separate owner authorization.
+    """
+    try:
+        selected, owner = review_ci_owner_signed_source(
+            owner_context, owner_payload, platform_root, analytics_checkout,
+            signature_base64=owner_signature_base64,
+            protected_signers=protected_owner_signers,
+        )
+        claim = prepare_successor_source_claim(
+            analytics_checkout, immutable_context, oci_archive,
+            platform_root=platform_root, owner_context=owner_context,
+            owner_payload=owner_payload,
+        )
+        transported = _bounded_file(claim_file, READ_LIMIT)
+        if (
+            claim["schema_version"] != 2
+            or claim["source_commit"] != selected.source_commit
+            or claim["source_tree"] != selected.source_tree
+            or claim["release_version"] != selected.release_version
+            or claim["platform_source_commit"] != selected.platform_workflow_commit
+            or claim["owner_approval_sha256"] != owner.approval_sha256
+            or owner.owner_signature_verified is not True
+            or owner.release_authorized is not False
+            or owner.deployment_authorized is not False
+            or transported != canonical_bytes(claim)
+        ):
+            raise DeploymentPolicyError("successor signed source handoff does not match")
+        return claim
+    except (AnalyticsOwnerSourceSelectionDenied, DeploymentPolicyError):
+        raise DeploymentPolicyError(ERROR) from None
 
 
 def verify_analytics_zot_receipt(receipt_raw: bytes, source_claim: dict[str, Any]) -> dict[str, Any]:
@@ -321,10 +458,36 @@ def main() -> int:
     parser.add_argument("--analytics-checkout", required=True, type=Path)
     parser.add_argument("--immutable-context", required=True, type=Path)
     parser.add_argument("--oci-archive", required=True, type=Path)
+    parser.add_argument("--successor", action="store_true")
     parser.add_argument("--original-evidence-dir", type=Path)
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
     try:
+        if args.successor:
+            if args.original_evidence_dir is not None or args.output_dir is not None:
+                raise DeploymentPolicyError("successor cannot use legacy evidence mode")
+            inputs = protected_ci_owner_inputs()
+            selected, owner = review_ci_owner_signed_source(
+                inputs["owner_context"], inputs["owner_payload"],
+                Path(__file__).resolve().parents[1], args.analytics_checkout,
+                signature_base64=inputs["owner_signature_base64"],
+                protected_signers=inputs["protected_owner_signers"],
+            )
+            claim = prepare_successor_source_claim(
+                args.analytics_checkout, args.immutable_context,
+                args.oci_archive, platform_root=Path(__file__).resolve().parents[1],
+                owner_context=inputs["owner_context"],
+                owner_payload=inputs["owner_payload"],
+            )
+            if (claim["source_commit"] != selected.source_commit
+                    or claim["release_version"] != selected.release_version
+                    or claim["owner_approval_sha256"] != owner.approval_sha256):
+                raise DeploymentPolicyError("owner-signed successor evidence mismatch")
+            print(canonical_bytes({
+                "schema_version": 2, "claim": claim, "signed": False,
+                "release_authorized": False, "deployment_authorized": False,
+            }).decode("utf-8"))
+            return 0
         if (args.original_evidence_dir is None) != (args.output_dir is None):
             raise DeploymentPolicyError("original evidence and output must be paired")
         if args.original_evidence_dir is not None:

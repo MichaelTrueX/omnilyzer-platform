@@ -12,10 +12,18 @@ import datetime as dt
 import hashlib
 import re
 from pathlib import Path
-from release.analytics_release_source_binding import _canonical_json, verify_analytics_zot_receipt, REQUIRED_SOURCE_CLAIM
+from release.analytics_release_source_binding import (
+    _canonical_json, verify_analytics_zot_receipt, REQUIRED_SOURCE_CLAIM,
+)
+from deployment.promotion import (
+    ANALYTICS_LEGACY_SOURCE_SHA, SIGNED_SUCCESSOR_SOURCE_FIELDS,
+    SIGNED_HASH_FIELDS, SIGNED_SUCCESSOR_HASH_FIELDS, SIGNED_GIT_FIELDS,
+)
+from deployment.policy import canonical_bytes, validate_sha256, validate_source_sha
+from release.analytics_owner_source_selection import review_ci_owner_signed_claim
+from release.analytics_task013_build_candidate import protected_ci_owner_inputs
 from release.provenance import release_execution
 from release.vulnerability_policy import validate_policy, validate_database_status, evaluate
-from deployment.policy import canonical_bytes
 
 
 def _hash(path: Path) -> str:
@@ -26,18 +34,71 @@ def _hash(path: Path) -> str:
 
 
 def create(source_claim: Path, publication: Path, scan_dir: Path, output: Path,
-           *, version: str, execution: dict) -> None:
+           *, version: str, execution: dict,
+           owner_context: dict[str, str] | None = None,
+           owner_payload: dict[str, str] | None = None,
+           owner_signature_base64: str | None = None,
+           protected_owner_signers: bytes | None = None) -> None:
     """Build exact OCI-only release evidence after authenticated Zot publication."""
     if output.exists() or output.is_symlink() or re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version) is None:
         raise ValueError('unsafe Analytics release output or version')
     claim = _canonical_json(source_claim.read_bytes(), 'Analytics claim')
-    if (set(claim) != REQUIRED_SOURCE_CLAIM or claim.get('product_id') != 'analytics'
-            or claim.get('schema_version') != 1
+    # Section: the original 0.15.0 claim stays exact and immutable.
+    # Successors bind the full Git-tree source and owner's distinct signed
+    # approval SHA in schema 2, without reusing the historical 78-file pin.
+    schema = claim.get('schema_version')
+    fields = (
+        REQUIRED_SOURCE_CLAIM if schema == 1
+        else SIGNED_SUCCESSOR_SOURCE_FIELDS if schema == 2
+        else frozenset()
+    )
+    if (type(schema) is not int or schema not in (1, 2)
+            or set(claim) != fields
+            or claim.get('product_id') != 'analytics'
             or claim.get('source_repository') != 'MichaelTrueX/omnilyzer'
-            or claim.get('source_commit') != '4cdda7faeba57abb3388f9be5c450fe6afb1140d'
-            or claim.get('source_files_verified') != 78
+            or claim.get('oci_repository') != 'omnilyzer/analytics'
             or claim.get('readiness_path') != '/readyz'):
         raise ValueError('Analytics source claim missing required fields')
+    if schema == 1:
+        if (claim['source_commit'] != ANALYTICS_LEGACY_SOURCE_SHA
+                or type(claim['source_files_verified']) is not int
+                or claim['source_files_verified'] != 78):
+            raise ValueError('legacy source review cannot change')
+    else:
+        if (claim['source_commit'] == ANALYTICS_LEGACY_SOURCE_SHA
+                or claim['release_version'] != version
+                or type(claim['release_version']) is not str
+                or type(claim['full_git_tree_file_count']) is not int
+                or not 8 <= claim['full_git_tree_file_count'] <= 10000):
+            raise ValueError('successor release/version/Git tree mismatch')
+    for name in SIGNED_HASH_FIELDS if schema == 1 else SIGNED_SUCCESSOR_HASH_FIELDS:
+        validate_sha256(claim[name], name)
+    for name in SIGNED_GIT_FIELDS:
+        validate_source_sha(claim[name])
+    # Section: original release signer must independently verify the SAME
+    # owner Ed25519 approval that protected source and Zot jobs checked.
+    # A replayable claim SHA alone cannot enter the protected signing job.
+    owner_inputs = (
+        owner_context, owner_payload,
+        owner_signature_base64, protected_owner_signers,
+    )
+    if schema == 2:
+        if not all(value is not None for value in owner_inputs):
+            raise ValueError('missing successor owner signing approval')
+        checked_owner = review_ci_owner_signed_claim(
+            claim, owner_context, owner_payload,
+            signature_base64=owner_signature_base64,
+            protected_signers=protected_owner_signers,
+        )
+        if (
+            checked_owner.approval_sha256 != claim["owner_approval_sha256"]
+            or checked_owner.owner_signature_verified is not True
+            or checked_owner.release_authorized is not False
+            or checked_owner.deployment_authorized is not False
+        ):
+            raise ValueError('unverified owner source claim')
+    elif any(value is not None for value in owner_inputs):
+        raise ValueError('successor signature cannot downgrade into original source')
     receipt = verify_analytics_zot_receipt(publication.read_bytes(), claim)
     if receipt['tag'] != version:
         raise ValueError('Zot version does not match Analytics release')
@@ -102,11 +163,14 @@ def main() -> int:
     for name in ('version', 'repository', 'repository-id', 'workflow-ref', 'workflow-sha',
                  'run-id', 'run-attempt', 'event-name', 'source-commit'):
         parser.add_argument('--' + name, required=True)
+    parser.add_argument('--successor', action='store_true',
+                        help='Require independently protected Ed25519 owner approval before signing')
     a = parser.parse_args()
     execution = {key: getattr(a, key) for key in ('repository', 'repository_id', 'workflow_ref',
                   'workflow_sha', 'run_id', 'run_attempt', 'event_name', 'source_commit')}
+    kwargs = protected_ci_owner_inputs() if a.successor else {}
     create(a.source_claim, a.publication, a.scan_dir, a.output,
-           version=a.version, execution=execution)
+           version=a.version, execution=execution, **kwargs)
     return 0
 
 

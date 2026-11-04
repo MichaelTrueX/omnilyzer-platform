@@ -83,7 +83,7 @@ class AnalyticsPrivateHandoffTests(unittest.TestCase):
         """The repository exposes only a public recipient with a pinned ID."""
         result = subprocess.run(
             ["gpg", "--batch", "--with-colons", "--show-keys", str(RECIPIENT)],
-            capture_output=True, check=True,
+            capture_output=True, check=True, env=self.environment,
         ).stdout.decode()
         self.assertIn(RECIPIENT_FINGERPRINT, result)
         self.assertIn("BEGIN PGP PUBLIC KEY BLOCK", RECIPIENT.read_text())

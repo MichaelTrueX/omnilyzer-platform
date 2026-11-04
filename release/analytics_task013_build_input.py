@@ -22,13 +22,20 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import tarfile
+import tempfile
 import sys
-from typing import Any
+from typing import Any, Mapping
 
 from deployment.policy import DeploymentPolicyError, canonical_bytes
 from deployment.saas_product_contract import load_reviewed_profile
 from deployment.saas_product_runtime import load_review_profile
 from release.analytics_source_admission import AnalyticsAdmissionError, verify_source
+from release.analytics_owner_source_selection import (
+    REVIEWED_0150_ANCESTOR, SOURCE_REPOSITORY,
+    AnalyticsOwnerSourceSelectionDenied, expected_owner_approval_bytes,
+    verify_owner_source_selection,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "release/products/analytics-source.json"
@@ -172,6 +179,144 @@ def build_input(analytics_checkout: Path, *, platform_root: Path = ROOT) -> dict
         "release_authorized": False,
         "deployment_authorized": False,
     }
+
+
+
+# Section: successor source review reuses the original full Git-tree build
+# archive. The original static 0.15.0 build_input() above is left untouched.
+def review_successor_build_input(
+    analytics_checkout: Path,
+    owner_context: Mapping[str, str],
+    owner_payload: Mapping[str, str],
+    *,
+    platform_root: Path = ROOT,
+) -> dict[str, Any]:
+    """Review a future Analytics build context from an exact Git commit.
+
+    Unlike the original PR52/49-hash admission, source integrity comes from
+    the *complete committed tree* and the same sanitized context used by the
+    existing BuildKit path. A later Task013 producer must verify the detached
+    owner signature and original signing/OCI pipeline before any publication.
+
+    The historical product profile's source_commit remains the accepted
+    0.15.0 baseline. It is NOT falsely represented as the selected new source.
+    This function creates only a temporary local tar; never builds, publishes,
+    signs, requests deployment, or authorizes an action.
+    """
+    if (
+        not isinstance(analytics_checkout, Path)
+        or not isinstance(platform_root, Path)
+        or analytics_checkout.is_symlink()
+        or platform_root.is_symlink()
+    ):
+        raise DeploymentPolicyError(ERROR)
+    try:
+        selected = verify_owner_source_selection(
+            owner_context, owner_payload, platform_root, analytics_checkout,
+        )
+        # Normal upgrade must not be silently used as a first-install replay.
+        if (
+            selected.source_commit == REVIEWED_0150_ANCESTOR
+            or tuple(map(int, selected.release_version.split("."))) <= (0, 15, 0)
+        ):
+            raise DeploymentPolicyError(ERROR)
+        binding = _load_object(platform_root / "release/products/analytics-source.json")
+        product = load_reviewed_profile(
+            platform_root / "deployment/products/analytics-dev.json"
+        )
+        runtime = load_review_profile(
+            platform_root / "deployment/products/analytics-runtime-dev.json"
+        )
+        # Preserve the already accepted application/runtime/secret/health
+        # boundary. In this OLD profile the source field means baseline,
+        # not a new per-release application commit.
+        _coherent_profiles(binding, product, runtime)
+        if (
+            product.source_commit != REVIEWED_0150_ANCESTOR
+            or binding["source_commit"] != REVIEWED_0150_ANCESTOR
+            or product.source_repository != SOURCE_REPOSITORY
+            or selected.platform_workflow_commit != _git(
+                platform_root, "rev-parse", "HEAD"
+            )
+        ):
+            raise DeploymentPolicyError(ERROR)
+
+        # Local import avoids a cycle: analytics_oci_context uses build_input
+        # for original 0.15.0 CLI invocation. Reuse its *existing* Git-only,
+        # bounded and secret-sanitized archive producer, not a new framework.
+        from release.analytics_oci_context import (
+            ESSENTIAL, snapshot_committed_tree,
+        )
+
+        with tempfile.TemporaryDirectory(prefix="task14b-source-review-") as tmp:
+            archive = Path(tmp) / "source.tar"
+            context = snapshot_committed_tree(
+                analytics_checkout, selected.source_commit, archive,
+            )
+            if (
+                context["source_commit"] != selected.source_commit
+                or context["file_count"] < len(ESSENTIAL)
+                or context["release_authorized"] is not False
+                or context["deployment_authorized"] is not False
+            ):
+                raise DeploymentPolicyError(ERROR)
+            required = frozenset(REQUIRED_INPUT_PATHS)
+            hashes = {}
+            with tarfile.open(archive, mode="r:") as source:
+                entries = source.getmembers()
+                if (
+                    len(entries) != context["file_count"]
+                    or not ESSENTIAL.issubset({item.name for item in entries})
+                    or not required.issubset({item.name for item in entries})
+                ):
+                    raise DeploymentPolicyError(ERROR)
+                for item in entries:
+                    if item.name in required:
+                        if not item.isfile():
+                            raise DeploymentPolicyError(ERROR)
+                        file = source.extractfile(item)
+                        if file is None:
+                            raise DeploymentPolicyError(ERROR)
+                        hashes[item.name] = hashlib.sha256(file.read()).hexdigest()
+            if set(hashes) != required:
+                raise DeploymentPolicyError(ERROR)
+
+        platform_tree = _git(platform_root, "rev-parse", "HEAD^{tree}")
+        if SHA40.fullmatch(platform_tree) is None:
+            raise DeploymentPolicyError(ERROR)
+        return {
+            "schema_version": 2,
+            "input_kind": "task013-analytics-successor-review-only",
+            "platform_source_commit": selected.platform_workflow_commit,
+            "platform_tree": platform_tree,
+            "analytics_repository": SOURCE_REPOSITORY,
+            "analytics_source_commit": selected.source_commit,
+            "analytics_tree": selected.source_tree,
+            "release_version": selected.release_version,
+            "oci_repository": EXPECTED_OCI_REPO,
+            "full_git_tree_file_count": context["file_count"],
+            "build_context_sha256": context["context_sha256"],
+            "dockerfile_sha256": hashes["Dockerfile.analytics"],
+            "dockerignore_sha256": hashes[".dockerignore"],
+            "oci_test_source_sha256": hashes[
+                "scripts/accept-m05-analytics-oci-dev.py"
+            ],
+            "owner_approval_sha256": hashlib.sha256(
+                expected_owner_approval_bytes(selected)
+            ).hexdigest(),
+            "product_profile_sha256": product.sha256(),
+            "runtime_profile_sha256": runtime.sha256(),
+            "readiness_path": runtime.ready_path,
+            "owner_signature_verified": False,
+            "release_signatures_verified": False,
+            "release_authorized": False,
+            "deployment_authorized": False,
+        }
+    except (
+        AnalyticsOwnerSourceSelectionDenied, OSError, ValueError, TypeError,
+        tarfile.TarError,
+    ):
+        raise DeploymentPolicyError(ERROR) from None
 
 
 def main() -> int:

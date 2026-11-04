@@ -1,8 +1,8 @@
 """File: deployment/tests/test_analytics_execution.py
 
-Purpose: Fail-closed original Task014 Analytics DEV executor request shape
-         regression, without installing it, granting broker permission or
-         accepting caller-supplied signature attestations as authorization.
+Purpose: Fail-closed Task014 Analytics DEV request regression for
+         original first-install schema 2 and inert reusable schema 3.
+         No installed executor, broker permission or caller-signed grant.
 
 Related: deployment/analytics_execution.py, deployment/execution.py (original
          canary-only request), deployment/identity.py,
@@ -372,6 +372,230 @@ class AnalyticsFirstInstallRequestTests(unittest.TestCase):
             list(REQUIRED_ANALYTICS_SECRET_NAMES),
         )
         self.assertEqual(parse_analytics_request(request.canonical_bytes(), **EXPECTED), request)
+
+
+# Section: inert successor request, without changing original Task014 authority.
+class AnalyticsSuccessorRequestTests(unittest.TestCase):
+    """Synthetic signed-release collaborators and real closed request grammar."""
+
+    def candidate(self):
+        from deployment.tests.test_analytics_signed_release_consumer import (
+            synthetic_successor, SyntheticBlobSignatureVerifier,
+            SyntheticSuccessorOCISignatureVerifier,
+        )
+        from deployment.analytics_signed_release_consumer import (
+            verify_owner_selected_analytics_signed_evidence,
+        )
+        selected, owner, evidence, scanners, digest = synthetic_successor()
+        signed_evidence = {k: v for k, v in evidence.items()
+                           if k not in (
+                               "oci-sbom.cdx.json", "oci-grype.json",
+                               "grype-db-status.json", "vulnerability-policy.json",
+                           )}
+        signed = verify_owner_selected_analytics_signed_evidence(
+            signed_evidence, scanners, SyntheticBlobSignatureVerifier(),
+            SyntheticSuccessorOCISignatureVerifier(digest),
+            received_at=1700000000, selected=selected, owner_approval=owner,
+        )
+        identity = authorize_verified_github_oidc(
+            valid_claims(), received_at=NOW, expected_workflow_sha=WORKFLOW_SHA,
+        )
+        data = fixture()
+        data.update({
+            "schema_version": 3,
+            "release_version": selected.release_version,
+            "source_sha": selected.platform_workflow_commit,
+            "product_source_sha": selected.source_commit,
+            "source_claim_sha256": signed.source.claim_sha256,
+            "owner_approval_sha256": owner.approval_sha256,
+            "manifest_digest": digest,
+            "exact_image_reference": signed.image,
+            "release_manifest_sha256": signed.manifest_sha256,
+            "provenance_sha256": signed.provenance_sha256,
+            "originating_release_run_id": signed.release_run_id,
+            "ingress_reference": {
+                "kind": "private-no-public-ingress",
+                "slot": "green", "loopback_address": "127.0.0.1",
+                "loopback_port": 3142,
+                "backend_network": ANALYTICS_NETWORK,
+                "public_origin": None, "active_slot": "blue",
+            },
+            "rollback_reference": {
+                "kind": "switch-private-slot-preserve-writes",
+                "previous_digest": PINNED_DIGEST,
+                "previous_slot": "blue",
+                "preserve_database_writes": True,
+            },
+        })
+        intent = canonical_bytes({
+            "product_id": "analytics", "release_version": selected.release_version,
+            "source_sha": selected.platform_workflow_commit, "image": signed.image,
+            "run_id": identity.run_id, "run_attempt": identity.run_attempt,
+            "release_manifest_sha256": signed.manifest_sha256,
+            "provenance_sha256": signed.provenance_sha256,
+            "source_claim_sha256": signed.source.claim_sha256,
+            "owner_approval_sha256": owner.approval_sha256,
+            "previous_digest": PINNED_DIGEST,
+        })
+        data["promotion_request_sha256"] = hashlib.sha256(intent).hexdigest()
+        context = {
+            **EXPECTED,
+            "signed_release": signed,
+            "selected": selected,
+            "owner_approval": owner,
+            "identity": identity,
+            "observed_active_digest": PINNED_DIGEST,
+            "observed_active_slot": "blue",
+        }
+        return data, context
+
+    def test_candidate_green_is_inert_and_original_parser_stays_closed(self):
+        from deployment.analytics_execution import (
+            AnalyticsSuccessorRequest, parse_analytics_successor_request,
+        )
+        data, context = self.candidate()
+        raw = canonical_bytes(data)
+        result = parse_analytics_successor_request(raw, **context)
+        self.assertIs(type(result), AnalyticsSuccessorRequest)
+        self.assertEqual(result.to_dict(), data)
+        self.assertEqual(result.canonical_bytes(), raw)
+        self.assertEqual(result.ingress_reference["slot"], "green")
+        self.assertEqual(result.rollback_reference["previous_digest"], PINNED_DIGEST)
+        self.assertTrue(result.rollback_reference["preserve_database_writes"])
+        with self.assertRaises(AnalyticsRequestError):
+            parse_analytics_request(raw, **EXPECTED)
+        with self.assertRaises(AnalyticsRequestError):
+            AnalyticsExecutorRequest.from_dict(data, **EXPECTED)
+
+    def test_subsequent_upgrade_reuses_trusted_active_green_image(self):
+        """Second upgrade can reverse the slot without repinning source code."""
+        from deployment.analytics_execution import parse_analytics_successor_request
+        data, context = self.candidate()
+        active = "sha256:" + "a" * 64
+        context["observed_active_slot"] = "green"
+        context["observed_active_digest"] = active
+        data["ingress_reference"] = {
+            **data["ingress_reference"], "slot": "blue",
+            "loopback_port": 3142, "active_slot": "green",
+        }
+        data["rollback_reference"] = {
+            **data["rollback_reference"], "previous_digest": active,
+            "previous_slot": "green",
+        }
+        signed = context["signed_release"]
+        selected = context["selected"]
+        owner = context["owner_approval"]
+        identity = context["identity"]
+        intent = canonical_bytes({
+            "product_id": "analytics", "release_version": selected.release_version,
+            "source_sha": selected.platform_workflow_commit, "image": signed.image,
+            "run_id": identity.run_id, "run_attempt": identity.run_attempt,
+            "release_manifest_sha256": signed.manifest_sha256,
+            "provenance_sha256": signed.provenance_sha256,
+            "source_claim_sha256": signed.source.claim_sha256,
+            "owner_approval_sha256": owner.approval_sha256,
+            "previous_digest": active,
+        })
+        data["promotion_request_sha256"] = hashlib.sha256(intent).hexdigest()
+        result = parse_analytics_successor_request(canonical_bytes(data), **context)
+        self.assertEqual(result.ingress_reference["slot"], "blue")
+        self.assertEqual(result.rollback_reference["previous_digest"], active)
+        self.assertTrue(result.rollback_reference["preserve_database_writes"])
+
+    def test_no_unreviewed_release_or_active_state_can_select_an_upgrade(self):
+        from dataclasses import replace
+        from deployment.analytics_execution import parse_analytics_successor_request
+
+        data, context = self.candidate()
+        for key, altered in (
+            ("schema_version", 2),
+            ("release_version", "0.15.0"),
+            ("source_sha", PINNED_PLATFORM_COMMIT),
+            ("product_source_sha", SOURCE_COMMIT),
+            ("source_claim_sha256", "0" * 64),
+            ("owner_approval_sha256", "0" * 64),
+            ("manifest_digest", PINNED_DIGEST),
+            ("exact_image_reference", PINNED_IMAGE),
+            ("originating_release_run_id", PINNED_RUN_ID),
+            ("release_manifest_sha256", "f" * 64),
+            ("provenance_sha256", "f" * 64),
+            ("promotion_request_sha256", "e" * 64),
+            ("github_run_id", data["github_run_id"] + 1),
+            ("oidc_jti", "not-original-nonce"),
+            ("unexpected", "extra"),
+        ):
+            with self.subTest(key=key), self.assertRaises(AnalyticsRequestError):
+                parse_analytics_successor_request(
+                    canonical_bytes({**data, key: altered}), **context,
+                )
+
+        for field, value in (
+            ("observed_active_digest", "sha256:" + "f" * 64),
+            ("observed_active_slot", "green"),
+            ("selected", replace(context["selected"], source_commit="a" * 40)),
+            ("owner_approval", replace(context["owner_approval"],
+                                       owner_signature_verified=False)),
+            ("signed_release", replace(context["signed_release"],
+                                       manifest_sha256="a" * 64)),
+            ("identity", replace(context["identity"], run_id=123456)),
+            ("reviewed_compose_sha256", "0" * 64),
+            ("reviewed_installed_commit", "0" * 40),
+        ):
+            with self.subTest(field=field), self.assertRaises(AnalyticsRequestError):
+                parse_analytics_successor_request(
+                    canonical_bytes(data), **{**context, field: value},
+                )
+
+        for field, alterations in (
+            ("ingress_reference", [
+                {"loopback_address": "0.0.0.0"},
+                {"loopback_port": 3141}, {"loopback_port": 3142.0},
+                {"active_slot": "green"},
+                {"public_origin": "https://public.invalid"},
+                {"slot": "blue"}, {"backend_network": "bridge"},
+            ]),
+            ("rollback_reference", [
+                {"previous_digest": None},
+                {"previous_slot": "green"},
+                {"kind": "restore-database"},
+                {"preserve_database_writes": False},
+                {"preserve_database_writes": 1},
+            ]),
+            ("runtime_configuration_reference", [
+                {"compose_sha256": "f" * 64},
+                {"product_profile_sha256": "f" * 64},
+            ]),
+            ("secrets_reference", [
+                {"required": []}, {"file_mode": "0644"},
+                {"container_uid": 0},
+            ]),
+        ):
+            for changes in alterations:
+                with self.subTest(field=field, changes=changes), self.assertRaises(
+                    AnalyticsRequestError
+                ):
+                    altered = {**data, field: {**data[field], **changes}}
+                    parse_analytics_successor_request(
+                        canonical_bytes(altered), **context,
+                    )
+
+    def test_noncanonical_duplicate_json_and_wrong_schema_are_denied(self):
+        from deployment.analytics_execution import parse_analytics_successor_request
+        data, context = self.candidate()
+        raw = canonical_bytes(data)
+        for altered in (
+            raw + b"\n",
+            json.dumps(data, indent=2).encode("ascii"),
+            raw.replace(b'"product_id":"analytics"',
+                        b'"product_id":"analytics","product_id":"canary"'),
+            raw.replace(b'"loopback_port":3142',
+                        b'"loopback_port":3142,"loopback_port":3000'),
+            b"x" * 16385,
+        ):
+            with self.subTest(size=len(altered)), self.assertRaises(
+                AnalyticsRequestError
+            ):
+                parse_analytics_successor_request(altered, **context)
 
 
 if __name__ == "__main__":

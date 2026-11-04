@@ -311,6 +311,165 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
                 self.assertTrue(fake.closed)
         finally:os.close(fd)
 
+    def test_schema3_scoped_fd_uses_original_peer_checked_analytics_socket(self):
+        """Real sealed successor FD crosses original transport, no deployment.
+
+        Original schema-2 receiver is NOT broadened and still denies a
+        successor. This test only covers the reused socket/credential
+        transport, not source-signature or release authority.
+        """
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+        from deployment.tests.test_unix_transport import (
+            FakeSocket, metadata, Clock, RESPONSE, PEER,
+        )
+        from deployment import unix_transport as wire
+
+        request, _ = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(request)
+        image = request["exact_image_reference"]
+        successor_fd = credential(
+            image=image, request=raw, product_id="analytics-successor",
+        )
+        old_fd = credential()
+        try:
+            self.assertFalse(
+                hasattr(UnixExecutorTransport, "_send_analytics_successor_private")
+            )
+            for payload, source_fd in (
+                (raw, successor_fd),
+                (raw + b" ", successor_fd),
+                (raw, old_fd),
+                (canonical_bytes({**request, "stage": "prod"}), successor_fd),
+                (canonical_bytes({
+                    **request, "exact_image_reference": PINNED_IMAGE,
+                }), successor_fd),
+            ):
+                fake = FakeSocket(peer=PEER.pack(1, 0, 0))
+                with (
+                    self.subTest(
+                        valid=payload == raw and source_fd == successor_fd,
+                    ),
+                    patch.object(
+                        wire.os, "lstat",
+                        side_effect=[
+                            metadata(uid=991, gid=993),
+                            metadata(uid=991, gid=993),
+                        ],
+                    ),
+                    patch.object(wire.socket, "socket", return_value=fake),
+                    patch.object(wire.time, "monotonic", Clock()),
+                    patch.object(wire, "send_sealed_header") as sent,
+                ):
+                    transport = AnalyticsUnixExecutorTransport(
+                        expected_executor_uid=991, expected_executor_gid=991,
+                        expected_socket_group_gid=993,
+                        reviewed_installed_source=EXPECTED,
+                    )
+                    if payload == raw and source_fd == successor_fd:
+                        self.assertEqual(
+                            transport._send_analytics_successor_private(
+                                payload, credential_fd=source_fd,
+                            ), RESPONSE,
+                        )
+                        sent.assert_called_once_with(
+                            fake, len(raw).to_bytes(4, "big"), successor_fd,
+                        )
+                    else:
+                        with self.assertRaises(ExecutorTransportUnavailableError):
+                            transport._send_analytics_successor_private(
+                                payload, credential_fd=source_fd,
+                            )
+                        sent.assert_not_called()
+                if payload == raw and source_fd == successor_fd:
+                    self.assertTrue(fake.closed)
+            # Sending from any previous v2 helper remains impossible.
+            with self.assertRaises(ExecutorTransportUnavailableError):
+                transport._send_analytics_private(raw, credential_fd=successor_fd)
+        finally:
+            os.close(successor_fd)
+            os.close(old_fd)
+
+    def test_successor_real_unix_fd_reaches_original_executor_and_stops_before_replay(self):
+        """Prove schema3 can cross the kernel boundary, NOT deploy through v2.
+
+        Real AF_UNIX, kernel SO_PEERCRED, sealed FD + SCM_RIGHTS and framing
+        execute in an isolated temporary socket. Original executor continues
+        to reject the successor prior to preflight, replay and Docker.
+        """
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+
+        candidate, _context = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(candidate)
+        image = candidate["exact_image_reference"]
+        executor, replay, events = receiver()
+        with tempfile.TemporaryDirectory(prefix="task14b-successor-socket-") as root:
+            path = str(Path(root) / "analytics.sock")
+            handler = AnalyticsUnixExecutorConnectionHandler(
+                executor=executor,
+                expected_broker_uid=os.getuid(),
+                expected_broker_gid=os.getgid(),
+                reviewed_installed_source=EXPECTED,
+                structural_successor_receive_only=True,
+            )
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(path)
+            os.chmod(path, 0o660)
+            listener.listen(1)
+            listener.settimeout(3)
+            failures = []
+
+            def serve():
+                """Accept only one local successor request, never start Docker."""
+                try:
+                    child, _ = listener.accept()
+                    handler.handle(child)
+                except ExecutorConnectionUnavailableError:
+                    failures.append("schema2-executor-denied")
+                except BaseException as unexpected:
+                    failures.append(type(unexpected).__name__)
+
+            server = threading.Thread(target=serve, daemon=True)
+            server.start()
+            fd = credential(
+                request=raw, image=image, product_id="analytics-successor",
+            )
+            try:
+                with (
+                    patch.object(
+                        analytics_boundary, "ANALYTICS_EXECUTOR_SOCKET_PATH", path,
+                    ),
+                    patch.object(
+                        analytics_boundary, "read_sealed_credential",
+                        wraps=read_sealed_credential,
+                    ) as credential_reader,
+                ):
+                    transport = AnalyticsUnixExecutorTransport(
+                        expected_executor_uid=os.getuid(),
+                        expected_executor_gid=os.getgid(),
+                        expected_socket_group_gid=os.getgid(),
+                        reviewed_installed_source=EXPECTED,
+                    )
+                    with self.assertRaises(ExecutorTransportUnavailableError):
+                        transport._send_analytics_successor_private(
+                            raw, credential_fd=fd,
+                        )
+                # Both sender and receiver inspect the exact sealed
+                # capability before the original v2 executor rejects it.
+                self.assertGreaterEqual(credential_reader.call_count, 2)
+            finally:
+                os.close(fd)
+                server.join(5)
+                listener.close()
+            self.assertFalse(server.is_alive())
+            self.assertEqual(failures, ["schema2-executor-denied"])
+            self.assertEqual(events, [])
+            self.assertEqual(replay.begin_calls, [])
+            self.assertEqual(replay.finish_calls, [])
+
     def test_real_analytics_unix_socket_and_sealed_fd_roundtrip(self):
         """Reuse original metadata, peer, expiry, framing and response checks."""
         with tempfile.TemporaryDirectory(prefix="m05-14-analytics-unix-") as root:

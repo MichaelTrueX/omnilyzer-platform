@@ -117,7 +117,19 @@ SIGNED_SOURCE_FIELDS = frozenset({
     "oci_manifest_digest", "product_profile_sha256", "runtime_profile_sha256",
     "readiness_path",
 })
+# Section: successor source claim makes Git tree and owner approval explicit.
+# Schema 1 is reserved for the original PR52 source and 78-file history.
+SIGNED_SUCCESSOR_SOURCE_FIELDS = (
+    SIGNED_SOURCE_FIELDS
+    - {"source_manifest_sha256", "source_binding_sha256", "source_files_verified"}
+    | {"full_git_tree_file_count", "owner_approval_sha256", "release_version"}
+)
+ANALYTICS_LEGACY_SOURCE_SHA = "4cdda7faeba57abb3388f9be5c450fe6afb1140d"
 SIGNED_HASH_FIELDS = frozenset(name for name in SIGNED_SOURCE_FIELDS if name.endswith("_sha256"))
+SIGNED_SUCCESSOR_HASH_FIELDS = (
+    SIGNED_HASH_FIELDS - {"source_manifest_sha256", "source_binding_sha256"}
+    | {"owner_approval_sha256"}
+)
 SIGNED_GIT_FIELDS = frozenset({
     "platform_source_commit", "platform_tree", "source_commit", "source_tree",
 })
@@ -137,6 +149,8 @@ class SignedExternalSource:
     oci_archive_sha256: str
     oci_manifest_digest: str
     claim_sha256: str
+    # Successor-only signed approval hash; original schema 1 remains None.
+    owner_approval_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -169,20 +183,38 @@ def _verified_external_source_claim(
         return None
     claim = provenance.get("external_source")
     mirror = manifest.get("external_source")
-    if (type(claim) is not dict or type(mirror) is not dict
-            or set(claim) != SIGNED_SOURCE_FIELDS or set(mirror) != SIGNED_SOURCE_FIELDS
+    if type(claim) is not dict or type(mirror) is not dict:
+        raise DeploymentPolicyError("signed external-source claim is invalid")
+    # Schema 1 retains its exact first-install identity. Schema 2 binds
+    # successors to the complete immutable Git context and distinct owner
+    # source-approval SHA, not a fabricated 78-file historical source review.
+    schema = claim.get("schema_version")
+    if type(schema) is not int or schema not in (1, 2):
+        raise DeploymentPolicyError("unsupported Analytics external-source schema")
+    required = SIGNED_SOURCE_FIELDS if schema == 1 else SIGNED_SUCCESSOR_SOURCE_FIELDS
+    if (set(claim) != required or set(mirror) != required
             or canonical_bytes(claim) != canonical_bytes(mirror)
-            or type(claim["schema_version"]) is not int or claim["schema_version"] != 1
             or claim["product_id"] != "analytics"
             or claim["source_repository"] != ANALYTICS_SOURCE_REPOSITORY
             or claim["oci_repository"] != ANALYTICS_REPOSITORY
-            or type(claim["source_files_verified"]) is not int
-            or claim["source_files_verified"] != 78
             or claim["readiness_path"] != "/readyz"
             or claim["platform_source_commit"] != request.source_sha
             or claim["oci_manifest_digest"] != request.manifest_digest):
         raise DeploymentPolicyError("signed external-source claim is invalid")
-    for key in SIGNED_HASH_FIELDS:
+    if schema == 1:
+        if (type(claim["source_files_verified"]) is not int
+                or claim["source_files_verified"] != 78
+                or claim["source_commit"] != ANALYTICS_LEGACY_SOURCE_SHA):
+            raise DeploymentPolicyError("legacy Analytics source identity mismatch")
+    elif (
+        type(claim["full_git_tree_file_count"]) is not int
+        or not 8 <= claim["full_git_tree_file_count"] <= 10000
+        or claim["release_version"] != request.release_version
+        or type(claim["release_version"]) is not str
+        or claim["source_commit"] == ANALYTICS_LEGACY_SOURCE_SHA
+    ):
+        raise DeploymentPolicyError("successor Analytics source identity mismatch")
+    for key in SIGNED_HASH_FIELDS if schema == 1 else SIGNED_SUCCESSOR_HASH_FIELDS:
         validate_sha256(claim[key], key)
     for key in SIGNED_GIT_FIELDS:
         validate_source_sha(claim[key])
@@ -194,6 +226,7 @@ def _verified_external_source_claim(
         claim["runtime_profile_sha256"], claim["oci_archive_sha256"],
         claim["oci_manifest_digest"],
         hashlib.sha256(canonical_bytes(claim)).hexdigest(),
+        None if schema == 1 else claim["owner_approval_sha256"],
     )
 
 

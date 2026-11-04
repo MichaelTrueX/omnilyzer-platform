@@ -30,15 +30,22 @@ import gzip
 import hashlib
 import io
 import tarfile
+from pathlib import Path
 from typing import Any
+
+from release.analytics_owner_source_selection import (
+    AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
+    load_and_verify_owner_signed_source,
+)
 
 from .analytics_signed_source_pin import (
     AnalyticsSourceReviewReceipt, review_signed_analytics_source,
+    review_owner_selected_signed_analytics_source,
 )
 from .policy import (
     APPROVED_OCI_ORIGIN, EXPECTED_CERTIFICATE_IDENTITY,
     EXPECTED_CERTIFICATE_ISSUER, EXPECTED_RELEASE_WORKFLOW,
-    DeploymentPolicyError, closed_object, validate_sha256,
+    DeploymentPolicyError, closed_object, validate_digest, validate_sha256,
 )
 from .promotion import (
     ANALYTICS_REPOSITORY, PromotionRequest, TrustedRelease,
@@ -192,16 +199,32 @@ def _analytics_archive(raw: bytes) -> tuple[dict[str, bytes], dict[str, str]]:
 
 
 def _signed_fields(
-    evidence: dict[str, bytes], scanner_hashes: dict[str, str],
+    evidence: dict[str, bytes], scanner_hashes: dict[str, str], *,
+    expected_version: str = PINNED_VERSION,
+    expected_platform_commit: str = PINNED_PLATFORM_COMMIT,
+    expected_digest: str = PINNED_DIGEST,
+    expected_run_id: int = PINNED_RUN_ID,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Check actual Analytics Task013 v1 grammar and scanner hash linkage."""
+    """Check Task013 v1 grammar with strictly expected immutable identities.
+
+    The defaults retain exact 0.15.0. Other expectations are read-only and
+    MUST come from a separately verified owner-approval and signed evidence.
+    """
     manifest = _json(evidence["release-manifest.json"], _MANIFEST_FIELDS, schema=1)
     provenance = _json(evidence["release-provenance.json"], _PROVENANCE_FIELDS, schema=1)
+    # Preserve schema-1 original 0.15.0 and recognize successor schema-2
+    # only through the same closed original parser. Promotion validates all
+    # required fields and the exact independent owner-signed approval SHA.
+    external = manifest["external_source"]
+    if (
+        type(external) is not dict
+        or type(external.get("schema_version")) is not int
+        or external["schema_version"] not in (1, 2)
+    ):
+        raise AnalyticsSignedEvidenceError(ERROR)
     claim = _json(
         evidence["analytics-source-claim.json"],
-        frozenset(manifest["external_source"].keys())
-        if type(manifest["external_source"]) is dict else frozenset(),
-        schema=1,
+        frozenset(external.keys()), schema=external["schema_version"],
     )
     receipt = _json(
         evidence["oci-publication.json"],
@@ -231,35 +254,35 @@ def _signed_fields(
         or provenance["schema_version"] != 1
         or manifest["product_id"] != "analytics"
         or provenance["product_id"] != "analytics"
-        or manifest["version"] != PINNED_VERSION
-        or provenance["version"] != PINNED_VERSION
-        or manifest["source_commit"] != PINNED_PLATFORM_COMMIT
-        or provenance["source_commit"] != PINNED_PLATFORM_COMMIT
+        or manifest["version"] != expected_version
+        or provenance["version"] != expected_version
+        or manifest["source_commit"] != expected_platform_commit
+        or provenance["source_commit"] != expected_platform_commit
         or provenance["statement_type"] != _PROVENANCE_TYPE
         or manifest["external_source"] != claim
         or provenance["external_source"] != claim
         or type(subjects["security_exceptions"]) is not int
         or subjects["security_exceptions"] != 0
         or subjects["oci_repository"] != ANALYTICS_REPOSITORY
-        or subjects["oci_manifest_digest"] != PINNED_DIGEST
+        or subjects["oci_manifest_digest"] != expected_digest
         or subjects["oci_archive_sha256"] != claim.get("oci_archive_sha256")
         or execution != {
             "repository": RELEASE_REPOSITORY,
             "repository_id": RELEASE_REPOSITORY_ID,
             "workflow_ref": EXPECTED_RELEASE_WORKFLOW,
-            "workflow_sha": PINNED_PLATFORM_COMMIT,
-            "run_id": PINNED_RUN_ID,
+            "workflow_sha": expected_platform_commit,
+            "run_id": expected_run_id,
             "run_attempt": execution["run_attempt"],
             "event_name": "workflow_dispatch",
-            "source_commit": PINNED_PLATFORM_COMMIT,
+            "source_commit": expected_platform_commit,
         }
         or type(execution["run_attempt"]) is not int
         or not 1 <= execution["run_attempt"] <= 2**63 - 1
         or manifest["oci"] != {
             "registry": APPROVED_OCI_ORIGIN,
             "repository": ANALYTICS_REPOSITORY,
-            "manifest_digest": PINNED_DIGEST,
-            "deployment_identity": ANALYTICS_REPOSITORY + "@" + PINNED_DIGEST,
+            "manifest_digest": expected_digest,
+            "deployment_identity": ANALYTICS_REPOSITORY + "@" + expected_digest,
         }
         or manifest["provenance"] != {
             "filename": "release-provenance.json",
@@ -269,28 +292,34 @@ def _signed_fields(
             "method": _SIGNER_METHOD,
             "release_manifest_bundle": "release-manifest.sigstore.json",
             "provenance_bundle": "release-provenance.sigstore.json",
-            "oci_signature": ANALYTICS_REPOSITORY + "@" + PINNED_DIGEST,
+            "oci_signature": ANALYTICS_REPOSITORY + "@" + expected_digest,
         }
         or receipt.get("registry") != APPROVED_OCI_ORIGIN
         or receipt.get("repository") != ANALYTICS_REPOSITORY
-        or receipt.get("tag") != PINNED_VERSION
-        or receipt.get("manifest_digest") != PINNED_DIGEST
+        or receipt.get("tag") != expected_version
+        or receipt.get("manifest_digest") != expected_digest
     ):
         raise AnalyticsSignedEvidenceError(ERROR)
     return manifest, provenance
 
 
-def verify_analytics_signed_evidence(
+def _verify_analytics_signed_evidence_with_expectation(
     evidence: dict[str, bytes], scanner_hashes: dict[str, str],
     blob_signatures: ReleaseBlobSignatureVerifier,
     oci_signatures: OCISignatureVerifier, *,
     received_at: int,
+    expected_version: str,
+    expected_platform_commit: str,
+    expected_digest: str,
+    expected_run_id: int,
+    selected: AnalyticsOwnerSourceSelection | None = None,
+    owner_approval: AnalyticsOwnerSignatureReceipt | None = None,
 ) -> AnalyticsSignedEvidenceReview:
-    """Apply the original Sigstore and OCI verifiers *before* source review.
+    """Apply original Sigstore and OCI checks to one exact read-only subject.
 
-    The caller must bind these collaborators to the original verified Task014
-    implementations in deployment/blob_verifier.py and oci_verifier.py.
-    Synthetic collaborators are acceptable ONLY in isolated regression tests.
+    This is NOT a privileged or cryptographically unforgeable authorization:
+    collaborator and receipt objects can be created by callers in tests.
+    Original installed 0.15.0 requires its unchanged hard-pin wrapper.
     """
     try:
         if (
@@ -302,14 +331,22 @@ def verify_analytics_signed_evidence(
                        for raw in evidence.values())
         ):
             raise ValueError("invalid signed evidence shape")
-        manifest, provenance = _signed_fields(evidence, scanner_hashes)
+        manifest, provenance = _signed_fields(
+            evidence, scanner_hashes,
+            expected_version=expected_version,
+            expected_platform_commit=expected_platform_commit,
+            expected_digest=expected_digest, expected_run_id=expected_run_id,
+        )
         # Preserve original Task014 signature-verifier invocation semantics.
         signer = blob_signatures.verify(
             evidence["release-manifest.json"], evidence["release-provenance.json"],
             evidence["release-manifest.sigstore.json"],
             evidence["release-provenance.sigstore.json"],
         )
-        oci = oci_signatures.verify(PINNED_IMAGE, received_at)
+        expected_image = (
+            f"oci-dev.omnilyzer.ai/{ANALYTICS_REPOSITORY}@{expected_digest}"
+        )
+        oci = oci_signatures.verify(expected_image, received_at)
         closed_object(
             signer,
             {"release_manifest_verified", "provenance_verified",
@@ -327,7 +364,7 @@ def verify_analytics_signed_evidence(
             or signer["issuer"] != EXPECTED_CERTIFICATE_ISSUER
             or oci["verified"] is not True
             or oci["repository"] != ANALYTICS_REPOSITORY
-            or oci["manifest_digest"] != PINNED_DIGEST
+            or oci["manifest_digest"] != expected_digest
             or oci["certificate_identity"] != EXPECTED_CERTIFICATE_IDENTITY
             or oci["issuer"] != EXPECTED_CERTIFICATE_ISSUER
         ):
@@ -337,26 +374,200 @@ def verify_analytics_signed_evidence(
         # This PromotionRequest is NOT a valid canary promotion and cannot be
         # sent to the canary-only original Task014 executor/broker.
         request = PromotionRequest(
-            1, PINNED_VERSION, PINNED_PLATFORM_COMMIT, ANALYTICS_REPOSITORY,
-            PINNED_DIGEST, PINNED_IMAGE, _sha(evidence["release-manifest.json"]),
-            _sha(evidence["release-provenance.json"]), PINNED_RUN_ID,
+            1, expected_version, expected_platform_commit, ANALYTICS_REPOSITORY,
+            expected_digest, expected_image, _sha(evidence["release-manifest.json"]),
+            _sha(evidence["release-provenance.json"]), expected_run_id,
             "dev", "analytics-signed-evidence-read-only",
         )
         claim = _verified_external_source_claim(manifest, provenance, request)
         if claim is None:
             raise ValueError("Analytics source attestation missing")
-        reviewed = review_signed_analytics_source(TrustedRelease(
-            PINNED_VERSION, PINNED_PLATFORM_COMMIT, ANALYTICS_REPOSITORY,
-            PINNED_DIGEST, PINNED_IMAGE, EXPECTED_RELEASE_WORKFLOW,
+        signed_source = TrustedRelease(
+            expected_version, expected_platform_commit, ANALYTICS_REPOSITORY,
+            expected_digest, expected_image, EXPECTED_RELEASE_WORKFLOW,
             EXPECTED_CERTIFICATE_IDENTITY, EXPECTED_CERTIFICATE_ISSUER, claim,
-        ))
+        )
+        if selected is None and owner_approval is None:
+            reviewed = review_signed_analytics_source(signed_source)
+        elif (
+            type(selected) is AnalyticsOwnerSourceSelection
+            and type(owner_approval) is AnalyticsOwnerSignatureReceipt
+        ):
+            reviewed = review_owner_selected_signed_analytics_source(
+                signed_source, selected=selected, owner_approval=owner_approval,
+            )
+        else:
+            raise ValueError("missing successor-source review")
         if reviewed.release_authorized or reviewed.deployment_authorized:
             raise ValueError("review must not authorize deployment")
         return AnalyticsSignedEvidenceReview(
-            PINNED_VERSION, PINNED_IMAGE, PINNED_RUN_ID,
+            expected_version, expected_image, expected_run_id,
             _sha(evidence["release-manifest.json"]),
             _sha(evidence["release-provenance.json"]), reviewed,
         )
+    except Exception:
+        raise AnalyticsSignedEvidenceError(ERROR) from None
+
+
+def verify_analytics_signed_evidence(
+    evidence: dict[str, bytes], scanner_hashes: dict[str, str],
+    blob_signatures: ReleaseBlobSignatureVerifier,
+    oci_signatures: OCISignatureVerifier, *,
+    received_at: int,
+) -> AnalyticsSignedEvidenceReview:
+    """Preserve original immutable 0.15.0 signature and source-review entry."""
+    return _verify_analytics_signed_evidence_with_expectation(
+        evidence, scanner_hashes, blob_signatures, oci_signatures,
+        received_at=received_at, expected_version=PINNED_VERSION,
+        expected_platform_commit=PINNED_PLATFORM_COMMIT,
+        expected_digest=PINNED_DIGEST, expected_run_id=PINNED_RUN_ID,
+    )
+
+
+def verify_owner_selected_analytics_signed_evidence(
+    evidence: dict[str, bytes], scanner_hashes: dict[str, str],
+    blob_signatures: ReleaseBlobSignatureVerifier,
+    oci_signatures: OCISignatureVerifier, *,
+    received_at: int,
+    selected: AnalyticsOwnerSourceSelection,
+    owner_approval: AnalyticsOwnerSignatureReceipt,
+) -> AnalyticsSignedEvidenceReview:
+    """Read-only successor check using the original Sigstore/OCI verifiers.
+
+    The manifest digest and run ID come from evidence, not a caller-selected
+    digest. Original signature verification below must authenticate all
+    manifest/provenance fields and image reference. Owner approval is only a
+    public receipt type here: root-controlled verification remains mandatory
+    in a FUTURE privileged Task014 consumer. Never treat result as authority.
+    """
+    try:
+        if (
+            type(selected) is not AnalyticsOwnerSourceSelection
+            or type(owner_approval) is not AnalyticsOwnerSignatureReceipt
+            or type(evidence) is not dict
+            or set(evidence) != _SIGNED_FILES | _SOURCE_FILES
+            or not all(
+                type(raw) is bytes and 0 < len(raw) <= _MAX_EVIDENCE_BYTES
+                for raw in evidence.values()
+            )
+        ):
+            raise ValueError("invalid successor source shape")
+        manifest = _json(evidence["release-manifest.json"], _MANIFEST_FIELDS, schema=1)
+        provenance = _json(
+            evidence["release-provenance.json"], _PROVENANCE_FIELDS, schema=1,
+        )
+        digest = validate_digest(manifest["oci"]["manifest_digest"])
+        run_id = provenance["execution"]["run_id"]
+        if type(run_id) is not int or not 0 < run_id <= 2**63 - 1:
+            raise ValueError("invalid originating run ID")
+        return _verify_analytics_signed_evidence_with_expectation(
+            evidence, scanner_hashes, blob_signatures, oci_signatures,
+            received_at=received_at,
+            expected_version=selected.release_version,
+            expected_platform_commit=selected.platform_workflow_commit,
+            expected_digest=digest, expected_run_id=run_id,
+            selected=selected, owner_approval=owner_approval,
+        )
+    except Exception:
+        raise AnalyticsSignedEvidenceError(ERROR) from None
+
+
+# Section 3b: the successor review must obtain the selection and approval
+# from the actual root-controlled signer authority, not a public receipt.
+def review_owner_approved_analytics_signed_evidence(
+    evidence: dict[str, bytes],
+    scanner_hashes: dict[str, str],
+    blob_signatures: ReleaseBlobSignatureVerifier,
+    oci_signatures: OCISignatureVerifier, *,
+    received_at: int,
+    approval_file: Path,
+    signature_file: Path,
+) -> AnalyticsSignedEvidenceReview:
+    """Verify real detached owner approval before original signed evidence.
+
+    The owner source is derived exclusively from canonical approval bytes
+    checked with the independently root-controlled signer anchor. This avoids
+    accepting an arbitrary constructible owner-review dataclass as authority.
+    Original Sigstore, Cosign, source/profile and zero-high scanner checks
+    still run unchanged. The output remains a read-only review: this function
+    does not authorize OIDC, installation, replay or traffic cutover.
+    """
+    try:
+        selected, owner = load_and_verify_owner_signed_source(
+            approval_file, signature_file,
+        )
+        return verify_owner_selected_analytics_signed_evidence(
+            evidence, scanner_hashes, blob_signatures, oci_signatures,
+            received_at=received_at, selected=selected, owner_approval=owner,
+        )
+    except Exception:
+        raise AnalyticsSignedEvidenceError(ERROR) from None
+
+
+def acquire_and_review_owner_approved_analytics_release(
+    zot_provider: ZotCredentialProvider,
+    forgejo_provider: ForgejoCredentialProvider,
+    blob_signatures: ReleaseBlobSignatureVerifier,
+    oci_signatures: OCISignatureVerifier, *,
+    received_at: int,
+    approval_file: Path,
+    signature_file: Path,
+    zot_factory=_connection,
+    forgejo_factory=_connection,
+) -> AnalyticsSignedEvidenceReview:
+    """Use original authenticated registry readers for a signed successor.
+
+    Exact version and workflow/source identities come ONLY from an independently
+    trusted owner signature, never a mutable tag or deployment request.
+    The manifest digest comes from verified original release evidence and is
+    read back from Zot by immutable SHA256, using existing TLS/credential rules.
+    This is a read-only review, not broker/executor/rollout authorization.
+    """
+    try:
+        selected, owner = load_and_verify_owner_signed_source(
+            approval_file, signature_file,
+        )
+        forgejo_token = _credential(
+            forgejo_provider.forgejo_read_credential(),
+            ForgejoReadCredential, received_at,
+        )
+        archive, _ = _get(
+            "forgejo", selected.release_version, forgejo_token,
+            forgejo_factory, product="analytics",
+        )
+        evidence, scanner_hashes = _analytics_archive(archive)
+        checked = verify_owner_selected_analytics_signed_evidence(
+            evidence, scanner_hashes, blob_signatures, oci_signatures,
+            received_at=received_at, selected=selected, owner_approval=owner,
+        )
+        if (
+            checked.release_version != selected.release_version
+            or checked.source.source_commit != selected.source_commit
+            or checked.deployment_authorized is not False
+        ):
+            raise ValueError("source review mismatch")
+        digest = checked.source.oci_manifest_digest
+        zot_token = _credential(
+            zot_provider.zot_read_credential(), ZotReadCredential, received_at,
+        )
+        body, headers = _get(
+            "zot", digest, zot_token, zot_factory, product="analytics",
+        )
+        if (
+            headers.get("docker-content-digest") != digest
+            or "sha256:" + _sha(body) != digest
+        ):
+            raise ValueError("published OCI bytes differ from signed subject")
+        manifest = _json(
+            body, frozenset({"schemaVersion", "mediaType", "config", "layers"}),
+            schema=None,
+        )
+        if (
+            manifest["schemaVersion"] != 2
+            or manifest["mediaType"] != OCI_MEDIA_TYPE
+        ):
+            raise ValueError("invalid OCI media type")
+        return checked
     except Exception:
         raise AnalyticsSignedEvidenceError(ERROR) from None
 

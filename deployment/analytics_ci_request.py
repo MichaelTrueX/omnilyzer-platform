@@ -1,26 +1,31 @@
 """File: deployment/analytics_ci_request.py
 
-Purpose: Select exactly the signed Analytics 0.15.0 Task014 schema-v2 DEV
-         request from the EXISTING GitHub workflow_dispatch CI job.
+Purpose: Preserve the immutable signed Analytics 0.15.0 Task014 schema-v2
+         CI request and prepare an inert reviewed-successor schema-v3 request.
+         Neither CI serialization path is a signer or a deployment grant.
 Related: .github/workflows/platform-promote.yml (original canary default),
          deployment/analytics_execution.py (closed request parser),
          deployment/ci_oidc_diagnostics.py (unverified JWT diagnostics),
          deployment/analytics_signed_release_consumer.py (pinned release),
          deployment/tests/test_analytics_ci_request.py.
 
-Sections: exact dispatch preflight; optional authenticated private metadata
-          lookup; unverified bounded identity projection; canonical request.
+Sections: immutable original dispatch preflight, optional private metadata
+          lookup, strict CI JWT projection, original canonical request;
+          successor source/slot preflight, private Forgejo metadata projection,
+          and canonical future request matching the independent schema-v3 parser.
 
-SECURITY: CI decoding of a JWT NEVER authenticates it or grants a deployment.
-Only the existing protected Task014 broker independently verifies three OIDC
-audiences, signed Zot/Forgejo/Cosign release, root-owned source and replay.
-The optional metadata lookup reuses only the existing short-lived Forgejo
-audience to read one pinned package. It does not send a broker request, read
-host secrets, install source or expose a route. Canary creation is unchanged.
+SECURITY: CI decoding a JWT or reading private Forgejo metadata NEVER
+authenticates the signer, owner key or active server. The root-owned Task014
+broker must independently verify ALL OIDC audiences, Ed25519 approval,
+Sigstore/Cosign, current active release and replay before an executor action.
+The successor path is NOT wired to the active promotion workflow. No broker
+request, host secret, Docker, database or public route is touched here.
+Canary and original Analytics 0.15.0 dispatch behavior are unchanged.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -30,6 +35,9 @@ from typing import Mapping
 from .analytics_execution import (
     ANALYTICS_COMPOSE_PATH, ANALYTICS_FIRST_PORT, ANALYTICS_NETWORK,
     ANALYTICS_REQUEST_SCHEMA, ANALYTICS_ROLLBACK_MODE,
+    ANALYTICS_SUCCESSOR_SCHEMA, ANALYTICS_PRIVATE_SLOT_PORTS,
+    ANALYTICS_SUCCESSOR_CANDIDATE_PORT,
+    ANALYTICS_UPGRADE_ROLLBACK_MODE,
     ANALYTICS_SECRETS_DIRECTORY, parse_analytics_request,
     AnalyticsRequestError,
 )
@@ -313,6 +321,243 @@ def build_analytics_ci_request(
             reviewed_runtime_profile_sha256=runtime_sha,
         )
         if parsed.canonical_bytes() != raw:
+            raise ValueError
+        return raw
+    except _CONTROL:
+        raise
+    except Exception:
+        raise AnalyticsCIDispatchError(_ERROR) from None
+
+
+# Section 4: ordinary successor CI bytes, no source/release pins.
+# The original v2 builder above remains fixed for signed 0.15.0. This
+# companion is purely a CI projection: it cannot independently authenticate
+# an owner signature, active server, JWT, Forgejo archive, or OCI image.
+_SUCCESSOR_INPUT_FIELDS = (
+    "ANALYTICS_PRODUCT_SOURCE_SHA",
+    "ANALYTICS_OWNER_APPROVAL_SHA256",
+    "ANALYTICS_ACTIVE_DIGEST",
+    "ANALYTICS_ACTIVE_SLOT",
+)
+_SEMVER = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
+
+
+def validate_analytics_successor_ci_inputs(
+    environment: Mapping[str, str], *, allow_metadata_resolution: bool = False,
+) -> dict[str, str]:
+    """Require complete future release and prior-slot inputs, NEVER authority.
+
+    The actual ROOT-owned broker must separately bind all request fields to
+    actual signed Task013 evidence, owner Ed25519 approval, real observed
+    active image/slot and original Task014 OIDC/replay before deployment.
+    """
+    try:
+        if (
+            not isinstance(environment, Mapping)
+            or type(allow_metadata_resolution) is not bool
+        ):
+            raise ValueError
+        data = {
+            key: environment.get(key)
+            for key in (*_REQUIRED_INPUTS, *_SUCCESSOR_INPUT_FIELDS)
+        }
+        if (
+            environment.get("TASK014_PRODUCT") != "analytics"
+            or environment.get("TARGET_STAGE") != "dev"
+            or environment.get("GITHUB_REPOSITORY") != DEV_REPOSITORY
+            or environment.get("GITHUB_REF") != DEV_REF
+            or environment.get("GITHUB_EVENT_NAME") != DEV_EVENT_NAME
+            or type(data["RELEASE_VERSION"]) is not str
+            or _SEMVER.fullmatch(data["RELEASE_VERSION"]) is None
+            or tuple(map(int, data["RELEASE_VERSION"].split("."))) <= (0, 15, 0)
+            or data["ANALYTICS_PRODUCT_SOURCE_SHA"] == SOURCE_COMMIT
+            or data["ANALYTICS_ACTIVE_SLOT"] not in ANALYTICS_PRIVATE_SLOT_PORTS
+            or _decimal(data["ORIGINATING_RELEASE_RUN_ID"]) == PINNED_RUN_ID
+        ):
+            raise ValueError
+        for key in (
+            "SOURCE_SHA", "ANALYTICS_PRODUCT_SOURCE_SHA",
+            "ANALYTICS_INSTALLED_COMMIT",
+        ):
+            _hash(data[key], 40)
+        unresolved = all(data[key] == "" for key in _METADATA_INPUTS)
+        if not (allow_metadata_resolution and unresolved):
+            for name in _METADATA_INPUTS:
+                _hash(data[name])
+        _hash(data["ANALYTICS_OWNER_APPROVAL_SHA256"])
+        for name in ("MANIFEST_DIGEST", "ANALYTICS_ACTIVE_DIGEST"):
+            digest = data[name]
+            if (
+                type(digest) is not str
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+                or digest == "sha256:" + "0" * 64
+            ):
+                raise ValueError
+        if (
+            data["MANIFEST_DIGEST"] in (PINNED_DIGEST, data["ANALYTICS_ACTIVE_DIGEST"])
+            or data["ANALYTICS_OWNER_APPROVAL_SHA256"] == "0" * 64
+        ):
+            raise ValueError
+        return data
+    except _CONTROL:
+        raise
+    except Exception:
+        raise AnalyticsCIDispatchError(_ERROR) from None
+
+
+def resolve_analytics_successor_ci_release_inputs(
+    *, environment: Mapping[str, str], forgejo_oidc_token: str,
+) -> dict[str, str]:
+    """Resolve three optional hashes from one exact private Forgejo release.
+
+    The archive is only an UNTRUSTED CI metadata source. The root broker
+    MUST independently re-download the release, check owner Ed25519,
+    Sigstore/Cosign and actual active state before any replay/transport.
+    """
+    try:
+        chosen = validate_analytics_successor_ci_inputs(
+            environment, allow_metadata_resolution=True,
+        )
+        result = dict(environment)
+        if all(chosen[key] for key in _METADATA_INPUTS):
+            return result
+        if (
+            type(forgejo_oidc_token) is not str
+            or not 0 < len(forgejo_oidc_token) <= 8192
+            or not forgejo_oidc_token.isascii()
+            or any(ord(char) < 33 or ord(char) > 126
+                   for char in forgejo_oidc_token)
+            or _decode_untrusted(forgejo_oidc_token).get("aud")
+            != "u:3:d4f50b90-f001-4b9f-ad1e-487080ec44fb"
+        ):
+            raise ValueError
+        from .release_consumer import _get, _connection
+        from .analytics_signed_release_consumer import (
+            _analytics_archive, _signed_fields,
+        )
+
+        archive, _headers = _get(
+            "forgejo", chosen["RELEASE_VERSION"], forgejo_oidc_token,
+            _connection, product="analytics",
+        )
+        evidence, scanner_hashes = _analytics_archive(archive)
+        manifest, _provenance = _signed_fields(
+            evidence, scanner_hashes,
+            expected_version=chosen["RELEASE_VERSION"],
+            expected_platform_commit=chosen["SOURCE_SHA"],
+            expected_digest=chosen["MANIFEST_DIGEST"],
+            expected_run_id=_decimal(chosen["ORIGINATING_RELEASE_RUN_ID"]),
+        )
+        claim = manifest["external_source"]
+        if (
+            type(claim) is not dict or claim.get("schema_version") != 2
+            or type(claim.get("schema_version")) is not int
+            or claim.get("source_commit") != chosen["ANALYTICS_PRODUCT_SOURCE_SHA"]
+            or claim.get("owner_approval_sha256")
+                != chosen["ANALYTICS_OWNER_APPROVAL_SHA256"]
+            or claim.get("platform_source_commit") != chosen["SOURCE_SHA"]
+            or claim.get("oci_manifest_digest") != chosen["MANIFEST_DIGEST"]
+            or claim.get("release_version") != chosen["RELEASE_VERSION"]
+        ):
+            raise ValueError
+        result.update({
+            "RELEASE_MANIFEST_SHA256": hashlib.sha256(
+                evidence["release-manifest.json"],
+            ).hexdigest(),
+            "PROVENANCE_SHA256": hashlib.sha256(
+                evidence["release-provenance.json"],
+            ).hexdigest(),
+            "ANALYTICS_SOURCE_CLAIM_SHA256": hashlib.sha256(
+                canonical_bytes(claim),
+            ).hexdigest(),
+        })
+        validate_analytics_successor_ci_inputs(result)
+        return result
+    except _CONTROL:
+        raise
+    except Exception:
+        raise AnalyticsCIDispatchError(_ERROR) from None
+
+
+def build_analytics_successor_ci_request(
+    *, deployment_oidc_token: str, environment: Mapping[str, str],
+) -> bytes:
+    """Build canonical schema-3 CI request; does not authorize deployment.
+
+    Reuse the original strict CI JWT projection, reviewed runtime/secrets and
+    OIDC metadata, then substitute the owner-selected successor identities.
+    This does not authenticate the CI inputs or owner key. The root-owned
+    broker must obtain and check actual signatures and current slot state.
+    """
+    try:
+        future = validate_analytics_successor_ci_inputs(environment)
+        # The pinned original CI path is deliberately reused as a *template*
+        # for immutable runtime/secret and original unverified JWT controls.
+        # No synthetic data are sent or trusted. This is local CI formatting.
+        baseline = {
+            **environment,
+            "RELEASE_VERSION": PINNED_VERSION,
+            "SOURCE_SHA": PINNED_PLATFORM_COMMIT,
+            "MANIFEST_DIGEST": PINNED_DIGEST,
+            "ORIGINATING_RELEASE_RUN_ID": str(PINNED_RUN_ID),
+        }
+        base_raw = build_analytics_ci_request(
+            deployment_oidc_token=deployment_oidc_token,
+            environment=baseline,
+        )
+        request = json.loads(base_raw.decode("ascii"))
+        active_slot = future["ANALYTICS_ACTIVE_SLOT"]
+        opposite = "green" if active_slot == "blue" else "blue"
+        image = (
+            "oci-dev.omnilyzer.ai/omnilyzer/analytics@"
+            + future["MANIFEST_DIGEST"]
+        )
+        request.update({
+            "schema_version": ANALYTICS_SUCCESSOR_SCHEMA,
+            "release_version": future["RELEASE_VERSION"],
+            "source_sha": future["SOURCE_SHA"],
+            "product_source_sha": future["ANALYTICS_PRODUCT_SOURCE_SHA"],
+            "source_claim_sha256": future["ANALYTICS_SOURCE_CLAIM_SHA256"],
+            "owner_approval_sha256": future["ANALYTICS_OWNER_APPROVAL_SHA256"],
+            "manifest_digest": future["MANIFEST_DIGEST"],
+            "exact_image_reference": image,
+            "release_manifest_sha256": future["RELEASE_MANIFEST_SHA256"],
+            "provenance_sha256": future["PROVENANCE_SHA256"],
+            "originating_release_run_id": _decimal(
+                future["ORIGINATING_RELEASE_RUN_ID"]
+            ),
+            "ingress_reference": {
+                "kind": "private-no-public-ingress",
+                "slot": opposite,
+                "loopback_address": "127.0.0.1",
+                "loopback_port": ANALYTICS_SUCCESSOR_CANDIDATE_PORT,
+                "backend_network": ANALYTICS_NETWORK,
+                "public_origin": None,
+                "active_slot": active_slot,
+            },
+            "rollback_reference": {
+                "kind": ANALYTICS_UPGRADE_ROLLBACK_MODE,
+                "previous_digest": future["ANALYTICS_ACTIVE_DIGEST"],
+                "previous_slot": active_slot,
+                "preserve_database_writes": True,
+            },
+        })
+        intent = canonical_bytes({
+            "product_id": "analytics",
+            "release_version": future["RELEASE_VERSION"],
+            "source_sha": future["SOURCE_SHA"],
+            "image": image,
+            "run_id": request["github_run_id"],
+            "run_attempt": request["github_run_attempt"],
+            "release_manifest_sha256": future["RELEASE_MANIFEST_SHA256"],
+            "provenance_sha256": future["PROVENANCE_SHA256"],
+            "source_claim_sha256": future["ANALYTICS_SOURCE_CLAIM_SHA256"],
+            "owner_approval_sha256": future["ANALYTICS_OWNER_APPROVAL_SHA256"],
+            "previous_digest": future["ANALYTICS_ACTIVE_DIGEST"],
+        })
+        request["promotion_request_sha256"] = hashlib.sha256(intent).hexdigest()
+        raw = canonical_bytes(request)
+        if not 0 < len(raw) <= _MAX_BODY:
             raise ValueError
         return raw
     except _CONTROL:

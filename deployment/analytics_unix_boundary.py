@@ -20,17 +20,22 @@ No general-purpose pluggable route or generic framework is introduced.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from .analytics_execution import (
     MAX_ANALYTICS_REQUEST_BYTES, parse_analytics_request,
 )
 from .analytics_executor import AnalyticsPrivilegedExecutor
 from .analytics_signed_release_consumer import PINNED_IMAGE
 from .executor_server import UnixExecutorConnectionHandler
+from .executor import ExecutorRejectedError, EXECUTOR_REJECTED_MESSAGE
 from .executor_listener import (
     UnixExecutorListener, PRODUCTION_EXECUTOR_SOCKET_PATH as CANARY_LISTENER_PATH,
 )
 from .execution import parse_canonical_request
-from .private_registry_fd import read_sealed_credential
+from .private_registry_fd import (
+    _successor_request_image, read_sealed_credential,
+)
 from .unix_transport import (
     PRODUCTION_EXECUTOR_SOCKET_PATH, UnixExecutorTransport, _validate_path,
     ExecutorTransportUnavailableError, TRANSPORT_UNAVAILABLE_MESSAGE,
@@ -118,6 +123,32 @@ class AnalyticsUnixExecutorTransport(UnixExecutorTransport):
             TRANSPORT_UNAVAILABLE_MESSAGE
         ) from None
 
+    def _send_analytics_successor_private(
+        self, canonical_request: bytes, *, credential_fd: int,
+    ) -> bytes:
+        """Carry only a structurally scoped successor on the ORIGINAL socket.
+
+        This method is not used by the installed broker and does not grant
+        deployment. The receiving schema-2 executor will still reject it
+        before replay. Only an independently reviewed successor receiver
+        may subsequently be enabled with the owner/OIDC/source trust chain.
+        """
+        try:
+            image = _successor_request_image(canonical_request)
+            read_sealed_credential(
+                credential_fd, canonical_request=canonical_request,
+                image=image, product_id="analytics-successor",
+            )
+        except _CONTROL:
+            raise
+        except Exception:
+            raise ExecutorTransportUnavailableError(
+                TRANSPORT_UNAVAILABLE_MESSAGE
+            ) from None
+        return UnixExecutorTransport._send(
+            self, canonical_request, credential_fd=credential_fd,
+        )
+
     def _send_analytics_private(
         self, canonical_request: bytes, *, credential_fd: int,
     ) -> bytes:
@@ -154,8 +185,17 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
         expected_broker_uid: int, expected_broker_gid: int,
         reviewed_installed_source: dict[str, str],
         timeout_ms: int = 3000,
+        structural_successor_receive_only: bool = False,
     ) -> None:
-        """Capture exact Analytics parser/FD at construction, never per-call."""
+        """Capture exact Analytics parser/FD at construction, never per-call.
+
+        The explicit structural successor mode is an inert transport test
+        boundary ONLY. It cannot change executor behavior or deploy a
+        successor: the original schema-2 executor rejects it before replay.
+        It must never be installed as a schema-3 deployment receiver.
+        """
+        if type(structural_successor_receive_only) is not bool:
+            raise TypeError("invalid successor receive boundary")
         if type(executor) is not AnalyticsPrivilegedExecutor:
             raise TypeError("Analytics receiver must have exact executor type")
         source = _root_reviewed_source(reviewed_installed_source)
@@ -184,9 +224,38 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
                 image=image, product_id="analytics",
             )
 
+        def parse_successor(raw: bytes):
+            """Return only exact request/image scope, never signed authority."""
+            return SimpleNamespace(
+                exact_image_reference=_successor_request_image(raw),
+            )
+
+        def read_successor(fd: int, *, canonical_request: bytes, image: str):
+            """Revalidate the exact future kernel-sealed analytics-only FD."""
+            return read_sealed_credential(
+                fd, canonical_request=canonical_request,
+                image=image, product_id="analytics-successor",
+            )
+
+        def reject_successor(
+            canonical_request: bytes, *, credential_fd: int,
+        ) -> bytes:
+            """NEVER delegate probe-only successor input to any executor.
+
+            This must remain a hard denial even if the original executor
+            later gains real successor support. The real signed release
+            receiver needs separate owner-approved source and replay gating.
+            """
+            raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE)
+
         settings[13] = MAX_ANALYTICS_REQUEST_BYTES
-        settings[30] = read_analytics
-        settings[31] = parse_analytics
+        if structural_successor_receive_only:
+            settings[0] = reject_successor
+            settings[30] = read_successor
+            settings[31] = parse_successor
+        else:
+            settings[30] = read_analytics
+            settings[31] = parse_analytics
         object.__setattr__(self, "_configuration", tuple(settings))
 
 
