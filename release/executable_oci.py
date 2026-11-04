@@ -12,7 +12,7 @@ import tarfile
 from typing import Any
 
 
-BASE_IMAGE_DIGEST = "sha256:549f3ba5e588ebab80dcf5a5a3536aa7f4b5c384bc6955c0347d372414197386"
+BASE_IMAGE_DIGEST = "sha256:31dd69d84fe5235fe18f8ceb5b76620e6f44a0ce1f9b0d3a46c491576f8b453b"
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 SEMVER_RE = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")

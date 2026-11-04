@@ -440,8 +440,64 @@ RestrictNamespaces=yes
             self.control.stop_and_confirm()
             fixed_parent.rmdir();Path('/run/omnilyzer').rmdir()
         self.addCleanup(remove_fixed)
-        package = self.base / 'package';package.mkdir(mode=0o755)
-        shutil.copytree(Path(__file__).resolve().parents[1], package / 'deployment', ignore=shutil.ignore_patterns('tests', '__pycache__'))
+        # Native fixture must import the SAME independently checked V2
+        # source graph as the isolated Task014 installer. Copying the mutable
+        # development deployment/ directory omits owner-signature modules and
+        # falsely tests an unreviewed Python import graph.
+        from deployment.analytics_source_handoff import (
+            review_analytics_successor_source_handoff,
+            _SHARED_BASE_COMMIT, _SHARED_PREIMAGE_COMMITS,
+        )
+        from deployment.analytics_source_archive import (
+            build_analytics_successor_source_archive,
+        )
+        from deployment.analytics_isolated_source_install import (
+            _review_and_combine,
+        )
+        from deployment.application_source_set import DevApplicationSourceSet
+        from deployment import application_manifest as git_source
+        import hashlib
+
+        repository = Path(__file__).resolve().parents[2]
+        reviewed_commit = subprocess.check_output(
+            ['/usr/bin/git', '-C', str(repository), 'rev-parse', 'HEAD'],
+            text=True, timeout=10,
+        ).strip()
+        source_manifest = review_analytics_successor_source_handoff(
+            repository_root=str(repository), reviewed_commit=reviewed_commit,
+        )
+        archive = build_analytics_successor_source_archive(
+            repository_root=str(repository), reviewed_commit=reviewed_commit,
+        )
+        historic = {}
+        for entry in DevApplicationSourceSet().files:
+            path = entry.repository_path
+            commit = _SHARED_PREIMAGE_COMMITS.get(path, _SHARED_BASE_COMMIT)
+            record = git_source._tree(git_source._output(
+                str(repository),
+                ('ls-tree', '-r', '-z', '--full-tree', commit, '--', path),
+                8192,
+            ), (path,))
+            historic[path] = git_source._output(
+                str(repository), ('cat-file', 'blob', record[0][1]),
+                1024 * 1024,
+            )
+        verified_sources = _review_and_combine(
+            historic, archive,
+            manifest_sha=hashlib.sha256(source_manifest).hexdigest(),
+            reviewed_commit=reviewed_commit, successor_source=True,
+        )
+        self.assertEqual(len(verified_sources), 73)
+        package = self.base / 'package'
+        package.mkdir(mode=0o755)
+        for path, source in verified_sources:
+            target = package / path
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+            target.write_bytes(source)
+            target.chmod(0o644)
+        self.assertTrue(
+            (package / 'release/analytics_owner_source_selection.py').is_file()
+        )
         request = self.base / 'request.json';request.write_bytes(canonical_bytes(fixture()));request.chmod(0o644)
         policy = self.base / 'expected.json';policy.write_text(json.dumps(EXPECTED));policy.chmod(0o644)
         worker = self.base / 'sealed-worker.py'

@@ -139,6 +139,38 @@ The original root-only installed entrypoint still accepts ONLY the
 original schema1 approval and 70-file path. V2 is not silently
 enabled in existing host configuration.
 
+**Follow-up C34D native systemd fixture, PR282 run 41761101143:** The
+earlier source-closure and isolated package stages PASS on the exact
+GitHub V2 snapshot, but the native systemd255 PID1 Unix/SCM_RIGHTS
+receiver test still failed because its *separate fixture* used
+`shutil.copytree(deployment)` and omitted the attested release owner
+module. The native fixture now derives its complete 73-file source
+graph from the SAME immutable Git-object V2 manifest/archive and
+`_review_and_combine` source-preimage verifier, rather than granting
+any ambient PYTHONPATH or copying an unreviewed release module.
+The original actual Unix socket, PID1 authentication, sealed FD,
+UID/GID and systemd lifecycle assertions remain unchanged. The
+portable isolated-process source/import regression confirms that the
+new native fixture's owner-release import is available; **the
+privileged native systemd255 GitHub CI job must still independently
+PASS on this exact follow-up source commit**.
+
+**Task013 Canary review-only dependency security repair:** The
+separate no-publish PR282 run 41761101200 again FAILS the unchanged
+zero Critical/High policy due the previously pinned Chainguard
+Python 3.15.1 / py3-pip-wheel / libexpat1 OCI base. The actual
+sanitized Grype denial evidence confirms six blocked OCI findings.
+The Dockerfile, canary OCI verifier and unit-test expected pin now
+propose the exact SHA256-verified 2026-11-04 public Chainguard Python
+index digest
+`sha256:31dd69d84fe5235fe18f8ceb5b76620e6f44a0ce1f9b0d3a46c491576f8b453b`.
+The historical October digest and evidence remain in
+`release/README.md` with a separate dated November review log.
+No latest tag is used at build time. This is NOT vulnerability
+acceptance until new no-publish Syft/Grype PASS and independent
+Cosign Chainguard publisher/issuer verification. Policy and allowed
+exceptions remain unchanged.
+
 **Still HARD HOLD:** No root-approved V2 source-install approval schema
 or exact installed UID/GID manifest has been activated. Protected
 Analytics broker/executor still admit only original schema2/0.15.0.

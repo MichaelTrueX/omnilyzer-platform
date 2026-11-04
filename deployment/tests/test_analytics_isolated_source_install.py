@@ -197,10 +197,15 @@ class IsolatedSourceGenerationTests(unittest.TestCase):
             "import deployment.analytics_broker_service_entrypoint as b; "
             "import deployment.analytics_executor_service_entrypoint as e; "
             "import deployment.analytics_signed_source_pin as p; "
+            "import deployment.analytics_unix_boundary as u; "
+            "import release.analytics_owner_source_selection as s; "
             "from pathlib import Path; "
             "assert Path(b.__file__).resolve().parents[1] == Path.cwd(); "
             "assert Path(e.__file__).resolve().parents[1] == Path.cwd(); "
+            "assert Path(u.__file__).resolve().parents[1] == Path.cwd(); "
+            "assert Path(s.__file__).resolve().parents[1] == Path.cwd(); "
             "assert p._load_pinned_source()['product'] == 'analytics'; "
+            "assert hasattr(u, 'AnalyticsUnixExecutorTransport'); "
             "print('ISOLATED_BROKER_EXECUTOR_IMPORT_OK')"
         )
         result = subprocess.run(

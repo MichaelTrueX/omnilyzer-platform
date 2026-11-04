@@ -304,7 +304,7 @@ def _oci_archive(path: Path, mutate=None) -> str:
 class ImageAndPipelineTests(unittest.TestCase):
     def test_dockerfile_is_digest_pinned_and_has_non_root_runtime_contract(self) -> None:
         dockerfile = (CANARY / "Dockerfile").read_text()
-        self.assertEqual(BASE_IMAGE_DIGEST, "sha256:549f3ba5e588ebab80dcf5a5a3536aa7f4b5c384bc6955c0347d372414197386")
+        self.assertEqual(BASE_IMAGE_DIGEST, "sha256:31dd69d84fe5235fe18f8ceb5b76620e6f44a0ce1f9b0d3a46c491576f8b453b")
         self.assertEqual(dockerfile.splitlines()[0], f"FROM cgr.dev/chainguard/python@{BASE_IMAGE_DIGEST}")
         self.assertNotIn("cgr.dev/chainguard/python:", dockerfile)
         self.assertNotRegex(dockerfile, r"(?im)^\s*RUN\b")
@@ -436,8 +436,12 @@ class ImageAndPipelineTests(unittest.TestCase):
             with self.subTest(legacy_job=name):
                 legacy = dict(workflow["jobs"][name])
                 if name == "gate":
+                    # The original canary job is only MORE restrictive:
+                    # successor-only owner signature inputs must be empty.
+                    # Removing this admission wrapper reproduces the exact
+                    # historical protected job's original byte hash.
                     self.assertEqual(legacy.pop("if"),
-                                     "${{ inputs.auth_probe == false && inputs.product == 'canary' }}")
+                                     "${{ inputs.auth_probe == false && inputs.product == 'canary' && inputs.analytics_source_sha == '' && inputs.analytics_owner_signature_base64 == '' }}")
                 encoded = json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
                 self.assertEqual(hashlib.sha256(encoded).hexdigest(), expected_hash)
 
