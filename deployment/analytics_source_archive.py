@@ -1,7 +1,8 @@
 """File: deployment/analytics_source_archive.py
 
-Purpose: Build and verify ONE deterministic unsigned Task014 Analytics additive
-         source archive containing the reviewed 32-file Git-object handoff (27 new + 5 shared patches).
+Purpose: Build and independently verify historical exact 32-entry Task014
+         Analytics unsigned source archive and a separate exact 35-entry
+         Task14B successor V2 archive with three additional Git modules.
 Related: deployment/analytics_source_handoff.py (original C26 Git-object
          evidence), deployment/analytics_executor_service_config.py (closed
          exact service source set), deployment/application_manifest.py (Git
@@ -279,8 +280,263 @@ def verify_analytics_source_archive(
         raise AnalyticsSourceArchiveError(_ERROR) from None
 
 
+# Section 4: an explicitly separate, complete unsigned source-generation-2
+# review archive. Never broaden the 32-entry accepted historical schema-1
+# source handoff or its original 0.15.0 installation/approval path.
+_V2_MANIFEST_LIMIT = 32768
+_V2_COUNT = 35
+
+
+def _validate_successor_manifest(
+    raw: bytes, *, expected_sha256: str, reviewed_commit: str,
+) -> dict[str, object]:
+    """Require both original V1 and exact three additional V2 source hashes."""
+    from .analytics_executor_service_config import (
+        ANALYTICS_INSTALLED_FILES, ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+        _INSTALLED_RUNTIME_FILES,
+    )
+    from .analytics_source_handoff import _ADDITIVE_UNITS
+
+    def unique(pairs):
+        """Reject duplicate fields, including nested original source metadata."""
+        result = {}
+        for name, value in pairs:
+            if type(name) is not str or name in result:
+                raise ValueError
+            result[name] = value
+        return result
+
+    if (
+        type(raw) is not bytes or not 0 < len(raw) <= _V2_MANIFEST_LIMIT
+        or type(expected_sha256) is not str
+        or _SHA_RE.fullmatch(expected_sha256) is None
+        or hashlib.sha256(raw).hexdigest() != expected_sha256
+    ):
+        raise ValueError
+    obj = json.loads(
+        raw.decode("ascii"), object_pairs_hook=unique,
+        parse_constant=lambda _: (_ for _ in ()).throw(ValueError),
+    )
+    if (
+        type(obj) is not dict or set(obj) != {
+            "schema_version", "purpose", "source_commit",
+            "source_file_count", "source_entries", "baseline_review",
+            "deployment_authorized", "signed_release_authorized",
+        }
+        or type(obj["schema_version"]) is not int
+        or obj["schema_version"] != 2
+        or obj["purpose"] != "analytics-task014-successor-source-review-only"
+        or obj["source_commit"] != reviewed_commit
+        or type(obj["source_file_count"]) is not int
+        or obj["source_file_count"] != _V2_COUNT
+        or obj["deployment_authorized"] is not False
+        or obj["signed_release_authorized"] is not False
+        or type(obj["source_entries"]) is not list
+        or len(obj["source_entries"]) != _V2_COUNT
+        or canonical_bytes(obj) != raw
+    ):
+        raise ValueError
+    base_raw = canonical_bytes(obj["baseline_review"])
+    base = _validate_manifest(
+        base_raw, hashlib.sha256(base_raw).hexdigest(), reviewed_commit,
+    )
+    original_names = tuple(
+        entry["path"] for entry in base["source_entries"]
+    )
+    extras = set(ANALYTICS_SUCCESSOR_INSTALLED_FILES) - set(ANALYTICS_INSTALLED_FILES)
+    expected_names = tuple(sorted((
+        *ANALYTICS_INSTALLED_FILES, *extras, *_INSTALLED_RUNTIME_FILES,
+        *_ADDITIVE_UNITS, *_SHARED_COMPATIBILITY_FILES,
+    )))
+    if (
+        len(extras) != 3 or len(expected_names) != _V2_COUNT
+        or len(set(expected_names)) != _V2_COUNT
+        or len(original_names) != 32
+        or tuple(item["path"] for item in obj["source_entries"]) != expected_names
+    ):
+        raise ValueError
+    unchanged = {entry["path"]: entry for entry in base["source_entries"]}
+    for item in obj["source_entries"]:
+        if (
+            type(item) is not dict
+            or set(item) != {"path", "mode", "sha256"}
+            or item["mode"] != "0644"
+            or type(item["sha256"]) is not str
+            or _SHA_RE.fullmatch(item["sha256"]) is None
+            or (
+                item["path"] in unchanged
+                and item != unchanged[item["path"]]
+            )
+        ):
+            raise ValueError
+    return obj
+
+
+def build_analytics_successor_source_archive(
+    *, repository_root: str, reviewed_commit: str,
+) -> bytes:
+    """Add exactly three successor source blobs to verified V1 Git evidence.
+
+    Only local immutable Git objects are read. No installed source, shell
+    mutator, registry, credentials or Docker operation is invoked. The
+    resulting schema-2 TAR remains an unsigned review input, NOT approval.
+    """
+    try:
+        from .analytics_source_handoff import (
+            review_analytics_successor_source_handoff,
+        )
+        from .analytics_executor_service_config import (
+            ANALYTICS_INSTALLED_FILES, ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+        )
+
+        base = build_analytics_source_archive(
+            repository_root=repository_root, reviewed_commit=reviewed_commit,
+        )
+        base_manifest = review_analytics_source_handoff(
+            repository_root=repository_root, reviewed_commit=reviewed_commit,
+        )
+        old = verify_analytics_source_archive(
+            base,
+            expected_manifest_sha256=hashlib.sha256(base_manifest).hexdigest(),
+            reviewed_commit=reviewed_commit,
+        )
+        manifest = review_analytics_successor_source_handoff(
+            repository_root=repository_root, reviewed_commit=reviewed_commit,
+        )
+        obj = _validate_successor_manifest(
+            manifest, expected_sha256=hashlib.sha256(manifest).hexdigest(),
+            reviewed_commit=reviewed_commit,
+        )
+        extra = tuple(sorted(
+            set(ANALYTICS_SUCCESSOR_INSTALLED_FILES)
+            - set(ANALYTICS_INSTALLED_FILES)
+        ))
+        records = _original_git._tree(_original_git._output(
+            repository_root,
+            ("ls-tree", "-r", "-z", "--full-tree", reviewed_commit, "--", *extra),
+            8192,
+        ), extra)
+        expectations = {
+            entry["path"]: entry["sha256"] for entry in obj["source_entries"]
+        }
+        added = []
+        for path, blob in records:
+            size_raw = _original_git._output(
+                repository_root, ("cat-file", "-s", blob), 32,
+            )
+            if re.fullmatch(rb"[1-9][0-9]*\n", size_raw) is None:
+                raise ValueError
+            size = int(size_raw[:-1])
+            if size > _MAX_FILE:
+                raise ValueError
+            payload = _original_git._output(
+                repository_root, ("cat-file", "blob", blob), size,
+            )
+            if (
+                len(payload) != size
+                or hashlib.sha256(payload).hexdigest() != expectations[path]
+            ):
+                raise ValueError
+            added.append((path, payload))
+        if _original_git._output(
+            repository_root, ("rev-parse", "--verify", "HEAD^{commit}"), 41,
+        ) != reviewed_commit.encode("ascii") + b"\n":
+            raise ValueError
+        selected = tuple(sorted((*old, *added)))
+        if (
+            len(selected) != _V2_COUNT
+            or tuple(path for path, _ in selected)
+               != tuple(item["path"] for item in obj["source_entries"])
+        ):
+            raise ValueError
+        return _archive_bytes(manifest, selected)
+    except _CONTROL:
+        raise
+    except Exception:
+        raise AnalyticsSourceArchiveError(_ERROR) from None
+
+
+def verify_analytics_successor_source_archive(
+    raw: bytes, *, expected_manifest_sha256: str, reviewed_commit: str,
+) -> tuple[tuple[str, bytes], ...]:
+    """Independently validate the full closed V2 TAR and nested original V1.
+
+    Requires an externally supplied expected manifest SHA, not one derived
+    from untrusted TAR data. V1 archive verification remains unchanged.
+    """
+    try:
+        if type(raw) is not bytes or not 0 < len(raw) <= _MAX_TOTAL:
+            raise ValueError
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as tar:
+            members = []
+            for _ in range(_V2_COUNT + 2):
+                member = tar.next()
+                if member is None:
+                    break
+                members.append(member)
+            if (
+                len(members) != _V2_COUNT + 1
+                or tar.next() is not None
+                or members[0].name != _META_PATH
+                or any(
+                    not m.isfile() or m.mode != 0o644 or m.uid != 0
+                    or m.gid != 0 or m.mtime != 0 or m.uname or m.gname
+                    or m.pax_headers or m.linkname
+                    or not 0 < m.size <= (
+                        _V2_MANIFEST_LIMIT if i == 0 else _MAX_FILE
+                    )
+                    for i, m in enumerate(members)
+                )
+            ):
+                raise ValueError
+            manifest_handle = tar.extractfile(members[0])
+            if manifest_handle is None:
+                raise ValueError
+            manifest = manifest_handle.read(_V2_MANIFEST_LIMIT + 1)
+            obj = _validate_successor_manifest(
+                manifest, expected_sha256=expected_manifest_sha256,
+                reviewed_commit=reviewed_commit,
+            )
+            names = tuple(entry["path"] for entry in obj["source_entries"])
+            if tuple(m.name for m in members[1:]) != names:
+                raise ValueError
+            contents = []
+            for member, entry in zip(members[1:], obj["source_entries"]):
+                stream = tar.extractfile(member)
+                if stream is None:
+                    raise ValueError
+                payload = stream.read(_MAX_FILE + 1)
+                if (
+                    len(payload) != member.size
+                    or hashlib.sha256(payload).hexdigest() != entry["sha256"]
+                ):
+                    raise ValueError
+                contents.append((member.name, payload))
+        expected_base = tuple(
+            item["path"] for item in obj["baseline_review"]["source_entries"]
+        )
+        baseline_entries = tuple(
+            item for item in contents if item[0] in expected_base
+        )
+        baseline_manifest = canonical_bytes(obj["baseline_review"])
+        verify_analytics_source_archive(
+            _archive_bytes(baseline_manifest, baseline_entries),
+            expected_manifest_sha256=hashlib.sha256(baseline_manifest).hexdigest(),
+            reviewed_commit=reviewed_commit,
+        )
+        if _archive_bytes(manifest, tuple(contents)) != raw:
+            raise ValueError
+        return tuple(contents)
+    except _CONTROL:
+        raise
+    except Exception:
+        raise AnalyticsSourceArchiveError(_ERROR) from None
+
+
 __all__ = (
     "AnalyticsSourceArchiveError", "build_analytics_source_archive",
     "verify_analytics_source_archive",
+    "build_analytics_successor_source_archive",
+    "verify_analytics_successor_source_archive",
 )
 

@@ -1,9 +1,8 @@
 """File: deployment/tests/test_analytics_isolated_source_install.py
 
-Purpose: Exercise genuine C31B FD/root-owned 70-file source staging and
-         fail-closed rollback on a disposable Linux directory. The exact
-         signed Analytics source handoff and actual 43-file DEV baseline
-         are used; no root-owned host path, service, database or secrets touched.
+Purpose: Exercise genuine C31B FD staging for original 70-source and
+         closed V2 73-source Analytics generations in isolated directories.
+         Verify immutable 43-file historical canary and strict V1/V2 denial.
 Related: deployment/analytics_isolated_source_install.py,
          deployment/analytics_source_archive.py,
          deployment/analytics_source_handoff.py,
@@ -26,12 +25,14 @@ from unittest.mock import patch
 import deployment.analytics_isolated_source_install as install
 from deployment.analytics_source_handoff import (
     review_analytics_source_handoff,
+    review_analytics_successor_source_handoff,
     _SHARED_BASE_COMMIT,
     _SHARED_COMPATIBILITY_FILES,
     _SHARED_PREIMAGE_COMMITS,
 )
 from deployment.analytics_source_archive import (
     build_analytics_source_archive,
+    build_analytics_successor_source_archive,
 )
 from deployment.application_source_set import DevApplicationSourceSet
 from deployment.policy import canonical_bytes
@@ -67,6 +68,13 @@ class IsolatedSourceGenerationTests(unittest.TestCase):
         )
         cls.manifest_sha = hashlib.sha256(manifest).hexdigest()
         cls.archive = build_analytics_source_archive(
+            repository_root=cls.repo, reviewed_commit=cls.sha,
+        )
+        cls.successor_manifest = review_analytics_successor_source_handoff(
+            repository_root=cls.repo, reviewed_commit=cls.sha,
+        )
+        cls.successor_sha = hashlib.sha256(cls.successor_manifest).hexdigest()
+        cls.successor_archive = build_analytics_successor_source_archive(
             repository_root=cls.repo, reviewed_commit=cls.sha,
         )
         cls.old = {
@@ -132,33 +140,43 @@ class IsolatedSourceGenerationTests(unittest.TestCase):
         _c31b._revalidate_chain(chain)
         return root
 
-    def stage(self, archive=None):
-        """Exercise complete source composition and C31B verified publication."""
+    def stage(self, archive=None, *, successor_source=False):
+        """Exercise original V1 or explicit fully attested V2 staging."""
+        selected = (
+            self.successor_archive if successor_source else self.archive
+        ) if archive is None else archive
+        selected_sha = (
+            self.successor_sha if successor_source else self.manifest_sha
+        )
         with patch.object(install, "_open_checked_root",
                           side_effect=self._test_fd_open):
             return install._publish_isolated_generation(
                 parent_root=str(self.parent),
                 original_root=str(self.old_root),
-                archive=self.archive if archive is None else archive,
-                manifest_sha=self.manifest_sha, reviewed_commit=self.sha,
+                archive=selected,
+                manifest_sha=selected_sha, reviewed_commit=self.sha,
                 uid=os.getuid(), gid=os.getgid(),
+                successor_source=successor_source,
             )
 
-    def test_70_sources_are_real_verified_and_legacy_tree_is_identical(self):
-        """New product root works WITHOUT replacing ANY protected canary inode."""
+    def test_73_successor_sources_are_real_verified_and_legacy_tree_is_identical(self):
+        """Actual isolated V2 broker imports, with original canary bytes intact."""
         before = {
             name: os.stat(self.old_root / name).st_ino for name in self.old
         }
-        self.assertEqual(self.stage(), str(self.parent / "analytics-app"))
+        self.assertEqual(
+            self.stage(successor_source=True),
+            str(self.parent / "analytics-app"),
+        )
         new_root = self.parent / "analytics-app"
         self.assertTrue(new_root.is_dir())
         actual = {
             str(item.relative_to(new_root))
             for item in new_root.rglob("*") if item.is_file()
         }
-        self.assertEqual(len(actual), 70)
+        self.assertEqual(len(actual), 73)
         self.assertEqual(
-            len(actual - set(self.old)), 27,
+            len(actual - set(self.old)), 30,
         )
         for name, payload in self.old.items():
             self.assertEqual((self.old_root / name).read_bytes(), payload)
@@ -173,8 +191,8 @@ class IsolatedSourceGenerationTests(unittest.TestCase):
         }
         self.assertEqual(changed, set(_SHARED_COMPATIBILITY_FILES))
         self.assertFalse((self.parent / install._STAGING).exists())
-        # Real separate Python process imports ONLY the isolated 70-file
-        # generation, not our development worktree or the original canary.
+        # Real separate Python process imports ONLY the isolated 73-file
+        # V2 generation, not development worktree or the original canary.
         program = (
             "import deployment.analytics_broker_service_entrypoint as b; "
             "import deployment.analytics_executor_service_entrypoint as e; "
@@ -196,6 +214,58 @@ class IsolatedSourceGenerationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ISOLATED_BROKER_EXECUTOR_IMPORT_OK", result.stdout)
         self.assertFalse((new_root / "deployment/__pycache__").exists())
+
+    def test_successor_v2_archive_never_falls_back_to_original_v1_install(self):
+        """A V2 source review cannot silently enter the signed V1 root path."""
+        old = {
+            path: (self.old_root / path).stat().st_ino for path in self.old
+        }
+        with self.assertRaises(Exception):
+            self.stage(archive=self.successor_archive, successor_source=False)
+        with self.assertRaises(Exception):
+            self.stage(archive=self.archive, successor_source=True)
+        self.assertFalse((self.parent / install._DESTINATION).exists())
+        self.assertFalse((self.parent / install._STAGING).exists())
+        self.assertEqual(
+            {path: (self.old_root / path).stat().st_ino for path in self.old},
+            old,
+        )
+
+    def test_successor_v2_tampered_extra_blob_cannot_create_staging(self):
+        """Wrong new trust file fails before materialization of even one file."""
+        from deployment.analytics_source_archive import _archive_bytes
+        from deployment.analytics_source_archive import (
+            verify_analytics_successor_source_archive,
+        )
+        entries = list(verify_analytics_successor_source_archive(
+            self.successor_archive,
+            expected_manifest_sha256=self.successor_sha,
+            reviewed_commit=self.sha,
+        ))
+        for i, (path, blob) in enumerate(entries):
+            if path == "release/analytics_owner_source_selection.py":
+                entries[i] = (path, blob + b"\n# unreviewed source\n")
+                break
+        else:
+            self.fail("missing required owner-trust Git file")
+        with self.assertRaises(Exception):
+            self.stage(
+                archive=_archive_bytes(
+                    self.successor_manifest, tuple(entries),
+                ),
+                successor_source=True,
+            )
+        self.assertFalse((self.parent / install._DESTINATION).exists())
+        self.assertFalse((self.parent / install._STAGING).exists())
+        self.assertEqual(
+            {
+                path: hashlib.sha256(
+                    (self.old_root / path).read_bytes(),
+                ).hexdigest()
+                for path in self.old
+            },
+            self.initial_hashes,
+        )
 
     def test_wrong_legacy_preimage_and_symlink_fail_before_a_host_write(self):
         """Reject even one changed canary file, including old promotion.py."""

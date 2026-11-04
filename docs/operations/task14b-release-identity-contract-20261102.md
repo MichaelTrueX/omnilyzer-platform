@@ -87,6 +87,69 @@ signed release trust, replay, candidate slot, health, route replacement
 and write-preserving rollback remain HARD HOLD pending integration and
 independent M04 review.
 
+## Task14B versioned installed source closure, PR282 CI repair (2026-11-04)
+
+**CI evidence and owning defect:** The draft PR #282 C34D run 41756851073
+failed on two independent source-closure assertions: missing V2-only
+`analytics_active_state_review.py` and `analytics_route_journal.py` in
+the statically attested source inventory, and the original 70-source
+installed archive failing an actual isolated Python import because
+`release.analytics_owner_source_selection` was absent. This is a genuine
+installer-source integrity defect. Neither Python path injection, a
+hand-copied file, a broadened schema-1 signed installation allowlist
+nor relaxing import checks is an acceptable resolution.
+
+**Implemented in candidate SOURCE, no host installation:**
+`deployment/analytics_executor_service_config.py` retains exactly
+20 historically accepted Analytics schema-1 installed Python source
+paths. It defines a **distinct, inert, sorted V2 exact source set**
+with 23 Python files: those original 20 plus exactly
+`deployment/analytics_active_state_review.py`,
+`deployment/analytics_route_journal.py` and
+`release/analytics_owner_source_selection.py`.
+The C34D AST closure assertion now checks BOTH the old 20-source
+contract and the complete V2 graph, including a separate exact
+`release.*` import closure, rather than omitting the crypto module.
+Unknown or dynamic dependencies still fail.
+
+The ORIGINAL schema-1 32-entry Git handoff, canonical TAR verifier,
+root-owned installation approval and original deployed 0.15.0 runtime
+remain byte/behaviorally unchanged. A SEPARATE inert schema-2 source
+review and TAR consists of 35 closed and deterministic Git-object
+entries: original 32 plus exactly the three new source modules.
+The V2 manifest embeds the original closed source review and adds
+schema2, fixed purpose, SHA, 35-entry source list and explicit
+`deployment_authorized=false`/`signed_release_authorized=false`.
+The V2 verifier requires an externally supplied approved SHA256,
+independently validates original 32-entry canonical verification,
+checks every file size/mode/digest, TAR header, ordered path and
+canonical bytes, and rejects V1/V2 swaps, unknown files, changed
+owner-trust code and malformed manifests.
+
+The SAME existing C31B protected isolated FD staging path has a
+test-only, explicitly selected V2 mode; it writes 73 complete files
+(43 independently hashed historical base files plus 30 new files),
+reuses closed owner/mode/inode/fsync/no-follow verification, and
+does NOT overwrite any original Canary source. A separate real Python
+process successfully imports BOTH Analytics broker and executor
+entrypoints from the isolated V2 tree with no development-worktree
+path and no bytecode carryover. Negative tests prove V1/V2 source
+confusion or forged owner-trust blob fails BEFORE staging writes.
+The original root-only installed entrypoint still accepts ONLY the
+original schema1 approval and 70-file path. V2 is not silently
+enabled in existing host configuration.
+
+**Still HARD HOLD:** No root-approved V2 source-install approval schema
+or exact installed UID/GID manifest has been activated. Protected
+Analytics broker/executor still admit only original schema2/0.15.0.
+A complete owner-signed next release, sealed-FD replay/actual-rootless
+executor path, one V2 supervisor/recovery installation and M04 final
+exact-HEAD review remain mandatory. Original Task013 Canary scan
+vulnerability-policy FAILED in PR282 run 41756851074; resolve the
+actual findings in its OWN scan/dependency boundary without weakening
+zero Critical/High. A source-import fix cannot override release
+security policy or authorize a signed dispatch.
+
 ## Task14B schema-3 original Unix transport integration (2026-11-04)
 
 The EXISTING `deployment/analytics_unix_boundary.py` now exposes a

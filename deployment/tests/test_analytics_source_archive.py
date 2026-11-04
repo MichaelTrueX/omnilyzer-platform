@@ -1,8 +1,8 @@
 """File: deployment/tests/test_analytics_source_archive.py
 
-Purpose: End-to-end deterministic original-C26 Git-object Analytics additive
-         installer-archive evidence, exact 27 member validation and negative
-         archive/security tests; all filesystem work is disposable.
+Purpose: Original C26 exact 32-entry Analytics source archive regression,
+         plus V2 35-entry successor deterministic Git-object evidence,
+         canonical manifests and negative cross-schema/archive security tests.
 Related: deployment/analytics_source_archive.py,
          deployment/analytics_source_handoff.py,
          deployment/tests/test_analytics_source_handoff.py,
@@ -30,13 +30,19 @@ from deployment.analytics_source_archive import (
     AnalyticsSourceArchiveError,
     build_analytics_source_archive,
     verify_analytics_source_archive,
+    build_analytics_successor_source_archive,
+    verify_analytics_successor_source_archive,
+    _archive_bytes,
 )
 from deployment.analytics_source_handoff import (
-    review_analytics_source_handoff, _SHARED_BASE_COMMIT,
+    review_analytics_source_handoff,
+    review_analytics_successor_source_handoff, _SHARED_BASE_COMMIT,
     _SHARED_COMPATIBILITY_FILES, _SHARED_PREIMAGE_SHA256,
     _SHARED_PREIMAGE_COMMITS,
 )
 from deployment.application_source_set import DevApplicationSourceSet
+from deployment.policy import canonical_bytes
+import json
 from deployment import application_manifest as original_manifest
 from deployment import dev_host_provisioning_mechanics as original_materialization
 
@@ -333,6 +339,122 @@ class OriginalC26ArchiveTests(unittest.TestCase):
                 repository_root=self.root, reviewed_commit=self.sha,
             )
         self.assertEqual(archive, self.archive)
+
+
+# Section: successor V2 additive source-generation review. This is a
+# separate, review-only 35-entry archive. Original V1/Canary remains unchanged.
+class SuccessorC26SourceArchiveTests(unittest.TestCase):
+    """Prove exact source bytes and complete closure without root privilege."""
+
+    @classmethod
+    def setUpClass(cls):
+        """Read only current reviewed Git objects, not working-tree edits."""
+        cls.root, cls.sha, cls.original_sha = _identities()
+        cls.manifest = review_analytics_successor_source_handoff(
+            repository_root=cls.root, reviewed_commit=cls.sha,
+        )
+        cls.manifest_sha = hashlib.sha256(cls.manifest).hexdigest()
+        cls.archive = build_analytics_successor_source_archive(
+            repository_root=cls.root, reviewed_commit=cls.sha,
+        )
+        cls.contents = verify_analytics_successor_source_archive(
+            cls.archive, expected_manifest_sha256=cls.manifest_sha,
+            reviewed_commit=cls.sha,
+        )
+
+    def inspect(self, archive=None, sha=None):
+        """Require externally selected reviewed V2 SHA for every readback."""
+        return verify_analytics_successor_source_archive(
+            self.archive if archive is None else archive,
+            expected_manifest_sha256=self.manifest_sha if sha is None else sha,
+            reviewed_commit=self.sha,
+        )
+
+    def test_exact_source_graph_and_original_version_still_separate(self):
+        """V2 has three and ONLY three extra Git objects beyond historical V1."""
+        original = dict(verify_analytics_source_archive(
+            build_analytics_source_archive(
+                repository_root=self.root, reviewed_commit=self.sha,
+            ),
+            expected_manifest_sha256=self.original_sha,
+            reviewed_commit=self.sha,
+        ))
+        future = dict(self.contents)
+        self.assertEqual(len(original), 32)
+        self.assertEqual(len(future), 35)
+        self.assertEqual(
+            set(future) - set(original), {
+                "deployment/analytics_active_state_review.py",
+                "deployment/analytics_route_journal.py",
+                "release/analytics_owner_source_selection.py",
+            },
+        )
+        self.assertTrue(all(future[p] == body for p, body in original.items()))
+        self.assertEqual(self.archive, build_analytics_successor_source_archive(
+            repository_root=self.root, reviewed_commit=self.sha,
+        ))
+        with self.assertRaises(AnalyticsSourceArchiveError):
+            verify_analytics_source_archive(
+                self.archive, expected_manifest_sha256=self.manifest_sha,
+                reviewed_commit=self.sha,
+            )
+        with self.assertRaises(AnalyticsSourceArchiveError):
+            self.inspect(archive=build_analytics_source_archive(
+                repository_root=self.root, reviewed_commit=self.sha,
+            ))
+
+    def test_wrong_root_sha_version_and_noncanonical_manifest_denied(self):
+        """A mutable ref, altered source count or forged manifest cannot pass."""
+        with self.assertRaises(AnalyticsSourceArchiveError):
+            self.inspect(sha="0" * 64)
+        for alteration in (
+            {"source_file_count": 32},
+            {"schema_version": 1},
+            {"source_commit": "0" * 40},
+            {"deployment_authorized": True},
+            {"purpose": "analytics-task014-additive-source-review-only"},
+            {"baseline_review": {}},
+        ):
+            with self.subTest(alteration=alteration):
+                model = json.loads(self.manifest)
+                model.update(alteration)
+                forged = canonical_bytes(model)
+                with self.assertRaises(AnalyticsSourceArchiveError):
+                    self.inspect(
+                        archive=_archive_bytes(forged, self.contents),
+                        sha=hashlib.sha256(forged).hexdigest(),
+                    )
+
+    def test_corrupt_missing_new_source_and_symlink_tar_denied(self):
+        """Do not accept a wrong extra image inspector or path injection."""
+        changed = list(self.contents)
+        changed[-1] = (
+            changed[-1][0], changed[-1][1] + b"\n# tampered\n",
+        )
+        with self.assertRaises(AnalyticsSourceArchiveError):
+            self.inspect(archive=_archive_bytes(self.manifest, tuple(changed)))
+        with self.assertRaises(AnalyticsSourceArchiveError):
+            self.inspect(archive=_archive_bytes(self.manifest, self.contents[:-1]))
+        with self.assertRaises(AnalyticsSourceArchiveError):
+            self.inspect(archive=self.archive + b"not tar")
+        with self.assertRaises(AnalyticsSourceArchiveError):
+            self.inspect(archive=self.archive[:-512])
+        # Unknown append cannot become a legitimate source under any SHA.
+        injected = tuple((*self.contents, ("release/unsafe.py", b"bad")))
+        with self.assertRaises(AnalyticsSourceArchiveError):
+            self.inspect(archive=_archive_bytes(self.manifest, injected))
+
+    def test_no_mutable_worktree_or_privileged_source_side_effect(self):
+        """Only reviewed Git objects, never network, root install or prompts."""
+        with (
+            patch("os.chown", side_effect=AssertionError("root write forbidden")),
+            patch("os.mkdir", side_effect=AssertionError("host write forbidden")),
+            patch("subprocess.run", side_effect=AssertionError("C26 Git only")),
+        ):
+            rebuilt = build_analytics_successor_source_archive(
+                repository_root=self.root, reviewed_commit=self.sha,
+            )
+        self.assertEqual(rebuilt, self.archive)
 
 
 if __name__ == "__main__":

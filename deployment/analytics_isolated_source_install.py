@@ -1,7 +1,8 @@
 """File: deployment/analytics_isolated_source_install.py
 
-Purpose: Prepare ONE approved Analytics Task014 root-owned source generation
-         without modifying the original protected canary application.
+Purpose: Preserve original root-approved 70-file Analytics Task014 source
+         installation and reuse its protected FD staging for an explicit
+         inert/test-only 73-file V2 successor source qualification.
 Related: deployment/analytics_source_archive.py (32 exact review objects),
          deployment/analytics_source_handoff.py (38 historical inherited
          source hashes), deployment/dev_host_provisioning_mechanics.py (C31B
@@ -35,7 +36,9 @@ from . import dev_host_provisioning_mechanics as _original
 from .application_manifest import ApplicationManifestEntry
 from .application_source_set import DevApplicationSourceSet
 from .analytics_source_archive import (
-    _validate_manifest, verify_analytics_source_archive,
+    _validate_manifest, _validate_successor_manifest,
+    verify_analytics_source_archive,
+    verify_analytics_successor_source_archive,
 )
 from .policy import canonical_bytes
 
@@ -216,9 +219,16 @@ def _read_legacy_sources(
 def _review_and_combine(
     old: dict[str, bytes], archive: bytes, *,
     manifest_sha: str, reviewed_commit: str,
+    successor_source: bool = False,
 ) -> tuple[tuple[str, bytes], ...]:
-    """Require exact 43 host preimages + 32 reviewed Git blobs, yielding 70."""
-    updated = verify_analytics_source_archive(
+    """Combine closed V1 70 or explicitly reviewed successor V2 73 sources."""
+    if type(successor_source) is not bool:
+        raise ValueError
+    verifier = (
+        verify_analytics_successor_source_archive
+        if successor_source else verify_analytics_source_archive
+    )
+    updated = verifier(
         archive, expected_manifest_sha256=manifest_sha,
         reviewed_commit=reviewed_commit,
     )
@@ -226,8 +236,14 @@ def _review_and_combine(
         manifest_file = tar.extractfile(".omnilyzer-analytics-source-review.json")
         if manifest_file is None:
             raise ValueError
-        model = _validate_manifest(
-            manifest_file.read(16385), manifest_sha, reviewed_commit,
+        raw = manifest_file.read(32769 if successor_source else 16385)
+        model = (
+            _validate_successor_manifest(
+                raw, expected_sha256=manifest_sha,
+                reviewed_commit=reviewed_commit,
+            )["baseline_review"]
+            if successor_source else
+            _validate_manifest(raw, manifest_sha, reviewed_commit)
         )
     baseline = dict(model["inherited_canary_sha256"])
     baseline.update(model["shared_preimage_sha256"])
@@ -238,7 +254,8 @@ def _review_and_combine(
         raise ValueError
     union = {**old, **dict(updated)}
     if (
-        len(union) != 70 or len(updated) != 32
+        len(union) != (73 if successor_source else 70)
+        or len(updated) != (35 if successor_source else 32)
         or sum(len(blob) for blob in union.values()) > _MAX_GENERATION
     ):
         raise ValueError
@@ -247,16 +264,20 @@ def _review_and_combine(
 
 def _stage_new_generation(
     parentfd: int, selected: tuple[tuple[str, bytes], ...], *,
-    uid: int, gid: int,
+    uid: int, gid: int, successor_source: bool = False,
 ) -> None:
-    """Build and verify one CLOSED 70-file root-owned private staging tree.
+    """Build and verify closed V1 70-file or opt-in V2 73-file staging.
 
     The stage must not preexist. The old canary app is never opened for write.
     On pre-publication failure only the exact files/dirs created here are
     deleted; an unrecognized object forces manual remediation, not recursion.
     """
     paths = tuple(path for path, _ in selected)
-    if len(paths) != 70 or paths != tuple(sorted(set(paths))):
+    if (
+        type(successor_source) is not bool
+        or len(paths) != (73 if successor_source else 70)
+        or paths != tuple(sorted(set(paths)))
+    ):
         raise ValueError
     os.mkdir(_STAGING, 0o700, dir_fd=parentfd)
     stagefd = os.open(_STAGING, _FD_DIR, dir_fd=parentfd)
@@ -377,8 +398,9 @@ def _remove_verified_stage(
 def _publish_isolated_generation(
     *, parent_root: str, original_root: str, archive: bytes,
     manifest_sha: str, reviewed_commit: str, uid: int, gid: int,
+    successor_source: bool = False,
 ) -> str:
-    """Private testable mechanics; publication is inert until service opt-in.
+    """Private test-only successor staging; root install remains legacy V1.
 
     Explicit roots are accepted ONLY here for isolated disposable tests. The
     public ROOT-ONLY function never forwards external paths; it uses the fixed
@@ -386,6 +408,7 @@ def _publish_isolated_generation(
     """
     if (
         type(parent_root) is not str or type(original_root) is not str
+        or type(successor_source) is not bool
         or type(archive) is not bytes or not 0 < len(archive) <= _MAX_ARCHIVE
         or type(uid) is not int or type(gid) is not int
     ):
@@ -394,8 +417,14 @@ def _publish_isolated_generation(
         handle = tar.extractfile(".omnilyzer-analytics-source-review.json")
         if handle is None:
             raise ValueError
-        model = _validate_manifest(
-            handle.read(16385), manifest_sha, reviewed_commit,
+        raw = handle.read(32769 if successor_source else 16385)
+        model = (
+            _validate_successor_manifest(
+                raw, expected_sha256=manifest_sha,
+                reviewed_commit=reviewed_commit,
+            )["baseline_review"]
+            if successor_source else
+            _validate_manifest(raw, manifest_sha, reviewed_commit)
         )
     expected = dict(model["inherited_canary_sha256"])
     expected.update(model["shared_preimage_sha256"])
@@ -405,6 +434,7 @@ def _publish_isolated_generation(
     combined = _review_and_combine(
         old, archive, manifest_sha=manifest_sha,
         reviewed_commit=reviewed_commit,
+        successor_source=successor_source,
     )
     owned: list[int] = []
     try:
@@ -416,7 +446,10 @@ def _publish_isolated_generation(
                 pass
             else:
                 raise OSError  # no existing source overwrite or stale stage
-        _stage_new_generation(parent, combined, uid=uid, gid=gid)
+        _stage_new_generation(
+            parent, combined, uid=uid, gid=gid,
+            successor_source=successor_source,
+        )
         # The parent is root-controlled, unprivileged users cannot race
         # publication. The existing canary directory is NEVER the target.
         try:

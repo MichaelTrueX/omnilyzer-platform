@@ -1,7 +1,8 @@
 """File: deployment/tests/test_analytics_executor_service_bootstrap.py
 
-Purpose: Test the exact Task014 Analytics root-owned service-admission schema,
-         inherited named-FD checks and one-shot service lifecycle.
+Purpose: Test original Analytics Task014 exact root-owned schema-1 service
+         admission and separate V2 static AST/source closure before release,
+         inherited socket FD checks and unchanged one-shot service lifecycle.
 Related: deployment/analytics_executor_service_config.py,
          deployment/analytics_executor_service_bootstrap.py,
          deployment/analytics_executor_service_entrypoint.py,
@@ -35,7 +36,9 @@ from deployment.analytics_executor_service_bootstrap import (
     run_analytics_executor_service_once,
 )
 from deployment.analytics_executor_service_config import (
-    ANALYTICS_INSTALLED_FILES, AnalyticsInstalledAuthorityError,
+    ANALYTICS_INSTALLED_FILES, ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+    ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES,
+    ANALYTICS_SUCCESSOR_RELEASE_FILES, AnalyticsInstalledAuthorityError,
     load_analytics_executor_service_config,
     parse_analytics_executor_service_config,
 )
@@ -129,9 +132,47 @@ class InstalledSourceConfigTests(unittest.TestCase):
             tree = ast.parse(source.read_text(), filename=path)
             module = path.removesuffix(".py").replace("/", ".")
             pending.update(local_imports(tree, module) - visited)
-        self.assertEqual(len(ANALYTICS_INSTALLED_FILES), len(set(ANALYTICS_INSTALLED_FILES)))
-        self.assertEqual(set(ANALYTICS_INSTALLED_FILES), visited - original)
-        self.assertTrue(original.isdisjoint(ANALYTICS_INSTALLED_FILES))
+        original_analytics = set(ANALYTICS_INSTALLED_FILES)
+        successor_deployment = set(ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES)
+        successor_release = set(ANALYTICS_SUCCESSOR_RELEASE_FILES)
+        self.assertEqual(len(original_analytics), 20)
+        self.assertEqual(len(ANALYTICS_SUCCESSOR_INSTALLED_FILES), 23)
+        self.assertEqual(
+            set(ANALYTICS_SUCCESSOR_INSTALLED_FILES),
+            original_analytics | successor_deployment | successor_release,
+        )
+        self.assertEqual(visited - original,
+                         original_analytics | successor_deployment)
+        self.assertTrue(original.isdisjoint(ANALYTICS_SUCCESSOR_INSTALLED_FILES))
+        # The original resolver follows only deployment.* imports. Prove
+        # that each new release.* import is deliberately attested, with
+        # no silent editable import or omitted crypto verification module.
+        successor_imports = set()
+        for path in visited:
+            tree = ast.parse((ROOT / path).read_text(), filename=path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and (
+                    node.module and node.module.startswith("release.")
+                ):
+                    successor_imports.add(node.module.replace(".", "/") + ".py")
+                if isinstance(node, ast.Import):
+                    successor_imports.update(
+                        alias.name.replace(".", "/") + ".py"
+                        for alias in node.names
+                        if alias.name.startswith("release.")
+                    )
+        self.assertEqual(successor_imports, successor_release)
+        for path in successor_release:
+            source = ROOT / path
+            self.assertTrue(source.is_file() and not source.is_symlink(), path)
+            source_ast = ast.parse(source.read_text(), filename=path)
+            self.assertFalse(any(
+                isinstance(node, (ast.ImportFrom, ast.Import))
+                and (
+                    getattr(node, "module", "") or ""
+                ).startswith(("deployment.", "release."))
+                for node in ast.walk(source_ast)
+            ))
 
     def test_duplicate_unknown_wrong_noncanonical_and_missing_files_denied(self):
         """No attacker-chosen path, extra config or unsigned source is admitted."""

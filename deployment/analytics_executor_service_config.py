@@ -8,9 +8,10 @@ Related: deployment/executor_service_config_loader.py (existing hardened C17
          deployment/analytics_executor_service_bootstrap.py (socket activation),
          deployment/tests/test_analytics_executor_service_config.py.
 
-Sections: exact pinned source selection, canonical JSON configuration,
-          descriptor-relative root-owned config load, immutable installed
-          file hash checking, and original C17 executor identity binding.
+Sections: original closed 20-source schema-1 installation, separate
+          review-only 23-source V2 closure, canonical JSON configuration,
+          descriptor-relative owner verification, immutable installed
+          file hash checking and original C17 executor identity binding.
 
 SECURITY: This module is inert until load_analytics_executor_service_config()
 is explicitly called by the separate installed root-owned systemd service.
@@ -63,6 +64,24 @@ ANALYTICS_INSTALLED_FILES = (
     "deployment/saas_product_contract.py",
     "deployment/saas_product_runtime.py",
 )
+# Section: future V2 upgrade source graph. The 20-source original
+# Analytics 0.15.0 installed schema-1 set above MUST remain unchanged.
+# An owner-reviewed future source-generation-2 installer must attest each
+# EXTRA file and approve a separately bound source/config version.
+# Merely having the files in this source tree confers no deployment authority.
+ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES = (
+    "deployment/analytics_active_state_review.py",
+    "deployment/analytics_route_journal.py",
+)
+ANALYTICS_SUCCESSOR_RELEASE_FILES = (
+    "release/analytics_owner_source_selection.py",
+)
+ANALYTICS_SUCCESSOR_INSTALLED_FILES = tuple(sorted((
+    *ANALYTICS_INSTALLED_FILES,
+    *ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES,
+    *ANALYTICS_SUCCESSOR_RELEASE_FILES,
+)))
+
 # These three are already bound inside the signed Analytics source claim.
 # Product/runtime profile hashes are SHA256(canonical parsed profile), NOT
 # SHA256(raw JSON file bytes); the original exact profile classes own them.
