@@ -63,7 +63,11 @@ def _provider(url, *, form=None, authenticated=False, empty_ok=False):
     """Make one HTTPS JSON request only to an exact trusted realm endpoint."""
     _trusted_endpoint(url)
     body = parse.urlencode(form).encode() if form is not None else None
-    headers = {"Accept": "application/json"}
+    # Identify the legitimate server-to-server OIDC client explicitly.
+    # Cloudflare rejects urllib's default Python-urllib UA (error 1010);
+    # do not disable zone-wide browser integrity protections.
+    headers = {"Accept": "application/json",
+               "User-Agent": "Omnilyzer-Identity-BFF/1.0"}
     if body is not None:
         headers["Content-Type"] = "application/x-www-form-urlencoded"
     if authenticated:

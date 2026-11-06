@@ -442,6 +442,38 @@ class RedirectTransportTests(unittest.TestCase):
             self.assertIsInstance(build.call_args.args[0],
                                   oidc._NoProviderRedirect)
 
+    def test_oidc_transport_uses_service_user_agent_with_exact_endpoints(self):
+        """Use a truthful service User-Agent for Cloudflare-protected OIDC.
+
+        Both public discovery and confidential token exchange must avoid
+        the blocked urllib default, without loosening endpoint allowlisting,
+        confidential client authentication or redirect refusal.
+        """
+        urls = (
+            (settings.OIDC_ISSUER + "/.well-known/openid-configuration",
+             None, False),
+            (settings.OIDC_ISSUER + "/protocol/openid-connect/token",
+             {"grant_type": "authorization_code"}, True),
+        )
+        with mock.patch.object(oidc.request, "build_opener") as builder:
+            builder.return_value.open.side_effect = oidc.IdentityError("blocked")
+            for url, form, authenticated in urls:
+                with self.subTest(url=url):
+                    with self.assertRaises(oidc.IdentityError):
+                        oidc._provider(url, form=form, authenticated=authenticated)
+                    transport_request = builder.return_value.open.call_args.args[0]
+                    self.assertEqual(transport_request.get_header("User-agent"),
+                                     "Omnilyzer-Identity-BFF/1.0")
+                    self.assertEqual(transport_request.get_header("Accept"),
+                                     "application/json")
+                    self.assertEqual(transport_request.full_url, url)
+                    self.assertEqual(
+                        transport_request.has_header("Authorization"),
+                        authenticated,
+                    )
+            self.assertIsInstance(builder.call_args.args[0],
+                                  oidc._NoProviderRedirect)
+
     def test_confidential_provider_rejects_cross_realm_or_host_endpoint(self):
         """Never send client secrets to an unapproved metadata-supplied URL."""
         approved = settings.OIDC_ISSUER
