@@ -123,7 +123,7 @@ class S03IssuerPeerOperatorTests(unittest.TestCase):
 
     def test_unknown_role_grant_matrix_denied(self):
         with mock.patch.object(OP, "pgsql",
-                               side_effect=["1|1|1|0|0|1", "1|1|1|1|0"]):
+                               side_effect=["1|1|1|0|0|1", "1|0|1|0|1|1|1|0"]):
             with self.assertRaisesRegex(RuntimeError, "restricted S03 issuer"):
                 OP.check_role_authority()
 

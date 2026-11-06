@@ -194,6 +194,9 @@ def check_role_authority():
     sql = (
         "SELECT "
         "has_database_privilege('" + PG_ROLE + "', current_database(), 'CONNECT')::int,"
+        "has_database_privilege('" + PG_ROLE + "', current_database(), 'CREATE')::int,"
+        "has_schema_privilege('" + PG_ROLE + "', 'sumlaude_auth', 'USAGE')::int,"
+        "has_schema_privilege('" + PG_ROLE + "', 'sumlaude_private', 'USAGE')::int,"
         "has_function_privilege('" + PG_ROLE + "',"
         "'sumlaude_auth.issue_admitted_oidc_session(text,text,bytea,timestamptz)',"
         "'EXECUTE')::int,"
@@ -204,7 +207,7 @@ def check_role_authority():
         "has_table_privilege('" + PG_ROLE + "', 'sumlaude_private.learner_admission',"
         "'SELECT')::int;"
     )
-    if pgsql(sql, database=DB) != "1|1|1|0|0":
+    if pgsql(sql, database=DB) != "1|0|1|0|1|1|0|0":
         hold("restricted S03 issuer grant/denial assertions failed")
 
 
