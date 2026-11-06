@@ -227,6 +227,10 @@ def install_inactive(sha, archive, new):
         # Only this release directory is created, no current or unit update.
         if new.exists() or new.is_symlink():
             fail("target appeared during installation")
+        # tempfile starts 0700: the dedicated nonroot systemd service must
+        # traverse the final root-owned release after a *separate* GO.
+        # Its source and dependencies contain no credentials.
+        temporary.chmod(0o755)
         temporary.rename(new)
         # Retain both releases for safe rollback and verify service remains inert.
         if CURRENT.resolve() != OLD:

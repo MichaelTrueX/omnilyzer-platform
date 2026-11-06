@@ -145,6 +145,7 @@ class InactiveReleaseTests(unittest.TestCase):
                   mock.patch.object(OP, "check_pinned_packages")):
                 OP.install_inactive(sha, archive, target)
             self.assertTrue(target.is_dir())
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o755)
             self.assertEqual(current.resolve(), old)
             self.assertIn(str(target / ".venv/bin/python"),
                           (target / ".venv/bin/gunicorn").read_text())
