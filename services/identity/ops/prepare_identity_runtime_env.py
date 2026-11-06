@@ -229,8 +229,17 @@ def verify_s03_issuer():
                 "has_function_privilege(current_user,"
                 "'sumlaude_auth.revoke_issued_oidc_session(bytea)','EXECUTE'), "
                 "has_table_privilege(current_user,'public.users','SELECT'), "
-                "has_table_privilege(current_user,"
-                "'sumlaude_private.learner_admission','SELECT'), "
+                # Resolve the existing private table via pg_catalog only.
+                # The issuer intentionally lacks USAGE on sumlaude_private.
+                # Text/regclass name resolution can raise SQLSTATE 42501 even
+                # when merely asking has_table_privilege for a denied grant.
+                # A missing relation yields NULL and fails the full tuple
+                # assertion below; never grant schema access to fix a probe.
+                "(SELECT has_table_privilege(current_user, c.oid, 'SELECT') "
+                "FROM pg_catalog.pg_class AS c "
+                "JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = 'sumlaude_private' "
+                "AND c.relname = 'learner_admission' AND c.relkind = 'r'), "
                 "has_schema_privilege(current_user,'sumlaude_private','USAGE'), "
                 "has_database_privilege(current_user,current_database(),'CREATE')"
             )

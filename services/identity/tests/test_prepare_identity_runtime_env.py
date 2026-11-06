@@ -259,6 +259,81 @@ class RuntimeEnvTests(unittest.TestCase):
                          "category=postgresql sqlstate=28000")
         self.assertNotIn("SYNTHETIC_PRIVATE_DSN", err.getvalue())
 
+    def test_private_table_probe_by_oid_without_schema_usage(self):
+        """Execute both DB checks; reject the former inaccessible name lookup.
+
+        S03 issuer has no USAGE on sumlaude_private. The catalog OID form
+        checks denied SELECT without crossing that schema name-resolution gate.
+        """
+        code = compile(OP.DB_CHECK, "<safe-db-probe>", "exec")
+        operations = []
+        class PrivateSchemaDenied(Exception):
+            sqlstate = "42501"
+        class Cursor:
+            def __init__(self, session):
+                self.session = session
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def execute(self, sql):
+                self.sql = sql
+                if not self.session:
+                    if ("'sumlaude_private.learner_admission','SELECT'"
+                            in sql):
+                        raise PrivateSchemaDenied("private schema hidden")
+                    self_test.assertIn(
+                        "has_table_privilege(current_user, c.oid, 'SELECT')", sql)
+                    self_test.assertIn("FROM pg_catalog.pg_class AS c", sql)
+                    self_test.assertIn(
+                        "JOIN pg_catalog.pg_namespace AS n", sql)
+                    self_test.assertIn(
+                        "n.nspname = 'sumlaude_private'", sql)
+                    self_test.assertIn(
+                        "c.relname = 'learner_admission'", sql)
+                operations.append("sessions" if self.session else "issuer")
+            def fetchone(self):
+                if self.session:
+                    return ("omnilyzer_identity_runtime",
+                            "omnilyzer_identity_sessions",
+                            True, True, True, True, False, False, False, 0)
+                return ("sumlaude_identity_issuer", "sumlaude_identity_issuer",
+                        "sumlaude_learning", True, True,
+                        False, False, False, False)
+        class Connection:
+            def __init__(self, session):
+                self.session = session
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def cursor(self):
+                return Cursor(self.session)
+        fake = types.ModuleType("psycopg")
+        fake.Error = PrivateSchemaDenied
+        fake.connect = lambda *args, **kw: Connection("dbname" in kw)
+        self_test = self
+        err = io.StringIO()
+        with (mock.patch.dict(sys.modules, {"psycopg": fake}),
+              mock.patch.dict(os.environ,
+                              {**DB, "SUMLAUDE_ISSUER_DSN": OP.ISSUER_DSN}),
+              contextlib.redirect_stderr(err)):
+            exec(code, {"__name__": "__main__"})
+        self.assertEqual(operations, ["sessions", "issuer"])
+        self.assertEqual(err.getvalue(), "")
+
+    def test_missing_private_table_catalog_lookup_is_fail_closed(self):
+        """A missing table must not turn the denied SELECT assertion into PASS."""
+        self.assertIn(
+            "has_table_privilege(current_user, c.oid, 'SELECT')", OP.DB_CHECK)
+        self.assertIn(
+            "n.nspname = 'sumlaude_private'", OP.DB_CHECK)
+        self.assertIn(
+            "c.relname = 'learner_admission' AND c.relkind = 'r'",
+            OP.DB_CHECK)
+        self.assertNotIn(
+            "'sumlaude_private.learner_admission','SELECT'", OP.DB_CHECK)
+
     def test_parent_reports_safe_child_marker_only(self):
         """Keep arbitrary secret-bearing child stderr completely hidden."""
         marker = ("M01_BFF_DB_PROBE_HOLD stage=s03_issuer "
