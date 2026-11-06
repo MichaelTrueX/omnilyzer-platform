@@ -1,4 +1,4 @@
-FROM cgr.dev/chainguard/python@sha256:31dd69d84fe5235fe18f8ceb5b76620e6f44a0ce1f9b0d3a46c491576f8b453b
+FROM cgr.dev/chainguard/python@sha256:f3e5face39b0acd813fae456df27b33bf6a6bffba5d201d15f6498138cb8fd96
 
 # File: release/fixtures/task013-canary/oci/Dockerfile
 # Purpose: Build the minimal private Task013 canary with an immutable,
@@ -16,7 +16,7 @@ LABEL org.opencontainers.image.title="$OCI_REPOSITORY" \
       org.opencontainers.image.version="$RELEASE_VERSION" \
       org.opencontainers.image.revision="$SOURCE_SHA" \
       ai.omnilyzer.canary="true" \
-      ai.omnilyzer.base.digest="sha256:31dd69d84fe5235fe18f8ceb5b76620e6f44a0ce1f9b0d3a46c491576f8b453b"
+      ai.omnilyzer.base.digest="sha256:f3e5face39b0acd813fae456df27b33bf6a6bffba5d201d15f6498138cb8fd96"
 
 ENV CANARY_RELEASE_VERSION="$RELEASE_VERSION" \
     CANARY_SOURCE_SHA="$SOURCE_SHA" \
