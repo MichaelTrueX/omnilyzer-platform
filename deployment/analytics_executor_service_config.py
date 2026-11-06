@@ -9,7 +9,7 @@ Related: deployment/executor_service_config_loader.py (existing hardened C17
          deployment/tests/test_analytics_executor_service_config.py.
 
 Sections: original closed 20-source schema-1 installation, separate
-          review-only 23-source V2 closure, canonical JSON configuration,
+          closed 23-source V2 root-approved installation grammar, canonical JSON configuration,
           descriptor-relative owner verification, immutable installed
           file hash checking and original C17 executor identity binding.
 
@@ -138,20 +138,28 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
         )
         if type(value) is not dict or set(value) != _FIELDS:
             raise ValueError
-        if (
-            type(value["schema_version"]) is not int
-            or value["schema_version"] != 1
-            or type(value["product_id"]) is not str
-            or value["product_id"] != "analytics"
-            or type(value["stage"]) is not str or value["stage"] != "dev"
-        ):
+        # Section: two explicit, disjoint source generations. An installed
+        # schema-1 file MUST retain exactly its original 20 Python modules.
+        # Schema-2 source is an owner-installed, fixed 23-module V2 generation;
+        # selecting an arbitrary path or mixing source generations is denied.
+        generation = value["schema_version"]
+        if (type(generation) is not int or generation not in (1, 2)
+                or value["product_id"] != "analytics"
+                or type(value["product_id"]) is not str
+                or type(value["stage"]) is not str or value["stage"] != "dev"):
             raise ValueError
+        paths = (ANALYTICS_INSTALLED_FILES if generation == 1
+                 else ANALYTICS_SUCCESSOR_INSTALLED_FILES)
         source = value["source_sha256"]
         if (
-            len(ANALYTICS_INSTALLED_FILES) != len(set(ANALYTICS_INSTALLED_FILES))
-            or
-            type(source) is not dict
-            or set(source) != set(ANALYTICS_INSTALLED_FILES)
+            len(ANALYTICS_INSTALLED_FILES) != 20
+            or len(set(ANALYTICS_INSTALLED_FILES)) != 20
+            or len(ANALYTICS_SUCCESSOR_INSTALLED_FILES) != 23
+            or len(set(ANALYTICS_SUCCESSOR_INSTALLED_FILES)) != 23
+            or set(ANALYTICS_SUCCESSOR_INSTALLED_FILES) - set(ANALYTICS_INSTALLED_FILES)
+                != set(ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES)
+                | set(ANALYTICS_SUCCESSOR_RELEASE_FILES)
+            or type(source) is not dict or set(source) != set(paths)
             or any(type(key) is not str or type(v) is not str
                    or len(v) != 64 or any(c not in "0123456789abcdef" for c in v)
                    for key, v in source.items())
@@ -171,7 +179,7 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
             raise ValueError
         return {
             **dict(reviewed),
-            "source_sha256": tuple((p, source[p]) for p in ANALYTICS_INSTALLED_FILES),
+            "source_sha256": tuple((p, source[p]) for p in paths),
         }
     except _CONTROL:
         raise
@@ -213,12 +221,12 @@ def _verify_source_bytes(
             parent = directory
         assert parent is not None
         total = 0
-        approved_names = set(ANALYTICS_INSTALLED_FILES) | set(
-            _INSTALLED_RUNTIME_FILES
-        )
-        if tuple(name for name, _sha in expected) != (
-            *ANALYTICS_INSTALLED_FILES, *_INSTALLED_RUNTIME_FILES,
-        ):
+        # Only a complete schema-1 or schema-2 ordered source vector is
+        # accepted, followed by the SAME four original runtime assets.
+        v1 = (*ANALYTICS_INSTALLED_FILES, *_INSTALLED_RUNTIME_FILES)
+        v2 = (*ANALYTICS_SUCCESSOR_INSTALLED_FILES, *_INSTALLED_RUNTIME_FILES)
+        approved_names = set(v2)
+        if tuple(name for name, _sha in expected) not in (v1, v2):
             raise ValueError
         for name, digest in expected:
             if name not in approved_names or type(digest) is not str:
@@ -226,7 +234,9 @@ def _verify_source_bytes(
             parts = name.split("/")
             if (
                 not 2 <= len(parts) <= 5
-                or not (parts[0] == "deployment" or name == _SOURCE_CLAIM_PATH)
+                or not (parts[0] == "deployment"
+                        or name in (_SOURCE_CLAIM_PATH,
+                                    *ANALYTICS_SUCCESSOR_RELEASE_FILES))
             ):
                 raise ValueError
             # All components are literally selected from reviewed module

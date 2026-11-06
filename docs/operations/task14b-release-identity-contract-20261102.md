@@ -1072,3 +1072,22 @@ root-controlled Task014 trust key require separate owner approval.
 The final automated blue/green executor/ingress, rollback and M04
 independent acceptance are not ready. No successful actual next-version
 release or deployment exists.
+
+## 2026-11-07: closed 23-file V2 root-owned service source grammar (candidate only)
+
+The existing `deployment/analytics_executor_service_config.py` now accepts
+an *explicitly root-selected* schema-2 source configuration whose file hashes
+cover exactly `ANALYTICS_SUCCESSOR_INSTALLED_FILES` (23 Python modules,
+including the owner source verifier). The original schema-1 configuration
+still requires its original 20-module set and cannot accept the additional
+files. The descriptor-relative `O_NOFOLLOW` installed-source verifier accepts
+only one of the two exact ordered module vectors followed by the unchanged
+four runtime assets. It rejects extra, missing, reordered, altered, symlinked,
+non-root-owned or improperly permissioned sources. A V2 test exercises actual
+filesystem file descriptors with projected root metadata and real hash checks.
+
+The source grammar and V2 hash validation do **not** enable schema-3 routes,
+consumer trust, broker forwarding, executor replay or blue/green deployment.
+An independently authorized root-owned exact-source generation and systemd
+transition, plus the verified signed source/OCI and recoverable task execution,
+are still required. Original signed 0.15.0 remains the only installed release.

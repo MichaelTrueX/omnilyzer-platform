@@ -99,6 +99,47 @@ class InstalledSourceConfigTests(unittest.TestCase):
             self.assertEqual(parsed[name], EXPECTED[name])
         self.assertLessEqual(len(encoded), 4096)
 
+    def test_v2_canonical_config_is_exactly_23_sources_and_v1_never_widens(self):
+        """A root-selected V2 grammar cannot contaminate installed schema V1."""
+        v1 = sample_config()
+        v2 = {
+            **v1, "schema_version": 2,
+            "source_sha256": {
+                name: "b" * 64 for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+            },
+        }
+        encoded = canonical_bytes(v2)
+        self.assertLessEqual(len(encoded), config._MAX_BYTES)
+        parsed = parse_analytics_executor_service_config(encoded)
+        self.assertEqual(parsed["source_sha256"], tuple(
+            (name, "b" * 64) for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+        ))
+        self.assertEqual(
+            parse_analytics_executor_service_config(canonical_bytes(v1))[
+                "source_sha256"],
+            tuple((name, "a" * 64) for name in ANALYTICS_INSTALLED_FILES),
+        )
+        extra = ANALYTICS_SUCCESSOR_RELEASE_FILES[0]
+        missing = ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES[0]
+        cases = (
+            {**v1, "source_sha256": v2["source_sha256"]},
+            {**v2, "source_sha256": v1["source_sha256"]},
+            {**v2, "source_sha256": {key: value for key, value in
+                                        v2["source_sha256"].items() if key != missing}},
+            {**v2, "source_sha256": {**v2["source_sha256"],
+                                         "release/unapproved.py": "a" * 64}},
+            {**v2, "source_sha256": {**v2["source_sha256"],
+                                         extra: "0" * 63 + "X"}},
+            {**v2, "schema_version": 3},
+            {**v2, "schema_version": True},
+        )
+        for candidate in cases:
+            with self.subTest(schema=candidate["schema_version"],
+                              count=len(candidate["source_sha256"])), self.assertRaises(
+                AnalyticsInstalledAuthorityError
+            ):
+                parse_analytics_executor_service_config(canonical_bytes(candidate))
+
     def test_privileged_analytics_import_closure_exactly_attested(self):
         """Mirror the original Task014 AST closure, without changing canary.
 
@@ -314,6 +355,63 @@ class InstalledSourceConfigTests(unittest.TestCase):
                 claim.unlink()
                 with self.assertRaises(AnalyticsInstalledAuthorityError):
                     config._verify_source_bytes(expected, root=root)
+
+    def test_v2_real_fd_source_closure_checks_extra_release_module(self):
+        """Read all 23 V2 files via O_NOFOLLOW and reject extra-file drift."""
+        source_files = ANALYTICS_SUCCESSOR_INSTALLED_FILES
+        with tempfile.TemporaryDirectory(prefix="task14b-v2-fd-") as temp:
+            root = Path(temp) / "installed"
+            root.mkdir()
+            hashes = []
+            for name in (*source_files, *config._INSTALLED_RUNTIME_FILES):
+                file = root / name
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_bytes(b"A")
+                file.chmod(0o644)
+                hashes.append((name, hashlib.sha256(b"A").hexdigest()))
+            actual_fstat, actual_stat = os.fstat, os.stat
+
+            def root_owned(info):
+                values = list(info)
+                values[4] = 0
+                if stat.S_ISDIR(info.st_mode):
+                    values[0] = (values[0] & ~0o7777) | 0o755
+                return os.stat_result(values)
+
+            class Profile:
+                """Stub only the profile decoder; exercise actual file reads."""
+                def sha256(self):
+                    return hashlib.sha256(b"A").hexdigest()
+
+            with (
+                patch.object(config, "_INSTALLED_ROOT", root),
+                patch.object(config.os, "fstat", side_effect=lambda fd: root_owned(actual_fstat(fd))),
+                patch.object(config.os, "stat", side_effect=lambda path, *args, **kwargs:
+                             root_owned(actual_stat(path, *args, **kwargs))),
+                patch.object(config.SaaSProductProfile, "from_json_bytes", return_value=Profile()),
+                patch.object(config.SaaSRuntimeProfile, "from_json_bytes", return_value=Profile()),
+            ):
+                self.assertIsNone(config._verify_source_bytes(tuple(hashes), root=root))
+                # A valid V2 vector cannot be accepted with a missing file or
+                # a byte modification in the additional release trust module.
+                file = root / ANALYTICS_SUCCESSOR_RELEASE_FILES[0]
+                file.write_bytes(b"B")
+                with self.assertRaises(AnalyticsInstalledAuthorityError):
+                    config._verify_source_bytes(tuple(hashes), root=root)
+                file.write_bytes(b"A")
+                file.unlink()
+                file.symlink_to(root / source_files[0])
+                with self.assertRaises(AnalyticsInstalledAuthorityError):
+                    config._verify_source_bytes(tuple(hashes), root=root)
+                file.unlink()
+                file.write_bytes(b"A")
+                file.chmod(0o644)
+                self.assertIsNone(config._verify_source_bytes(tuple(hashes), root=root))
+                # Do not allow a partial V2 inventory or reordered list.
+                with self.assertRaises(AnalyticsInstalledAuthorityError):
+                    config._verify_source_bytes(tuple(hashes[:-5] + hashes[-4:]), root=root)
+                with self.assertRaises(AnalyticsInstalledAuthorityError):
+                    config._verify_source_bytes(tuple(reversed(hashes)), root=root)
 
     def test_missing_privileged_file_denied_before_any_listener(self):
         """Ordinary unprivileged test process cannot spoof owner/config."""
