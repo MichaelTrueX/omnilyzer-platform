@@ -140,7 +140,10 @@ def installed_runtime_guard(sha, archive):
         fail("BFF currently active")
     if "UnitFileState=disabled" not in service.splitlines():
         fail("BFF currently enabled")
-    if APPROVAL.exists() or APPROVAL.is_symlink():
+    # A nonroot observer cannot stat paths inside the root:root 0700
+    # directory. EACCES is NOT evidence the activation marker is absent.
+    # The authorized root install re-runs this check with full visibility.
+    if os.geteuid() == 0 and (APPROVAL.exists() or APPROVAL.is_symlink()):
         fail("live BFF owner GO marker exists")
     # Use /proc socket view, never open a listener.
     ports = run(["/usr/bin/ss", "-lnt"])
@@ -247,7 +250,9 @@ def main(argv=None):
     target = installed_runtime_guard(args.sha, archive)
     if args.action == "preflight":
         print("M01_INACTIVE_RELEASE_READONLY_PREFLIGHT_PASS="
-              + args.sha + " no_production_write=true")
+              + args.sha + " no_production_write=true"
+              + " root_only_marker_check_pending="
+              + str(os.geteuid() != 0).lower())
         return 0
     install_inactive(args.sha, archive, target)
     return 0

@@ -74,6 +74,29 @@ class InactiveReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "root authorization"):
                 OP.trusted_privileged_operator()
 
+    def test_root_only_marker_cannot_be_inferred_absent_by_nonroot(self):
+        """Do not stat an inaccessible 0700 secret path as nonroot."""
+        with (mock.patch.object(OP.os, "geteuid", return_value=1000),
+              mock.patch.object(OP, "APPROVAL") as marker,
+              mock.patch.object(OP, "CURRENT") as current,
+              mock.patch.object(OP, "RELEASES") as releases,
+              mock.patch.object(OP, "OLD") as old,
+              mock.patch.object(OP.socket, "gethostname", return_value=OP.HOST),
+              mock.patch.object(OP, "run", return_value=(
+                  "ActiveState=inactive\nUnitFileState=disabled")),
+              mock.patch("tarfile.open") as arch):
+            current.is_symlink.return_value = True
+            current.resolve.return_value = old
+            releases.__truediv__.return_value.exists.return_value = False
+            releases.__truediv__.return_value.is_symlink.return_value = False
+            old.__truediv__.return_value.is_file.return_value = True
+            old.__truediv__.return_value.read_bytes.return_value = b""
+            arch.return_value.__enter__.return_value.extractfile.return_value.read.return_value = b""
+            # The root-only marker must never be probed by nonroot.
+            OP.installed_runtime_guard("a" * 40, "fixture.tar")
+            marker.exists.assert_not_called()
+            marker.is_symlink.assert_not_called()
+
     def test_runtime_console_relocation(self):
         with tempfile.TemporaryDirectory() as home:
             p = Path(home)
