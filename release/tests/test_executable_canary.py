@@ -304,7 +304,7 @@ def _oci_archive(path: Path, mutate=None) -> str:
 class ImageAndPipelineTests(unittest.TestCase):
     def test_dockerfile_is_digest_pinned_and_has_non_root_runtime_contract(self) -> None:
         dockerfile = (CANARY / "Dockerfile").read_text()
-        self.assertEqual(BASE_IMAGE_DIGEST, "sha256:f3e5face39b0acd813fae456df27b33bf6a6bffba5d201d15f6498138cb8fd96")
+        self.assertEqual(BASE_IMAGE_DIGEST, "sha256:31dd69d84fe5235fe18f8ceb5b76620e6f44a0ce1f9b0d3a46c491576f8b453b")
         self.assertEqual(dockerfile.splitlines()[0], f"FROM cgr.dev/chainguard/python@{BASE_IMAGE_DIGEST}")
         self.assertNotIn("cgr.dev/chainguard/python:", dockerfile)
         self.assertNotRegex(dockerfile, r"(?im)^\s*RUN\b")

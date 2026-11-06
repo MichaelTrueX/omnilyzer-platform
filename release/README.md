@@ -132,7 +132,7 @@ fixed packages `3.15.2_git20261030-r0`, `26.2.2-r1` and
 zero matches, and no vulnerability-policy exceptions were applied.
 
 The new **PROPOSED**, exact immutable Chainguard Python OCI INDEX pin is
-`sha256:f3e5face39b0acd813fae456df27b33bf6a6bffba5d201d15f6498138cb8fd96`.
+`sha256:31dd69d84fe5235fe18f8ceb5b76620e6f44a0ce1f9b0d3a46c491576f8b453b`.
 On 2026-11-04 the public `cgr.dev/chainguard/python:latest` OCI
 registry returned this exact digest; SHA256 of its actual index bytes
 matched the HTTP Docker-Content-Digest header. Its linux/amd64
@@ -158,23 +158,3 @@ merge or publication still requires its ordinary independent gates.
 ## Phase 1 non-claims
 
 Phase 1 did not prove live publishing. Phase 2 enables only the reviewed DEV canary path; until its live run succeeds, it establishes no live round-trip result. Neither phase proves actual production package boundaries, PROD registry deployment, product consumption, or DEV-to-STAGING-to-PROD promotion. Those remain later acceptance work.
-
-## November 7, 2026 canary security repin candidate (no publication)
-
-The current PR282 unpublished canary test run `42312187935` preserved an actual
-Grype zero-waiver policy FAIL on the pinned November 4 base: OCI High alerts
-for `sqlite-libs 3.54.1-r0` and `glibc-2.44 2.44-r13`; wheel and npm scans
-remained clear. The previous candidate's apparent PASS is no longer current
-security evidence. Do not suppress either finding or treat a supplier tag as
-a release identity.
-
-The new review-only candidate is exact Chainguard OCI **index**
-`sha256:f3e5face39b0acd813fae456df27b33bf6a6bffba5d201d15f6498138cb8fd96`,
-whose selected `linux/amd64` manifest is
-`sha256:889f0885c6d0052f2d102420306927b1e83a55bee8faaf80f7bef2930ede6807`.
-Both were resolved read-only from the supplier registry on November 7. The
-Dockerfile, config-label verifier and expected test pin are intentionally
-changed together. Final real build, pinned Grype scan (0 Critical/High),
-Sigstore supplier identity and detached reviewer approval are STILL mandatory
-before any signed Task013 publication. This candidate makes no registry write,
-protected dispatch or live Task014 activation.
