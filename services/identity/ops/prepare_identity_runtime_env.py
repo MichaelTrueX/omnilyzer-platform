@@ -260,6 +260,39 @@ def assembled_variables(source, *, signing_key, fernet_key):
     return out, ("\n".join(lines) + "\n").encode("ascii")
 
 
+# Section 2a: Django check --deploy intentionally reports two constrained
+# HSTS warnings: Sumlaude cannot promise HTTPS across all sibling subdomains
+# and does not request the browser HSTS preload list. These are the only
+# accepted warnings. Other warnings or any errors remain release blockers.
+KNOWN_DEPLOY_WARNINGS = frozenset(("security.W005", "security.W021"))
+
+
+def django_deploy_check_passed(result):
+    """Accept a successful Django CLI only with no issues or two known HSTS warnings.
+
+    Django writes deployment warnings and summary to stderr, not stdout.
+    Never mistake successful exit code 0 with arbitrary warnings for approval.
+    The exact known exception is not a request to modify SSL/HSTS policy.
+    """
+    if result.returncode or "ERRORS:" in result.stderr:
+        return False
+    messages = re.findall(
+        r"(?m)^[^:\n]+:\s+\(([a-zA-Z0-9_.]+)\)\s+",
+        result.stderr,
+    )
+    stdout = result.stdout.strip()
+    if stdout == "System check identified no issues (0 silenced).":
+        return not messages and "System check identified some issues" not in result.stderr
+    return (
+        not stdout
+        and len(messages) == len(KNOWN_DEPLOY_WARNINGS)
+        and frozenset(messages) == KNOWN_DEPLOY_WARNINGS
+        and result.stderr.count("WARNINGS:") == 1
+        and result.stderr.count("System check identified 2 issues (0 silenced).") == 1
+        and "System check identified some issues:" in result.stderr
+    )
+
+
 def verify_runtime(configuration):
     """Run real Django deployment checks and two real read-only PG connections."""
     django_root = RELEASE / "services/identity"
@@ -276,7 +309,7 @@ def verify_runtime(configuration):
     cmd = ["/usr/sbin/runuser", "-u", OS_USER, "--", str(py),
            "-B", "manage.py", "check", "--deploy"]
     p = run(cmd, cwd=django_root, env=env)
-    if p.returncode or "System check identified no issues" not in p.stdout:
+    if not django_deploy_check_passed(p):
         fail("real nonroot Django production settings check failed")
     check = run(["/usr/sbin/runuser", "-u", OS_USER, "--", str(py),
                  "-I", "-B", "-c", DB_CHECK], cwd=django_root, env=env)

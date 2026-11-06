@@ -154,10 +154,43 @@ class RuntimeEnvTests(unittest.TestCase):
             self.assertEqual(cfg["OIDC_CLIENT_SECRET"], CLIENT["OIDC_CLIENT_SECRET"])
             self.assertTrue(cfg["DJANGO_SECRET_KEY"].startswith("synthetic-preflight"))
 
+    def test_real_django_two_approved_deploy_warnings(self):
+        """Reproduce truexmainserver Django6.1 stderr stream and exit 0."""
+        result = mock.Mock(
+            returncode=0,
+            stdout="",
+            stderr=(
+                "identity_bff/oidc.py:15: AuthlibDeprecationWarning: deprecated\n"
+                "System check identified some issues:\n\n"
+                "WARNINGS:\n"
+                "?: (security.W005) HSTS subdomains intentionally disabled\n"
+                "?: (security.W021) HSTS preload intentionally disabled\n\n"
+                "System check identified 2 issues (0 silenced).\n"
+            ).replace("\\\n", "\n"),
+        )
+        self.assertTrue(OP.django_deploy_check_passed(result))
+        for extra in (
+            result.stderr.replace("W021", "W018"),
+            result.stderr + "?: (security.W018) unexpected\n",
+            result.stderr.replace("2 issues", "3 issues"),
+            result.stderr + "\nERRORS:\n",
+        ):
+            with self.subTest(extra=extra[-60:]):
+                self.assertFalse(OP.django_deploy_check_passed(
+                    mock.Mock(returncode=0, stdout="", stderr=extra)))
+        self.assertFalse(OP.django_deploy_check_passed(
+            mock.Mock(returncode=1, stdout="", stderr=result.stderr)))
+
+    def test_django_zero_issue_cli_is_still_accepted(self):
+        result = mock.Mock(returncode=0,
+                           stdout="System check identified no issues (0 silenced).\n",
+                           stderr="")
+        self.assertTrue(OP.django_deploy_check_passed(result))
+
     def test_real_nonroot_check_invokes_unchanged_systemd_manage_and_db(self):
         with (mock.patch.object(OP, "run", side_effect=[
                 mock.Mock(returncode=0,
-                          stdout="System check identified no issues (0 silenced)."),
+                          stdout="System check identified no issues (0 silenced).", stderr=""),
                 mock.Mock(returncode=0, stdout=""),
               ]) as run,
               mock.patch.object(OP, "RELEASE") as release):
