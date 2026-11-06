@@ -538,3 +538,112 @@ because Python console-script shebangs would refer to the old path.
 an operator action requiring explicit permission. If the prepared
 service shows non-inactive status or an unexpected running BFF listener,
 stop and investigate rather than treating source QA as production GO.
+
+## Sprint 1: one joined Keycloak browser acceptance (7 November 2026)
+
+<!--
+Section purpose: define one source-pinned actual browser acceptance for
+platform M01 (Issue 238, PR 243) with Sumlaude S01/S03 and S02-Teacher.
+Related: docs/adr/0003-keycloak-bff-and-native-authentication.md;
+services/identity/tests/run_keycloak_provider_interop_qa.py and
+services/identity/tests/run_keycloak_s01_full_lc1_qa.py.
+This section supersedes older source-only/installation status above when
+the exact previously recorded milestones differ. No automatic production GO.
+-->
+
+**Owner:** M01 Identity, operating alongside rather than blocking the Analytics
+MVP. Governing request: Omnilyzer Issue 238 comment 6698069329. The existing
+Analytics JSON-issued localStorage Bearer token remains unchanged. Sumlaude
+browser identity uses its reviewed, separate server-side Keycloak tokens and
+two Secure, HttpOnly, host-only opaque cookies. No new login, Redis, test
+framework, Task013/014 workflow, generic release process or additional PR.
+
+### Current exact pre-acceptance baseline
+
+| Owner | Git authority / installed code | Verified scope and HOLD |
+|---|---|---|
+| M01 | Platform draft PR243 HEAD ec5e970bb6420b0d27cfd5649d3b6c13e443fb91; inactive BFF release 304b5acdc642ec4b26e08867af467e63c1b04c5e | Real Keycloak public OIDC discovery PASS and root-held BFF environment/session/issuer connector prepared; old current d65d14b69d3e5c899ab9291741b9029669244168; inactive/disabled, no port 18740 |
+| S01 | Sumlaude draft PR325 HEAD 7de3182c340e3694c545f23eeca186ff3e3db551; installed frontend 97aee5a0c27837300d9ed2d075e4673f9fc91fd7 | App origin NGINX/TLS, exact static HTML/JS/CSS hashes PASS; first GTM001 prediction prematurely exposes failure/not-run outcomes; no public app DNS |
+| S03 | Sumlaude core PR230 6094a81bc9c97d6532e271bb772f8bbb850621cd, GTM draft PR326 be2f1822dd552a41bbd71d899a6ca4c69fc77ebb; inactive Native release ba3b123f4839113e384bb497d07e2d5b7946fba1 | Age16 + GTM 35-table schema and RLS previously verified. Old current f87d79580e4f6868e20cbd84a9a3b81dc06f2e0c, Native inactive/disabled, no port 18741. Preprediction DTO also leaks outcome categories; no real invited adult/release mapping verified |
+| S02-GTM/Teacher | Source PR277 e38786eb87399104dc1abac3d81acb2faa74911d, academically approved original GTM001 blob 6d3a26a0908fb34085d1ebe2f4a12de575386532 | Manuscript approval does NOT approve exact rendered UI. GTM001-FID-M03 Major open; focused independent Teacher verdict after corrections pending |
+| Edge | Active single S01 app origin vhost and Origin CA certificate | Correct /auth/ to 127.0.0.1:18740 and /api/ to 127.0.0.1:18741. Cloudflare authoritative app.sumlaude.com record count zero; DNS HOLD |
+| Recovery | Existing age ciphertext SHA256 e845bfdcb16eead6031cc577f7113b1f78797504508120f4fc2ad34e76af52fd | Root0600 configuration, independent in-memory decryption on small-laptop and separately stored encrypted backup on michael-laptop PASS. Do NOT repeat absent changed boundary |
+
+### Only actual work still required of S01, S03 and Teacher
+
+1. **S01 plus S03 in existing PR325 and PR326:** before a saved learner
+   prediction, serve and display only the original 98/100 headline, choices
+   A/B/C and learner-authored reason. Eliminate 1 FAIL, 1 NOT RUN and coached
+   release-decision text in BOTH initial S03 network DTO and S01
+   DOM/ARIA/JS/prefetch. After the committed prediction and novice bridge,
+   preserve actual evidence 98/1/1, eight F/E/N states and accessible
+   controls. Regression-test early payload/DOM leakage, not only UI hiding.
+2. **S02-GTM then independent S02-Teacher:** compare exact corrected S01
+   mounted UI, strict S01 DTO and S03 projection blobs against the approved
+   original and learner-copy sidecar. Record separate source review and
+   independent rendered-fidelity decision. Preserve original 40/40 blobs.
+3. **S03:** provide evidence of independently verified invitation-only
+   adult 18+ admission, stable Keycloak issuer+sub link, a registered
+   approved GTM001 content/release mapping and the learner's authorized
+   enrollment; deny unknown/minor/revoked/cross-user identity. Do not create
+   fictional adult evidence in production or rerun accepted migrations.
+
+### One joined test runner, two sharply distinct evidence levels
+
+**A. Existing disposable actual-Keycloak rehearsal, before any production
+activation.** Reuse the original real Keycloak26 HTTPS fixture, permanent
+Django/Authlib BFF under test, real restricted S03 PostgreSQL16 in disposable
+databases and actual compiled S01 Chromium. Never use production secrets,
+Keycloak accounts, PG data or admission. QA fixture adult identities are
+explicitly SYNTHETIC admissions. The prior joined runners are real but their
+embedded S01/S03 Git SHA pins predate current PR325/326; their historical
+PASS receipts are not current-source acceptance. After M03 correction,
+update source pins and ONLY necessary DTO compatibility in the existing
+runner, run once on matched exact Git SHAs and record actual process/browser
+results. No new test stack or separate acceptance PR.
+
+**B. Genuine authorized production adult browser session, after separate
+activation GO.** This is not implied by A. The real approved adult must
+complete Keycloak Authorization Code + PKCE S256 over the final same-origin
+HTTPS website through the exact newly active Django BFF and S03 backend.
+Require independent product admission and actual persisted Native state.
+M01 owns the joint acceptance result, with S01/S03 providing owned parts.
+Do not start/enable services, change current symlinks, write GO marker,
+register users, create DNS or merge draft source merely to run this test.
+
+| Case | Expected observable browser/network/database result |
+|---|---|
+| ID-01 Anonymous | /auth/session unauthenticated; unauthorized Native GET/POST denied; no protected app data or premature backend call |
+| ID-02 Real login | Keycloak Code+PKCE S256, exact state/nonce/issuer/sub and signed ID validation, callback query removed, session fixation protection |
+| ID-03 Cookies | Two host-only __Host-* opaque cookies, Secure/HttpOnly/SameSite=Lax/Path=/, no Domain; no OAuth access/refresh/ID tokens in browser JS, localStorage, sessionStorage, IndexedDB or URL |
+| ID-04 Admission | Authenticated Keycloak alone does not allow Native; only verified invited adult and current registered GTM001 enrollment/release can read course |
+| ID-05 Learning | Before prediction no 1 FAIL/1 NOT RUN leak; commit original A/B/C+reason, then novice bridge, real eight F/E/N evidence states, one guided/transfer POST and durable PG attempt |
+| ID-06 Resume | Browser reload resumes same adult/current release attempt; hints/help require saved current revision and explicit request; keys not leaked |
+| ID-07 Refresh | Django CSRF required; Keycloak refresh and S03 token digest rotation; old cookie denied; obtain fresh independent S03 CSRF for new Native write |
+| ID-08 Logout | Django CSRF and S03 revoke; identity false, stale S03 cookie rejected; provider refresh-token revocation is best-effort and must not be falsely reported as global SSO logout |
+| ID-09 Negatives | Invalid Origin/CSRF/state/nonce/audience/issuer, expired session, refused refresh, stale/replay cookies, second user's data, uninvited/minor account and cross-release access all denied |
+| ID-10 Recovery | Document approved prior immutable BFF/Native release pointers, controlled paired-session revocation and rollback; no data loss or impact on existing public sumlaude.com |
+
+**Evidence contract:** exact platform/S01/S03 Git SHAs, academic blob,
+compiled asset hashes, test environment, true browser and Keycloak version,
+redacted network statuses/cookie attributes, actual PG attempt/revocation
+observations, each ID-01..ID-10 PASS/FAIL/NOT_RUN, negative-case proof,
+cleanup/rollback and separate owner activation/launch decision. Zero
+unredacted secrets or learner records in issues/logs/screenshots.
+
+### Current Sprint 1 decision and next action
+
+**READY:** exact M01 runtime source, public Keycloak discovery, prepared
+separate Django/S03 issuer databases, inert releases, S01 origin TLS and
+verified independent offsite BFF recovery. Do not duplicate.
+
+**HOLD:** unresolved source-level GTM001-FID-M03, independent Teacher
+decision, real S03 verified adult admission/release mapping, active BFF/Native
+services, actual matched-current-source joined browser and public app DNS.
+
+**NEXT:** S01/S03 deliver their two narrow corrected source blobs and
+network/DOM negative tests. S02-GTM and Teacher sign off their own scope.
+M01 then runs the one existing matched-source *isolated* joined browser
+acceptance, fixes any M01 identity defect in PR243, and prepares the
+separate owner-authorized live activation. Never turn this contract into
+an implicit production GO or an Analytics authentication migration.
