@@ -138,12 +138,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B -m unittest deployment.tests.test_analytics_service_recovery
-          # The disposable native fixture runs as root, while checkout files
-          # belong to the unprivileged CI runner. Trust ONLY this exact GitHub
-          # workspace for read-only Git object verification in this process.
-          # Do not configure global safe.directory or allow wildcard trust.
-          sudo -n --preserve-env=GITHUB_ACTIONS /usr/bin/env \
-            GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
-            GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" \
-            /usr/bin/python3 -I -B \
+          # The native fixture builds its own root-owned Git source mirror;
+          # the original Git object reader deliberately scrubs environment.
+          sudo -n --preserve-env=GITHUB_ACTIONS /usr/bin/python3 -I -B \
             deployment/tests/accept_task014_analytics_recovery.py
