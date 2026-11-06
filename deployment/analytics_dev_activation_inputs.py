@@ -1,7 +1,7 @@
 """File: deployment/analytics_dev_activation_inputs.py
 
-Purpose: Construct exact UNSIGNED Task014 Analytics 0.15.0 DEV review
-         inputs from the previously reviewed immutable Git source archive,
+Purpose: Construct exact UNSIGNED Task014 Analytics 0.15.0/V2 DEV review
+         inputs from independently verified immutable Git source archives,
          including the original C32ZF rootless socket source contract.
 Related: deployment/analytics_source_handoff.py (32 Git objects),
          deployment/analytics_source_archive.py (canonical USTAR),
@@ -28,14 +28,19 @@ import json
 from . import application_manifest as _original_git
 from .rootless_docker_authority import AUTHORITY
 from .analytics_executor_service_config import (
-    ANALYTICS_INSTALLED_FILES, _INSTALLED_RUNTIME_FILES,
+    ANALYTICS_INSTALLED_FILES, ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+    _INSTALLED_RUNTIME_FILES,
     _SOURCE_CLAIM_SHA256, parse_analytics_executor_service_config,
 )
 from .analytics_isolated_source_install import _approval
 from .analytics_source_archive import (
     build_analytics_source_archive, verify_analytics_source_archive,
+    build_analytics_successor_source_archive,
+    verify_analytics_successor_source_archive,
 )
-from .analytics_source_handoff import review_analytics_source_handoff
+from .analytics_source_handoff import (
+    review_analytics_source_handoff, review_analytics_successor_source_handoff,
+)
 from .policy import canonical_bytes
 
 SOURCE_ARCHIVE = "/opt/omnilyzer/deployment/.analytics-source-review.tar"
@@ -93,76 +98,106 @@ class AnalyticsActivationInputsError(Exception):
 
 def build_unsigned_analytics_activation_inputs(
     *, repository_root: str, reviewed_commit: str,
+    successor_source: bool = False,
 ) -> dict[str, bytes]:
-    """Bind four review inputs to the SAME exact immutable Git source.
+    """Bind four review inputs to exactly one verified Git source generation.
 
-    The original Analytics parser validates the broker/executor config and
-    original root-only approval parser validates the installation request.
-    Return values are publicly constructible and NEVER grant root authority.
+    The default retains the independently accepted V1 root-install request.
+    Explicit V2 emits unsigned successor review data and schema-2 config,
+    which the CURRENT root-only installer still rejects. This is never an
+    installation, deployment authorization or signature acceptance.
     """
     try:
-        manifest = review_analytics_source_handoff(
-            repository_root=repository_root, reviewed_commit=reviewed_commit,
+        if type(successor_source) is not bool:
+            raise ValueError
+        manifest = (
+            review_analytics_successor_source_handoff(
+                repository_root=repository_root, reviewed_commit=reviewed_commit,
+            ) if successor_source else review_analytics_source_handoff(
+                repository_root=repository_root, reviewed_commit=reviewed_commit,
+            )
         )
         metadata = json.loads(manifest)
         manifest_sha = hashlib.sha256(manifest).hexdigest()
-        archive = build_analytics_source_archive(
-            repository_root=repository_root, reviewed_commit=reviewed_commit,
+        archive = (
+            build_analytics_successor_source_archive(
+                repository_root=repository_root, reviewed_commit=reviewed_commit,
+            ) if successor_source else build_analytics_source_archive(
+                repository_root=repository_root, reviewed_commit=reviewed_commit,
+            )
         )
-        contents = dict(verify_analytics_source_archive(
+        contents = dict((
+            verify_analytics_successor_source_archive if successor_source
+            else verify_analytics_source_archive
+        )(
             archive, expected_manifest_sha256=manifest_sha,
             reviewed_commit=reviewed_commit,
         ))
+        baseline = metadata["baseline_review"] if successor_source else metadata
+        paths = (
+            ANALYTICS_SUCCESSOR_INSTALLED_FILES if successor_source
+            else ANALYTICS_INSTALLED_FILES
+        )
+        expected_count = 35 if successor_source else 32
         entries = {
             item["path"]: item["sha256"]
             for item in metadata["source_entries"]
         }
         if (
-            len(contents) != 32 or len(entries) != 32
-            or len(ANALYTICS_INSTALLED_FILES) != 20
-            or not set(ANALYTICS_INSTALLED_FILES).issubset(entries)
+            len(contents) != expected_count or len(entries) != expected_count
+            or len(paths) != (23 if successor_source else 20)
+            or not set(paths).issubset(entries)
             or not set(_INSTALLED_RUNTIME_FILES).issubset(entries)
-            or metadata["reviewed_source_claim_sha256"] != _SOURCE_CLAIM_SHA256
+            or any(hashlib.sha256(contents[path]).hexdigest() != entries[path]
+                   for path in paths)
+            or baseline["reviewed_source_claim_sha256"] != _SOURCE_CLAIM_SHA256
             or metadata["source_commit"] != reviewed_commit
-            or metadata["isolation_target"] != DESTINATION
+            or baseline["isolation_target"] != DESTINATION
             or metadata["deployment_authorized"] is not False
             or metadata["signed_release_authorized"] is not False
+            or baseline["deployment_authorized"] is not False
+            or baseline["signed_release_authorized"] is not False
         ):
             raise ValueError
+        generation = 2 if successor_source else 1
         product_config = canonical_bytes({
-            "schema_version": 1, "product_id": "analytics", "stage": "dev",
+            "schema_version": generation, "product_id": "analytics", "stage": "dev",
             "reviewed_installed_commit": reviewed_commit,
-            "reviewed_compose_sha256": metadata["reviewed_compose_sha256"],
+            "reviewed_compose_sha256": baseline["reviewed_compose_sha256"],
             "reviewed_product_profile_sha256":
-                metadata["reviewed_product_profile_sha256"],
+                baseline["reviewed_product_profile_sha256"],
             "reviewed_runtime_profile_sha256":
-                metadata["reviewed_runtime_profile_sha256"],
+                baseline["reviewed_runtime_profile_sha256"],
             "source_sha256": {
-                path: entries[path] for path in ANALYTICS_INSTALLED_FILES
+                path: entries[path] for path in paths
             },
         })
         parsed = parse_analytics_executor_service_config(product_config)
         if (
             parsed["reviewed_installed_commit"] != reviewed_commit
             or parsed["reviewed_compose_sha256"]
-                != metadata["reviewed_compose_sha256"]
+                != baseline["reviewed_compose_sha256"]
             or parsed["reviewed_product_profile_sha256"]
-                != metadata["reviewed_product_profile_sha256"]
+                != baseline["reviewed_product_profile_sha256"]
             or parsed["reviewed_runtime_profile_sha256"]
-                != metadata["reviewed_runtime_profile_sha256"]
+                != baseline["reviewed_runtime_profile_sha256"]
             or tuple(parsed["source_sha256"]) != tuple(
-                (path, entries[path]) for path in ANALYTICS_INSTALLED_FILES
+                (path, entries[path]) for path in paths
             )
         ):
             raise ValueError
         approval = canonical_bytes({
-            "schema_version": 1, "product_id": "analytics", "stage": "dev",
+            "schema_version": generation, "product_id": "analytics", "stage": "dev",
             "reviewed_commit": reviewed_commit,
             "manifest_sha256": manifest_sha,
             "archive_sha256": hashlib.sha256(archive).hexdigest(),
             "destination": DESTINATION,
         })
-        if _approval(approval)["archive_sha256"] != hashlib.sha256(archive).hexdigest():
+        # Original ROOT installer still accepts V1 ONLY: allowing V2 here
+        # makes a reproducible reviewed input, not a usable root install.
+        if not successor_source and _approval(approval)["archive_sha256"] != (
+            hashlib.sha256(archive).hexdigest()
+        ):
             raise ValueError
         result = {
             SOURCE_ARCHIVE: archive,

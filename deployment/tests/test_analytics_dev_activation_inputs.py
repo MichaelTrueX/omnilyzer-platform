@@ -25,11 +25,12 @@ from unittest.mock import patch
 
 from deployment import analytics_dev_activation_inputs as activation
 from deployment.analytics_executor_service_config import (
-    ANALYTICS_INSTALLED_FILES, parse_analytics_executor_service_config,
+    ANALYTICS_INSTALLED_FILES, ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+    parse_analytics_executor_service_config,
 )
 from deployment.analytics_isolated_source_install import _approval
 from deployment.analytics_source_archive import (
-    verify_analytics_source_archive,
+    verify_analytics_source_archive, verify_analytics_successor_source_archive,
 )
 from deployment.policy import canonical_bytes
 
@@ -98,6 +99,88 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         self.assertEqual(len(entries), 32)
         self.assertNotIn("deployment/analytics_dev_activation_inputs.py", entries)
         self.assertNotIn("deployment/analytics_isolated_source_install.py", entries)
+
+    def test_v2_exact_git_review_inputs_are_not_installed_authority(self):
+        """Tie all 23 successor source hashes to one immutable V2 Git TAR."""
+        successor = activation.build_unsigned_analytics_activation_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        self.assertEqual(set(successor), set(self.artifacts))
+        self.assertEqual(successor[activation.EXECUTOR_CONFIG],
+                         successor[activation.BROKER_CONFIG])
+        self.assertEqual(
+            activation.build_unsigned_analytics_activation_inputs(
+                repository_root=str(ROOT), reviewed_commit=self.sha,
+            ), self.artifacts,
+        )
+        approval = json.loads(successor[activation.SOURCE_APPROVAL])
+        self.assertEqual(approval["schema_version"], 2)
+        self.assertEqual(approval["reviewed_commit"], self.sha)
+        self.assertEqual(approval["destination"], activation.DESTINATION)
+        self.assertEqual(
+            approval["archive_sha256"],
+            hashlib.sha256(successor[activation.SOURCE_ARCHIVE]).hexdigest(),
+        )
+        archived = dict(verify_analytics_successor_source_archive(
+            successor[activation.SOURCE_ARCHIVE],
+            expected_manifest_sha256=approval["manifest_sha256"],
+            reviewed_commit=self.sha,
+        ))
+        self.assertEqual(len(archived), 35)
+        parsed = parse_analytics_executor_service_config(
+            successor[activation.EXECUTOR_CONFIG],
+        )
+        self.assertEqual(
+            tuple(name for name, _ in parsed["source_sha256"]),
+            ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+        )
+        for name, expected in parsed["source_sha256"]:
+            with self.subTest(path=name):
+                self.assertEqual(hashlib.sha256(archived[name]).hexdigest(), expected)
+        # Current first-install root approval parses ONLY schema1. This is
+        # reviewed source evidence, never a second implicit live installer.
+        with self.assertRaises(ValueError):
+            _approval(successor[activation.SOURCE_APPROVAL])
+        self.assertNotEqual(
+            self.artifacts[activation.EXECUTOR_CONFIG],
+            successor[activation.EXECUTOR_CONFIG],
+        )
+
+    def test_v2_bad_generation_or_changed_git_blob_is_denied(self):
+        """No caller-selected generation/manifest or tampered TAR can pass."""
+        with self.assertRaises(activation.AnalyticsActivationInputsError):
+            activation.build_unsigned_analytics_activation_inputs(
+                repository_root=str(ROOT), reviewed_commit=self.sha,
+                successor_source=1,
+            )
+        with self.assertRaises(activation.AnalyticsActivationInputsError):
+            activation.build_unsigned_analytics_activation_inputs(
+                repository_root=str(ROOT), reviewed_commit="a" * 40,
+                successor_source=True,
+            )
+        successor = activation.build_unsigned_analytics_activation_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        good = verify_analytics_successor_source_archive(
+            successor[activation.SOURCE_ARCHIVE],
+            expected_manifest_sha256=json.loads(
+                successor[activation.SOURCE_APPROVAL]
+            )["manifest_sha256"],
+            reviewed_commit=self.sha,
+        )
+        corrupt = tuple(
+            (name, b"modified" if name == ANALYTICS_SUCCESSOR_INSTALLED_FILES[-1]
+             else blob) for name, blob in good
+        )
+        with patch.object(activation, "verify_analytics_successor_source_archive",
+                          return_value=corrupt), self.assertRaises(
+                activation.AnalyticsActivationInputsError):
+            activation.build_unsigned_analytics_activation_inputs(
+                repository_root=str(ROOT), reviewed_commit=self.sha,
+                successor_source=True,
+            )
 
     def test_unsigned_inputs_alone_never_install_or_confer_permission(self):
         """No privileged source/data writes can happen from a review builder."""

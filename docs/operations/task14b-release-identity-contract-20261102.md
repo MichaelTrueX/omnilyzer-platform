@@ -1091,3 +1091,22 @@ consumer trust, broker forwarding, executor replay or blue/green deployment.
 An independently authorized root-owned exact-source generation and systemd
 transition, plus the verified signed source/OCI and recoverable task execution,
 are still required. Original signed 0.15.0 remains the only installed release.
+
+## 2026-11-07: Git-exact V2 source/config input generation (not root install)
+
+The original `build_unsigned_analytics_activation_inputs` now has a closed,
+optional `successor_source=True` review mode. It reuses the original
+Task014 Git-plumbing + canonical V2 35-entry source manifest/archive, checks
+each 23-module SHA against immutable Git objects, and emits root/broker
+configuration for schema 2. The unchanged default generates the same V1
+20-module configuration and 32-entry original source archive. No caller can
+choose an arbitrary file list, release SHA, registry or deployment route.
+
+This V2 output intentionally includes a schema-2 **unsigned** approval that
+the *currently installed* root-only first-install parser does not accept.
+Do not place it on the host or call it a usable installation: the already
+installed 0.15.0 source generation cannot be overwritten in place. Its safe
+one-time V1-to-V2 replacement must independently preserve original source,
+active 0.15.0, signed provenance, DB writes and rollback before any schema-3
+executor promotion. The new source generator has no host, registry, replay,
+systemd, Docker or secret side effects.
