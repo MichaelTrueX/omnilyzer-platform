@@ -67,6 +67,58 @@ uses a dedicated branch, progressive validation, complete diff review, GitHub
 security/CI checks, and a final deployment.dev_handoff leaving DEV clean and
 synchronized to main.
 
+## Owner communication: plain Danish, concise and useful (2026-10-30)
+
+The owner is not a software engineer. Default to **short, practical Danish
+explanations** of the actual user-visible result, risk, and next action.
+Use a familiar general term first; explain specialized names only when needed.
+For example, say "Linux-bruger-id (UID 991)" only if the actual number matters,
+"containerregister (Zot)" for the system storing container images, and
+"færdigpakket app (OCI image)" for an application package. Do not use an
+unexplained acronym, internal ticket/commit/port number, raw command, or security
+jargon as the sole explanation. Keep technical precision and full evidence in
+GitHub, not in a long chat reply; give a link for optional details. Normally
+answer in a few short paragraphs or one compact list, not a lengthy report.
+Explain more when the owner asks, when a genuine decision depends on it, or
+when exact complete source files are explicitly requested. End with what works,
+what remains, and at most one actionable next step; do not ask the owner to
+relay commands or logs between chats.
+
+## Every development task includes safe cleanup (owner decision 2026-10-30)
+
+Before creating temporary worktrees, build folders, Docker containers/images,
+test databases, log files or downloads, identify their **purpose, owner,
+location and retention/cleanup rule**. Prefer existing named, isolated work
+areas, bounded logs and established release/backup retention. Avoid generating
+unnecessary duplicate builds, diagnostic dumps, archives and untracked artifacts.
+
+- **During execution:** label or record temporary resources so they can be
+  distinguished from installed services, approved images, signed evidence,
+  active data and other chats' work. Keep secrets and personal data out of logs.
+- **At task end, including failure:** clean up only temporary resources
+  **created by this task** once no longer needed; stop test-only containers,
+  remove disposable test databases/worktrees, and clear temporary outputs.
+  Ensure cleanup of owned test resources happens on success and failure;
+  check that active processes and external sessions are unaffected.
+- **For existing unclassified clutter:** first perform a read-only inventory
+  showing paths, owners, size/age, purpose, references and whether active
+  processes, volumes or releases depend on it. Propose bounded, reversible
+  cleanup of verified-unused items; obtain required owner/privileged approval
+  before deletion. Unknown ownership or uncertain dependency means **KEEP**.
+- **Never use indiscriminate cleanup:** no blanket `docker system prune`,
+  `docker volume prune`, recursive deletion of shared paths, broad log
+  truncation or mass image deletion. Never remove running-service images,
+  retained rollback images, PostgreSQL volumes, learner/customer data,
+  backups, secrets, audits, signatures, SBOMs or required release evidence
+  without a separately authorized, verified retention/recovery procedure.
+  Preserve existing GitHub worktrees and others' in-progress changes.
+- **Completion:** verify no owned test container, orphan worktree, disposable
+  database or excessive temporary log remains; report cleanup in one short
+  line ("Oprydning: udført / ikke nødvendig / blokeret, hvorfor"). Do not
+  claim global server cleanup unless explicitly inspected. Reuse existing
+  retention/rotation mechanisms; do not build a new cleanup service or
+  weaken mandatory forensic evidence to save disk space.
+
 ## Lean feature delivery (owner decision 2026-10-29)
 
 The owner is a solo operator. A normal product feature must not recreate the
