@@ -105,6 +105,17 @@ class StateRegressions(unittest.TestCase):
     def test_native_completion_property_is_explicitly_allowed(self):
         self.assertIn('ExecMainStatus', recovery._PROPERTIES)
 
+    def test_native_ci_git_trust_is_exact_and_process_scoped(self):
+        """The sudo native fixture must not weaken Git's global safe.directory."""
+        workflow = Path(__file__).resolve().parents[2] / '.github/workflows/task014-c34d-review.yml'
+        raw = workflow.read_text()
+        native = raw.split('      - name: Test native Analytics service lifecycle and stopped recovery', 1)[1]
+        self.assertIn('GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory', native)
+        self.assertIn('GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE"', native)
+        self.assertIn('sudo -n --preserve-env=GITHUB_ACTIONS /usr/bin/env', native)
+        self.assertNotIn('safe.directory=*', native)
+        self.assertNotIn('git config --global', native)
+
 
 class RealProcessCapture(unittest.TestCase):
     """Real harmless child processes, no systemctl or privileged operation."""

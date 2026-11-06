@@ -13,13 +13,13 @@ from dataclasses import dataclass
 import base64
 import binascii
 import hashlib
+import fcntl
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import stat
-import tempfile
 from typing import Mapping
 
 
@@ -321,20 +321,36 @@ def _verify_owner_signature_with_signers(
              + '" ssh-ed25519 ').encode("ascii")
         ) or signers.count(b"\n") != 1:
             raise AnalyticsOwnerSourceSelectionDenied("owner approval binding mismatch")
-        # Verify exact signature bytes already hashed, not a mutable path.
-        with tempfile.TemporaryDirectory(prefix="analytics-source-sig-") as temp:
-            immutable_signature = Path(temp) / "signature"
-            immutable_signature.write_bytes(signature)
-            immutable_signers = Path(temp) / "allowed-signers"
-            immutable_signers.write_bytes(signers)
+        # Section: keep the verified signature and public signer list in
+        # immutable Linux anonymous memory. Never copy caller-provided bytes
+        # to persistent or temporary filesystem paths (CodeQL secret sink).
+        # OpenSSH reads inherited /proc/self/fd descriptors under pass_fds.
+        descriptors: list[int] = []
+        try:
+            for label, contents in (("analytics-signature", signature),
+                                    ("analytics-allowed-signers", signers)):
+                fd = os.memfd_create(label, os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+                descriptors.append(fd)
+                if os.write(fd, contents) != len(contents):
+                    raise AnalyticsOwnerSourceSelectionDenied("incomplete memory evidence")
+                os.lseek(fd, 0, os.SEEK_SET)
+                fcntl.fcntl(fd, fcntl.F_ADD_SEALS, (
+                    fcntl.F_SEAL_SEAL | fcntl.F_SEAL_SHRINK
+                    | fcntl.F_SEAL_GROW | fcntl.F_SEAL_WRITE
+                ))
+            signature_fd, signer_fd = descriptors
             result = subprocess.run(
                 [
-                    "ssh-keygen", "-Y", "verify", "-f", str(immutable_signers),
+                    "ssh-keygen", "-Y", "verify", "-f", f"/proc/self/fd/{signer_fd}",
                     "-I", OWNER_SIGNER_IDENTITY, "-n", OWNER_APPROVAL_NAMESPACE,
-                    "-s", str(immutable_signature),
+                    "-s", f"/proc/self/fd/{signature_fd}",
                 ],
                 input=approval, capture_output=True, check=False, timeout=10,
+                pass_fds=tuple(descriptors),
             )
+        finally:
+            for fd in descriptors:
+                os.close(fd)
         if result.returncode != 0 or len(result.stdout) > 4096:
             raise AnalyticsOwnerSourceSelectionDenied("invalid owner source signature")
         return AnalyticsOwnerSignatureReceipt(
