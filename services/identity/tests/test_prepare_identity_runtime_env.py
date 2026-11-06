@@ -7,12 +7,17 @@ Linked: services/identity/ops/prepare_identity_runtime_env.py,
   services/identity/omnilyzer-identity.service.
 """
 import base64
+import contextlib
+import io
+import os
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 import stat
+import sys
 import tempfile
 import unittest
+import types
 from unittest import mock
 
 
@@ -186,6 +191,94 @@ class RuntimeEnvTests(unittest.TestCase):
                            stdout="System check identified no issues (0 silenced).\n",
                            stderr="")
         self.assertTrue(OP.django_deploy_check_passed(result))
+
+    def test_db_probe_code_compiles_and_reports_sanitized_pg_sqlstate(self):
+        """Run the actual child probe with a fake denied PostgreSQL connection."""
+        code = compile(OP.DB_CHECK, "<safe-db-probe>", "exec")
+        secret = "DO_NOT_EXPOSE_FAKE_DATABASE_PASSWORD"
+        class PrivatePsycopgError(Exception):
+            sqlstate = "42501"
+        fake = types.ModuleType("psycopg")
+        fake.Error = PrivatePsycopgError
+        fake.connect = lambda *args, **kwargs: (_ for _ in ()).throw(
+            PrivatePsycopgError(secret))
+        err = io.StringIO()
+        with (mock.patch.dict(sys.modules, {"psycopg": fake}),
+              mock.patch.dict(os.environ,
+                              {**DB, "SUMLAUDE_ISSUER_DSN": OP.ISSUER_DSN}),
+              contextlib.redirect_stderr(err),
+              self.assertRaises(SystemExit) as end):
+            exec(code, {"__name__": "__main__"})
+        self.assertEqual(end.exception.code, 3)
+        self.assertEqual(err.getvalue().strip(),
+                         "M01_BFF_DB_PROBE_HOLD stage=session_db "
+                         "category=postgresql sqlstate=42501")
+        self.assertNotIn(secret, err.getvalue())
+
+    def test_db_probe_reports_second_role_without_leaking(self):
+        """Positive first DB, denied S03 peer transport stays categorized."""
+        code = compile(OP.DB_CHECK, "<safe-db-probe>", "exec")
+        class PrivatePsycopgError(Exception):
+            sqlstate = "28000"
+        class Cursor:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def execute(self, query):
+                if "django_session" not in query:
+                    raise AssertionError("unexpected test SQL")
+            def fetchone(self):
+                return ("omnilyzer_identity_runtime",
+                        "omnilyzer_identity_sessions",
+                        True, True, True, True, False, False, False, 0)
+        class Connection:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def cursor(self):
+                return Cursor()
+        fake = types.ModuleType("psycopg")
+        fake.Error = PrivatePsycopgError
+        def connect(*args, **kwargs):
+            if "dbname" in kwargs:
+                return Connection()
+            raise PrivatePsycopgError("SYNTHETIC_PRIVATE_DSN")
+        fake.connect = connect
+        err = io.StringIO()
+        with (mock.patch.dict(sys.modules, {"psycopg": fake}),
+              mock.patch.dict(os.environ,
+                              {**DB, "SUMLAUDE_ISSUER_DSN": OP.ISSUER_DSN}),
+              contextlib.redirect_stderr(err),
+              self.assertRaises(SystemExit) as end):
+            exec(code, {"__name__": "__main__"})
+        self.assertEqual(end.exception.code, 3)
+        self.assertEqual(err.getvalue().strip(),
+                         "M01_BFF_DB_PROBE_HOLD stage=s03_issuer "
+                         "category=postgresql sqlstate=28000")
+        self.assertNotIn("SYNTHETIC_PRIVATE_DSN", err.getvalue())
+
+    def test_parent_reports_safe_child_marker_only(self):
+        """Keep arbitrary secret-bearing child stderr completely hidden."""
+        marker = ("M01_BFF_DB_PROBE_HOLD stage=s03_issuer "
+                  "category=postgresql sqlstate=42501")
+        with (mock.patch.object(OP, "run", side_effect=[
+                mock.Mock(returncode=0,
+                          stdout="System check identified no issues (0 silenced).",
+                          stderr=""),
+                mock.Mock(returncode=3,
+                          stdout="",
+                          stderr="SHOULD_NOT_PRINT_TEST_PASSWORD\n" + marker),
+              ]),
+              mock.patch.object(OP, "RELEASE") as release):
+            release.__truediv__.return_value.__truediv__.return_value.is_file.return_value = True
+            with self.assertRaisesRegex(
+                    RuntimeError,
+                    "stage=s03_issuer category=postgresql sqlstate=42501"
+            ) as caught:
+                OP.verify_runtime({"DJANGO_SECRET_KEY": "synthetic"})
+            self.assertNotIn("SHOULD_NOT_PRINT", str(caught.exception))
 
     def test_real_nonroot_check_invokes_unchanged_systemd_manage_and_db(self):
         with (mock.patch.object(OP, "run", side_effect=[

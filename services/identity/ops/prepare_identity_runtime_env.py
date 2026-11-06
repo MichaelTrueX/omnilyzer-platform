@@ -182,56 +182,83 @@ def credentials():
 # Section 2: Actual role-isolated read-only checks under future OS service user.
 DB_CHECK = r"""
 import os
+import re
+import sys
 import psycopg
 
-# Both roles are authenticated from the real future systemd OS principal.
-with psycopg.connect(
-    dbname=os.environ['IDENTITY_PG_DATABASE'],
-    user=os.environ['IDENTITY_PG_USER'],
-    password=os.environ['IDENTITY_PG_PASSWORD'],
-    host=os.environ['IDENTITY_PG_HOST'],
-    port=int(os.environ['IDENTITY_PG_PORT']),
-    connect_timeout=5,
-) as session_db:
-    with session_db.cursor() as cur:
-        cur.execute(
-            "SELECT current_user, current_database(), "
-            "has_table_privilege(current_user,'public.django_session','SELECT'), "
-            "has_table_privilege(current_user,'public.django_session','INSERT'), "
-            "has_table_privilege(current_user,'public.django_session','UPDATE'), "
-            "has_table_privilege(current_user,'public.django_session','DELETE'), "
-            "has_schema_privilege(current_user,'public','CREATE'), "
-            "has_database_privilege(current_user,current_database(),'CREATE'), "
-            "has_table_privilege(current_user,'public.django_migrations','SELECT'), "
-            "(SELECT count(*) FROM public.django_session)"
-        )
-        if cur.fetchone() != (
-            'omnilyzer_identity_runtime', 'omnilyzer_identity_sessions',
-            True, True, True, True, False, False, False, 0
-        ):
-            raise RuntimeError('restricted Django session role verification failed')
+# Section: Independent read-only checks performed with real future service OS
+# identity. Errors are reported only by sanitized stage, category and SQLSTATE.
+def verify_session_db():
+    # Validate runtime identity, DML scope, and zero Django sessions.
+    with psycopg.connect(
+        dbname=os.environ['IDENTITY_PG_DATABASE'],
+        user=os.environ['IDENTITY_PG_USER'],
+        password=os.environ['IDENTITY_PG_PASSWORD'],
+        host=os.environ['IDENTITY_PG_HOST'],
+        port=int(os.environ['IDENTITY_PG_PORT']),
+        connect_timeout=5,
+    ) as session_db:
+        with session_db.cursor() as cur:
+            cur.execute(
+                "SELECT current_user, current_database(), "
+                "has_table_privilege(current_user,'public.django_session','SELECT'), "
+                "has_table_privilege(current_user,'public.django_session','INSERT'), "
+                "has_table_privilege(current_user,'public.django_session','UPDATE'), "
+                "has_table_privilege(current_user,'public.django_session','DELETE'), "
+                "has_schema_privilege(current_user,'public','CREATE'), "
+                "has_database_privilege(current_user,current_database(),'CREATE'), "
+                "has_table_privilege(current_user,'public.django_migrations','SELECT'), "
+                "(SELECT count(*) FROM public.django_session)"
+            )
+            if cur.fetchone() != (
+                'omnilyzer_identity_runtime', 'omnilyzer_identity_sessions',
+                True, True, True, True, False, False, False, 0
+            ):
+                raise RuntimeError('restricted Django session role verification failed')
 
-with psycopg.connect(os.environ['SUMLAUDE_ISSUER_DSN'],
-                     connect_timeout=5) as issuer_db:
-    with issuer_db.cursor() as cur:
-        cur.execute(
-            "SELECT current_user, session_user, current_database(), "
-            "has_function_privilege(current_user,"
-            "'sumlaude_auth.issue_admitted_oidc_session(text,text,bytea,timestamptz)',"
-            "'EXECUTE'), "
-            "has_function_privilege(current_user,"
-            "'sumlaude_auth.revoke_issued_oidc_session(bytea)','EXECUTE'), "
-            "has_table_privilege(current_user,'public.users','SELECT'), "
-            "has_table_privilege(current_user,"
-            "'sumlaude_private.learner_admission','SELECT'), "
-            "has_schema_privilege(current_user,'sumlaude_private','USAGE'), "
-            "has_database_privilege(current_user,current_database(),'CREATE')"
-        )
-        if cur.fetchone() != (
-            'sumlaude_identity_issuer', 'sumlaude_identity_issuer',
-            'sumlaude_learning', True, True, False, False, False, False
-        ):
-            raise RuntimeError('restricted S03 issuer role verification failed')
+def verify_s03_issuer():
+    # Validate dedicated peer account and narrow issue/revoke grants.
+    with psycopg.connect(os.environ['SUMLAUDE_ISSUER_DSN'],
+                         connect_timeout=5) as issuer_db:
+        with issuer_db.cursor() as cur:
+            cur.execute(
+                "SELECT current_user, session_user, current_database(), "
+                "has_function_privilege(current_user,"
+                "'sumlaude_auth.issue_admitted_oidc_session(text,text,bytea,timestamptz)',"
+                "'EXECUTE'), "
+                "has_function_privilege(current_user,"
+                "'sumlaude_auth.revoke_issued_oidc_session(bytea)','EXECUTE'), "
+                "has_table_privilege(current_user,'public.users','SELECT'), "
+                "has_table_privilege(current_user,"
+                "'sumlaude_private.learner_admission','SELECT'), "
+                "has_schema_privilege(current_user,'sumlaude_private','USAGE'), "
+                "has_database_privilege(current_user,current_database(),'CREATE')"
+            )
+            if cur.fetchone() != (
+                'sumlaude_identity_issuer', 'sumlaude_identity_issuer',
+                'sumlaude_learning', True, True, False, False, False, False
+            ):
+                raise RuntimeError('restricted S03 issuer role verification failed')
+
+for stage, function in (("session_db", verify_session_db),
+                        ("s03_issuer", verify_s03_issuer)):
+    try:
+        function()
+    except Exception as exc:
+        # Never expose exception messages, SQL, DSNs, tokens or credentials.
+        code = getattr(exc, "sqlstate", None)
+        code = code if isinstance(code, str) and re.fullmatch(
+            r"[0-9A-Z]{5}", code
+        ) else "none"
+        category = ("authorization_mismatch"
+                    if isinstance(exc, RuntimeError) else
+                    "postgresql" if isinstance(exc, psycopg.Error)
+                    else "runtime")
+        print("M01_BFF_DB_PROBE_HOLD stage=" + stage
+              + " category=" + category + " sqlstate=" + code,
+              file=sys.stderr)
+        sys.exit(3)
+
 """
 
 
@@ -314,7 +341,20 @@ def verify_runtime(configuration):
     check = run(["/usr/sbin/runuser", "-u", OS_USER, "--", str(py),
                  "-I", "-B", "-c", DB_CHECK], cwd=django_root, env=env)
     if check.returncode:
-        fail("nonroot session DB or restricted issuer connection failed")
+        # Only the intentionally sanitized child marker may cross the root
+        # boundary into operator stdout; raw DB stderr might contain secrets.
+        markers = re.findall(
+            r"(?m)^M01_BFF_DB_PROBE_HOLD stage=(session_db|s03_issuer) "
+            r"category=(authorization_mismatch|postgresql|runtime) "
+            r"sqlstate=([0-9A-Z]{5}|none)$",
+            check.stderr,
+        )
+        if len(markers) == 1:
+            stage, category, state = markers[0]
+            fail("restricted database probe failed "
+                 + "stage=" + stage + " category=" + category
+                 + " sqlstate=" + state)
+        fail("nonroot restricted database probe failed without safe classification")
 
 
 def preflight():
