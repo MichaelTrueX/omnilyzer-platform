@@ -1993,3 +1993,51 @@ forged success denial, missing successor sender denial, and replay
 rejection before any second forward. Existing SGID SQLite and actual
 Unix socket tests remain enabled and must be qualified by CI or an
 authorized host with compatible filesystem permissions.
+
+
+## UID991 isolated V2 Sigstore/Cosign service assets (7 November 2026)
+
+The original Task014 broker verifier runs at UID/GID990 and owns its exact
+Cosign v3.1.2 binary, Sigstore TrustedRoot and two private runtime workspaces.
+The already developed independent UID991 successor evidence review invokes
+the same original CosignReleaseBlobVerifier and CosignOCISignatureVerifier,
+without changing their trusted paths or zero-Critical/High policy. The
+original metadata guard requires root-owned (uid=0) assets grouped to the
+actual verifier GID, 0750 parent directory, 0640 TrustedRoot, 0540 Cosign,
+exact size/SHA256 and isolated 0700 principal-owned temporary workspaces.
+A global UID990 supplementary group or weaker verifier policy is prohibited.
+
+The existing build_unsigned_analytics_service_inputs(...,
+successor_source=True) now emits a UID991-only analytics-v2-source.conf
+review candidate alongside unchanged V1, Canary and V2 broker bytes.
+Inside the UID991 service PRIVATE systemd mount namespace only, it binds
+separately provisioned ROOT/UID991 directories:
+
+* Source /etc/omnilyzer/deployment/dev/analytics-executor-sigstore
+  (root 0:991, 0750) to original /etc/omnilyzer/deployment/broker.
+  Source MUST contain only sigstore-trusted-root.json (0:991, 0640,
+  exact pinned DevSigstoreVerificationProvenance SHA256). It MUST NOT
+  include broker dev.json, credentials or signing secrets.
+* Source /opt/omnilyzer/deployment/analytics-executor-tools
+  (root 0:991, 0750) to original /opt/omnilyzer/deployment/tools.
+  Source MUST contain cosign-v3.1.2-linux-amd64 (0:991, 0540,
+  141150460 bytes, exact independent reviewed SHA256). Neither original
+  UID990 directory nor its executable may be chmodded or altered.
+
+The same V2-only drop-in mounts private tmpfs for
+/run/omnilyzer/deployment/dev/blob-verifier and
+/run/omnilyzer/deployment/dev/oci-verifier (both 0700, uid=991,gid=991)
+under the existing private rootless mount parent, with no UID990 or
+Canary shared RuntimeDirectory lifetime. The original O_NOFOLLOW
+descriptor, inode/owner/mode/hash and sealed memfd checks still apply.
+
+These are UNSIGNED review bytes in the PR, not an installed unit. The
+already required root-approved Task014 installation must independently
+validate source-dir symlink-free ownership and exact authenticated
+asset hashes, copy the source using protected root ownership, and
+verify service-private mount namespace + UID991 visibility before any
+service changes. Owner Ed25519 source-approval paths/trust also require
+the separately owner-approved root installation. Do not create keys,
+install files, start or restart services or dispatch Task013 based on
+this document. The schema3 Unix receiver remains intentionally
+DENY-only. One existing M04 independent review follows integrated code.
