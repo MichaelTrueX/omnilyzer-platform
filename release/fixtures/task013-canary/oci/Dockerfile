@@ -18,7 +18,7 @@ RUN set -eu; \
     apk info -e sqlite-libs; \
     apk info -e .python-rundeps; \
     apk del --no-network .python-rundeps sqlite-libs; \
-    rm -f /usr/local/lib/python3.14/lib-dynload/_sqlite3*.so; \
+    find /usr/local/lib/python3.14 -iname '*sqlite*' -exec rm -rf {} +; \
     test -z "$(find /usr/local/lib /usr/lib -iname '*sqlite*' -print -quit)"; \
     test -e /lib/ld-musl-x86_64.so.1; \
     ln -s /usr/local/bin/python /usr/bin/python; \

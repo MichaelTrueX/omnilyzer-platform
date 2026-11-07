@@ -309,6 +309,7 @@ class ImageAndPipelineTests(unittest.TestCase):
         self.assertNotIn("FROM scratch", dockerfile)
         self.assertIn("apk del --no-network .python-rundeps sqlite-libs", dockerfile)
         self.assertIn("find /usr/local/lib /usr/lib -iname '*sqlite*'", dockerfile)
+        self.assertIn("find /usr/local/lib/python3.14 -iname '*sqlite*' -exec rm -rf {} +", dockerfile)
         self.assertNotIn("FROM cgr.dev/chainguard/python", dockerfile)
         self.assertIn("COPY --chown=10001:10001", dockerfile)
         self.assertIn("USER 10001:10001", dockerfile)
