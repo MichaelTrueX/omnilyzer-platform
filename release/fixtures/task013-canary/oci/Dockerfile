@@ -16,7 +16,8 @@ FROM ghcr.io/astral-sh/uv@sha256:df6ea28f3caf5eb77ebae34d38e9b177b41a4e58ee963b1
 RUN set -eu; \
     test -x /usr/local/bin/python; \
     apk info -e sqlite-libs; \
-    apk del --force-broken-world sqlite-libs; \
+    apk info -e .python-rundeps; \
+    apk del --no-network .python-rundeps sqlite-libs; \
     rm -f /usr/local/lib/python3.14/lib-dynload/_sqlite3*.so; \
     test -z "$(find /usr/local/lib /usr/lib -iname '*sqlite*' -print -quit)"; \
     test -e /lib/ld-musl-x86_64.so.1; \
