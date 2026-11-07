@@ -1,7 +1,8 @@
 """File: deployment/analytics_broker_router.py
 
 Purpose: Reuse original Task014 HTTPS/loopback broker ingress for ONE additional
-         signed Analytics 0.15.0 DEV first-install request without modifying
+         signed Analytics 0.15.0 DEV first-install request and an explicitly
+         root-V2-selected, DENY-only schema3 successor review without modifying
          the original canary broker, HTTP parser, listener or Nginx endpoint.
 Related: deployment/broker_https_ingress.py (original closed three-JWT ingress),
          deployment/broker_loopback_listener.py (existing port 3031),
@@ -25,6 +26,7 @@ from __future__ import annotations
 from .analytics_execution import (
     AnalyticsRequestError, parse_analytics_request,
 )
+from .private_registry_fd import _successor_request_image
 from .analytics_promotion_broker import AnalyticsPrivatePromotionBroker
 from .broker import BrokerRejectedError, REJECTED_MESSAGE, _bound_operation
 from .broker_integration import InertDevPromotionHandler, MAX_PROMOTION_REQUEST_BYTES
@@ -33,18 +35,20 @@ from .policy import canonical_bytes
 
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _ANALYTICS_SCHEMA = 2
+_ANALYTICS_SUCCESSOR_SCHEMA = 3
 _ANALYTICS_PRODUCT = "analytics"
 
 
 class AnalyticsDEVPromotionRouter:
     """Exact two-path Task014 handler for original broker HTTPS ingress."""
 
-    __slots__ = ("_canary", "_analytics", "_reviewed_source")
+    __slots__ = ("_canary", "_analytics", "_successor", "_reviewed_source")
 
     def __init__(
         self, *, canary: InertDevPromotionHandler,
         analytics: AnalyticsPrivatePromotionBroker,
         reviewed_installed_source: dict[str, str],
+        successor_preflight_only: bool = False,
     ) -> None:
         """Require original canary handler and the explicit signed Analytics one.
 
@@ -52,7 +56,8 @@ class AnalyticsDEVPromotionRouter:
         installed config; a public mapping never becomes release authority.
         """
         if (type(canary) is not InertDevPromotionHandler
-                or type(analytics) is not AnalyticsPrivatePromotionBroker):
+                or type(analytics) is not AnalyticsPrivatePromotionBroker
+                or type(successor_preflight_only) is not bool):
             raise TypeError("Analytics Task014 router configuration is invalid")
         try:
             from .analytics_unix_boundary import _root_reviewed_source
@@ -64,6 +69,17 @@ class AnalyticsDEVPromotionRouter:
                 self, "_analytics",
                 _bound_operation(analytics, "authorize_and_forward"),
             )
+            # NEVER expose schema3 as a deployment operation. The captured
+            # broker method independently rechecks owner/OIDC/Sigstore/Cosign
+            # and sealed FD, then always fails closed. Only a root-reviewed
+            # V2 service generation may opt into this future preflight route.
+            selected = (
+                _bound_operation(
+                    analytics,
+                    "forward_verified_first_successor_probe_without_deployment",
+                ) if successor_preflight_only else None
+            )
+            object.__setattr__(self, "_successor", selected)
             object.__setattr__(self, "_reviewed_source", source)
         except _CONTROL:
             raise
@@ -102,20 +118,29 @@ class AnalyticsDEVPromotionRouter:
                 raise ValueError("noncanonical promotion")
             schema = data.get("schema_version")
             product = data.get("product_id")
+            successor_selected = False
             if schema == _ANALYTICS_SCHEMA or product == _ANALYTICS_PRODUCT:
-                if (type(schema) is not int or schema != _ANALYTICS_SCHEMA
-                        or type(product) is not str or product != _ANALYTICS_PRODUCT):
+                if type(schema) is not int or type(product) is not str or product != _ANALYTICS_PRODUCT:
                     raise ValueError("inconsistent product schema")
-                parse_analytics_request(
-                    promotion_request,
-                    **dict(object.__getattribute__(self, "_reviewed_source")),
-                )
-                analytics_selected = True
+                if schema == _ANALYTICS_SCHEMA:
+                    parse_analytics_request(
+                        promotion_request,
+                        **dict(object.__getattribute__(self, "_reviewed_source")),
+                    )
+                elif (schema == _ANALYTICS_SUCCESSOR_SCHEMA
+                      and object.__getattribute__(self, "_successor") is not None):
+                    # This is structural routing only. The read-only broker
+                    # independently performs the full signed release review.
+                    _successor_request_image(promotion_request)
+                    successor_selected = True
+                else:
+                    raise ValueError("unapproved Analytics request generation")
+                analytics_selected = not successor_selected
             else:
                 analytics_selected = False
             # The original promotion schema does not have product_id.
             # Any unrelated product_id or schema 2 is a DENY, not canary.
-            if not analytics_selected and (
+            if not analytics_selected and not successor_selected and (
                 product is not None or type(schema) is not int or schema != 1
             ):
                 raise ValueError("unrecognized Task014 product")
@@ -129,6 +154,16 @@ class AnalyticsDEVPromotionRouter:
         # broker REJECTED versus UNAVAILABLE must pass through unchanged so
         # the existing ingress emits 403 versus 503 correctly; never turn a
         # signer outage into a claim that the user supplied a bad identity.
+        if successor_selected:
+            # The probe MUST raise BrokerUnavailableError after its real
+            # signed/Unix checks. It cannot report an accepted release.
+            object.__getattribute__(self, "_successor")(
+                compact_token=compact_token, zot_token=zot_token,
+                forgejo_token=forgejo_token,
+                canonical_request=promotion_request, received_at=received_at,
+            )
+            from .broker import BrokerUnavailableError, UNAVAILABLE_MESSAGE
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         if analytics_selected:
             return object.__getattribute__(self, "_analytics")(
                 compact_token=compact_token, zot_token=zot_token,
