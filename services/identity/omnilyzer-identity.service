@@ -3,6 +3,7 @@
 # private loopback port; inactive source template for truexmainserver.
 # Linked files: services/identity/config/{settings,wsgi}.py,
 # services/identity/requirements.txt,
+# services/identity/tests/test_inactive_identity_release.py,
 # services/identity/nginx-auth-location.conf.review and
 # docs/operations/p0-shared-keycloak-sumlaude-identity-20261029.md.
 #
@@ -29,6 +30,11 @@ WorkingDirectory=/opt/omnilyzer/identity/current/services/identity
 EnvironmentFile=/etc/omnilyzer/identity/identity.env
 Environment=DJANGO_SETTINGS_MODULE=config.settings
 Environment=PYTHONDONTWRITEBYTECODE=1
+# Section 3a - Do not start an obsolete BFF even if the owner GO marker
+# is later created. The reviewed immutable source selection is release-bound;
+# a future approved BFF version requires an explicit, reviewed unit update.
+# ExecCondition mismatch skips startup without falling back to old code.
+ExecCondition=/usr/bin/test /opt/omnilyzer/identity/current -ef /opt/omnilyzer/identity/releases/304b5acdc642ec4b26e08867af467e63c1b04c5e
 ExecStartPre=/opt/omnilyzer/identity/current/.venv/bin/python manage.py check --deploy
 # Section 4 - Original Django WSGI entrypoint; no public network listener.
 # Gunicorn access logs are intentionally disabled to avoid logging OIDC

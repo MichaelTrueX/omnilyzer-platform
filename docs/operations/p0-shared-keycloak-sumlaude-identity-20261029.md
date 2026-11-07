@@ -430,6 +430,20 @@ were performed.**
    The source unit has `AssertPathExists=/etc/omnilyzer/identity/owner-approved-go`;
    absent this owner-controlled marker it refuses even a mistaken service
    startup. **Do not create that marker until actual approved activation.**
+   The reviewed systemd source also uses an `ExecCondition=/usr/bin/test`
+   same-file check: `/opt/omnilyzer/identity/current` must resolve to
+   the exact reviewed release directory
+   `/opt/omnilyzer/identity/releases/304b5acdc642ec4b26e08867af467e63c1b04c5e`.
+   If it still selects the obsolete `d65d14b...`, startup is skipped
+   even if the owner marker exists. Future approved BFF upgrades require
+   one deliberate reviewed unit-pin update, not a permissive fallback.
+   **Important actual-host gap:** the installed inactive production systemd
+   unit predates this added source guard. This source-only PR does not
+   update that installed unit. Before any approved real activation, an
+   authorized operator must install the new exact-Git/SHA-verified service
+   unit, run `systemd-analyze verify` and independently check the loaded
+   `ExecCondition` plus the release selection. Do NOT start services or
+   create the owner marker merely to test the guard.
 8. Only after explicit owner GO: start the existing nonroot Gunicorn
    service and enable exact app-origin HTTPS/Nginx routing. One real
    owner-authorized flow must prove Keycloak Authorization Code+PKCE,

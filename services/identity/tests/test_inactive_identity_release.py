@@ -9,6 +9,7 @@ import importlib.util
 import io
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -44,6 +45,38 @@ def make_tar(path, items):
 
 class InactiveReleaseTests(unittest.TestCase):
     """Focused safety and immutability assertions for the real operator."""
+
+    def test_service_requires_exact_reviewed_selected_release(self):
+        """A mere owner GO marker must never start an older BFF binary."""
+        unit = (SOURCE.parents[1] / "omnilyzer-identity.service").read_text(
+            encoding="utf-8")
+        guard = (
+            "ExecCondition=/usr/bin/test "
+            "/opt/omnilyzer/identity/current -ef "
+            "/opt/omnilyzer/identity/releases/"
+            "304b5acdc642ec4b26e08867af467e63c1b04c5e"
+        )
+        self.assertEqual(unit.count(guard), 1)
+        self.assertIn(
+            "AssertPathExists=/etc/omnilyzer/identity/owner-approved-go",
+            unit)
+        self.assertLess(unit.index(guard), unit.index("ExecStartPre="))
+        self.assertNotIn("-ExecCondition=", unit)
+        # Exercise the same /usr/bin/test -ef predicate on disposable
+        # filesystem objects without needing root or modifying /opt.
+        with tempfile.TemporaryDirectory() as home:
+            base = Path(home)
+            reviewed = base / "reviewed"
+            obsolete = base / "obsolete"
+            current = base / "current"
+            reviewed.mkdir()
+            obsolete.mkdir()
+            current.symlink_to(obsolete, target_is_directory=True)
+            command = ["/usr/bin/test", str(current), "-ef", str(reviewed)]
+            self.assertEqual(subprocess.run(command, check=False).returncode, 1)
+            current.unlink()
+            current.symlink_to(reviewed, target_is_directory=True)
+            self.assertEqual(subprocess.run(command, check=False).returncode, 0)
 
     def test_stage_path_uses_exact_sha_prefix(self):
         self.assertEqual(OP.stage_for("abcd1234" + "0" * 32).name,
