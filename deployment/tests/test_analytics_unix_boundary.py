@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+from contextlib import contextmanager
+import subprocess
 from pathlib import Path
 import socket
 import tempfile
@@ -58,6 +60,44 @@ from deployment.policy import canonical_bytes
 REQUEST = canonical_bytes(fixture())
 TOKEN = "synthetic-test-only-zot-auth-token"
 CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
+
+
+@contextmanager
+def signed_owner_fixture(selected):
+    """Generate a disposable *real* SSH Ed25519 owner approval fixture.
+
+    The root-controlled public signer is mocked ONLY in this synthetic test.
+    The original load_and_verify_owner_signed_source uses real OpenSSH,
+    canonical signed bytes and actual O_NOFOLLOW filesystem reads. No owner
+    private key or real /etc/omnilyzer anchor is created or contacted.
+    """
+    from release import analytics_owner_source_selection as owner
+    from deployment import analytics_executor as executor_module
+
+    with tempfile.TemporaryDirectory(prefix="task14b-owner-ed25519-") as dirname:
+        root = Path(dirname)
+        private = root / "fixture-owner-key"
+        subprocess.run([
+            "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(private),
+        ], check=True, capture_output=True, timeout=10)
+        pub = private.with_suffix(".pub").read_text().strip()
+        trust = (
+            f'{owner.OWNER_SIGNER_IDENTITY} '
+            f'namespaces="{owner.OWNER_APPROVAL_NAMESPACE}" {pub}\n'
+        ).encode("ascii")
+        approval = root / "signed-source.json"
+        approval.write_bytes(owner.expected_owner_approval_bytes(selected))
+        subprocess.run([
+            "ssh-keygen", "-Y", "sign", "-f", str(private),
+            "-n", owner.OWNER_APPROVAL_NAMESPACE, str(approval),
+        ], check=True, capture_output=True, timeout=10)
+        signature = root / "signed-source.json.sig"
+        with (
+            patch.object(owner, "_root_controlled_signers", return_value=trust),
+            patch.object(executor_module, "_OWNER_APPROVAL_FILE", approval),
+            patch.object(executor_module, "_OWNER_SIGNATURE_FILE", signature),
+        ):
+            yield approval, signature, trust
 
 
 class SyntheticPreflight:
@@ -297,7 +337,8 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
         from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
         from dataclasses import replace
 
-        raw_model, _ = AnalyticsSuccessorRequestTests().candidate()
+        raw_model, source = AnalyticsSuccessorRequestTests().candidate()
+        self.enterContext(signed_owner_fixture(source["selected"]))
         raw = canonical_bytes(raw_model)
         image = raw_model["exact_image_reference"]
         state = AnalyticsActiveState(
@@ -346,7 +387,8 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
         from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
         from dataclasses import replace
 
-        raw_model, _ = AnalyticsSuccessorRequestTests().candidate()
+        raw_model, source = AnalyticsSuccessorRequestTests().candidate()
+        self.enterContext(signed_owner_fixture(source["selected"]))
         raw = canonical_bytes(raw_model)
         image = raw_model["exact_image_reference"]
         state = AnalyticsActiveState(
@@ -393,6 +435,68 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
         finally:
             os.close(fd)
             os.close(old_fd)
+
+    def test_successor_executor_rechecks_actual_owner_ed25519_before_host_io(self):
+        """Verify owner source independently, reject tamper/different approval."""
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        from deployment import analytics_executor as executor_module
+        from release import analytics_owner_source_selection as owner
+
+        candidate, context = AnalyticsSuccessorRequestTests().candidate()
+        selected = context["selected"]
+        with signed_owner_fixture(selected) as (approval, signature, trust):
+            self.assertIsNone(executor_module._verify_executor_owner_source(candidate))
+            for key, bad in (
+                ("owner_approval_sha256", "f" * 64),
+                ("source_sha", "a" * 40),
+                ("product_source_sha", "b" * 40),
+                ("release_version", "9.9.9"),
+            ):
+                with self.subTest(field=key), self.assertRaises(ValueError):
+                    executor_module._verify_executor_owner_source({**candidate, key: bad})
+            prior = signature.read_bytes()
+            signature.write_bytes(prior[:-4] + b"AAAA")
+            with self.assertRaises(owner.AnalyticsOwnerSourceSelectionDenied):
+                executor_module._verify_executor_owner_source(candidate)
+            signature.write_bytes(prior)
+            with patch.object(owner, "_root_controlled_signers", side_effect=(
+                owner.AnalyticsOwnerSourceSelectionDenied("missing root anchor")
+            )), self.assertRaises(owner.AnalyticsOwnerSourceSelectionDenied):
+                executor_module._verify_executor_owner_source(candidate)
+            approval.unlink()
+            with self.assertRaises(owner.AnalyticsOwnerSourceSelectionDenied):
+                executor_module._verify_executor_owner_source(candidate)
+
+    def test_first_successor_owner_anchor_missing_denies_before_registry_or_docker(self):
+        """Missing real root trust stops before any host read or replay."""
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        from release import analytics_owner_source_selection as owner
+
+        candidate, _ = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(candidate)
+        executor, replay, events = receiver()
+        fd = credential(
+            request=raw, image=candidate["exact_image_reference"],
+            product_id="analytics-successor",
+        )
+        try:
+            with (
+                patch("deployment.analytics_executor.os.geteuid", return_value=991),
+                patch.object(owner, "_root_controlled_signers", side_effect=(
+                    owner.AnalyticsOwnerSourceSelectionDenied("no real root key")
+                )),
+                patch("deployment.analytics_active_state_review.inspect_analytics_active_state") as observed,
+                self.assertRaises(ExecutorUnavailableError),
+            ):
+                executor.preflight_first_successor_without_deployment(
+                    raw, credential_fd=fd,
+                )
+            observed.assert_not_called()
+            self.assertEqual(events, [])
+            self.assertEqual(replay.begin_calls, [])
+            self.assertEqual(replay.finish_calls, [])
+        finally:
+            os.close(fd)
 
     def test_systemd_analytics_listener_transfers_descriptor_after_exact_peer_check(self):
         """Join the real Analytics sender to the real shared PID1 decision."""
@@ -594,7 +698,8 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
         """
         from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
 
-        candidate, _ = AnalyticsSuccessorRequestTests().candidate()
+        candidate, source = AnalyticsSuccessorRequestTests().candidate()
+        self.enterContext(signed_owner_fixture(source["selected"]))
         raw = canonical_bytes(candidate)
         state = AnalyticsActiveState(
             schema_version=1, active_slot="blue", active_digest=PINNED_DIGEST,

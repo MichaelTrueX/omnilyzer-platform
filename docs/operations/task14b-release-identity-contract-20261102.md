@@ -1203,3 +1203,33 @@ schema-3 receiver, durable replay, candidate pull, health, route journal
 switch and rollback remain fail-closed and require one independently reviewed
 integrated release candidate. No root-owned installation, registry write,
 service activation or deployment is authorized by this change.
+
+## 2026-11-07: independent real owner signature at UID991 before successor host reads
+
+The existing executor's `preflight_first_successor_without_deployment()`
+now **reuses** `release/analytics_owner_source_selection.py` to verify a real
+OpenSSH Ed25519 detached signature from the exact root-owned trust anchor
+`/etc/omnilyzer/deployment/dev/analytics-owner-source-signers`. The two
+separately installed immutable review input files are required at fixed paths:
+`/etc/omnilyzer/deployment/dev/analytics-owner-source-approval.json` and
+`/etc/omnilyzer/deployment/dev/analytics-owner-source-approval.json.sig`.
+These must be installed/provisioned by an authorized privileged owner process
+under the original protected systemd directory policy. No request-supplied
+path, signer, key or Python receipt is accepted. The verifier checks the
+original canonical source approval bytes, detached signature, source commit,
+platform workflow commit, release version and approval SHA against the
+canonical schema-3 request before any Docker/RootlessKit or private Zot probe.
+Missing root trust/key/approval/signature, unknown signer, altered bytes or
+mismatched source identity deny. Test-only fixtures generate an actual local
+Ed25519 key to exercise OpenSSH signature validation, never install it as a
+real trusted signer, and prove denial occurs before host API access.
+
+**Still HOLD:** The required owner signer is not confirmed installed on the
+actual DEV host; this code must reject a real request until authorization and
+provisioning. Owner source signature is separate from GitHub OIDC and Task013
+Cosign/Sigstore/repository + SCA attestation: those are NOT yet independently
+reverified by UID991 over an authenticated successor request. The method
+remains read-only and the Unix handler still hard-rejects promotion after
+preflight. Actual persistent replay, immutable OCI pull, rootless 3141
+cutover and journaled rollback are not implemented here. Signed Analytics
+0.15.0 continues unchanged.

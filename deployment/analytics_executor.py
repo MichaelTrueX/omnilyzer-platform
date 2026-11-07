@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from pathlib import Path
 import sys
 import time
 from typing import Any
@@ -55,6 +56,58 @@ _SOURCE_FIELDS = frozenset({
     "reviewed_product_profile_sha256", "reviewed_runtime_profile_sha256",
 })
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
+# These are the SAME fixed root-controlled DEV approval files used by the
+# signed source reviewer, not release/OCI bytes supplied over the Unix socket.
+# A missing file or missing trusted signer is a mandatory rejection.
+_OWNER_APPROVAL_FILE = Path(
+    "/etc/omnilyzer/deployment/dev/analytics-owner-source-approval.json"
+)
+_OWNER_SIGNATURE_FILE = Path(
+    "/etc/omnilyzer/deployment/dev/analytics-owner-source-approval.json.sig"
+)
+
+
+def _verify_executor_owner_source(request: dict[str, object]) -> None:
+    """Independently check owner-held Ed25519 exact-source approval at UID991.
+
+    The existing root-owned public-key trust anchor and OpenSSH verification
+    are used unmodified. A broker-provided Python receipt, claimed SHA,
+    registry token or request-shaped JSON never substitutes for root-trusted
+    signature verification. No network, filesystem write or deployment.
+    This is ONE mandatory source proof, NOT complete signed Task013 evidence,
+    OIDC authorization, durable replay or successor deployment permission.
+    """
+    from release.analytics_owner_source_selection import (
+        AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
+        expected_owner_approval_bytes, load_and_verify_owner_signed_source,
+    )
+    if type(request) is not dict:
+        raise ValueError("invalid executor request")
+    selected, proof = load_and_verify_owner_signed_source(
+        _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
+    )
+    if (
+        type(selected) is not AnalyticsOwnerSourceSelection
+        or type(proof) is not AnalyticsOwnerSignatureReceipt
+        or proof.owner_signature_verified is not True
+        or proof.independent_review_verified is not False
+        or proof.release_authorized is not False
+        or proof.deployment_authorized is not False
+        or selected.release_authorized is not False
+        or selected.deployment_authorized is not False
+        or selected.source_commit != request.get("product_source_sha")
+        or selected.platform_workflow_commit != request.get("source_sha")
+        or selected.release_version != request.get("release_version")
+        or proof.source_commit != selected.source_commit
+        or proof.source_tree != selected.source_tree
+        or proof.release_version != selected.release_version
+        or proof.approval_sha256 != request.get("owner_approval_sha256")
+        or proof.approval_sha256 != hashlib.sha256(
+            expected_owner_approval_bytes(selected)
+        ).hexdigest()
+    ):
+        raise ValueError("owner-approved source does not match request")
+    return None
 
 
 class AnalyticsPrivilegedExecutor:
@@ -156,8 +209,9 @@ class AnalyticsPrivilegedExecutor:
         or success response. The broker must independently authenticate OIDC,
         owner Ed25519 and signed release before future forwarding; a forged
         caller-constructible schema-3 JSON or this local result grants nothing.
-        Exact sealed FD, local live OCI digest, private candidate 3142 and
-        actual Zot manifest are rechecked by the restricted UID991 executor.
+        Exact independently root-anchored owner signature, sealed FD, local
+        live OCI digest, private candidate 3142 and actual Zot manifest are
+        rechecked by the restricted UID991 executor.
         """
         if type(credential_fd) is not int or credential_fd < 0:
             raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE) from None
@@ -186,6 +240,10 @@ class AnalyticsPrivilegedExecutor:
                 canonical_request.decode("ascii"), object_pairs_hook=no_duplicates,
                 parse_constant=lambda _: (_ for _ in ()).throw(ValueError),
             )
+            # Mandatory *independent* owner Ed25519 verification at UID991.
+            # Do this before any Docker/RootlessKit/registry access. The two
+            # root-controlled files cannot be selected by the broker/request.
+            _verify_executor_owner_source(parsed)
             observed = inspect_analytics_active_state()
             if (
                 type(observed) is not AnalyticsActiveState
