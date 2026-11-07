@@ -22,6 +22,22 @@ Workspace/tenant-isolation, token/session, CSP/CORS, supply-chain, deployment,
 and validation requirements. Do not silently resolve conflicting requirements:
 preserve and report them unless precedence is explicit and unambiguous.
 
+## Mandatory unambiguous chat status and next action (owner decision, 7 November 2026)
+
+**Applies to every project ChatGPT workstream:** strategy, development, QA/review, teaching/content, publishing, operations and release. When the user asks whether a chat can continue, what it is waiting for, or requests a progress/closeout handover, **lead with exactly ONE status for the current chat**:
+
+- **ACTIVE - [one specific, necessary action that this chat can execute now].** Use only when the action is actually unblocked and owned by this chat. Execute it in the current turn when possible, rather than merely offering more checks.
+- **WAITING ON [named existing owner + exact required deliverable/decision].** Use when there is no remaining necessary task that this chat can independently complete now. State what evidence or event resumes this chat. Do not add hypothetical "I could still review/check/prepare..." suggestions to a WAITING answer.
+- **DONE - [the exact scoped deliverable completed; next owner or none].** Use only when this chat's responsibilities are finished. Distinguish "source/QA complete" from a product actually live and accepted; a feature may still be WAITING overall.
+
+**Never give contradictory statuses in one answer.** An optional check, vague preparation, repeated already-accepted test or invented improvement does not make a WAITING chat ACTIVE. If multiple chats have tasks, give their separate owners and dependencies *after* the one current-chat status. Verify the current canonical GitHub PR/Issue, exact source and real environment before determining status; correct an outdated status when new verified evidence appears.
+
+**Keep progress answers concrete and short:** state (1) what is actually completed, including source-only versus live evidence when relevant; (2) the single remaining blocking condition and who owns it; (3) the next action **only if actionable now**, or the exact resumption trigger. Keep existing required security, academic, independent QA, approval and deployment gates. Do not turn this communication rule into new tests, approvals, PRs, meetings or a separate status framework.
+
+**Example:** `STATUS: WAITING ON S03's production-published GTM-001 and a genuinely verified enrolled adult. M01 source and independent security review are complete. M01 resumes for the single real login-to-progression browser acceptance after S03's evidence and authorized activation.` Do not append "M01 could also examine installation preparations" unless an actual mandatory, outstanding check is documented.
+
+**Cross-chat delivery limitation:** GitHub guidance and issue comments are durable instructions, not automatic messages to other already-open ChatGPT conversations. A receiving chat must read the current instructions on resumption. Preserve the existing project-specific final handover headings and actual named owners.
+
 ## Mandatory technical constraint: GitHub paid services are unavailable (7 November 2026)
 
 **Reason: technical inability to use GitHub payment methods, NOT a cost-saving preference.** The Product Owner cannot use GitHub's payment methods because of an unresolved technical payment problem. Consequently **all GitHub services or features requiring a paid plan, billing enrollment, a registered payment method, purchased credits, or pay-as-you-go capacity are unavailable**. Do not plan, invoke, procure, depend on, or recommend them as an option. There is **no exception for separate owner approval**: the owner cannot resolve access by approving expenditure. Do not ask the owner to enable GitHub billing, try another payment method, increase limits, or switch to a paid GitHub plan as a fallback. This constraint remains active until the owner explicitly reports a real technical resolution and authorizes a change to this policy.
