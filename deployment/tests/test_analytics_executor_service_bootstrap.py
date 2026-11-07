@@ -384,7 +384,7 @@ class InstalledSourceConfigTests(unittest.TestCase):
                     return hashlib.sha256(b"A").hexdigest()
 
             with (
-                patch.object(config, "_INSTALLED_ROOT", root),
+                patch.object(config, "_SUCCESSOR_INSTALLED_ROOT", root),
                 patch.object(config.os, "fstat", side_effect=lambda fd: root_owned(actual_fstat(fd))),
                 patch.object(config.os, "stat", side_effect=lambda path, *args, **kwargs:
                              root_owned(actual_stat(path, *args, **kwargs))),
@@ -392,6 +392,14 @@ class InstalledSourceConfigTests(unittest.TestCase):
                 patch.object(config.SaaSRuntimeProfile, "from_json_bytes", return_value=Profile()),
             ):
                 self.assertIsNone(config._verify_source_bytes(tuple(hashes), root=root))
+                # Wrong-generation root must fail BEFORE any filesystem open.
+                with patch.object(config.os, "open", side_effect=AssertionError(
+                    "wrong generation must not open a source path"
+                )) as opened, self.assertRaises(AnalyticsInstalledAuthorityError):
+                    config._verify_source_bytes(
+                        tuple(hashes), root=config._INSTALLED_ROOT,
+                    )
+                opened.assert_not_called()
                 # A valid V2 vector cannot be accepted with a missing file or
                 # a byte modification in the additional release trust module.
                 file = root / ANALYTICS_SUCCESSOR_RELEASE_FILES[0]
@@ -426,7 +434,7 @@ class InstalledSourceConfigTests(unittest.TestCase):
                 load_analytics_executor_service_config()
 
 
-    def installed_source_preflight(self, *, product_commit=None):
+    def installed_source_preflight(self, *, product_commit=None, successor=False):
         """Simulate protected descriptor reads with independent real C17 config."""
         from contextlib import ExitStack
         from deployment.executor_service_config import DevExecutorServiceConfiguration
@@ -437,6 +445,11 @@ class InstalledSourceConfigTests(unittest.TestCase):
             replay_group_gid=992, socket_group_gid=993, reviewed_commit="d" * 40,
         ))
         value = sample_config()
+        if successor:
+            value["schema_version"] = 2
+            value["source_sha256"] = {
+                name: "b" * 64 for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+            }
         if product_commit is not None:
             value["reviewed_installed_commit"] = product_commit
         raw = canonical_bytes(value)
@@ -473,6 +486,23 @@ class InstalledSourceConfigTests(unittest.TestCase):
         self.assertEqual(identities["expected_executor_gid"], 991)
         verified.assert_called_once()
         self.assertEqual(verified.call_args.args[0][0][0], ANALYTICS_INSTALLED_FILES[0])
+        self.assertEqual(verified.call_args.kwargs["root"], config._INSTALLED_ROOT)
+
+    def test_v2_root_config_verifies_only_fixed_inactive_candidate_path(self):
+        """Original executor identities are retained with 23-source V2 pin."""
+        stack, base, verified = self.installed_source_preflight(successor=True)
+        with stack:
+            source, identities = load_analytics_executor_service_config()
+        self.assertEqual(source, EXPECTED)
+        self.assertEqual(identities["expected_executor_uid"], 991)
+        verified.assert_called_once()
+        self.assertEqual(
+            verified.call_args.kwargs["root"], config._SUCCESSOR_INSTALLED_ROOT,
+        )
+        self.assertEqual(
+            tuple(name for name, _sha in verified.call_args.args[0][:23]),
+            ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+        )
 
     def test_real_loader_identity_result_reaches_the_actual_bootstrap_contract(self):
         """Keep the real C17 producer and Analytics consumer joined.

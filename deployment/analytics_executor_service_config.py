@@ -100,6 +100,9 @@ _INSTALLED_RUNTIME_FILES = (
 )
 CONFIG_PATH = "/etc/omnilyzer/deployment/dev/analytics-executor.json"
 _INSTALLED_ROOT = Path("/opt/omnilyzer/deployment/analytics-app")
+# A separately owner-installed schema-2 source is verified only beside V1.
+# This is NOT a generic source root or permission to alter active service.
+_SUCCESSOR_INSTALLED_ROOT = Path("/opt/omnilyzer/deployment/analytics-app-candidate")
 _CONFIGURATION_NAME = "analytics-executor.json"
 _FIELDS = frozenset({
     "schema_version", "product_id", "stage", "reviewed_installed_commit",
@@ -179,6 +182,7 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
             raise ValueError
         return {
             **dict(reviewed),
+            "source_generation": generation,
             "source_sha256": tuple((p, source[p]) for p in paths),
         }
     except _CONTROL:
@@ -191,13 +195,27 @@ def _verify_source_bytes(
     expected: tuple[tuple[str, str], ...],
     *, root: Path = _INSTALLED_ROOT,
 ) -> None:
-    """Read only exact root-owned source via fd-relative O_NOFOLLOW paths.
+    """Read exact generation-specific source via fd-relative O_NOFOLLOW.
 
+    Root-owned schema 1 accepts only the original 20-file live directory;
+    schema 2 accepts only the exact 23-file inactive candidate directory.
     The real installed root and all ancestors must be root-owned and not
     writable by any unprivileged role. Files must be single-link, mode0644,
     bounded, regular and byte-hash identical to root-owned installed policy.
     """
-    if root != _INSTALLED_ROOT or type(expected) is not tuple:
+    if type(expected) is not tuple or root not in (
+        _INSTALLED_ROOT, _SUCCESSOR_INSTALLED_ROOT,
+    ):
+        raise AnalyticsInstalledAuthorityError(_ERROR)
+    # Check generation/root pairing before opening even one host descriptor.
+    # V2 cannot self-authorize a read of the V1 active path and vice versa.
+    v1_names = (*ANALYTICS_INSTALLED_FILES, *_INSTALLED_RUNTIME_FILES)
+    v2_names = (*ANALYTICS_SUCCESSOR_INSTALLED_FILES, *_INSTALLED_RUNTIME_FILES)
+    names = tuple(name for name, _sha in expected)
+    if (
+        (root == _INSTALLED_ROOT and names != v1_names)
+        or (root == _SUCCESSOR_INSTALLED_ROOT and names != v2_names)
+    ):
         raise AnalyticsInstalledAuthorityError(_ERROR)
     descriptors: list[int] = []
     try:
@@ -223,11 +241,7 @@ def _verify_source_bytes(
         total = 0
         # Only a complete schema-1 or schema-2 ordered source vector is
         # accepted, followed by the SAME four original runtime assets.
-        v1 = (*ANALYTICS_INSTALLED_FILES, *_INSTALLED_RUNTIME_FILES)
-        v2 = (*ANALYTICS_SUCCESSOR_INSTALLED_FILES, *_INSTALLED_RUNTIME_FILES)
-        approved_names = set(v2)
-        if tuple(name for name, _sha in expected) not in (v1, v2):
-            raise ValueError
+        approved_names = set(v2_names)
         for name, digest in expected:
             if name not in approved_names or type(digest) is not str:
                 raise ValueError
@@ -306,7 +320,7 @@ def _verify_source_bytes(
 
 
 def load_analytics_executor_service_config() -> tuple[dict[str, str], dict[str, int]]:
-    """Check original hardened C17 config, then product root-owned hash source.
+    """Check original hardened C17 identity and selected root-owned source.
 
     This is the only intended runtime route to a reviewed_installed_source
     mapping. A caller-constructible mapping never proves host installation.
@@ -345,13 +359,17 @@ def load_analytics_executor_service_config() -> tuple[dict[str, str], dict[str, 
             or base.executor_gid != RootlessDockerAuthority().executor_gid
         ):
             raise ValueError
+        source_root = (
+            _SUCCESSOR_INSTALLED_ROOT if product["source_generation"] == 2
+            else _INSTALLED_ROOT
+        )
         _verify_source_bytes((
             *product["source_sha256"],
             (_PRODUCT_PATH, product["reviewed_product_profile_sha256"]),
             (_RUNTIME_PATH, product["reviewed_runtime_profile_sha256"]),
             (_COMPOSE_PATH, product["reviewed_compose_sha256"]),
             (_SOURCE_CLAIM_PATH, _SOURCE_CLAIM_SHA256),
-        ))
+        ), root=source_root)
         result = (
             {key: product[key] for key in (
                 "reviewed_installed_commit", "reviewed_compose_sha256",

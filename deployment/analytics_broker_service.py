@@ -32,6 +32,7 @@ from . import broker_service_config_loader as _original
 from .analytics_broker_router import AnalyticsDEVPromotionRouter
 from .analytics_executor_service_config import (
     parse_analytics_executor_service_config, _verify_source_bytes,
+    _INSTALLED_ROOT, _SUCCESSOR_INSTALLED_ROOT,
     _PRODUCT_PATH, _RUNTIME_PATH, _COMPOSE_PATH,
     _SOURCE_CLAIM_PATH, _SOURCE_CLAIM_SHA256,
 )
@@ -117,13 +118,19 @@ def load_analytics_broker_installed_source(
         if missing:
             result = None
         else:
+            # Root-installed schema decides ONE fixed source directory;
+            # public requests have no influence on generation or source root.
+            source_root = (
+                _SUCCESSOR_INSTALLED_ROOT if parsed["source_generation"] == 2
+                else _INSTALLED_ROOT
+            )
             _verify_source_bytes((
                 *parsed["source_sha256"],
                 (_PRODUCT_PATH, parsed["reviewed_product_profile_sha256"]),
                 (_RUNTIME_PATH, parsed["reviewed_runtime_profile_sha256"]),
                 (_COMPOSE_PATH, parsed["reviewed_compose_sha256"]),
                 (_SOURCE_CLAIM_PATH, _SOURCE_CLAIM_SHA256),
-            ))
+            ), root=source_root)
             result = {
                 key: parsed[key] for key in (
                     "reviewed_installed_commit", "reviewed_compose_sha256",

@@ -199,6 +199,8 @@ class OriginalRootOwnedOptInTests(unittest.TestCase):
             result = broker_service.load_analytics_broker_installed_source(self.cfg)
         self.assertEqual(result, EXPECTED)
         verified.assert_called_once()
+        self.assertEqual(verified.call_args.kwargs["root"],
+                         broker_service._INSTALLED_ROOT)
         names = tuple(name for name, _digest in verified.call_args.args[0])
         self.assertEqual(names[:len(ANALYTICS_INSTALLED_FILES)], ANALYTICS_INSTALLED_FILES)
         self.assertEqual(names[-4:], (
@@ -210,6 +212,35 @@ class OriginalRootOwnedOptInTests(unittest.TestCase):
         self.assertEqual(
             verified.call_args.args[0][-1][1],
             "45e13536c413a5e5c0a39a4d8c98daf412614dec535398b2ba204039772c88b9",
+        )
+
+    def test_v2_source_verifier_uses_only_fixed_candidate_root(self):
+        """Protected broker schema-2 config cannot redirect live source."""
+        from deployment.analytics_executor_service_config import (
+            ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+        )
+        self.raw = canonical_bytes({
+            "schema_version": 2, "product_id": "analytics", "stage": "dev",
+            **EXPECTED,
+            "source_sha256": {
+                name: "b" * 64 for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+            },
+        })
+        metadata = list(self.file_stat)
+        metadata[6] = len(self.raw)
+        self.file_stat = os.stat_result(metadata)
+        stack, verified = self.preflight()
+        with stack:
+            result = broker_service.load_analytics_broker_installed_source(self.cfg)
+        self.assertEqual(result, EXPECTED)
+        verified.assert_called_once()
+        self.assertEqual(
+            verified.call_args.kwargs["root"],
+            broker_service._SUCCESSOR_INSTALLED_ROOT,
+        )
+        self.assertEqual(
+            tuple(path for path, _ in verified.call_args.args[0][:23]),
+            ANALYTICS_SUCCESSOR_INSTALLED_FILES,
         )
 
     def test_distinct_canary_revision_preserves_product_source_checks(self):

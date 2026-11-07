@@ -1131,3 +1131,20 @@ install a service or authorize schema-3 broker/UID991 executor requests. Before
 any later cutover, separate owner authorization, verified source/signature and
 actual root-owned service migration/rollback/reconciliation are mandatory.
 The currently installed signed Analytics 0.15.0 is preserved.
+
+## 2026-11-07: fixed generation-to-directory binding before service activation
+
+The existing broker and executor installed-source loader now select exactly
+one root-owned product source directory from the protected configuration:
+**schema 1** binds only the 20-module V1 list and
+`/opt/omnilyzer/deployment/analytics-app`; **schema 2** binds only the
+23-module V2 list and
+`/opt/omnilyzer/deployment/analytics-app-candidate`. The original fd-relative
+`O_NOFOLLOW`, root UID, immutable SHA/size/ctime/mode/inode and four runtime
+asset checks are reused without allowing caller-supplied paths. Crossed V1/V2
+manifest/root combinations fail before opening the first source descriptor.
+The original broker and executor security collaborators, identities and
+installed 0.15.0 source remain unchanged. A root-owned config alone does not
+authorize an upgraded service or any schema-3 deployment; the separately
+protected systemd entrypoint, genuine signed release, durable replay and
+rollback cutover are still pending.
