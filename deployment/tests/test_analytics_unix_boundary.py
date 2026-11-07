@@ -1630,5 +1630,155 @@ class AnalyticsSuccessorIndependentJWTTests(unittest.TestCase):
             os.close(fd)
 
 
+# Section: explicit UNINSTALLED UID991 full Task013 review. All registry,
+# signer/owner and live-host responses below are synthetic. This verifies the
+# real release consumer composition and fail-closed binding, not actual release
+# signature acceptance or a privileged/signed DEV deployment.
+class AnalyticsSuccessorIndependentSignedReleaseReviewTests(unittest.TestCase):
+    """Exercise the future full evidence reader without positive Unix routing."""
+
+    def setUp(self):
+        """Use a genuine signed RSA/JWT sealed FD but only synthetic release data."""
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+        from deployment.tests.test_analytics_private_registry import (
+            first_successor_empty_active_state,
+        )
+        self.data, self.context = AnalyticsSuccessorRequestTests().candidate()
+        self.raw = canonical_bytes(self.data)
+        self.proof = AnalyticsSuccessorIndependentJWTTests()
+        self.fd = self.proof.proof(self.raw)
+        self.addCleanup(os.close, self.fd)
+        self.live = first_successor_empty_active_state()
+
+    @contextmanager
+    def synthetic_host(self, *, state=None, signed=None, owner=True):
+        """Mock only unavailable root/registry assets, never JWT verification."""
+        from contextlib import ExitStack
+        from deployment.tests.test_broker_integration import KEY
+        from deployment.tests.test_registry_oidc_credentials import StaticCache
+        from deployment.tests.test_identity import WORKFLOW_SHA
+        from deployment.analytics_executor import (
+            _review_executor_successor_signed_release,
+        )
+        with ExitStack() as mocks:
+            for name in ("getuid", "geteuid", "getgid", "getegid"):
+                mocks.enter_context(patch(
+                    "deployment.analytics_executor.os." + name, return_value=991,
+                ))
+            owner_signature = mocks.enter_context(patch(
+                "deployment.analytics_executor._verify_executor_owner_source",
+                side_effect=None if owner else ValueError("forged owner proof"),
+            ))
+            active = mocks.enter_context(patch(
+                "deployment.analytics_active_state_review.inspect_analytics_active_state",
+                return_value=self.live if state is None else state,
+            ))
+            forgejo = mocks.enter_context(patch(
+                "deployment.analytics_signed_release_consumer.acquire_and_review_owner_approved_analytics_release",
+                return_value=self.context["signed_release"] if signed is None else signed,
+            ))
+            signature = mocks.enter_context(patch(
+                "release.analytics_owner_source_selection.load_and_verify_owner_signed_source",
+                return_value=(
+                    self.context["selected"], self.context["owner_approval"],
+                ),
+            ))
+            def review(raw=self.raw, fd=self.fd):
+                """Use the same exact reviewed source and original RSA JWKS."""
+                return _review_executor_successor_signed_release(
+                    raw, fd, expected_workflow_sha=WORKFLOW_SHA,
+                    reviewed_installed_source=EXPECTED, received_at=NOW,
+                    jwks_cache=StaticCache(KEY.public_key()),
+                )
+            yield review, owner_signature, active, forgejo, signature
+
+    def test_existing_real_uid_cannot_enter_signed_review(self):
+        """A restricted test user cannot impersonate the future UID991."""
+        from deployment.analytics_executor import (
+            _review_executor_successor_signed_release,
+        )
+        from deployment.tests.test_identity import WORKFLOW_SHA
+        with self.assertRaises(ExecutorUnavailableError):
+            _review_executor_successor_signed_release(
+                self.raw, self.fd, expected_workflow_sha=WORKFLOW_SHA,
+                reviewed_installed_source=EXPECTED, received_at=NOW,
+            )
+
+    def test_full_signed_review_binds_same_original_policy_and_exact_request(self):
+        """Verified 3-JWT identity feeds original independent signer consumers."""
+        from deployment.analytics_execution import AnalyticsSuccessorRequest
+        from deployment.blob_verifier import (
+            CosignReleaseBlobVerifier, COSIGN_PATH,
+        )
+        from deployment.analytics_executor import _OWNER_APPROVAL_FILE
+        from deployment.oci_verifier import CosignOCISignatureVerifier
+        with self.synthetic_host() as (review, owner, state, forgejo, signature):
+            result = review()
+            self.assertIs(type(result), AnalyticsSuccessorRequest)
+            self.assertEqual(result.canonical_bytes(), self.raw)
+            owner.assert_called_once()
+            self.assertEqual(state.call_count, 2)
+            self.assertEqual(signature.call_count, 1)
+            forgejo.assert_called_once()
+            args, kwargs = forgejo.call_args
+            self.assertIs(type(args[2]), CosignReleaseBlobVerifier)
+            self.assertIs(type(args[3]), CosignOCISignatureVerifier)
+            self.assertEqual(
+                object.__getattribute__(args[2], "_authority")[0],
+                COSIGN_PATH,
+            )
+            self.assertEqual(
+                object.__getattribute__(args[2], "_broker"), (991, 991),
+            )
+            self.assertEqual(
+                object.__getattribute__(args[3], "_broker"), (991, 991),
+            )
+            self.assertEqual(kwargs["approval_file"], _OWNER_APPROVAL_FILE)
+
+    def test_owner_rejection_happens_before_remote_release_fetch(self):
+        """An invalid owner signature cannot trigger Sigstore/Zot I/O."""
+        with self.synthetic_host(owner=False) as (review, owner, state, forgejo, _):
+            with self.assertRaises(ExecutorUnavailableError):
+                review()
+            owner.assert_called_once()
+            state.assert_not_called()
+            forgejo.assert_not_called()
+
+    def test_forged_signed_subject_or_host_drift_never_returns_request(self):
+        """Even synthetic upstream success cannot bypass equality and route checks."""
+        from dataclasses import replace
+        wrong = replace(self.context["signed_release"], manifest_sha256="f" * 64)
+        with self.synthetic_host(signed=wrong) as (review, _, state, forgejo, _):
+            with self.assertRaises(ExecutorUnavailableError):
+                review()
+            forgejo.assert_called_once()
+        # Actual state must still match the original blue writer on SECOND read.
+        with self.synthetic_host() as (review, _, state, forgejo, _):
+            state.side_effect = [
+                self.live, replace(self.live, active_digest="sha256:" + "e" * 64),
+            ]
+            with self.assertRaises(ExecutorUnavailableError):
+                review()
+            forgejo.assert_called_once()
+
+    def test_invalid_runtime_and_unbound_source_reject_before_registry(self):
+        """No broker receipt or unreviewed local source may become authority."""
+        with self.synthetic_host() as (review, _, state, forgejo, _):
+            from deployment.analytics_executor import (
+                _review_executor_successor_signed_release,
+            )
+            from deployment.tests.test_identity import WORKFLOW_SHA
+            with self.assertRaises(ExecutorUnavailableError):
+                _review_executor_successor_signed_release(
+                    self.raw, self.fd, expected_workflow_sha=WORKFLOW_SHA,
+                    reviewed_installed_source={"source": "untrusted"},
+                    received_at=NOW,
+                )
+            state.assert_not_called()
+            forgejo.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -73,6 +73,7 @@ ANALYTICS_INSTALLED_FILES = (
 ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES = (
     "deployment/analytics_active_state_review.py",
     "deployment/analytics_route_journal.py",
+    "deployment/sigstore_authority_provenance.py",
 )
 ANALYTICS_SUCCESSOR_RELEASE_FILES = (
     "release/analytics_owner_source_selection.py",
@@ -172,8 +173,8 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
         if (
             len(ANALYTICS_INSTALLED_FILES) != 20
             or len(set(ANALYTICS_INSTALLED_FILES)) != 20
-            or len(ANALYTICS_SUCCESSOR_INSTALLED_FILES) != 24
-            or len(set(ANALYTICS_SUCCESSOR_INSTALLED_FILES)) != 24
+            or len(ANALYTICS_SUCCESSOR_INSTALLED_FILES) != 25
+            or len(set(ANALYTICS_SUCCESSOR_INSTALLED_FILES)) != 25
             or set(ANALYTICS_SUCCESSOR_INSTALLED_FILES) - set(ANALYTICS_INSTALLED_FILES)
                 != set(ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES)
                 | set(ANALYTICS_SUCCESSOR_RELEASE_FILES)

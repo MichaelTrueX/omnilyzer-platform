@@ -130,7 +130,7 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
             expected_manifest_sha256=approval["manifest_sha256"],
             reviewed_commit=self.sha,
         ))
-        self.assertEqual(len(archived), 36)
+        self.assertEqual(len(archived), 37)
         parsed = parse_analytics_executor_service_config(
             successor[activation.EXECUTOR_CONFIG],
         )

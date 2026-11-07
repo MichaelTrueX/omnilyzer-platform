@@ -255,6 +255,180 @@ def _verify_executor_successor_identity(
     return None
 
 
+def _review_executor_successor_signed_release(
+    canonical_request: bytes, credential_fd: int, *,
+    expected_workflow_sha: str,
+    reviewed_installed_source: dict[str, str],
+    received_at: int | None = None,
+    jwks_cache: object | None = None,
+):
+    """Independently read and verify full original Task013 evidence at UID991.
+
+    This UNINSTALLED, read-only helper obtains all original JWTs from the
+    single sealed kernel FD, verifies their issuer/signature/audience/workflow
+    using the independent root-reviewed V2 workflow SHA, and THEN reads the
+    original Forgejo archive and Zot OCI subject with the same immutable
+    Sigstore/Cosign/provenance/SBOM/zero-High policy as the UID990 broker.
+
+    The future root-installed UID991 service must mount separately root-
+    approved, exact-hash Cosign/TrustedRoot resource copies inside its OWN
+    private mount namespace at the unchanged original verifier paths. The
+    original signer code and the UID990 broker's filesystem view remain
+    byte-identical. No shared broker group membership, requester path, env
+    or unsigned receipt grants access. The original independently owner-signed source and live private
+    blue 0.15.0 are rebound to the candidate request BEFORE returning.
+
+    Returning a parsed read-only request is NOT deployment authority. No
+    replay, Docker pull, 3142 route, 3141 switch, journal write, service
+    start or success response occurs. The actual Unix receiver remains
+    DENY-only until this and the independent rollback/operation chain are
+    securely installed and accepted.
+    """
+    try:
+        import json
+        from .analytics_active_state_review import (
+            AnalyticsActiveState, inspect_analytics_active_state,
+        )
+        from .analytics_execution import (
+            AnalyticsSuccessorRequest, parse_analytics_successor_request,
+        )
+        from .analytics_signed_release_consumer import (
+            AnalyticsSignedEvidenceReview,
+            acquire_and_review_owner_approved_analytics_release,
+        )
+        from .analytics_unix_boundary import _root_reviewed_source
+        from .blob_verifier import CosignReleaseBlobVerifier
+        from .oci_verifier import CosignOCISignatureVerifier
+        from .policy import canonical_bytes
+        from .sigstore_authority_provenance import (
+            DevSigstoreVerificationProvenance,
+        )
+        from release.analytics_owner_source_selection import (
+            AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
+            load_and_verify_owner_signed_source,
+        )
+
+        if (
+            (os.getuid(), os.geteuid(), os.getgid(), os.getegid())
+                != (991, 991, 991, 991)
+            or type(expected_workflow_sha) is not str
+            or type(credential_fd) is not int or credential_fd < 0
+            or type(canonical_request) is not bytes
+            or received_at is not None and (
+                type(received_at) is not int or received_at < 0
+            )
+        ):
+            raise ValueError("untrusted Analytics signed review principal")
+        source = dict(_root_reviewed_source(reviewed_installed_source))
+        _successor_request_image(canonical_request)
+
+        def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            """Reject ambiguous source/owner/signature references recursively."""
+            found: dict[str, object] = {}
+            for name, value in pairs:
+                if name in found:
+                    raise ValueError("ambiguous canonical Analytics request")
+                found[name] = value
+            return found
+
+        request = json.loads(
+            canonical_request.decode("ascii"), object_pairs_hook=unique,
+            parse_constant=lambda _name: (_ for _ in ()).throw(ValueError),
+        )
+        if type(request) is not dict or canonical_bytes(request) != canonical_request:
+            raise ValueError("untrusted signed-request bytes")
+
+        # Owner approval and actual live writer are checked BEFORE any remote
+        # registry read. Current active blue 0.15.0 must remain the sole writer.
+        _verify_executor_owner_source(request)
+        previous = inspect_analytics_active_state()
+        if (
+            type(previous) is not AnalyticsActiveState
+            or previous.read_only is not True
+            or previous.deployment_authorized is not False
+            or previous.active_slot != "blue"
+            or previous.active_digest != PINNED_DIGEST
+            or previous.active_image != PINNED_IMAGE
+            or previous.private_ingress_port != 3141
+            or previous.candidate_slot != "green"
+            or previous.candidate_port != ANALYTICS_SUCCESSOR_CANDIDATE_PORT
+            or previous.candidate_probe_present is not False
+            or previous.candidate_digest is not None
+            or previous.candidate_container_id is not None
+        ):
+            raise ValueError("active Analytics source has changed")
+
+        now = int(time.time()) if received_at is None else received_at
+        identity, registry = _verified_executor_successor_identity_and_credentials(
+            canonical_request, credential_fd,
+            expected_workflow_sha=expected_workflow_sha,
+            jwks_cache=jwks_cache, received_at=now,
+        )
+
+        # Zero-input immutable C32I provenance pins the SAME actual Cosign
+        # executable and TrustedRoot SHA as UID990. UID991 must see separately
+        # approved root-owned READ-ONLY copies via an authorized private
+        # systemd mount, under the unchanged original verifier paths.
+        # The original signer implementation, policy and runtime checks
+        # remain unchanged; there is NO new verifier framework.
+        # No input/request/FD/env can supply either digest or asset path.
+        toolchain = dict(
+            DevSigstoreVerificationProvenance().broker_service_configuration_kwargs()
+        )
+        if set(toolchain) != {
+            "cosign_version", "cosign_binary_sha256",
+            "sigstore_trusted_root_sha256",
+        }:
+            raise ValueError("unknown verification toolchain")
+        verifier_config = {
+            "expected_cosign_version": toolchain["cosign_version"],
+            "expected_binary_sha256": toolchain["cosign_binary_sha256"],
+            "expected_trusted_root_sha256":
+                toolchain["sigstore_trusted_root_sha256"],
+            "broker_uid": 991, "broker_gid": 991,
+        }
+        blob = CosignReleaseBlobVerifier(**verifier_config)
+        oci = CosignOCISignatureVerifier(
+            **verifier_config, zot_credential_provider=registry,
+            product_id="analytics",
+        )
+        signed = acquire_and_review_owner_approved_analytics_release(
+            registry, registry, blob, oci, received_at=now,
+            approval_file=_OWNER_APPROVAL_FILE,
+            signature_file=_OWNER_SIGNATURE_FILE,
+        )
+        selected, owner = load_and_verify_owner_signed_source(
+            _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
+        )
+        if (
+            type(signed) is not AnalyticsSignedEvidenceReview
+            or type(selected) is not AnalyticsOwnerSourceSelection
+            or type(owner) is not AnalyticsOwnerSignatureReceipt
+            or owner.owner_signature_verified is not True
+        ):
+            raise ValueError("unsigned Analytics release")
+        parsed = parse_analytics_successor_request(
+            canonical_request, **source,
+            signed_release=signed, selected=selected, owner_approval=owner,
+            identity=identity,
+            observed_active_digest=previous.active_digest,
+            observed_active_slot=previous.active_slot,
+        )
+        if (
+            type(parsed) is not AnalyticsSuccessorRequest
+            or parsed.exact_image_reference != signed.image
+            or inspect_analytics_active_state() != previous
+        ):
+            raise ValueError("release/host drift during verified source review")
+        return parsed
+    except _CONTROL:
+        raise
+    except Exception:
+        # No original JWT, GitHub claim, registry data, verifier argv, owner
+        # signature, host/container state or exception detail crosses UID991.
+        raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+
+
 class AnalyticsPrivilegedExecutor:
     """Exact first-install receiver; no generic or canary deployment method."""
 

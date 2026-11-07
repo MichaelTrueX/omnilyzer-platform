@@ -185,7 +185,7 @@ class InstalledSourceConfigTests(unittest.TestCase):
         successor_deployment = set(ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES)
         successor_release = set(ANALYTICS_SUCCESSOR_RELEASE_FILES)
         self.assertEqual(len(original_analytics), 20)
-        self.assertEqual(len(ANALYTICS_SUCCESSOR_INSTALLED_FILES), 24)
+        self.assertEqual(len(ANALYTICS_SUCCESSOR_INSTALLED_FILES), 25)
         self.assertEqual(
             (ROOT / "deployment/runtime/dev/analytics.compose.successor-ports.yaml").is_symlink(),
             False,
@@ -503,7 +503,7 @@ class InstalledSourceConfigTests(unittest.TestCase):
         self.assertEqual(verified.call_args.kwargs["root"], config._INSTALLED_ROOT)
 
     def test_v2_root_config_verifies_only_fixed_inactive_candidate_path(self):
-        """Original executor identities are retained with 24-object V2 pin."""
+        """Original executor identities are retained with 25-object V2 pin."""
         stack, base, verified = self.installed_source_preflight(successor=True)
         with stack:
             source, identities = load_analytics_executor_service_config()
@@ -514,7 +514,7 @@ class InstalledSourceConfigTests(unittest.TestCase):
             verified.call_args.kwargs["root"], config._SUCCESSOR_INSTALLED_ROOT,
         )
         self.assertEqual(
-            tuple(name for name, _sha in verified.call_args.args[0][:24]),
+            tuple(name for name, _sha in verified.call_args.args[0][:25]),
             ANALYTICS_SUCCESSOR_INSTALLED_FILES,
         )
 

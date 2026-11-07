@@ -266,7 +266,7 @@ class OriginalRootOwnedOptInTests(unittest.TestCase):
             broker_service._SUCCESSOR_INSTALLED_ROOT,
         )
         self.assertEqual(
-            tuple(path for path, _ in verified.call_args.args[0][:24]),
+            tuple(path for path, _ in verified.call_args.args[0][:25]),
             ANALYTICS_SUCCESSOR_INSTALLED_FILES,
         )
 

@@ -1642,3 +1642,67 @@ wired with negative real-host tests, the protected successor Unix receiver
 **must continue to deny**. Cryptographic proof of identity by itself never
 grants authorization to publish or deploy. Existing Canary, 0.15.0, rootless
 systemd and signed-release policy are unchanged.
+
+## M05 UID991 independent original Task013 signature proof, source-only (2026-11-07)
+
+The original installed Analytics 0.15.0 and Canary verifier code and runtime
+remain untouched. The existing signed successor broker at UID990 already
+performs a complete Task013 read-only check. The future separately installed
+UID991 executor must independently verify the **same original signed release
+archive and OCI signature**, not accept broker-returned Python receipt values.
+
+The current source-only `deployment/analytics_executor.py`
+`_review_executor_successor_signed_release` reuses the original, unchanged:
+- three real GitHub/JWKS-issued JWT verifiers and kernel-sealed FD credentials;
+- fixed root-held owner Ed25519 exact product/owner/source selection;
+- zero-input `DevSigstoreVerificationProvenance` reviewed upstream Cosign
+  binary SHA256 and Sigstore TrustedRoot SHA256, with no values from the request;
+- `CosignReleaseBlobVerifier`, `CosignOCISignatureVerifier`, and the original
+  `acquire_and_review_owner_approved_analytics_release` reader for the Forgejo
+  tarball, actual Syft/Grype policy artifacts, provenance, SBOM, Cosign
+  signatures, exact source claim and immutable Zot manifest;
+- original `parse_analytics_successor_request` checks, including the exact
+  signed manifest/provenance/OCI/source hashes, verified OIDC run/workflow,
+  previous blue 0.15.0 digest and write-preserving rollback identity; actual
+  local active state is read before AND after bounded registry verification.
+
+**No second verifier framework or modified common Cosign code.** The existing
+Cosign verifier requires its original immutable paths:
+`/opt/omnilyzer/deployment/tools/cosign-v3.1.2-linux-amd64`,
+`/etc/omnilyzer/deployment/broker/sigstore-trusted-root.json` (verify actual
+original `broker_service_config` constant before any installation), and
+private runtime directories under `/run/omnilyzer/deployment/dev`.
+These directories are currently UID990 broker-owned; UID991 MUST NOT receive
+the broker's supplementary group or permission to read the broker's live
+credentials/configuration. Before any actual V2 UID991 installation, a
+separately owner-approved root-controlled service/private mount namespace must
+provide **separate reviewed root-owned readonly copies** of the exact Cosign
+binary/TrustedRoot at the *unchanged original paths* ONLY inside that
+executor's private mount. Parent ownership, group991, mode, upstream SHA256,
+unchanged Cosign certificate identity/issuer, bounded temporary working
+directories, startup reconciliation, service immutability and restart/rollback
+must all be independently reviewed. The unchanged UID990 broker must continue
+to see only its original files. NEVER bind or chgrp the original live broker
+directory for UID991 globally.
+
+The V2 unsigned source inventory now includes the original C32I
+`deployment/sigstore_authority_provenance.py` through the exact immutable
+Git object manifest: **37** review-source entries, **25** Analytics V2
+installed source objects (original V1 still exactly 32 and 20 respectively),
+and a proposed **75-file inactive candidate** retaining original inherited
+sources. This is an auditable source closure, not a root-owned install.
+
+Synthetic tests prove all three JWT audiences pass actual RSA signature
+verification and are bound to the real original signed-evidence reader and
+immutable verifier inputs; forged source, owner, signed subjects, untrusted
+UID and active writer drift fail closed. A synthetic signer/host fixture is NOT
+a real Cosign/Forgejo/OCI/UID991 host acceptance. The current original schema3
+Unix receiver still unconditionally **DENIES** without replay, Docker,
+journal, route switch or success response; Task14B remains HOLD.
+
+**Remaining:** review/install private mount-scope and root-owned V2 asset
+provisioning only with explicit owner authorization; integrate and qualify
+positive request admission, durable SQLite JTI replay, genuine digest-pinned
+green startup/3142 health, journaled 3141 cutover and write-preserving
+rollback, followed by exact-HEAD independent M04 acceptance and separate
+authorized new reviewed Analytics Task013/014 DEV release.

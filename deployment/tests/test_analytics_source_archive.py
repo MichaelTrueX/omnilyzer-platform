@@ -1,7 +1,7 @@
 """File: deployment/tests/test_analytics_source_archive.py
 
 Purpose: Original C26 exact 32-entry Analytics source archive regression,
-         plus V2 36-entry successor deterministic Git-object evidence,
+         plus V2 37-entry successor deterministic Git-object evidence,
          canonical manifests and negative cross-schema/archive security tests.
 Related: deployment/analytics_source_archive.py,
          deployment/analytics_source_handoff.py,
@@ -342,7 +342,7 @@ class OriginalC26ArchiveTests(unittest.TestCase):
 
 
 # Section: successor V2 additive source-generation review. This is a
-# separate, review-only 36-entry archive. Original V1/Canary remains unchanged.
+# separate, review-only 37-entry archive. Original V1/Canary remains unchanged.
 class SuccessorC26SourceArchiveTests(unittest.TestCase):
     """Prove exact source bytes and complete closure without root privilege."""
 
@@ -381,11 +381,12 @@ class SuccessorC26SourceArchiveTests(unittest.TestCase):
         ))
         future = dict(self.contents)
         self.assertEqual(len(original), 32)
-        self.assertEqual(len(future), 36)
+        self.assertEqual(len(future), 37)
         self.assertEqual(
             set(future) - set(original), {
                 "deployment/analytics_active_state_review.py",
                 "deployment/analytics_route_journal.py",
+                "deployment/sigstore_authority_provenance.py",
                 "release/analytics_owner_source_selection.py",
                 "deployment/runtime/dev/analytics.compose.successor-ports.yaml",
             },
