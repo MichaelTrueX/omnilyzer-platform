@@ -1424,6 +1424,34 @@ class AnalyticsSuccessorIndependentJWTTests(unittest.TestCase):
             os.close(fd)
         self.assertEqual(before, set(os.listdir("/proc/self/fd")))
 
+    def test_verified_registry_context_can_be_reused_only_in_memory(self):
+        """Executor obtains original issuer-verified credentials for a future signed review."""
+        from deployment.analytics_executor import (
+            _verified_executor_successor_identity_and_credentials,
+        )
+        from deployment.identity import AuthorizedGitHubIdentity
+        from deployment.registry_oidc_credentials import VerifiedRegistryCredentials
+        from deployment.tests.test_identity import WORKFLOW_SHA
+        from deployment.tests.test_broker_integration import KEY
+        from deployment.tests.test_registry_oidc_credentials import StaticCache
+
+        raw = canonical_bytes(self.candidate())
+        fd = self.proof(raw)
+        try:
+            identity, registry = _verified_executor_successor_identity_and_credentials(
+                raw, fd, expected_workflow_sha=WORKFLOW_SHA,
+                jwks_cache=StaticCache(KEY.public_key()), received_at=NOW,
+            )
+            self.assertIs(type(identity), AuthorizedGitHubIdentity)
+            self.assertIs(type(registry), VerifiedRegistryCredentials)
+            self.assertEqual(identity.run_id, self.candidate()["github_run_id"])
+            self.assertEqual(registry.zot_read_credential().expires_at, NOW + 290)
+            # The installed read-only route retains the historical None
+            # contract and cannot promote using these in-memory credentials.
+            self.assertIsNone(self.verify(raw, fd))
+        finally:
+            os.close(fd)
+
     def test_wrong_workflow_and_exact_request_identity_never_become_authority(self):
         """Neither request-selected workflow nor altered actor/run/JTI works."""
         raw = canonical_bytes(self.candidate())

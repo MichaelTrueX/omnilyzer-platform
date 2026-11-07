@@ -112,24 +112,19 @@ def _verify_executor_owner_source(request: dict[str, object]) -> None:
     return None
 
 
-def _verify_executor_successor_identity(
+def _verified_executor_successor_identity_and_credentials(
     canonical_request: bytes, credential_fd: int, *,
     expected_workflow_sha: str, jwks_cache: object | None = None,
     received_at: int | None = None,
 ) -> None:
-    """Independently authenticate all three sealed JWTs at the UID991 boundary.
+    """Verify and retain the original three-token executor registry context.
 
-    This standalone, read-only component is a necessary *preflight*, not a
-    release approval. The expected workflow SHA MUST eventually come from
-    the separately checked root-owned executor source/configuration, NEVER
-    the request, broker, network, or sealed FD. Until that integration exists
-    the schema-3 receiver retains its unconditional DENY behavior.
-
-    First verify the original deployment OIDC signature, authorization,
-    workflow SHA and time. Then verify both different registry-audience
-    signatures against the same approved run, and bind the signed identity
-    to the nine fields in the canonical successor request. No local state,
-    Docker, Zot/Forgejo I/O, replay or deployment is performed.
+    This scoped, in-memory result is NOT release authorization. All three
+    original OIDC/JWT issuer, signature, audience and run claims are verified
+    independently of the broker against an independently root-reviewed
+    workflow SHA. Returning the validated context enables the future UID991
+    release reader to fetch original signed Task013 evidence without trusting
+    a broker-created receipt. This performs no I/O, replay or deployment.
     """
     try:
         from .identity import AuthorizedGitHubIdentity
@@ -231,12 +226,33 @@ def _verify_executor_successor_identity(
             )
         ):
             raise ValueError("signed identities do not match request")
-        return None
+        # Internal only: the original verified pair remains in memory and
+        # cannot represent an executor deployment or release success response.
+        return deployment, registry
     except _CONTROL:
         raise
     except Exception:
         # Never log/return compact JWTs, expected SHA or decoded claims.
         raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+
+
+def _verify_executor_successor_identity(
+    canonical_request: bytes, credential_fd: int, *,
+    expected_workflow_sha: str, jwks_cache: object | None = None,
+    received_at: int | None = None,
+) -> None:
+    """Preserve the existing read-only three-JWT check and DENY-only contract.
+
+    A verified registry context must never become success just because the
+    original Unix handler has validated signatures. Complete independent
+    signed Task013 evidence, replay and rollout remain separate gates.
+    """
+    _verified_executor_successor_identity_and_credentials(
+        canonical_request, credential_fd,
+        expected_workflow_sha=expected_workflow_sha,
+        jwks_cache=jwks_cache, received_at=received_at,
+    )
+    return None
 
 
 class AnalyticsPrivilegedExecutor:
