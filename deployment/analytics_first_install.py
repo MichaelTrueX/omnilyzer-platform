@@ -614,6 +614,20 @@ class AnalyticsSuccessorCandidateOperation:
             ).stdout.strip())
             if actual != image:
                 return False
+            if expected_id is not None:
+                # Compose resolves the service name AGAIN during stop, which
+                # could target a replacement created after the ID check.
+                # The completed rollout instead stops only its exact ID.
+                stopped = self._docker(
+                    image, "container", "stop", "--time", "15", expected_id,
+                ).stdout.strip()
+                if stopped != expected_id:
+                    return False
+                running = _strict_json(self._docker(
+                    image, "container", "inspect", "--format",
+                    "{{json .State.Running}}", expected_id,
+                ).stdout.strip())
+                return running is False
             self._compose(
                 image, "stop", "--timeout", "15", "analytics-green",
             )
