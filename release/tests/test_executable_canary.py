@@ -304,11 +304,12 @@ def _oci_archive(path: Path, mutate=None) -> str:
 class ImageAndPipelineTests(unittest.TestCase):
     def test_dockerfile_is_digest_pinned_and_has_non_root_runtime_contract(self) -> None:
         dockerfile = (CANARY / "Dockerfile").read_text()
-        self.assertEqual(BASE_IMAGE_DIGEST, "sha256:31dd69d84fe5235fe18f8ceb5b76620e6f44a0ce1f9b0d3a46c491576f8b453b")
-        self.assertEqual(dockerfile.splitlines()[0], f"FROM cgr.dev/chainguard/python@{BASE_IMAGE_DIGEST}")
-        self.assertNotIn("cgr.dev/chainguard/python:", dockerfile)
-        self.assertNotRegex(dockerfile, r"(?im)^\s*RUN\b")
-        self.assertNotRegex(dockerfile, r"\b(apk|apt-get|bash|busybox|pip|gcc)\b")
+        self.assertEqual(BASE_IMAGE_DIGEST, "sha256:df6ea28f3caf5eb77ebae34d38e9b177b41a4e58ee963b1cbc5c8c1c92710238")
+        self.assertEqual(dockerfile.splitlines()[0], f"FROM ghcr.io/astral-sh/uv@{BASE_IMAGE_DIGEST}")
+        self.assertNotIn("FROM scratch", dockerfile)
+        self.assertIn("apk del --force-broken-world sqlite-libs", dockerfile)
+        self.assertIn("find /usr/local/lib /usr/lib -iname '*sqlite*'", dockerfile)
+        self.assertNotIn("FROM cgr.dev/chainguard/python", dockerfile)
         self.assertIn("COPY --chown=10001:10001", dockerfile)
         self.assertIn("USER 10001:10001", dockerfile)
         self.assertIn("EXPOSE 8080", dockerfile)
