@@ -307,9 +307,19 @@ class ImageAndPipelineTests(unittest.TestCase):
         self.assertEqual(BASE_IMAGE_DIGEST, "sha256:df6ea28f3caf5eb77ebae34d38e9b177b41a4e58ee963b1cbc5c8c1c92710238")
         self.assertEqual(dockerfile.splitlines()[0], f"FROM ghcr.io/astral-sh/uv@{BASE_IMAGE_DIGEST}")
         self.assertNotIn("FROM scratch", dockerfile)
-        self.assertIn("apk del --no-network .python-rundeps sqlite-libs zlib", dockerfile)
+        self.assertIn("apk del --no-network .python-rundeps sqlite-libs zlib apk-tools", dockerfile)
         self.assertIn("apk info -e zlib", dockerfile)
-        self.assertIn("! apk info -e zlib", dockerfile)
+        self.assertIn("apk info -e apk-tools", dockerfile)
+        # The apk-tools package itself holds the original zlib dependency.
+        # Negated apk info checks previously did not fail the Docker RUN.
+        # Direct database checks MUST force nonzero exit on remaining packages.
+        for package in ("zlib", "sqlite-libs", "apk-tools"):
+            self.assertIn(
+                f"if grep -qx 'P:{package}' /lib/apk/db/installed; then exit 1; fi",
+                dockerfile,
+            )
+        self.assertNotIn("! apk info -e zlib", dockerfile)
+        self.assertIn("test -s /lib/apk/db/installed", dockerfile)
         self.assertIn("importlib.util.find_spec(\"zlib\") is None", dockerfile)
         self.assertIn(
             "find /usr/local/lib /usr/lib \\( -iname '*sqlite*' -o -iname '*zlib*' \\)",

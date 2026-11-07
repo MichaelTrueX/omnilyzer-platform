@@ -9,22 +9,26 @@ FROM ghcr.io/astral-sh/uv@sha256:df6ea28f3caf5eb77ebae34d38e9b177b41a4e58ee963b1
 #          .github/workflows/task013-canary-security-review.yml, and
 #          deployment/docker_runtime.py.
 #
-# Section 1: Remove unused SQLite and zlib APKs plus optional CPython modules.
-# CVE-2026-4738 is CRITICAL in Alpine zlib 1.3.2-r1; the Canary runtime uses
-# neither zlib nor SQLite. Delete their actual package contents and any Python
-# extension, NOT an SBOM entry. Build remains offline, no security waiver.
-# The package database remains intact and Syft/Grype scan every residual APK.
+# Section 1: Remove unused SQLite, zlib and APK tooling + Python extensions.
+# CVE-2026-4738 is CRITICAL in Alpine zlib 1.3.2-r1. The original offline
+# apk del zlib alone leaves zlib installed because apk-tools depends on it.
+# The Canary needs NONE of zlib/SQLite/apk-tools after build. Remove their
+# actual package contents and optional Python extensions, NOT SBOM entries.
+# Keep the genuine installed APK database for complete Syft/Grype scanning.
 # Existing Task014 requires /usr/bin/python; keep that exact entrypoint path.
 RUN set -eu; \
     test -x /usr/local/bin/python; \
     apk info -e sqlite-libs; \
     apk info -e .python-rundeps; \
     apk info -e zlib; \
-    apk del --no-network .python-rundeps sqlite-libs zlib; \
+    apk info -e apk-tools; \
+    apk del --no-network .python-rundeps sqlite-libs zlib apk-tools; \
+    test -s /lib/apk/db/installed; \
+    if grep -qx 'P:sqlite-libs' /lib/apk/db/installed; then exit 1; fi; \
+    if grep -qx 'P:zlib' /lib/apk/db/installed; then exit 1; fi; \
+    if grep -qx 'P:apk-tools' /lib/apk/db/installed; then exit 1; fi; \
     find /usr/local/lib/python3.14 \( -iname '*sqlite*' -o -iname '*zlib*' \) -exec rm -rf {} +; \
     test -z "$(find /usr/local/lib /usr/lib \( -iname '*sqlite*' -o -iname '*zlib*' \) -print -quit)"; \
-    ! apk info -e sqlite-libs; \
-    ! apk info -e zlib; \
     test -e /lib/ld-musl-x86_64.so.1; \
     ln -s /usr/local/bin/python /usr/bin/python; \
     /usr/bin/python -c 'import fcntl,hashlib,http.server,json,socket,threading; import importlib.util; assert importlib.util.find_spec("zlib") is None'; \

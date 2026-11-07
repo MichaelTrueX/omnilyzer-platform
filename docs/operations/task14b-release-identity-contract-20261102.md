@@ -1838,3 +1838,24 @@ Python entrypoint, source SHA, C34D and all original Task013/014 checks stay
 the same. Source-level tests are necessary but NOT sufficient: only the
 exact new GitHub CI build and unchanged Critical/High Grype policy can
 confirm this removal is viable and the successor remains releasable.
+
+
+### Canary scanner follow-up for original zlib dependency
+
+The first source-only fix at `4aa69821351c671b24291c5d0ace204ebf4858df`
+produced a valid OCI image but still FAILED the original scan, run
+[42352295760](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/42352295760).
+The actual immutable Docker build log states the remaining dependency
+`zlib: apk-tools` and keeps the original `zlib 1.3.2-r1` package
+in the final, true installed APK database. Both Syft and Grype correctly
+reported it; this was NOT a scanner false positive.
+
+The revised offline image cleanup now also removes unused `apk-tools`,
+which the final nonroot Python process never calls. The build requires a
+nonempty real APK installed database and uses explicit `grep`/exit-code
+checks on `P:zlib`, `P:sqlite-libs`, and `P:apk-tools` to fail closed
+if package dependency resolution preserves any of them. Syft/Grype's
+original full OCI package inventory, zero-Critical/High policy and all
+upstream pinned signature/build attestations remain unchanged. Acceptance
+is conditional on the NEW same-commit unpublished Task013 container build
+and actual scanner result, not source-only tests.
