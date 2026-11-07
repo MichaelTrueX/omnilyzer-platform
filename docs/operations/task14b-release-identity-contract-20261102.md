@@ -1553,3 +1553,41 @@ UID991, durable replay, OCI startup/3142/3141 cutover and write-preserving
 rollback are **HOLD**. Do not silently promote this DENY-only preflight
 into an accepting handler. A separate privileged release/installation
 authorization and independent M04 review remain necessary.
+
+
+## Task14B M05 sealed successor three-JWT read-only transport (2026-11-07)
+
+The existing `deployment/private_registry_fd.py` now defines a **separate**
+`analytics-successor` sealed FD **schema 2** carrying a scoped Zot-read JWT,
+Forgejo-read JWT and deployment GitHub OIDC JWT. The existing broker first
+authenticates each token for the reviewed GitHub repository, exact workflow,
+run, three required audiences and read scopes; it then seals the three raw JWTs
+into a kernel `MFD_ALLOW_SEALING`/CLOEXEC memfd. The existing `SCM_RIGHTS`
+Unix transport passes exactly one descriptor, and UID991 can independently
+read the original token trio through
+`read_sealed_successor_review_credentials`. The signature-bearing tokens
+never appear in the canonical request body, process arguments, environment,
+disk, logs, exceptions or normal object representation.
+
+The old six-field schema-1 memfd remains **unchanged** for Canary and signed
+Analytics 0.15.0; the prior single-token successor read-only probe remains
+valid solely for backward-compatible non-deploying tests. Schema-1 **cannot**
+be mistaken for a complete three-JWT successor proof. The new schema-2 is
+restricted to the original canonical schema-3 Analytics image/release request
+SHA256 and a maximum of 27 KiB, validates kernel seals, 0-link inode,
+exact payload identity, bounded printable compact token grammar, Zot expiry,
+and no mutable OCI tags. It is **not** a cryptographic validation or deploy
+authorization. No systemd/Docker/RootlessKit/network operation or replay
+mutation is introduced in this transport.
+
+**Actual remaining acceptance block:** UID991 must independently validate
+the three JWT signatures and exact run/workflow claims using **its own
+root-reviewed workflow SHA**, then independently acquire and verify original
+Task013 Forgejo signed release, Sigstore/Cosign/provenance/SBOM/zero-High
+policy, immutable Zot manifest and owner-signed source. These checks
+must precede the durable SQLite replay begin, exact OCI pull, journaled
+private 3142 probe and 3141 swap, and all success receipts. The currently
+installed root-owned V1/V2 sources do **not** yet authorize the positive
+schema-3 receiver; it always rejects. The new FD alone is not deployment.
+No protected service change, owner authorization, new signed release or
+M04 integrated acceptance is claimed in this increment.

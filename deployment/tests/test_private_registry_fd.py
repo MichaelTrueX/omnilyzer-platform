@@ -25,7 +25,10 @@ from unittest.mock import patch
 
 from deployment.private_registry_fd import (
     ANALYTICS_IMAGE, PrivateRegistryTransferError, ScopedReadCredential,
+    ScopedSuccessorReviewCredentials,
     create_sealed_credential, read_sealed_credential,
+    create_sealed_successor_review_credentials,
+    read_sealed_successor_review_credentials,
     receive_sealed_header, send_sealed_header,
 )
 
@@ -460,6 +463,148 @@ class AnalyticsSuccessorSealedCredentialTests(unittest.TestCase):
                         canonical_request=broken, product_id="analytics-successor",
                     )
             create.assert_not_called()
+
+    def test_independent_review_bundle_is_kernel_sealed_and_does_not_grant_deploy(self):
+        """Three JWTs transfer through one sealed FD, without JSON or log leakage."""
+        raw, image, _ = self.candidate()
+        before = set(os.listdir("/proc/self/fd"))
+        params = {
+            "zot_token": SECRET,
+            "forgejo_token": "forgejo.payload.signature",
+            "github_oidc_token": "deployment.payload.signature",
+            "expires_at": NOW + 240,
+            "image": image,
+            "canonical_request": raw,
+            "now": NOW,
+        }
+        fd = create_sealed_successor_review_credentials(**params)
+        a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        peer = None
+        try:
+            view = read_sealed_successor_review_credentials(
+                fd, canonical_request=raw, image=image, now=NOW,
+            )
+            self.assertIs(type(view), ScopedSuccessorReviewCredentials)
+            self.assertEqual(view.zot.token, SECRET)
+            self.assertEqual(view.forgejo_token, params["forgejo_token"])
+            self.assertEqual(view.github_oidc_token, params["github_oidc_token"])
+            self.assertEqual(
+                read_sealed_credential(
+                    fd, canonical_request=raw, image=image,
+                    product_id="analytics-successor", now=NOW,
+                ).token,
+                SECRET,
+            )
+            self.assertFalse(os.get_inheritable(fd))
+            for secret in (SECRET, params["forgejo_token"], params["github_oidc_token"]):
+                self.assertNotIn(secret, repr(view))
+                self.assertNotIn(secret.encode(), raw)
+            with self.assertRaises(OSError):
+                os.write(fd, b"alter")
+            with self.assertRaises(AttributeError):
+                view.forgejo_token = "changed"
+            import pickle
+            with self.assertRaises(TypeError):
+                pickle.dumps(view)
+            send_sealed_header(a, len(raw).to_bytes(4, "big"), fd)
+            a.sendall(raw)
+            header, peer = receive_sealed_header(b)
+            self.assertEqual(int.from_bytes(header, "big"), len(raw))
+            self.assertEqual(b.recv(len(raw)), raw)
+            received = read_sealed_successor_review_credentials(
+                peer, canonical_request=raw, image=image, now=NOW,
+            )
+            self.assertEqual(received.github_oidc_token, params["github_oidc_token"])
+            self.assertEqual(received.zot.request_sha256, hashlib.sha256(raw).hexdigest())
+            for wrong in (
+                {"image": ANALYTICS_IMAGE},
+                {"canonical_request": raw + b" "},
+                {"now": NOW + 241},
+            ):
+                with self.subTest(wrong=wrong), self.assertRaises(
+                    PrivateRegistryTransferError
+                ):
+                    read_sealed_successor_review_credentials(
+                        peer, **{
+                            "canonical_request": raw, "image": image,
+                            "now": NOW, **wrong,
+                        },
+                    )
+            for product in ("analytics", "canary", "unknown"):
+                with self.subTest(product=product), self.assertRaises(
+                    PrivateRegistryTransferError
+                ):
+                    read_sealed_credential(
+                        peer, canonical_request=raw, image=image,
+                        now=NOW, product_id=product,
+                    )
+        finally:
+            if peer is not None:
+                os.close(peer)
+            os.close(fd)
+            a.close()
+            b.close()
+        self.assertEqual(before, set(os.listdir("/proc/self/fd")))
+
+    def test_original_one_token_successor_cannot_claim_full_oidc_evidence(self):
+        """Schema-1 remains read-only, but never supplies a three-JWT approval."""
+        raw, image, _ = self.candidate()
+        fd = create_sealed_credential(
+            SECRET, expires_at=NOW + 240, image=image,
+            canonical_request=raw, now=NOW, product_id="analytics-successor",
+        )
+        try:
+            self.assertEqual(
+                read_sealed_credential(
+                    fd, canonical_request=raw, image=image,
+                    now=NOW, product_id="analytics-successor",
+                ).token,
+                SECRET,
+            )
+            with self.assertRaises(PrivateRegistryTransferError):
+                read_sealed_successor_review_credentials(
+                    fd, canonical_request=raw, image=image, now=NOW,
+                )
+        finally:
+            os.close(fd)
+
+    def test_review_envelope_rejects_invalid_jwts_scope_and_unsealed_copy(self):
+        """Malformed JWT or altered request must fail before any reviewer use."""
+        raw, image, _ = self.candidate()
+        valid = {
+            "zot_token": SECRET, "forgejo_token": "forgejo.payload.signature",
+            "github_oidc_token": "deployment.payload.signature",
+            "expires_at": NOW + 240, "image": image,
+            "canonical_request": raw, "now": NOW,
+        }
+        for mutation in (
+            {"forgejo_token": "invalid"},
+            {"github_oidc_token": "invalid"},
+            {"forgejo_token": "a.b."},
+            {"github_oidc_token": "a.b.\n"},
+            {"forgejo_token": "a" * 8193},
+            {"expires_at": NOW + 301},
+            {"image": ANALYTICS_IMAGE},
+            {"canonical_request": raw + b" "},
+        ):
+            with self.subTest(mutation=list(mutation)), self.assertRaises(
+                PrivateRegistryTransferError
+            ):
+                create_sealed_successor_review_credentials(**(valid | mutation))
+        fd = os.memfd_create("test-unsealed-review", os.MFD_ALLOW_SEALING)
+        try:
+            legitimate = create_sealed_successor_review_credentials(**valid)
+            try:
+                os.write(fd, os.pread(legitimate, os.fstat(legitimate).st_size, 0))
+            finally:
+                os.close(legitimate)
+            with self.assertRaises(PrivateRegistryTransferError):
+                read_sealed_successor_review_credentials(
+                    fd, canonical_request=raw, image=image, now=NOW,
+                )
+        finally:
+            os.close(fd)
+
 
 
 if __name__ == "__main__":

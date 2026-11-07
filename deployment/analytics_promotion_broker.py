@@ -53,7 +53,9 @@ from .identity import (
 )
 from .jwks import OIDCVerificationError, OIDCVerificationUnavailable
 from .oidc_verifier import MAX_COMPACT_TOKEN_BYTES
-from .private_registry_fd import create_sealed_credential
+from .private_registry_fd import (
+    create_sealed_credential, create_sealed_successor_review_credentials,
+)
 from .private_registry_pull import MIN_POST_PREFLIGHT_VALIDITY_SECONDS
 from .registry_oidc_credentials import (
     GitHubRegistryCredentialVerifier, RegistryCredentialRejectedError,
@@ -294,7 +296,7 @@ class AnalyticsPrivatePromotionBroker:
         self, *, compact_token: str, zot_token: str, forgejo_token: str,
         canonical_request: bytes, received_at: int,
     ) -> None:
-        """Prove broker OIDC+owner+signed OCI admission over real sealed FD.
+        """Carry independently re-verifiable OIDC/Forgejo/Zot JWTs over sealed FD.
 
         NOT registered in the installed HTTPS promotion router. Even a fully
         verified request is sent only to the read-only UID991 probe, which
@@ -375,11 +377,12 @@ class AnalyticsPrivatePromotionBroker:
             if (type(scoped.expires_at) is not int
                     or scoped.expires_at - now < MIN_POST_PREFLIGHT_VALIDITY_SECONDS):
                 raise ValueError("insufficient credential lifetime")
-            descriptor = create_sealed_credential(
-                scoped.token, expires_at=scoped.expires_at,
+            descriptor = create_sealed_successor_review_credentials(
+                scoped.token, forgejo_token=forgejo_token,
+                github_oidc_token=compact_token,
+                expires_at=scoped.expires_at,
                 image=selected.exact_image_reference,
-                canonical_request=canonical_request,
-                product_id="analytics-successor", now=now,
+                canonical_request=canonical_request, now=now,
             )
         except RegistryCredentialRejectedError:
             raise BrokerRejectedError(REJECTED_MESSAGE) from None

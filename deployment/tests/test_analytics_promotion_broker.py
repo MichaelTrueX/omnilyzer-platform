@@ -36,7 +36,9 @@ from deployment.analytics_signed_source_pin import (
     AnalyticsSourceReviewReceipt, SOURCE_COMMIT, SOURCE_TREE,
 )
 from deployment.broker import BrokerRejectedError, BrokerUnavailableError
-from deployment.private_registry_fd import read_sealed_credential
+from deployment.private_registry_fd import (
+    read_sealed_credential, read_sealed_successor_review_credentials,
+)
 from deployment.registry_oidc_credentials import VerifiedRegistryCredentials
 from deployment.tests.test_analytics_execution import (
     EXPECTED, PRODUCT_SHA, RUNTIME_SHA, fixture,
@@ -397,6 +399,15 @@ class ReadOnlySuccessorProbeTransport(PrivateAnalyticsTransport):
             image=image, product_id="analytics-successor", now=NOW,
         )
         assert scoped.token == ZOT_TOKEN
+        # This new sealed schema-2 contains raw proofs that UID991 must
+        # authenticate *itself*. No caller-created receipt grants a release.
+        review = read_sealed_successor_review_credentials(
+            credential_fd, canonical_request=request,
+            image=image, now=NOW,
+        )
+        assert review.zot.token == ZOT_TOKEN
+        assert review.github_oidc_token == TOKEN
+        assert review.forgejo_token == FORGEJO_TOKEN
         assert image != PINNED_IMAGE
         self.checked.append((request, image))
         if self.positive_response:

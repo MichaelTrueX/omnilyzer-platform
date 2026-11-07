@@ -4,7 +4,9 @@ Purpose: Linux-only, request-scoped sealed-memory transfer of an already
 cryptographically verified Zot read credential from broker to executor.
 Original Task014 canary and Analytics 0.15.0 default scopes are unchanged.
 An explicit Analytics-successor mode binds the exact future OCI digest to
-canonical schema-3 request bytes without changing the original FD envelope.
+canonical schema-3 request bytes; successor-only sealed schema-2 additionally
+carries three JWTs for independent UID991 verification. Original schema-1,
+canary, and signed Analytics 0.15.0 FD envelopes stay byte-compatible.
 Related: deployment/registry_oidc_credentials.py, deployment/unix_transport.py,
 deployment/executor_server.py, deployment/docker_runtime.py,
 deployment/analytics_execution.py, deployment/analytics_promotion_broker.py
@@ -41,6 +43,9 @@ ANALYTICS_IMAGE = (
 OCI_HOST = "oci-dev.omnilyzer.ai"
 MAX_TOKEN_BYTES = 8192
 MAX_ENVELOPE_BYTES = 9216
+# Only the distinct successor proof bundle may contain three short-lived
+# GitHub-signed credentials. No change to canary/0.15.0 sealed envelope size.
+MAX_SUCCESSOR_REVIEW_ENVELOPE_BYTES = 27 * 1024
 MAX_LIFETIME_SECONDS = 300
 _MIN_LIFETIME_SECONDS = 1
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -269,6 +274,15 @@ def read_sealed_credential(fd: int, *, canonical_request: bytes,
 
     The original canary-only default also refuses Analytics envelopes.
     """
+    if product_id == "analytics-successor":
+        try:
+            return read_sealed_successor_review_credentials(
+                fd, canonical_request=canonical_request, image=image, now=now,
+            ).zot
+        except PrivateRegistryTransferError:
+            # Compatibility with the deliberately inert original one-token
+            # schema-1 successor probe. Only schema-2 is full proof transport.
+            pass
     try:
         if type(fd) is not int or fd < 0 or type(canonical_request) is not bytes                 or not canonical_request or len(canonical_request) > 65536:
             raise ValueError("invalid fd or request")
@@ -310,6 +324,218 @@ def read_sealed_credential(fd: int, *, canonical_request: bytes,
         raise
     except Exception:
         raise PrivateRegistryTransferError("private registry handoff unavailable") from None
+
+
+# Section 2b: three-token sealed *read-only* successor review transport.
+# GitHub OIDC/Forgejo token fields are only raw claims here. The protected
+# UID991 verifier must cryptographically validate them independently before
+# any durable replay, container pull, traffic change or success response.
+class ScopedSuccessorReviewCredentials:
+    """Nonserializable sealed FD view; NOT a verified release approval."""
+
+    __slots__ = ("_zot", "_forgejo", "_oidc")
+
+    def __init__(
+        self, zot: ScopedReadCredential, forgejo_token: str, oidc_token: str,
+    ) -> None:
+        """Capture exact already-parsed envelope fields, never trust claims."""
+        if type(zot) is not ScopedReadCredential:
+            raise TypeError("invalid successor review scope")
+        object.__setattr__(self, "_zot", zot)
+        object.__setattr__(self, "_forgejo", forgejo_token)
+        object.__setattr__(self, "_oidc", oidc_token)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        """Prevent token or Zot binding changes after construction."""
+        raise AttributeError("successor review credentials are immutable")
+
+    def __delattr__(self, name: str) -> None:
+        """Prevent removal of a sealed credential field."""
+        raise AttributeError("successor review credentials are immutable")
+
+    def __repr__(self) -> str:
+        """Never disclose JWT bytes in diagnostic output."""
+        return "<ScopedSuccessorReviewCredentials redacted>"
+
+    def __reduce__(self) -> object:
+        """Forbid serialization of authentication material."""
+        raise TypeError("review credentials cannot be serialized")
+
+    def __reduce_ex__(self, protocol: int) -> object:
+        """Forbid pickling by alternative protocols."""
+        raise TypeError("review credentials cannot be serialized")
+
+    @property
+    def zot(self) -> ScopedReadCredential:
+        """Return Zot scope only for existing short-lived manifest preflight."""
+        return object.__getattribute__(self, "_zot")
+
+    @property
+    def forgejo_token(self) -> str:
+        """Return raw Forgejo JWT only to an independent signature verifier."""
+        return object.__getattribute__(self, "_forgejo")
+
+    @property
+    def github_oidc_token(self) -> str:
+        """Return raw deployment JWT only to an independent OIDC verifier."""
+        return object.__getattribute__(self, "_oidc")
+
+
+def _successor_jwt(token: object) -> str:
+    """Require bounded printable compact JWT shape without trusting claims."""
+    if (
+        type(token) is not str
+        or not 1 <= len(token) <= MAX_TOKEN_BYTES
+        or not token.isascii()
+        or any(ord(c) < 33 or ord(c) > 126 for c in token)
+        or token.count(".") != 2
+        or any(not part for part in token.split("."))
+    ):
+        raise PrivateRegistryTransferError("invalid successor review authority")
+    return token
+
+
+def _successor_review_payload(
+    credential: ScopedReadCredential, *,
+    forgejo_token: str, github_oidc_token: str,
+) -> bytes:
+    """Canonical, exact schema-2 envelope, never used for legacy products."""
+    raw = (json.dumps({
+        "expires_at": credential.expires_at,
+        "forgejo_token": _successor_jwt(forgejo_token),
+        "github_oidc_token": _successor_jwt(github_oidc_token),
+        "host": OCI_HOST,
+        "image": credential.image,
+        "product_id": "analytics-successor",
+        "request_sha256": credential.request_sha256,
+        "schema_version": 2,
+        "token": credential.token,
+    }, separators=(",", ":"), sort_keys=True, ensure_ascii=True) + "\n").encode("ascii")
+    if len(raw) > MAX_SUCCESSOR_REVIEW_ENVELOPE_BYTES:
+        raise PrivateRegistryTransferError("invalid successor review size")
+    return raw
+
+
+def create_sealed_successor_review_credentials(
+    zot_token: str, *, forgejo_token: str, github_oidc_token: str,
+    expires_at: int, image: str, canonical_request: bytes,
+    now: int | None = None,
+) -> int:
+    """Seal three independently verifiable JWTs to one canonical schema-3.
+
+    Kernel-authenticated SCM_RIGHTS carries the FD, not environment, argv,
+    request JSON, a log or persisted runtime secret. No signature validation,
+    source approval, replay or promotion occurs during construction.
+    """
+    try:
+        if _successor_request_image(canonical_request) != image:
+            raise ValueError("unreviewed successor request")
+        current = int(time.time()) if now is None else now
+        zot = _normalize(
+            zot_token, expires_at, image,
+            hashlib.sha256(canonical_request).hexdigest(), current,
+            product_id="analytics-successor",
+        )
+        raw = _successor_review_payload(
+            zot, forgejo_token=forgejo_token,
+            github_oidc_token=github_oidc_token,
+        )
+        fd = -1
+        try:
+            fd = os.memfd_create(
+                "omnilyzer-successor-review",
+                os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING,
+            )
+            if os.write(fd, raw) != len(raw):
+                raise OSError("partial sealed proof write")
+            fcntl.fcntl(fd, fcntl.F_ADD_SEALS, _SEALS)
+            if fcntl.fcntl(fd, fcntl.F_GET_SEALS) & _SEALS != _SEALS:
+                raise ValueError("unsealed proof")
+            return fd
+        except Exception:
+            if fd >= 0:
+                os.close(fd)
+            raise
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except Exception:
+        raise PrivateRegistryTransferError(
+            "private successor review handoff unavailable"
+        ) from None
+
+
+def read_sealed_successor_review_credentials(
+    fd: int, *, canonical_request: bytes, image: str, now: int | None = None,
+) -> ScopedSuccessorReviewCredentials:
+    """Independently validate kernel seal, exact image/hash/TTL and JWT shape.
+
+    A successful read is *not* authority: OIDC, Forgejo, owner Ed25519 and
+    Task013 Sigstore/Cosign MUST be reverified at UID991 after this read.
+    """
+    try:
+        if (
+            type(fd) is not int or fd < 0
+            or _successor_request_image(canonical_request) != image
+        ):
+            raise ValueError("wrong successor proof scope")
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 0
+            or not 0 < info.st_size <= MAX_SUCCESSOR_REVIEW_ENVELOPE_BYTES
+            or fcntl.fcntl(fd, fcntl.F_GET_SEALS) & _SEALS != _SEALS
+        ):
+            raise ValueError("unsealed or oversized proof")
+        raw = os.pread(fd, info.st_size + 1, 0)
+        if len(raw) != info.st_size or not raw.endswith(b"\n"):
+            raise ValueError("noncanonical review length")
+        def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            value: dict[str, object] = {}
+            for key, item in pairs:
+                if key in value:
+                    raise ValueError("ambiguous review field")
+                value[key] = item
+            return value
+        body = json.loads(
+            raw.decode("ascii"), object_pairs_hook=unique,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError),
+        )
+        if (
+            type(body) is not dict
+            or set(body) != {
+                "expires_at", "forgejo_token", "github_oidc_token", "host",
+                "image", "product_id", "request_sha256", "schema_version",
+                "token",
+            }
+            or type(body["schema_version"]) is not int
+            or body["schema_version"] != 2
+            or body["host"] != OCI_HOST
+            or body["product_id"] != "analytics-successor"
+        ):
+            raise ValueError("wrong review envelope")
+        current = int(time.time()) if now is None else now
+        zot = _normalize(
+            body["token"], body["expires_at"], body["image"],
+            body["request_sha256"], current, product_id="analytics-successor",
+        )
+        if (
+            zot.image != image
+            or zot.request_sha256 != hashlib.sha256(canonical_request).hexdigest()
+            or _successor_review_payload(
+                zot, forgejo_token=body["forgejo_token"],
+                github_oidc_token=body["github_oidc_token"],
+            ) != raw
+        ):
+            raise ValueError("review request changed")
+        return ScopedSuccessorReviewCredentials(
+            zot, body["forgejo_token"], body["github_oidc_token"],
+        )
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except Exception:
+        raise PrivateRegistryTransferError(
+            "private successor review handoff unavailable"
+        ) from None
 
 
 # Section 3: exact one-FD SCM_RIGHTS transfer in the existing AF_UNIX stream.
@@ -366,4 +592,7 @@ __all__ = (
     "PrivateRegistryTransferError", "ScopedReadCredential",
     "create_sealed_credential", "read_sealed_credential",
     "send_sealed_header", "receive_sealed_header",
+    "ScopedSuccessorReviewCredentials",
+    "create_sealed_successor_review_credentials",
+    "read_sealed_successor_review_credentials",
 )
