@@ -40,7 +40,7 @@ from deployment.tests.test_analytics_execution import (
     AnalyticsSuccessorRequestTests, EXPECTED,
 )
 from deployment.tests.test_analytics_private_registry import (
-    first_successor_empty_active_state,
+    first_successor_empty_active_state, make_full_successor_fd,
 )
 from deployment.tests.test_analytics_unix_boundary import signed_owner_fixture
 from deployment.tests.test_identity import NOW
@@ -231,11 +231,12 @@ class AnalyticsSuccessorCandidateStageTests(unittest.TestCase):
             prefix="m05-14-green-candidate-",
         )
         self.addCleanup(self.temp.cleanup)
-        self.fd = create_sealed_credential(
-            TOKEN, expires_at=NOW + 270,
-            image=self.request.exact_image_reference,
-            canonical_request=self.raw,
-            product_id="analytics-successor", now=NOW,
+        # Section: future mutating image-pull tests must pass the complete
+        # kernel-sealed three-JWT schema-2 FD, not the legacy read-only
+        # one-token successor probe. Real JWT signatures are verified by
+        # UID991's separate cryptographic admission, not this Docker fake.
+        self.fd = make_full_successor_fd(
+            self.raw, self.request.exact_image_reference,
         )
         self.addCleanup(os.close, self.fd)
         self.scope = ExitStack()
@@ -441,6 +442,28 @@ class AnalyticsSuccessorCandidateStageTests(unittest.TestCase):
         ):
             self.operation.stage_first_successor_green(altered)
         self.assertFalse(self.runner.created)
+
+    def test_legacy_single_token_fd_cannot_stage_green(self):
+        """Historical successor probe token is never an image-pull grant."""
+        old = create_sealed_credential(
+            TOKEN, expires_at=NOW + 270,
+            image=self.request.exact_image_reference,
+            canonical_request=self.raw,
+            product_id="analytics-successor", now=NOW,
+        )
+        try:
+            with (
+                scoped_private_zot_request(old, self.raw),
+                self.assertRaises(AnalyticsFirstInstallError),
+            ):
+                self.operation.stage_first_successor_green(self.request)
+            self.assertFalse(self.runner.created)
+            self.assertFalse(any(
+                "up" in call or "sealed-zot-pull" in call
+                for call in self.runner.calls
+            ))
+        finally:
+            os.close(old)
 
     def test_existing_green_denies_without_pulling_or_overwriting(self):
         """A stopped or unknown candidate is not adopted by --no-recreate."""
