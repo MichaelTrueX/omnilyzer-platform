@@ -11,8 +11,9 @@ Related: deployment/analytics_execution.py (exact reviewed request grammar),
          deployment/analytics_promotion_broker.py (caller, not a trust anchor),
          deployment/tests/test_analytics_executor.py.
 
-Sections: root-reviewed input capture, exact FD+request preflight, original
-          replay transitions and protected product-only operation.
+Sections: root-reviewed input capture, original FD+request execution, separate
+          first-successor read-only live OCI/manifest proof, original replay
+          transitions and protected product-only operation.
 
 NOT A DEPLOYMENT: This class is not installed in the Task014 application
 source set; no host listener, rootless runtime, secret, DB, Docker or release
@@ -31,9 +32,11 @@ from typing import Any
 
 from .analytics_execution import (
     AnalyticsExecutorRequest, AnalyticsRequestError,
+    ANALYTICS_SUCCESSOR_CANDIDATE_PORT,
     parse_analytics_request,
 )
-from .analytics_signed_release_consumer import PINNED_IMAGE
+from .analytics_signed_release_consumer import PINNED_IMAGE, PINNED_DIGEST
+from .private_registry_fd import _successor_request_image
 from .executor import (
     EXECUTOR_REJECTED_MESSAGE, EXECUTOR_UNAVAILABLE_MESSAGE,
     ExecutorRejectedError, ExecutorUnavailableError, _ordinary_bound_method,
@@ -57,8 +60,8 @@ _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 class AnalyticsPrivilegedExecutor:
     """Exact first-install receiver; no generic or canary deployment method."""
 
-    __slots__ = ("_replay", "_preflight", "_deploy", "_rollback",
-                 "_reviewed_source")
+    __slots__ = ("_replay", "_preflight", "_preflight_successor",
+                 "_deploy", "_rollback", "_reviewed_source")
 
     def __init__(
         self, *, replay_guard: object, private_registry_preflight: object,
@@ -86,6 +89,16 @@ class AnalyticsPrivilegedExecutor:
                 private_registry_preflight, "preflight_analytics",
                 positional=("canonical_request", "credential_fd"),
             )
+            # Only the original product-specific Zot adapter provides this
+            # additional manifest PROBE. Never synthesize a fallback that
+            # could mistake original 0.15.0 authorization for a successor.
+            try:
+                successor_preflight = _ordinary_bound_method(
+                    private_registry_preflight, "preflight_analytics_successor",
+                    positional=("canonical_request", "credential_fd"),
+                )
+            except TypeError:
+                successor_preflight = None
             deploy = _ordinary_bound_method(
                 operation, "deploy_analytics", positional=("request",),
             )
@@ -104,6 +117,7 @@ class AnalyticsPrivilegedExecutor:
             )
             object.__setattr__(self, "_replay", replay)
             object.__setattr__(self, "_preflight", preflight)
+            object.__setattr__(self, "_preflight_successor", successor_preflight)
             object.__setattr__(self, "_deploy", deploy)
             object.__setattr__(self, "_rollback", rollback)
             object.__setattr__(self, "_reviewed_source", tuple(sorted(source.items())))
@@ -131,6 +145,96 @@ class AnalyticsPrivilegedExecutor:
             sys.stderr.write(
                 "TASK014_ANALYTICS_EXECUTOR_UNAVAILABLE phase=rollback_unconfirmed\n"
             )
+
+    def preflight_first_successor_without_deployment(
+        self, canonical_request: bytes, *, credential_fd: int,
+    ) -> None:
+        """Read-only first-successor proof against the *actual* UID991 host.
+
+        This is NOT an executable promotion receiver: it deliberately has no
+        replay begin/finish, pull, OCI install, 3141 switch, rollback mutation
+        or success response. The broker must independently authenticate OIDC,
+        owner Ed25519 and signed release before future forwarding; a forged
+        caller-constructible schema-3 JSON or this local result grants nothing.
+        Exact sealed FD, local live OCI digest, private candidate 3142 and
+        actual Zot manifest are rechecked by the restricted UID991 executor.
+        """
+        if type(credential_fd) is not int or credential_fd < 0:
+            raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE) from None
+        try:
+            from .analytics_active_state_review import (
+                AnalyticsActiveState, inspect_analytics_active_state,
+            )
+            # A root script may review host state independently but MUST NOT
+            # use this executor method. Only the existing UID991 principal.
+            if os.geteuid() != 991:
+                raise ValueError("not the approved product executor")
+            image = _successor_request_image(canonical_request)
+            if image == PINNED_IMAGE:
+                raise ValueError("same image cannot be a successor")
+            import json
+
+            def no_duplicates(pairs):
+                value = {}
+                for key, item in pairs:
+                    if key in value:
+                        raise ValueError("duplicate request key")
+                    value[key] = item
+                return value
+
+            parsed = json.loads(
+                canonical_request.decode("ascii"), object_pairs_hook=no_duplicates,
+                parse_constant=lambda _: (_ for _ in ()).throw(ValueError),
+            )
+            observed = inspect_analytics_active_state()
+            if (
+                type(observed) is not AnalyticsActiveState
+                or observed.read_only is not True
+                or observed.deployment_authorized is not False
+                or observed.active_slot != "blue"
+                or observed.active_digest != PINNED_DIGEST
+                or observed.active_image != PINNED_IMAGE
+                or observed.private_ingress_port != 3141
+                or observed.candidate_slot != "green"
+                or observed.candidate_port != ANALYTICS_SUCCESSOR_CANDIDATE_PORT
+                or observed.candidate_probe_present is not True
+                or observed.candidate_digest != parsed["manifest_digest"]
+                or type(observed.candidate_container_id) is not str
+                or len(observed.candidate_container_id) != 64
+                or parsed["rollback_reference"] != {
+                    "kind": "switch-private-slot-preserve-writes",
+                    "previous_digest": PINNED_DIGEST,
+                    "previous_slot": "blue",
+                    "preserve_database_writes": True,
+                }
+                or parsed["ingress_reference"] != {
+                    "kind": "private-no-public-ingress",
+                    "slot": "green", "loopback_address": "127.0.0.1",
+                    "loopback_port": ANALYTICS_SUCCESSOR_CANDIDATE_PORT,
+                    "backend_network": "omnilyzer-analytics-backend-dev",
+                    "public_origin": None, "active_slot": "blue",
+                }
+            ):
+                raise ValueError("independently observed OCI state does not match")
+            now = int(time.time())
+            credential = read_sealed_credential(
+                credential_fd, canonical_request=canonical_request,
+                image=image, product_id="analytics-successor", now=now,
+            )
+            if credential.expires_at - now < MIN_POST_PREFLIGHT_VALIDITY_SECONDS:
+                raise ValueError("private registry credential TTL insufficient")
+            preflight = object.__getattribute__(self, "_preflight_successor")
+            if preflight is None or preflight(canonical_request, credential_fd) is not None:
+                raise ValueError("no verified immutable successor manifest")
+            # Reinspect the still-active signed 0.15.0 and the candidate
+            # after the bounded remote registry read; reject any TOCTOU drift.
+            if inspect_analytics_active_state() != observed:
+                raise ValueError("host state changed during review")
+            return None
+        except _CONTROL:
+            raise
+        except Exception:
+            raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
 
     def execute_private(
         self, canonical_request: bytes, *, credential_fd: int,

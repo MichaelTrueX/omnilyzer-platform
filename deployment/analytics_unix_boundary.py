@@ -186,15 +186,22 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
         reviewed_installed_source: dict[str, str],
         timeout_ms: int = 3000,
         structural_successor_receive_only: bool = False,
+        verified_successor_preflight_only: bool = False,
     ) -> None:
         """Capture exact Analytics parser/FD at construction, never per-call.
 
-        The explicit structural successor mode is an inert transport test
-        boundary ONLY. It cannot change executor behavior or deploy a
-        successor: the original schema-2 executor rejects it before replay.
-        It must never be installed as a schema-3 deployment receiver.
+        Both explicit successor modes are inert transport test boundaries.
+        Structural mode rejects immediately. Read-only preflight mode
+        invokes UID991 actual OCI/manifest/FD checks and then ALSO rejects;
+        neither calls original replay/deploy or can signal promotion success.
+        Neither mode may be installed as a schema-3 deployment receiver.
         """
-        if type(structural_successor_receive_only) is not bool:
+        if (
+            type(structural_successor_receive_only) is not bool
+            or type(verified_successor_preflight_only) is not bool
+            or (structural_successor_receive_only
+                and verified_successor_preflight_only)
+        ):
             raise TypeError("invalid successor receive boundary")
         if type(executor) is not AnalyticsPrivilegedExecutor:
             raise TypeError("Analytics receiver must have exact executor type")
@@ -248,8 +255,27 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
             """
             raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE)
 
+        def preflight_and_reject_successor(
+            canonical_request: bytes, *, credential_fd: int,
+        ) -> bytes:
+            """Enforce REAL read-only UID991 checks, then always refuse GO.
+
+            Kernel peer identity and verified SCM_RIGHTS FD have already
+            passed the original handler. Even a successful live-state and
+            private manifest probe must NOT become a promotion success.
+            Existing V1 execute_private/replay/deploy remain uncalled.
+            """
+            executor.preflight_first_successor_without_deployment(
+                canonical_request, credential_fd=credential_fd,
+            )
+            raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE)
+
         settings[13] = MAX_ANALYTICS_REQUEST_BYTES
-        if structural_successor_receive_only:
+        if verified_successor_preflight_only:
+            settings[0] = preflight_and_reject_successor
+            settings[30] = read_successor
+            settings[31] = parse_successor
+        elif structural_successor_receive_only:
             settings[0] = reject_successor
             settings[30] = read_successor
             settings[31] = parse_successor

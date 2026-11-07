@@ -1170,3 +1170,36 @@ An approved rollback would remove only these two V2 drop-ins, restore the
 original protected V1 config and confirm the unchanged V1 source and service
 status, with durable route journal reconciliation. None of that privileged
 activation or rollback is performed or authorized by the builder.
+
+## 2026-11-07: actual UID991-only first-successor read-only manifest/OCI probe
+
+The existing `AnalyticsPrivilegedExecutor` has a separate
+`preflight_first_successor_without_deployment()` method. This is **not** the
+schema-3 deployment API. A caller-constructible canonical request cannot
+obtain execution permission: the method checks exact product OCI request
+shape, one `analytics-successor` kernel-sealed credential FD, UID991 executor
+identity, the independently observed healthy original signed 0.15.0 blue
+container, the exactly staged green candidate/3142 private route, the
+unchanged rollback digest/slot, and the existing successor-only Zot **manifest
+PROBE**. It observes the rootless live state again after the manifest read,
+rejecting a changed container/route. It does not invoke Docker pull, deploy,
+replay begin/finish, route journal mutation, ingress change or rollback.
+
+The existing Unix receiver offers an **explicit test-only**
+`verified_successor_preflight_only=True` probe mode. It reuses the original
+kernel `SO_PEERCRED`, `SCM_RIGHTS`, request framing, fd scope and validation.
+After a successful preflight, it still raises the original *rejected* result;
+no response indicating accepted deployment is ever sent. It cannot be combined
+with structural successor test mode. The installed schema-2 receiver's default
+and original 0.15.0 live service are unchanged. A real isolated AF_UNIX test
+checks the sealed FD and actual receiver callback through the original
+framing/peer implementation, asserts no durable replay, and confirms denial.
+
+**Remaining permission gap:** broker verification of Ed25519 owner approval,
+GitHub OIDC, Cosign/Sigstore and Forgejo must be conveyed across the trust
+boundary in a way the UID991 executor can independently validate; a Python
+signed-evidence dataclass or this read-only probe is not sufficient. The true
+schema-3 receiver, durable replay, candidate pull, health, route journal
+switch and rollback remain fail-closed and require one independently reviewed
+integrated release candidate. No root-owned installation, registry write,
+service activation or deployment is authorized by this change.

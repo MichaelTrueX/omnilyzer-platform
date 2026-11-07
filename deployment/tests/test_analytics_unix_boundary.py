@@ -35,7 +35,8 @@ from deployment.analytics_unix_boundary import (
     AnalyticsUnixExecutorConnectionHandler,
     AnalyticsUnixExecutorTransport, AnalyticsUnixExecutorListener,
 )
-from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+from deployment.analytics_signed_release_consumer import PINNED_IMAGE, PINNED_DIGEST
+from deployment.analytics_active_state_review import AnalyticsActiveState
 from deployment.executor import (
     ExecutorRejectedError, ExecutorUnavailableError,
     parse_canonical_response,
@@ -77,6 +78,19 @@ class SyntheticPreflight:
         assert authority.token == self.token
         if self.error:
             raise OSError("synthetic image preflight failed")
+
+    def preflight_analytics_successor(self, canonical_request, credential_fd):
+        """Simulate the actual successor Zot manifest PROBE, never a pull."""
+        from deployment.private_registry_fd import _successor_request_image
+        self.events.append("successor_manifest_probe")
+        image = _successor_request_image(canonical_request)
+        authority = read_sealed_credential(
+            credential_fd, canonical_request=canonical_request,
+            image=image, now=NOW, product_id="analytics-successor",
+        )
+        assert authority.token == self.token
+        if self.error:
+            raise OSError("synthetic manifest probe failed")
 
 
 class SyntheticFirstInstall:
@@ -278,6 +292,108 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
         self.addCleanup(self.clock1.stop)
         self.addCleanup(self.clock2.stop)
 
+    def test_first_successor_preflight_observes_real_slot_shape_without_deploy(self):
+        """Sealed successor FD + independent active/candidate + Zot PROBE only."""
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        from dataclasses import replace
+
+        raw_model, _ = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(raw_model)
+        image = raw_model["exact_image_reference"]
+        state = AnalyticsActiveState(
+            schema_version=1, active_slot="blue", active_digest=PINNED_DIGEST,
+            active_image=PINNED_IMAGE, active_container_id="a" * 64,
+            active_child_ip="172.20.0.3", active_network_id="f" * 64,
+            private_ingress_port=3141, candidate_slot="green",
+            candidate_port=3142, candidate_probe_present=True,
+            candidate_digest=raw_model["manifest_digest"],
+            candidate_container_id="b" * 64,
+        )
+        executor, replay, events = receiver()
+        fd = credential(request=raw, image=image, product_id="analytics-successor")
+        try:
+            with (
+                patch("deployment.analytics_executor.os.geteuid", return_value=991),
+                patch("deployment.analytics_active_state_review.inspect_analytics_active_state",
+                      return_value=state) as inspector,
+            ):
+                self.assertIsNone(executor.preflight_first_successor_without_deployment(
+                    raw, credential_fd=fd,
+                ))
+            self.assertEqual(inspector.call_count, 2)
+            self.assertEqual(events, ["successor_manifest_probe"])
+            self.assertEqual(replay.begin_calls, [])
+            self.assertEqual(replay.finish_calls, [])
+
+            # Runtime changes during the manifest network probe fail closed.
+            with (
+                patch("deployment.analytics_executor.os.geteuid", return_value=991),
+                patch("deployment.analytics_active_state_review.inspect_analytics_active_state",
+                      side_effect=(state, replace(state, active_container_id="c" * 64))),
+                self.assertRaises(ExecutorUnavailableError),
+            ):
+                executor.preflight_first_successor_without_deployment(
+                    raw, credential_fd=fd,
+                )
+            self.assertEqual(events, ["successor_manifest_probe"] * 2)
+            self.assertEqual(replay.begin_calls, [])
+            self.assertEqual(replay.finish_calls, [])
+        finally:
+            os.close(fd)
+
+    def test_first_successor_preflight_denies_wrong_live_state_and_fd(self):
+        """No credential, forged state, wrong UID or callback invokes replay."""
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        from dataclasses import replace
+
+        raw_model, _ = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(raw_model)
+        image = raw_model["exact_image_reference"]
+        state = AnalyticsActiveState(
+            schema_version=1, active_slot="blue", active_digest=PINNED_DIGEST,
+            active_image=PINNED_IMAGE, active_container_id="a" * 64,
+            active_child_ip="172.20.0.3", active_network_id="f" * 64,
+            private_ingress_port=3141, candidate_slot="green",
+            candidate_port=3142, candidate_probe_present=True,
+            candidate_digest=raw_model["manifest_digest"],
+            candidate_container_id="b" * 64,
+        )
+        executor, replay, events = receiver()
+        fd = credential(request=raw, image=image, product_id="analytics-successor")
+        old_fd = credential()
+        try:
+            variants = (
+                (raw, fd, state, 1005),
+                (raw, old_fd, state, 991),
+                (raw, fd, replace(state, active_digest="sha256:" + "a" * 64), 991),
+                (raw, fd, replace(state, active_slot="green"), 991),
+                (raw, fd, replace(state, candidate_probe_present=False), 991),
+                (raw, fd, replace(state, candidate_digest="sha256:" + "c" * 64), 991),
+                (canonical_bytes({**raw_model, "rollback_reference": {
+                    **raw_model["rollback_reference"], "previous_slot": "green",
+                }}), fd, state, 991),
+            )
+            for request, token_fd, observed, uid in variants:
+                with (
+                    self.subTest(uid=uid, digest=observed.candidate_digest,
+                                 old_fd=token_fd is old_fd),
+                    patch("deployment.analytics_executor.os.geteuid", return_value=uid),
+                    patch("deployment.analytics_active_state_review.inspect_analytics_active_state",
+                          return_value=observed),
+                    self.assertRaises(ExecutorUnavailableError),
+                ):
+                    executor.preflight_first_successor_without_deployment(
+                        request, credential_fd=token_fd,
+                    )
+            self.assertEqual(events, [])
+            self.assertEqual(replay.begin_calls, [])
+            self.assertEqual(replay.finish_calls, [])
+            with self.assertRaises(ExecutorRejectedError):
+                executor.preflight_first_successor_without_deployment(raw, credential_fd=-1)
+        finally:
+            os.close(fd)
+            os.close(old_fd)
+
     def test_systemd_analytics_listener_transfers_descriptor_after_exact_peer_check(self):
         """Join the real Analytics sender to the real shared PID1 decision."""
         from deployment import unix_transport as wire
@@ -469,6 +585,107 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
             self.assertEqual(events, [])
             self.assertEqual(replay.begin_calls, [])
             self.assertEqual(replay.finish_calls, [])
+
+    def test_successor_read_only_probe_real_unix_fd_never_reports_deploy(self):
+        """Real SO_PEERCRED + SCM_RIGHTS enters UID991 proof, then DENIES.
+
+        This is a disposable socket with a SYNTHETIC observed host snapshot
+        and credential, not a live release or a signed deployment acceptance.
+        """
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+
+        candidate, _ = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(candidate)
+        state = AnalyticsActiveState(
+            schema_version=1, active_slot="blue", active_digest=PINNED_DIGEST,
+            active_image=PINNED_IMAGE, active_container_id="a" * 64,
+            active_child_ip="172.20.0.3", active_network_id="f" * 64,
+            private_ingress_port=3141, candidate_slot="green",
+            candidate_port=3142, candidate_probe_present=True,
+            candidate_digest=candidate["manifest_digest"],
+            candidate_container_id="b" * 64,
+        )
+        executor, replay, events = receiver()
+        with tempfile.TemporaryDirectory(prefix="task14b-schema3-review-") as tmp:
+            path = str(Path(tmp) / "socket")
+            handler = AnalyticsUnixExecutorConnectionHandler(
+                executor=executor, expected_broker_uid=os.getuid(),
+                expected_broker_gid=os.getgid(),
+                reviewed_installed_source=EXPECTED,
+                verified_successor_preflight_only=True,
+            )
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(path)
+            os.chmod(path, 0o660)
+            listener.listen(1)
+            listener.settimeout(3)
+            failures: list[str] = []
+
+            def serve():
+                """Serve one protected local request and refuse all promotion."""
+                try:
+                    accepted, _ = listener.accept()
+                    handler.handle(accepted)
+                except ExecutorConnectionUnavailableError:
+                    failures.append("read-only-probe-denied")
+                except BaseException as problem:
+                    failures.append(type(problem).__name__)
+
+            worker = threading.Thread(target=serve, daemon=True)
+            worker.start()
+            fd = credential(
+                request=raw, image=candidate["exact_image_reference"],
+                product_id="analytics-successor",
+            )
+            try:
+                with (
+                    patch.object(analytics_boundary, "ANALYTICS_EXECUTOR_SOCKET_PATH", path),
+                    patch("deployment.analytics_executor.os.geteuid", return_value=991),
+                    patch("deployment.analytics_active_state_review.inspect_analytics_active_state",
+                          return_value=state) as inspected,
+                    patch.object(analytics_boundary, "read_sealed_credential",
+                                 wraps=read_sealed_credential) as read_fd,
+                ):
+                    transport = AnalyticsUnixExecutorTransport(
+                        expected_executor_uid=os.getuid(),
+                        expected_executor_gid=os.getgid(),
+                        expected_socket_group_gid=os.getgid(),
+                        reviewed_installed_source=EXPECTED,
+                    )
+                    with self.assertRaises(ExecutorTransportUnavailableError):
+                        transport._send_analytics_successor_private(
+                            raw, credential_fd=fd,
+                        )
+                self.assertEqual(inspected.call_count, 2)
+                self.assertGreaterEqual(read_fd.call_count, 2)
+            finally:
+                os.close(fd)
+                worker.join(5)
+                listener.close()
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(failures, ["read-only-probe-denied"])
+        self.assertEqual(events, ["successor_manifest_probe"])
+        self.assertEqual(replay.begin_calls, [])
+        self.assertEqual(replay.finish_calls, [])
+
+    def test_successor_probe_receiver_never_combines_with_structural_mode(self):
+        """No mixed dispatch mode or accidental default schema-3 allowance."""
+        executor, replay, events = receiver()
+        with self.assertRaises(TypeError):
+            AnalyticsUnixExecutorConnectionHandler(
+                executor=executor, expected_broker_uid=os.getuid(),
+                expected_broker_gid=os.getgid(), reviewed_installed_source=EXPECTED,
+                structural_successor_receive_only=True,
+                verified_successor_preflight_only=True,
+            )
+        with self.assertRaises(TypeError):
+            AnalyticsUnixExecutorConnectionHandler(
+                executor=executor, expected_broker_uid=os.getuid(),
+                expected_broker_gid=os.getgid(), reviewed_installed_source=EXPECTED,
+                verified_successor_preflight_only=1,
+            )
+        self.assertEqual(events, [])
+        self.assertEqual(replay.begin_calls, [])
 
     def test_real_analytics_unix_socket_and_sealed_fd_roundtrip(self):
         """Reuse original metadata, peer, expiry, framing and response checks."""
