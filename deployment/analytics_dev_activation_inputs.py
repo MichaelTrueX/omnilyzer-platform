@@ -82,6 +82,28 @@ _SUCCESSOR_EXECUTOR_DROPIN = (
     "/etc/systemd/system/omnilyzer-deployment-analytics-executor.service.d/"
     "analytics-v2-source.conf"
 )
+# The original Cosign and TrustedRoot reader requires two protected directories
+# to have the *current verifier principal's* group, not broker UID990's group.
+# Systemd binds separately root-provisioned 0:991 copies into the old paths
+# INSIDE the UID991 service mount namespace. No shared broker file becomes
+# group-readable, and neither signed binary nor original verifier is modified.
+_SUCCESSOR_VERIFIER_BINDS = (
+    "BindReadOnlyPaths="
+    "/etc/omnilyzer/deployment/dev/analytics-executor-sigstore:"
+    "/etc/omnilyzer/deployment/broker "
+    "/opt/omnilyzer/deployment/analytics-executor-tools:"
+    "/opt/omnilyzer/deployment/tools"
+)
+# The original original C32G/C32I verifier demands independently private
+# 0700 workspaces for its sealed evidence and Docker OIDC auth. The private
+# parent mount is already in rootless-runtime.conf and is never shared with
+# Canary/UID990. Nested mounts grant only UID991 temporary write capability.
+_SUCCESSOR_VERIFIER_TMPFS = (
+    "TemporaryFileSystem="
+    "/run/omnilyzer/deployment/dev:mode=0755,uid=0,gid=0 "
+    "/run/omnilyzer/deployment/dev/blob-verifier:mode=0700,uid=991,gid=991 "
+    "/run/omnilyzer/deployment/dev/oci-verifier:mode=0700,uid=991,gid=991"
+)
 _ORIGINAL_RUNTIME_DIRECTORY = (
     "RuntimeDirectory=omnilyzer/deployment/rootless-docker"
 )
@@ -376,7 +398,14 @@ def build_unsigned_analytics_service_inputs(
                 "[Service]\nWorkingDirectory=" + SUCCESSOR_DESTINATION + "\n"
             ).encode("ascii")
             result[_SUCCESSOR_BROKER_DROPIN] = candidate_bytes
-            result[_SUCCESSOR_EXECUTOR_DROPIN] = candidate_bytes
+            # The broker uses its own already-qualified UID990 signer assets.
+            # Only UID991's *private* V2 mount namespace receives isolated
+            # signer copies and writable temporary verifier workspaces.
+            result[_SUCCESSOR_EXECUTOR_DROPIN] = (
+                candidate_bytes
+                + (_SUCCESSOR_VERIFIER_BINDS + "\n"
+                   + _SUCCESSOR_VERIFIER_TMPFS + "\n").encode("ascii")
+            )
         expected_paths = {
             _ANALYTICS_RUNTIME_DROPIN,
             *(destination for _source, destination in _SERVICE_SOURCES),
