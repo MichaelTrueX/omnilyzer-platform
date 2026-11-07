@@ -126,6 +126,41 @@ class AnalyticsRouteJournalTests(unittest.TestCase):
         with self.assertRaises(AnalyticsRouteJournalUnavailable):
             self.journal.finish(restored, phase="switched")
 
+    def test_committed_rollback_intent_must_be_durable_before_restoration(self):
+        """Switched can only transition through rollback_pending to restored.
+
+        Never allow an arbitrary changed owner, process or request to clear
+        an unfinished rollback after the 3141 writer has already switched.
+        """
+        prepared = self.journal.begin(**approval())
+        ready = self.journal.finish(prepared, phase="candidate_ready")
+        switched = self.journal.finish(ready, phase="switched")
+        self.denied(lambda: self.journal.finish(switched, phase="restored"))
+        pending = self.journal.finish(switched, phase="rollback_pending")
+        self.assertEqual(pending["phase"], "rollback_pending")
+        self.assertEqual(self.path.read_bytes(), canonical_bytes(pending))
+        reopened = AnalyticsRouteJournal(
+            str(self.directory),
+            expected_uid=os.getuid(), expected_gid=os.getgid(),
+        )
+        self.assertEqual(reopened.read(), pending)
+        self.denied(lambda: reopened.begin(**approval(request_sha256="f" * 64)))
+        self.denied(lambda: reopened.finish(
+            switched, phase="rollback_pending",
+        ))
+        self.denied(lambda: reopened.finish(
+            pending, phase="switched",
+        ))
+        restored = reopened.finish(pending, phase="restored")
+        self.assertEqual(restored["phase"], "restored")
+        self.assertEqual(self.path.read_bytes(), canonical_bytes(restored))
+        self.denied(lambda: reopened.finish(pending, phase="restored"))
+        self.denied(lambda: reopened.finish(restored, phase="switched"))
+        # A new signed release may subsequently begin, but the original
+        # replay database still independently rejects reuse of the old JTI.
+        second = reopened.begin(**approval(request_sha256="f" * 64))
+        self.assertEqual(second["generation"], 2)
+
     def test_restored_route_may_retry_with_original_signed_identity(self):
         """Rollback is a recoverable state, not a reused prior JTI."""
         pending = self.journal.begin(**approval())

@@ -564,8 +564,10 @@ def _recover_reviewed_private_route_locked(
     """Reconcile an interrupted PREPARED cutover to the old healthy writer.
 
     This is a private future-supervisor recovery action, NOT a public CLI,
-    signature check or permission to deploy. The caller must have independently
-    verified exact signed previous and next releases and the original JTI.
+    signature check or permission to deploy. Also handles a fsync-protected
+    rollback_pending transaction AFTER a completed 3141 cutover, e.g. when
+    replay finalization fails. The caller must independently verify both
+    exact signed releases, the previous healthy writer and original JTI.
     A missing/finished/foreign/corrupt journal or unrecognized local rule is
     a hard HOLD, never an inferred permission to recreate host forwarding.
     """
@@ -579,7 +581,9 @@ def _recover_reviewed_private_route_locked(
     intent = journal.read()
     if (
         type(intent) is not dict
-        or intent.get("phase") not in ("prepared", "candidate_ready")
+        or intent.get("phase") not in (
+            "prepared", "candidate_ready", "rollback_pending",
+        )
         or intent.get("request_sha256") != request_sha256
         or intent.get("previous_slot") != previous_slot
         or intent.get("previous_image") != previous_image
@@ -604,7 +608,14 @@ def _recover_reviewed_private_route_locked(
     old_rules = [r for r in observed if r["spec"] == old]
     new_rules = [r for r in observed if r["spec"] == new]
     if (
-        len(observed) not in (2, 3)
+        # A post-COMMIT rollback has no 3142 probe. If the executor dies
+        # exactly AFTER deleting green3141 but BEFORE reposting blue3141,
+        # the only remaining rule can legitimately be the untouched Canary.
+        # Permit that narrow 1-rule recovery shape ONLY for the fsync-proven
+        # rollback_pending phase, never for prepared/candidate_ready.
+        len(observed) not in (
+            (1, 2) if intent["phase"] == "rollback_pending" else (2, 3)
+        )
         or len(old_rules) > 1 or len(new_rules) > 1
         or bool(old_rules) and bool(new_rules)
         or sum(r["spec"] == _CANARY for r in observed) != 1
@@ -951,6 +962,97 @@ def _switch_reviewed_private_route_locked(
             except Exception:
                 raise RuntimeError("TASK014_ANALYTICS_ROUTE_RECOVERY_UNCONFIRMED") from None
         raise RuntimeError("TASK014_ANALYTICS_ROUTE_CHANGE_REJECTED") from None
+
+
+# Section 4b: an already switched first successor can be reversed only
+# through a durable, matched rollback intent. No service currently calls it.
+def _rollback_committed_private_successor(
+    *, previous_slot: str, previous_image: str, previous_id: str,
+    next_slot: str, next_image: str, next_id: str,
+    journal: object, request_sha256: str,
+) -> None:
+    """Restore the original signed blue writer after a COMMITTED V2 switch.
+
+    A failure of replay.finish_execution after the already healthy green
+    switch cannot be treated as a completed release. Record the exact
+    rollback_pending phase DURABLY before changing localhost3141, and reuse
+    the existing checked recovery algorithm to restore ONLY the original
+    signed 0.15.0 route, with Canary untouched and database writes preserved.
+    Interrupted rollback remains pending and blocks another candidate until
+    the same independently reviewed release identity is recovered.
+
+    This future-supervisor primitive does NOT validate OIDC, SBOM, signed
+    release or replay itself and is not installed/enabled by this source.
+    The sole eventual caller must pass those checks before any route change.
+    It cannot stop containers, delete volumes, switch public ingress or
+    synthesize a release success.
+    """
+    _require_route_journal(journal)
+    with journal.exclusive():
+        if (
+            not journal.exclusive_active()
+            or os.geteuid() != _UID
+            or os.environ.get(_SUCCESSOR_SCOPE) != "1"
+            or type(request_sha256) is not str
+            or _HEX64.fullmatch(request_sha256) is None
+            or request_sha256 == "0" * 64
+            or previous_slot != "blue" or previous_image != _IMAGE
+            or next_slot != "green"
+            or type(next_image) is not str
+            or not next_image.startswith(_SUCCESSOR_REPOSITORY)
+            or _HEX64.fullmatch(
+                next_image[len(_SUCCESSOR_REPOSITORY):]
+            ) is None
+            or next_image == previous_image
+        ):
+            raise ValueError("unreviewed post-switch rollback authority")
+        existing = journal.read()
+        if (
+            type(existing) is not dict
+            or existing.get("phase") != "switched"
+            or existing.get("request_sha256") != request_sha256
+            or existing.get("previous_slot") != previous_slot
+            or existing.get("previous_image") != previous_image
+            or existing.get("previous_container_id") != previous_id
+            or existing.get("next_slot") != next_slot
+            or existing.get("next_image") != next_image
+            or existing.get("next_container_id") != next_id
+        ):
+            raise ValueError("foreign or unfinished committed release")
+        _rootless_info()
+        old_ip = _verified_slot(previous_slot, previous_image, previous_id)
+        if old_ip != existing["previous_ip"]:
+            raise ValueError("signed previous writer is not intact")
+        old = {
+            "proto": "tcp4", "parentIP": "127.0.0.1",
+            "parentPort": 3141, "childIP": old_ip, "childPort": 3000,
+        }
+        new = dict(old, childIP=existing["next_ip"])
+        actual = _raw_rules()
+        # No unknown, duplicate, public, Canary-replaced or partially
+        # prepared forwarding state may be mistaken for a committed release.
+        if (
+            len(actual) != 2
+            or sum(rule["spec"] == _CANARY for rule in actual) != 1
+            or sum(rule["spec"] == new for rule in actual) != 1
+            or any(rule["spec"] not in (_CANARY, new) for rule in actual)
+            or _raw_rules() != actual
+        ):
+            raise ValueError("committed private route is not unchanged")
+        # Fsync both the temporary file and its directory BEFORE first DELETE.
+        journal.finish(existing, phase="rollback_pending")
+        # This exact recovery is also callable after a crash on restart,
+        # only with the same UID991 environment, signed identities and JTI.
+        _recover_reviewed_private_route_locked(
+            journal=journal, request_sha256=request_sha256,
+            previous_slot=previous_slot, previous_image=previous_image,
+            previous_id=previous_id, next_slot=next_slot,
+            next_image=next_image, next_id=next_id,
+        )
+        committed = journal.read()
+        if type(committed) is not dict or committed.get("phase") != "restored":
+            raise RuntimeError("TASK014_ANALYTICS_ROLLBACK_UNCONFIRMED")
+    return None
 
 
 # Section 5: unchanged original closed lifecycle, no successor dispatch.

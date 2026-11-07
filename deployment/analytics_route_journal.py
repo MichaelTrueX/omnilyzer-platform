@@ -2,8 +2,9 @@
 
 Purpose: Durable, product-only Task14B Analytics private route-switch intent.
          Persist exact signed-release *references* before any 3141 mutation,
-         and distinguish prepared, candidate_ready, switched and restored
-         outcomes on restart without trusting a partial stage as promotion.
+         and distinguish prepared, candidate_ready, switched, rollback_pending
+         and restored outcomes on restart without trusting a partial stage
+         or post-commit rollback attempt as a completed promotion.
 Related: deployment/analytics_loopback_guard.py (same RootlessKit supervisor),
          deployment/analytics_active_state_review.py (live OCI observation),
          deployment/replay_sqlite.py (separate existing JTI replay authority),
@@ -43,7 +44,7 @@ _KEYS = frozenset({
     "previous_slot", "previous_image", "previous_container_id",
     "previous_ip", "next_slot", "next_image", "next_container_id", "next_ip",
 })
-_PHASES = frozenset({"prepared", "candidate_ready", "switched", "restored"})
+_PHASES = frozenset({"prepared", "candidate_ready", "switched", "rollback_pending", "restored"})
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _ERROR = "TASK014_ANALYTICS_ROUTE_JOURNAL_UNAVAILABLE"
 
@@ -331,7 +332,7 @@ class AnalyticsRouteJournal:
             try:
                 existing = self._read_at(directory_fd)
                 if existing is not None:
-                    if existing["phase"] in ("prepared", "candidate_ready"):
+                    if existing["phase"] in ("prepared", "candidate_ready", "rollback_pending"):
                         _reject()
                     if existing["phase"] == "switched":
                         if (
@@ -373,9 +374,15 @@ class AnalyticsRouteJournal:
     def finish(
         self, record: dict[str, object], *, phase: str,
     ) -> dict[str, object]:
-        """Durably record candidate health, switch or confirmed restoration."""
+        """Durably record health, switch, rollback intent or restoration.
+
+        A finished switch can only be rolled back after first recording a
+        separate fsync-protected rollback_pending intent. A failed process
+        can never clear that intent merely by creating a new release.
+        This storage primitive does not authorize an operation or a signer.
+        """
         try:
-            if phase not in ("candidate_ready", "switched", "restored"):
+            if phase not in ("candidate_ready", "switched", "rollback_pending", "restored"):
                 _reject()
             previous = _route_record(record)
             if not (
@@ -383,6 +390,10 @@ class AnalyticsRouteJournal:
                  and phase in ("candidate_ready", "restored"))
                 or (previous["phase"] == "candidate_ready"
                     and phase in ("switched", "restored"))
+                or (previous["phase"] == "switched"
+                    and phase == "rollback_pending")
+                or (previous["phase"] == "rollback_pending"
+                    and phase == "restored")
             ):
                 _reject()
             directory_fd, close_when_done = self._write_handle()

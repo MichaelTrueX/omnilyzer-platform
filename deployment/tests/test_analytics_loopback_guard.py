@@ -400,6 +400,157 @@ class AnalyticsSuccessorRouteTransactionTests(unittest.TestCase):
                          "172.20.0.4")
         self.assertEqual(self.backend.rules[0], self.original_canary)
 
+    # Section: signed first successor can be reversed AFTER an acknowledged
+    # switch when the executor cannot durably finish the original JTI.
+    # No real Docker/RootlessKit/DB calls occur in these synthetic fixtures.
+    def _commit_green_for_rollback(self):
+        """Produce one actual journaled synthetic green cutover."""
+        self._without_candidate_route()
+        self.assertIsNone(guard._stage_reviewed_private_candidate_probe(**self.old))
+        self.assertIsNone(guard._switch_reviewed_private_route(**self.old))
+        self.assertEqual(self.journal.read()["phase"], "switched")
+        self.assertEqual(self.backend.route(3142), [])
+        self.assertEqual(self.backend.route(3141)[0]["spec"]["childIP"],
+                         "172.20.0.4")
+
+    def test_post_commit_rollback_restores_original_signed_blue(self):
+        """Rollback finished switch without deleting data, containers or Canary."""
+        self._commit_green_for_rollback()
+        self.assertIsNone(guard._rollback_committed_private_successor(**self.old))
+        self.assertEqual(self.journal.read()["phase"], "restored")
+        self.assertEqual(self.backend.route(3141)[0]["spec"]["childIP"],
+                         "172.20.0.3")
+        self.assertEqual(self.backend.route(3142), [])
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+        self.assertEqual(self.backend.state["blue"]["State"]["Running"], True)
+        self.assertEqual(self.backend.state["green"]["State"]["Running"], True)
+        self.assertEqual(self.backend.changes[-2][0], "DELETE")
+        self.assertEqual(self.backend.changes[-1][0], "POST")
+
+    def test_post_commit_rollback_wrong_request_or_canary_never_mutates(self):
+        """JTI, actor source or live routing drift is checked before fsync."""
+        self._commit_green_for_rollback()
+        before = list(self.backend.changes)
+        for mutation in (
+            {"request_sha256": "f" * 64},
+            {"previous_image": guard._SUCCESSOR_REPOSITORY + "d" * 64},
+            {"previous_id": "c" * 64},
+            {"next_id": "e" * 64},
+            {"next_image": guard._SUCCESSOR_REPOSITORY + "d" * 64},
+        ):
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                guard._rollback_committed_private_successor(
+                    **{**self.old, **mutation},
+                )
+            self.assertEqual(self.journal.read()["phase"], "switched")
+            self.assertEqual(before, self.backend.changes)
+        self.backend.rules[0]["spec"]["parentPort"] = 3000
+        with self.assertRaises(ValueError):
+            guard._rollback_committed_private_successor(**self.old)
+        self.assertEqual(self.journal.read()["phase"], "switched")
+        self.assertEqual(before, self.backend.changes)
+
+    def test_rollback_pending_crash_before_delete_recovers_old_writer(self):
+        """A signed, fsync'd intent survives process loss before DELETE."""
+        self._commit_green_for_rollback()
+        swapped = self.journal.read()
+        pending = self.journal.finish(swapped, phase="rollback_pending")
+        self.assertEqual(pending["phase"], "rollback_pending")
+        with self.assertRaises(AnalyticsRouteJournalUnavailable):
+            self.journal.begin(**{
+                "request_sha256": "f" * 64,
+                "previous_slot": "green", "previous_image": self.old["next_image"],
+                "previous_container_id": self.old["next_id"],
+                "previous_ip": "172.20.0.4",
+                "next_slot": "blue", "next_image": guard._IMAGE,
+                "next_container_id": self.old["previous_id"],
+                "next_ip": "172.20.0.3",
+            })
+        self.assertIsNone(guard._recover_reviewed_private_route(**self.old))
+        self.assertEqual(self.journal.read()["phase"], "restored")
+        self.assertEqual(self.backend.route(3141)[0]["spec"]["childIP"],
+                         "172.20.0.3")
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+
+    def test_rollback_pending_crash_after_delete_recovers_from_canary_only(self):
+        """A crash between route DELETE and POST cannot strand all writers."""
+        self._commit_green_for_rollback()
+        pending = self.journal.finish(
+            self.journal.read(), phase="rollback_pending",
+        )
+        self.backend.rules = [self.backend.rules[0]]
+        self.assertEqual(pending["phase"], "rollback_pending")
+        self.assertEqual(self.backend.route(3141), [])
+        self.assertIsNone(guard._recover_reviewed_private_route(**self.old))
+        self.assertEqual(self.journal.read()["phase"], "restored")
+        self.assertEqual(self.backend.route(3141)[0]["spec"]["childIP"],
+                         "172.20.0.3")
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+
+    def test_rollback_pending_crash_after_blue_repost_only_marks_verified(self):
+        """Crash after old3141 POST but before fsync is safely idempotent."""
+        self._commit_green_for_rollback()
+        self.journal.finish(
+            self.journal.read(), phase="rollback_pending",
+        )
+        self.backend.rules = [
+            self.original_canary, self.original_stable,
+        ]
+        before = list(self.backend.changes)
+        self.assertIsNone(guard._recover_reviewed_private_route(**self.old))
+        self.assertEqual(self.backend.changes, before)
+        self.assertEqual(self.journal.read()["phase"], "restored")
+        self.assertEqual(self.backend.route(3141), [self.original_stable])
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+
+    def test_post_commit_rollback_requires_protected_uid_and_service_scope(self):
+        """Environment selector alone cannot override the kernel UID or owner."""
+        self._commit_green_for_rollback()
+        before = list(self.backend.changes)
+        with patch.dict(os.environ, {guard._SUCCESSOR_SCOPE: "0"}):
+            with self.assertRaises(ValueError):
+                guard._rollback_committed_private_successor(**self.old)
+        with patch.object(guard.os, "geteuid", return_value=1000):
+            with self.assertRaises(ValueError):
+                guard._rollback_committed_private_successor(**self.old)
+        self.assertEqual(self.journal.read()["phase"], "switched")
+        self.assertEqual(before, self.backend.changes)
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+
+    def test_failed_pending_intent_fsync_prevents_route_deletion(self):
+        """No POST/DELETE when the durable post-COMMIT rollback intent fails."""
+        self._commit_green_for_rollback()
+        before = list(self.backend.changes)
+        original = self.journal.read()
+        with patch.object(
+            AnalyticsRouteJournal, "finish",
+            side_effect=AnalyticsRouteJournalUnavailable(
+                "synthetic fsync failure",
+            ),
+        ):
+            with self.assertRaises(AnalyticsRouteJournalUnavailable):
+                guard._rollback_committed_private_successor(**self.old)
+        self.assertEqual(self.backend.changes, before)
+        self.assertEqual(self.journal.read(), original)
+        self.assertEqual(
+            self.backend.route(3141)[0]["spec"]["childIP"], "172.20.0.4",
+        )
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+
+    def test_post_commit_failed_recovery_stays_pending_no_false_success(self):
+        """Unconfirmed post-commit restoration remains a durable operational HOLD."""
+        self._commit_green_for_rollback()
+        self.backend.restore_fails = True
+        with self.assertRaises(Exception):
+            guard._rollback_committed_private_successor(**self.old)
+        self.assertEqual(self.journal.read()["phase"], "rollback_pending")
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+        self.backend.restore_fails = False
+        self.assertIsNone(guard._recover_reviewed_private_route(**self.old))
+        self.assertEqual(self.journal.read()["phase"], "restored")
+        self.assertEqual(self.backend.route(3141)[0]["spec"]["childIP"],
+                         "172.20.0.3")
+
     def test_crash_before_first_3142_post_restores_without_mutation(self):
         """A durable prepare may exist without any route due to process kill."""
         self._without_candidate_route()

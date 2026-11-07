@@ -1747,3 +1747,69 @@ immutable candidate startup, private 3142 health, journaled 3141 route switch,
 failure/restart reconciliation and write-preserving rollback. Only one owner
 approval for actual protected installation/release as required by AGENTS.md;
 independent M04 acceptance when the combined code is real and testable.
+
+## M05 committed private 3141 cutover rollback and crash recovery (7 Nov 2026)
+
+Previously the route journal could restore only PREPARED/CANDIDATE_READY
+transactions that had not fully committed. If original SQLite
+`finish_execution` failed immediately AFTER a successful 3141 cutover, the
+already-SWITCHED journal had no safe way to record an operator-authorized
+rollback to the original signed blue 0.15.0. A process crash after deleting
+green3141 but before restoring blue3141 could leave ONLY Canary3020 and no
+Analytics writer, with no independently recoverable phase.
+
+The existing **Analytics-only** `deployment/analytics_route_journal.py`
+now requires this strict, fsync-protected state machine:
+
+`prepared -> candidate_ready -> switched -> rollback_pending -> restored`
+
+The existing alternative `prepared/candidate_ready -> restored` remains
+valid for aborted pre-commit swaps. `switched -> restored` is intentionally
+DENIED because it would claim recovery without first writing the exact
+rollback intent. `rollback_pending` blocks any new generation, replay or
+candidate adoption until a privileged recovery of the SAME request/image/
+container IDs completes. The original V1 source and Canary remain unchanged.
+
+The existing `deployment/analytics_loopback_guard.py` now exposes the
+**UNINSTALLED, protected private helper**
+`_rollback_committed_private_successor` for the FIRST immutable
+blue0.15.0 -> green successor, restricted to original UID991, exact
+private supervisor scope, bounded original request SHA, exact fsync-
+committed SWITCHED journal, verified healthy original blue container,
+previous/next exact OCI image and immutable container IDs, and a strictly
+unchanged two-rule inventory containing ONLY Canary3020 and green3141.
+The helper writes `rollback_pending` and fsyncs it BEFORE mutating any
+RootlessKit forwarding. It delegates to the existing checked recovery path
+to restore blue3141 while NEVER removing Canary, stopping another product
+or deleting database/volume writes.
+
+The existing recovery helper also now accepts `rollback_pending` with
+exact matching JTI/request/hash/source identities and the same UID991
+scope. Only in this phase may the local route inventory consist of
+**Canary3020 alone**, representing a crash just after deleting green3141
+but before the first blue3141 POST. This special case is forbidden for
+ordinary PREPARED/CANDIDATE_READY stages. The recovery rechecks the
+original healthy signed blue container/NetworkID, the exact Canary
+mapping and signed transaction, restores blue3141, verifies readyz and
+livez, and atomically fsyncs `restored`. Failures leave the durable
+rollback_pending HOLD for an explicit retry; they cannot falsely report
+success. A completed rollback does NOT by itself stop green or authorize
+a new release. The independent original SQLite JTI remains consumed
+across retries.
+
+Tests now exercise durable re-open across real Linux filesystem inode,
+foreign JTI/image/container rejection, unchanged Canary and no public
+ports, simulated process crashes before DELETE, after DELETE, and after
+blue POST, source/UID/scope denials, failed fsync before any route DELETE,
+and failed blue restore remaining HOLD. Fake local RootlessKit/Docker APIs
+prove control flow, not permission to operate the real host. This helper
+is NOT connected to the original installed 0.15.0 supervisor, and the
+protected positive schema3 executor still is not installed or enabled.
+
+**Next** integrate a separately approved signed/replay-bound UID991
+candidate-to-route coordinator which calls original start/green health,
+the existing journaled private 3142 stage and 3141 switch, then original
+SQLite `finish_execution`; on failure after committed switch call this
+new durable rollback BEFORE stopping exact candidate. Independent final
+M04 review and explicit owner release/deployment authorization remain
+mandatory.
