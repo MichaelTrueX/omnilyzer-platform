@@ -78,6 +78,60 @@ class InactiveReleaseTests(unittest.TestCase):
             current.symlink_to(reviewed, target_is_directory=True)
             self.assertEqual(subprocess.run(command, check=False).returncode, 0)
 
+    def test_symlink_retarget_after_guard_keeps_executable_paths_pinned(self):
+        """The service never executes a mutable current symlink after guard."""
+        unit = (SOURCE.parents[1] / "omnilyzer-identity.service").read_text(
+            encoding="utf-8")
+        reviewed_root = (
+            "/opt/omnilyzer/identity/releases/"
+            "304b5acdc642ec4b26e08867af467e63c1b04c5e"
+        )
+        lines = [
+            line.split("=", 1) for line in unit.splitlines()
+            if line.startswith(("WorkingDirectory=", "ExecStartPre=",
+                                "ExecStart="))
+        ]
+        self.assertEqual(len(lines), 3)
+        directives = dict(lines)
+        self.assertEqual(len(directives), 3)
+        self.assertEqual(
+            directives["WorkingDirectory"],
+            reviewed_root + "/services/identity")
+        self.assertEqual(
+            directives["ExecStartPre"].split(" ", 1)[0],
+            reviewed_root + "/.venv/bin/python")
+        self.assertEqual(
+            directives["ExecStart"].split(" ", 1)[0],
+            reviewed_root + "/.venv/bin/gunicorn")
+        self.assertTrue(
+            all("/current/" not in value for value in directives.values()))
+        # Reproduce reviewer-reported TOCTOU using only disposable paths.
+        with tempfile.TemporaryDirectory() as home:
+            base = Path(home)
+            reviewed = base / "reviewed"
+            obsolete = base / "obsolete"
+            current = base / "current"
+            for p in (reviewed, obsolete):
+                (p / "services/identity").mkdir(parents=True)
+                (p / ".venv/bin").mkdir(parents=True)
+                (p / ".venv/bin/python").write_text("test-only")
+                (p / ".venv/bin/gunicorn").write_text("test-only")
+            current.symlink_to(reviewed, target_is_directory=True)
+            predicate = ["/usr/bin/test", str(current), "-ef", str(reviewed)]
+            self.assertEqual(subprocess.run(predicate, check=False).returncode, 0)
+            # The selection is changed after the condition passes.
+            current.unlink()
+            current.symlink_to(obsolete, target_is_directory=True)
+            self.assertEqual(subprocess.run(predicate, check=False).returncode, 1)
+            for relative in ("services/identity", ".venv/bin/python",
+                             ".venv/bin/gunicorn"):
+                # Original service directives are rooted at reviewed_root.
+                # Simulated executions resolve to reviewed, not current.
+                self.assertEqual((reviewed / relative).resolve(),
+                                 (reviewed / relative).absolute())
+                self.assertNotEqual((reviewed / relative).resolve(),
+                                    (current / relative).resolve())
+
     def test_stage_path_uses_exact_sha_prefix(self):
         self.assertEqual(OP.stage_for("abcd1234" + "0" * 32).name,
                          "omnilyzer-identity-abcd123-source-stage-20261106")

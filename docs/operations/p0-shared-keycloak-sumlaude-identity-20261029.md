@@ -1,3 +1,11 @@
+<!--
+File: docs/operations/p0-shared-keycloak-sumlaude-identity-20261029.md
+Purpose: Shared Keycloak/Django BFF identity contract, recovery, and secure activation steps.
+Related: services/identity/omnilyzer-identity.service,
+         services/identity/tests/test_inactive_identity_release.py,
+         services/identity/ops/install_inactive_identity_release.py.
+-->
+
 # P0 shared platform identity BFF for Sumlaude (29 Oct 2026)
 
 **Source-only integration candidate. NOT merged, deployed, or authorized for learner access.**
@@ -396,9 +404,12 @@ were performed.**
    `/opt/omnilyzer/identity/releases/<approved-git-sha>/` and point
    `/opt/omnilyzer/identity/current` to that version only after the
    release identity/hash is verified. Install exact
-   `services/identity/requirements.txt` in
-   `/opt/omnilyzer/identity/current/.venv`, keeping the Venv and source
-   read-only to the dedicated nonroot `omnilyzer-identity` system account.
+   `services/identity/requirements.txt` in the exact approved immutable
+   `/opt/omnilyzer/identity/releases/304b5acdc642ec4b26e08867af467e63c1b04c5e/.venv`,
+   keeping the Venv and source read-only to the dedicated nonroot
+   `omnilyzer-identity` system account. The `current` symlink is
+   release-selection metadata, never the path that starts Django or Gunicorn.
+   Future reviewed BFF releases must update the unit to pin the new path.
 5. Create a root-owned private `/etc/omnilyzer/identity/` directory
    (0700) and root-owned `identity.env` file (0600) OUTSIDE Git.
    Set `DJANGO_SECRET_KEY`, `TOKEN_FERNET_KEY`,
@@ -437,6 +448,15 @@ were performed.**
    If it still selects the obsolete `d65d14b...`, startup is skipped
    even if the owner marker exists. Future approved BFF upgrades require
    one deliberate reviewed unit-pin update, not a permissive fallback.
+   The unit also pins `WorkingDirectory`, `ExecStartPre`, and `ExecStart`
+   to the exact approved immutable release, never the mutable `current`
+   symlink. A retarget between `ExecCondition` and actual process launch
+   therefore cannot select the older executable. A failed condition skips
+   the start; it does not necessarily mark the unit as failed.
+   Before deployment, inspect the installed and loaded unit's actual paths.
+   After a separately approved start, verify `systemctl is-active` and
+   inspect Gunicorn's actual process executable, command and working
+   directory against the approved release without exposing secrets.
    **Important actual-host gap:** the installed inactive production systemd
    unit predates this added source guard. This source-only PR does not
    update that installed unit. Before any approved real activation, an
