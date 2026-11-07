@@ -164,7 +164,13 @@ class SyntheticGreenRunner:
                     "",
                 )
             if "--all" in command and "-q" in command:
-                return CommandResult(0, CID if self.created else "", "")
+                # Simulate the service being replaced by an unrelated container
+                # using the same image digest after startup but before rollback.
+                selected = (
+                    "f" * 64 if self.failure == "replaced-same-image"
+                    else CID
+                )
+                return CommandResult(0, selected if self.created else "", "")
             if "-q" in command:
                 return CommandResult(0, CID if self.running else "", "")
             if "--status" in command:
@@ -357,6 +363,18 @@ class AnalyticsSuccessorCandidateStageTests(unittest.TestCase):
             self.operation.rollback_staged_successor(self.request, CID),
         )
         self.assertFalse(self.runner.running)
+
+    def test_rollback_rejects_replaced_same_image_container_without_stop(self):
+        """A new container ID is not the approved staged release identity."""
+        self.assertEqual(self.stage(), CID)
+        self.runner.failure = "replaced-same-image"
+        with self.assertRaises(AnalyticsFirstInstallError):
+            self.operation.rollback_staged_successor(self.request, CID)
+        self.assertTrue(self.runner.running)
+        self.assertFalse(any(
+            a and a[0] == "compose" and "stop" in a
+            for a in self.runner.calls
+        ))
 
     def test_untrusted_principal_or_v1_generation_denied_before_docker(self):
         """Incorrect UID/GID and absent root-approved V2 never start anything."""
