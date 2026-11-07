@@ -1591,3 +1591,30 @@ installed root-owned V1/V2 sources do **not** yet authorize the positive
 schema-3 receiver; it always rejects. The new FD alone is not deployment.
 No protected service change, owner authorization, new signed release or
 M04 integrated acceptance is claimed in this increment.
+
+### M05 next proof increment: independent UID991 three-token OIDC validation
+
+`deployment/analytics_executor.py::_verify_executor_successor_identity`
+now performs actual JWT **RS256/JWKS** verification of the forwarded, kernel-
+sealed **schema-2** successor bundle. It reuses the original
+`GitHubOIDCVerifier` and `GitHubRegistryCredentialVerifier`, checks all
+three distinct audience/issuer and same-run restrictions and requires exact
+actor, repository, workflow revision, GitHub run/attempt, JTI, issued-at and
+expiry values in the canonical schema-3 request. Wrong signer, wrong
+audience/workflow, mismatched request fields, expired credential, or original
+one-token schema-1 FD all fail closed. This isolated proof has no container,
+network registry, filesystem write, replay consume or success response.
+The original 0.15.0 module import remains compatible with its historical
+one-token FD: the schema-2 symbol is imported only when this future helper
+is explicitly invoked.
+
+**Important not-yet-wired trust boundary:** The helper intentionally requires
+`expected_workflow_sha` as a separate *independently reviewed* input. This
+must be obtained from a root-owned, V2-verified executor configuration,
+not copied from the incoming request or broker assertion. Until that input,
+the full independent Task013 Forgejo/Cosign/SBOM release review, durable
+replay, candidate start, and journaled 3142-to-3141 cutover have all been
+wired with negative real-host tests, the protected successor Unix receiver
+**must continue to deny**. Cryptographic proof of identity by itself never
+grants authorization to publish or deploy. Existing Canary, 0.15.0, rootless
+systemd and signed-release policy are unchanged.

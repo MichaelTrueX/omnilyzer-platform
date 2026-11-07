@@ -5,14 +5,16 @@ Purpose: Closed Analytics-only Task014 private executor boundary for the signed
          Zot FD, performs authenticated immutable-image preflight and full
          pull-time-budget check, then original durable replay begin/finish.
 Related: deployment/analytics_execution.py (exact reviewed request grammar),
-         deployment/private_registry_fd.py (original sealed Linux credential),
+         deployment/private_registry_fd.py (legacy and successor sealed JWTs),
+         deployment/oidc_verifier.py and registry_oidc_credentials.py,
          deployment/executor_server.py (SO_PEERCRED and SCM_RIGHTS handler),
          deployment/executor.py (original response and replay primitives),
          deployment/analytics_promotion_broker.py (caller, not a trust anchor),
          deployment/tests/test_analytics_executor.py.
 
 Sections: root-reviewed input capture, original FD+request execution, separate
-          first-successor read-only live OCI/manifest proof, original replay
+          first-successor read-only live OCI/manifest proof and independent
+         three-JWT successor identity verification, original replay
           transitions and protected product-only operation.
 
 NOT A DEPLOYMENT: This class is not installed in the Task014 application
@@ -108,6 +110,133 @@ def _verify_executor_owner_source(request: dict[str, object]) -> None:
     ):
         raise ValueError("owner-approved source does not match request")
     return None
+
+
+def _verify_executor_successor_identity(
+    canonical_request: bytes, credential_fd: int, *,
+    expected_workflow_sha: str, jwks_cache: object | None = None,
+    received_at: int | None = None,
+) -> None:
+    """Independently authenticate all three sealed JWTs at the UID991 boundary.
+
+    This standalone, read-only component is a necessary *preflight*, not a
+    release approval. The expected workflow SHA MUST eventually come from
+    the separately checked root-owned executor source/configuration, NEVER
+    the request, broker, network, or sealed FD. Until that integration exists
+    the schema-3 receiver retains its unconditional DENY behavior.
+
+    First verify the original deployment OIDC signature, authorization,
+    workflow SHA and time. Then verify both different registry-audience
+    signatures against the same approved run, and bind the signed identity
+    to the nine fields in the canonical successor request. No local state,
+    Docker, Zot/Forgejo I/O, replay or deployment is performed.
+    """
+    try:
+        from .identity import AuthorizedGitHubIdentity
+        from .oidc_verifier import GitHubOIDCVerifier
+        from .registry_oidc_credentials import (
+            GitHubRegistryCredentialVerifier, VerifiedRegistryCredentials,
+        )
+        # Local-only import protects the original frozen Analytics 0.15.0
+        # installation, which has the historical schema-1 FD module.
+        from .private_registry_fd import (
+            _successor_request_image, read_sealed_successor_review_credentials,
+        )
+        from .policy import canonical_bytes
+        import json
+
+        if (
+            type(credential_fd) is not int or credential_fd < 0
+            or type(canonical_request) is not bytes
+            or not 0 < len(canonical_request) <= 16 * 1024
+            or type(expected_workflow_sha) is not str
+            or received_at is not None and (
+                type(received_at) is not int or received_at < 0
+            )
+        ):
+            raise ValueError("unreviewed proof input")
+        workflow = validate_source_sha(expected_workflow_sha)
+        if workflow == "0" * 40:
+            raise ValueError("zero workflow authority")
+
+        def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            """Reject duplicate nested request fields before any signature."""
+            result: dict[str, object] = {}
+            for name, value in pairs:
+                if name in result:
+                    raise ValueError("duplicate signed-request field")
+                result[name] = value
+            return result
+
+        request = json.loads(
+            canonical_request.decode("ascii"), object_pairs_hook=unique,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError),
+        )
+        if (
+            type(request) is not dict
+            or canonical_bytes(request) != canonical_request
+            or request.get("schema_version") != 3
+            or type(request.get("schema_version")) is not int
+            or request.get("stage") != "dev"
+            or request.get("product_id") != "analytics"
+            or request.get("github_workflow_sha") != workflow
+        ):
+            raise ValueError("not an authorized successor request")
+        image = _successor_request_image(canonical_request)
+        now = int(time.time()) if received_at is None else received_at
+        sealed = read_sealed_successor_review_credentials(
+            credential_fd, canonical_request=canonical_request,
+            image=image, now=now,
+        )
+        # An omitted/untrusted JWKS source never becomes a fallback to
+        # broker-provided decoded claims: only the actual JWT verification.
+        deployment = GitHubOIDCVerifier(
+            expected_workflow_sha=workflow, jwks_cache=jwks_cache,
+        ).verify(sealed.github_oidc_token, received_at=now)
+        if type(deployment) is not AuthorizedGitHubIdentity:
+            raise ValueError("unverified deployment identity")
+        registry = GitHubRegistryCredentialVerifier(
+            expected_workflow_sha=workflow, jwks_cache=jwks_cache,
+        ).verify(
+            deployment, zot_token=sealed.zot.token,
+            forgejo_token=sealed.forgejo_token, received_at=now,
+        )
+        if type(registry) is not VerifiedRegistryCredentials:
+            raise ValueError("unverified registry identity")
+        zot = registry.zot_read_credential()
+        forgejo = registry.forgejo_read_credential()
+        # The registry verifier's OAuth/JWT policy is separate from the
+        # original one-use sealed FD request hash and exact immutable OCI.
+        if (
+            type(zot.expires_at) is not int
+            or zot.expires_at != sealed.zot.expires_at
+            or zot.expires_at - now < MIN_POST_PREFLIGHT_VALIDITY_SECONDS
+            or type(forgejo.expires_at) is not int
+            or forgejo.expires_at <= now
+            or (
+                request.get("requested_by_actor_id"),
+                request.get("github_repository_id"),
+                request.get("github_workflow_ref"),
+                request.get("github_workflow_sha"),
+                request.get("github_run_id"),
+                request.get("github_run_attempt"),
+                request.get("oidc_jti"),
+                request.get("oidc_issued_at"),
+                request.get("oidc_expires_at"),
+            ) != (
+                deployment.actor_id, deployment.repository_id,
+                deployment.workflow_ref, deployment.workflow_sha,
+                deployment.run_id, deployment.run_attempt, deployment.jti,
+                deployment.issued_at, deployment.expires_at,
+            )
+        ):
+            raise ValueError("signed identities do not match request")
+        return None
+    except _CONTROL:
+        raise
+    except Exception:
+        # Never log/return compact JWTs, expected SHA or decoded claims.
+        raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
 
 
 class AnalyticsPrivilegedExecutor:

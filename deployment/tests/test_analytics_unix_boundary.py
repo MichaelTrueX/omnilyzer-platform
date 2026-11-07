@@ -12,7 +12,8 @@ Related: deployment/analytics_unix_boundary.py,
 
 Sections: original callback fixtures, exact first-install receiver, adversarial
           private credential and request tests, real one-shot Unix socket flow,
-          cross-product and incorrect peer denial.
+          cross-product and incorrect peer denial; independent signed
+          three-audience successor JWT verification with no deployment.
 
 The synthetic operation and preflight are NOT a real Docker, PostgreSQL,
 rootless executor or signed registry verification. No installed process,
@@ -1345,6 +1346,175 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
         finally:
             left.close()
             right.close()
+
+
+# Section: independently signed deployment and distinct registry audiences
+# are now transported in the original FD. Verify the real cryptographic gates
+# without using a broker-created receipt or activating UID991/Docker services.
+class AnalyticsSuccessorIndependentJWTTests(unittest.TestCase):
+    """Real RSA/JWT and kernel FD acceptance at the *future* executor boundary."""
+
+    @staticmethod
+    def candidate():
+        """Return an exact synthetic schema-3 request with signed run identity."""
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+        return AnalyticsSuccessorRequestTests().candidate()[0]
+
+    @staticmethod
+    def proof(raw, *, deployment=None, zot=None, forgejo=None, expires=None):
+        """Seal raw cryptographic evidence, not an already accepted claim."""
+        import jwt
+        from deployment.private_registry_fd import (
+            create_sealed_successor_review_credentials,
+        )
+        from deployment.tests.test_broker_integration import (
+            KEY, ZOT_TOKEN, FORGEJO_TOKEN,
+        )
+        from deployment.tests.test_identity import valid_claims
+        from deployment.tests.test_oidc_verifier import private_pem
+        from deployment.private_registry_fd import _successor_request_image
+
+        token = jwt.encode(
+            valid_claims(), private_pem(KEY), algorithm="RS256",
+            headers={"kid": "key-1", "typ": "JWT"},
+        ) if deployment is None else deployment
+        return create_sealed_successor_review_credentials(
+            zot_token=ZOT_TOKEN if zot is None else zot,
+            forgejo_token=FORGEJO_TOKEN if forgejo is None else forgejo,
+            github_oidc_token=token, expires_at=NOW + 290 if expires is None else expires,
+            image=_successor_request_image(raw), canonical_request=raw, now=NOW,
+        )
+
+    def verify(self, raw, fd, *, workflow=None, at=NOW, cache=None):
+        """Use the existing independent verifier with a synthetic trusted key."""
+        from deployment.analytics_executor import _verify_executor_successor_identity
+        from deployment.tests.test_broker_integration import KEY
+        from deployment.tests.test_identity import WORKFLOW_SHA
+        from deployment.tests.test_registry_oidc_credentials import StaticCache
+        return _verify_executor_successor_identity(
+            raw, fd, expected_workflow_sha=(
+                WORKFLOW_SHA if workflow is None else workflow
+            ), received_at=at, jwks_cache=(
+                StaticCache(KEY.public_key()) if cache is None else cache
+            ),
+        )
+
+    def test_three_real_jwt_signatures_bound_to_exact_request_and_fd(self):
+        """Three verified audiences are necessary but not deployment consent."""
+        raw = canonical_bytes(self.candidate())
+        before = set(os.listdir("/proc/self/fd"))
+        fd = self.proof(raw)
+        try:
+            self.assertIsNone(self.verify(raw, fd))
+            self.assertIsNone(self.verify(raw, fd))
+            # Even three valid signed JWTs create no replay, Docker route,
+            # source signature or container operation from this helper.
+            with (
+                patch("deployment.analytics_executor._verify_executor_owner_source") as owner,
+                patch("deployment.analytics_active_state_review.inspect_analytics_active_state") as live,
+                patch("deployment.analytics_executor._ENTER_EXECUTION") as replay,
+            ):
+                self.assertIsNone(self.verify(raw, fd))
+            owner.assert_not_called()
+            live.assert_not_called()
+            replay.assert_not_called()
+        finally:
+            os.close(fd)
+        self.assertEqual(before, set(os.listdir("/proc/self/fd")))
+
+    def test_wrong_workflow_and_exact_request_identity_never_become_authority(self):
+        """Neither request-selected workflow nor altered actor/run/JTI works."""
+        raw = canonical_bytes(self.candidate())
+        fd = self.proof(raw)
+        try:
+            from deployment.tests.test_identity import WORKFLOW_SHA
+            with self.assertRaises(ExecutorUnavailableError):
+                self.verify(raw, fd, workflow="a" * 40)
+            with self.assertRaises(ExecutorUnavailableError):
+                self.verify(raw, fd, workflow="0" * 40)
+            with self.assertRaises(ExecutorUnavailableError):
+                self.verify(raw + b" ", fd)
+            for field, value in (
+                ("github_run_id", 99),
+                ("github_run_attempt", 2),
+                ("requested_by_actor_id", 1),
+                ("oidc_jti", "different-jti"),
+                ("oidc_issued_at", NOW - 90),
+                ("oidc_expires_at", NOW + 100),
+            ):
+                modified = canonical_bytes({**self.candidate(), field: value})
+                other = self.proof(modified)
+                try:
+                    with self.subTest(field=field), self.assertRaises(
+                        ExecutorUnavailableError
+                    ):
+                        self.verify(modified, other)
+                finally:
+                    os.close(other)
+        finally:
+            os.close(fd)
+
+    def test_wrong_signed_audiences_or_signer_or_expiration_fail_closed(self):
+        """A real signed wrong audience is not acceptable; nor forged JWT."""
+        import jwt
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from deployment.tests.test_broker_integration import KEY
+        from deployment.tests.test_identity import valid_claims
+        from deployment.tests.test_oidc_verifier import private_pem
+        from deployment.tests.test_broker_integration import (
+            ZOT_TOKEN, FORGEJO_TOKEN,
+        )
+        raw = canonical_bytes(self.candidate())
+        def signed(claims, *, key=KEY):
+            return jwt.encode(
+                claims, private_pem(key), algorithm="RS256",
+                headers={"kid": "key-1", "typ": "JWT"},
+            )
+        wrong = rsa.generate_private_key(
+            public_exponent=65537, key_size=2048,
+        )
+        cases = (
+            {"deployment": signed(valid_claims(), key=wrong)},
+            {"deployment": signed(valid_claims() | {"aud": "wrong"})},
+            {"zot": FORGEJO_TOKEN},
+            {"forgejo": ZOT_TOKEN},
+            {"forgejo": signed(valid_claims() | {
+                "aud": "u:3:d4f50b90-f001-4b9f-ad1e-487080ec44fb",
+                "run_id": "34150000001",
+            })},
+        )
+        for index, mutation in enumerate(cases):
+            with self.subTest(index=index):
+                fd = self.proof(raw, **mutation)
+                try:
+                    with self.assertRaises(ExecutorUnavailableError):
+                        self.verify(raw, fd)
+                finally:
+                    os.close(fd)
+        fd = self.proof(raw)
+        try:
+            with self.assertRaises(ExecutorUnavailableError):
+                self.verify(raw, fd, at=NOW + 301)
+        finally:
+            os.close(fd)
+
+    def test_original_schema_one_successor_readonly_probe_is_not_validated_jwt(self):
+        """Legacy one-Zot-only FD can never acquire three-signature status."""
+        from deployment.private_registry_fd import create_sealed_credential
+        from deployment.private_registry_fd import _successor_request_image
+        raw = canonical_bytes(self.candidate())
+        fd = create_sealed_credential(
+            TOKEN, expires_at=NOW + 270,
+            image=_successor_request_image(raw),
+            canonical_request=raw, now=NOW, product_id="analytics-successor",
+        )
+        try:
+            with self.assertRaises(ExecutorUnavailableError):
+                self.verify(raw, fd)
+        finally:
+            os.close(fd)
 
 
 if __name__ == "__main__":
