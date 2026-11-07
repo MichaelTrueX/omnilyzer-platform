@@ -22,6 +22,18 @@ Workspace/tenant-isolation, token/session, CSP/CORS, supply-chain, deployment,
 and validation requirements. Do not silently resolve conflicting requirements:
 preserve and report them unless precedence is explicit and unambiguous.
 
+## Owner-approved zero-paid-GitHub-Actions rule (7 November 2026)
+
+**Applies to every development, QA, security and release task in this product/repository.** Do not invoke, enable, add or depend on a GitHub Actions job, hosted-runner minute, artifact/cache storage overage, Marketplace action/service, CodeQL/advanced-security entitlement, or third-party CI feature that incurs charges to the owner's account. Before dispatching or making a workflow required, verify the actual repository billing/entitlement, remaining free allowance and whether the planned run is **zero additional cost**. Unknown billing or unavailable free quota means **HOLD**, not an assumed free run. Never buy credits, upgrade a plan, turn on pay-as-you-go billing, or authorize paid usage without the Product Owner's explicit separate cost approval.
+
+**Preferred implementation for a potentially billed workflow:** Move the equivalent tasks into version-controlled **first-party Python, shell, Node or other project scripts**, run reproducibly on already-authorized owned DEV/QA machines, an approved isolated self-hosted runner, or existing no-extra-cost infrastructure. Free open-source CLI tools may be invoked by these scripts when their license, source, pinned version and supply chain are acceptable; do **not** attempt to reinvent cryptography or vulnerability intelligence. GitHub can still store source, PRs, commit status and evidence, and genuinely free GitHub Actions may be used when zero incremental cost is verified. Never confuse moving execution off GitHub with bypassing a required independent check.
+
+**Preserve release/security gates:** Required tests, code/secret and dependency analysis, SBOM, provenance, signature verification, zero Critical/High vulnerability policy where mandated, identity/authorization checks, exact-source SHA binding, rollback, and independent approvals remain mandatory. Self-run evidence must show exact commit, tool/version, commands, result, artifacts and independent QA where required. If a required GitHub branch-protection check cannot run at zero cost, leave the relevant merge/release on **HOLD** until a reviewed equivalent check and authorized ruleset migration exist; do not forge a PASS, silently disable checks or use personal credentials as a workaround.
+
+**Safe self-hosting:** Never run untrusted PR scripts with production credentials, root privileges, registry publishing tokens, protected OIDC signers or access to live learner/customer data. Keep disposable isolated environments, least privilege, secret separation, concurrency/resource limits and repeatable cleanup. Use existing machines and services; a new paid runner, hosting contract or CI service requires prior owner approval.
+
+**Migration is separate from policy:** Existing workflows are **not** proven free or converted simply because this rule is merged. Owners must inventory current triggers/runners/paid features, then replace only billable execution in the existing delivery path; retain non-billable, independently accepted controls. No automatic dispatch or deployment is authorized by this documentation.
+
 ## Product scope and delivery priority
 
 Omnilyzer is an owner-confirmed, reusable technical foundation for
