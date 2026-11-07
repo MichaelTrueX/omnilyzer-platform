@@ -1267,3 +1267,30 @@ anti-replay, a qualified immutable candidate image pull, health checks and
 journaled blue/green cutover/rollback. The root-owned signer/approval sources
 must be provisioned only under separately authorized DEV policy. A normal
 successor release is not ready, and signed Analytics 0.15.0 remains active.
+
+## 2026-11-07: actual broker-to-UID991 kernel-boundary joint regression
+
+A new test within the **existing**
+`deployment/tests/test_analytics_unix_boundary.py` constructs a disposable
+real AF_UNIX listener, protected peer-checked Analytics transport, OpenSSH
+Ed25519 signed owner-source fixture and the unchanged broker, handler and
+privileged executor classes. The broker verifies its existing test OIDC and
+synthetic old/new registry release receipts, then re-verifies a genuine signed
+owner source, creates a short-lived sealed exact-digest Zot FD, transfers it
+through the real `SO_PEERCRED`/`SCM_RIGHTS` boundary, and invokes the UID991
+read-only active/candidate OCI and Zot manifest preflight. The receiver must
+ALWAYS reject promotion. The test checks that neither replay implementation
+begins, the credential FD is closed, old/new release review methods were
+invoked, and live OCI state is inspected both before and after manifest read.
+A second test mutates the real detached owner signature and verifies denial
+**before** sealing or transferring any credential. No live signer key, JWT,
+release or rootless Docker socket is used; the synthetic OIDC/release/OCI data
+is explicitly **not** cryptographic Task013 acceptance. The original 0.15.0
+live DEV service and HTTPS routing remain unaffected.
+
+This verifies the joined **negative/safety** journey, not the positive
+release acceptance. The existing first-successor handler still rejects even
+correctly signed and health-checked candidates. A real schema-3 deployment
+with independent UID991 Task013/Sigstore/Cosign evidence, persistent replay,
+image pull, health/route transaction, restart reconciliation and rollback
+remains HOLD until separately authorized and independently reviewed.

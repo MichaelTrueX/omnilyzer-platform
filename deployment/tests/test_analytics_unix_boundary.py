@@ -164,16 +164,17 @@ class SyntheticFirstInstall:
         return None
 
 
-def receiver(*, events=None, fail_preflight=False, fail_deploy=False):
+def receiver(*, events=None, fail_preflight=False, fail_deploy=False,
+             token=TOKEN):
     """Assemble actual original replay and product-specific executor callbacks."""
     history = [] if events is None else events
     replay = Replay(history)
     executor = AnalyticsPrivilegedExecutor(
         replay_guard=replay,
         private_registry_preflight=SyntheticPreflight(
-            history, error=fail_preflight,
+            history, error=fail_preflight, token=token,
         ),
-        operation=SyntheticFirstInstall(history, error=fail_deploy),
+        operation=SyntheticFirstInstall(history, error=fail_deploy, token=token),
         reviewed_installed_source=EXPECTED,
     )
     return executor, replay, history
@@ -791,6 +792,137 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
             )
         self.assertEqual(events, [])
         self.assertEqual(replay.begin_calls, [])
+
+    def test_broker_review_to_uid991_read_only_socket_denies_promotion(self):
+        """Join reviewed OIDC/source, real signed owner, kernel FD and UID991.
+
+        Registry release receipts and OCI observations are synthetic. This
+        proves rejection across one real local socket, never a live release.
+        """
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        from deployment.tests.test_analytics_promotion_broker import (
+            make_broker, evidence, AnalyticsFirstSuccessorBrokerReviewTests,
+        )
+        from deployment.broker import BrokerUnavailableError
+
+        request, context = AnalyticsSuccessorRequestTests().candidate()
+        payload = canonical_bytes(request)
+        observed = AnalyticsActiveState(
+            schema_version=1, active_slot="blue", active_digest=PINNED_DIGEST,
+            active_image=PINNED_IMAGE, active_container_id="a" * 64,
+            active_child_ip="172.20.0.3", active_network_id="f" * 64,
+            private_ingress_port=3141, candidate_slot="green",
+            candidate_port=3142, candidate_probe_present=True,
+            candidate_digest=request["manifest_digest"],
+            candidate_container_id="b" * 64,
+        )
+        executor, replay, events = receiver(
+            token=AnalyticsFirstSuccessorBrokerReviewTests.kwargs(payload)["zot_token"],
+        )
+        with tempfile.TemporaryDirectory(prefix="task14b-full-review-") as folder, (
+            signed_owner_fixture(context["selected"])
+        ) as (approval, signature, _signers):
+            location = str(Path(folder) / "executor.sock")
+            handler = AnalyticsUnixExecutorConnectionHandler(
+                executor=executor, expected_broker_uid=os.getuid(),
+                expected_broker_gid=os.getgid(), reviewed_installed_source=EXPECTED,
+                verified_successor_preflight_only=True,
+            )
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(location)
+            os.chmod(location, 0o660)
+            listener.listen(1)
+            listener.settimeout(4)
+            failures = []
+
+            def serve():
+                """Process one genuine kernel-framed request; reject promotion."""
+                try:
+                    connected, _ = listener.accept()
+                    handler.handle(connected)
+                except ExecutorConnectionUnavailableError:
+                    failures.append("denied")
+                except BaseException as err:
+                    failures.append(type(err).__name__)
+
+            worker = threading.Thread(target=serve, daemon=True)
+            worker.start()
+            try:
+                with (
+                    patch.object(analytics_boundary, "ANALYTICS_EXECUTOR_SOCKET_PATH", location),
+                    patch("deployment.analytics_executor.os.geteuid", return_value=991),
+                    patch("deployment.analytics_active_state_review.inspect_analytics_active_state",
+                          return_value=observed) as inspection,
+                    patch("deployment.analytics_registry_review_composition.acquire_and_review_analytics_release",
+                          return_value=evidence()) as old,
+                    patch("deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release",
+                          return_value=context["signed_release"]) as next_release,
+                    patch("deployment.analytics_promotion_broker.time.time", return_value=NOW),
+                ):
+                    transport = AnalyticsUnixExecutorTransport(
+                        expected_executor_uid=os.getuid(),
+                        expected_executor_gid=os.getgid(),
+                        expected_socket_group_gid=os.getgid(),
+                        reviewed_installed_source=EXPECTED,
+                    )
+                    broker, broker_replay, _ = make_broker(
+                        owner_files=(approval, signature), transport=transport,
+                    )
+                    before = set(os.listdir("/proc/self/fd"))
+                    with self.assertRaises(BrokerUnavailableError):
+                        broker.forward_verified_first_successor_probe_without_deployment(
+                            **AnalyticsFirstSuccessorBrokerReviewTests.kwargs(payload)
+                        )
+                    self.assertEqual(before, set(os.listdir("/proc/self/fd")))
+                    self.assertEqual(broker_replay.calls, [])
+                    old.assert_called_once()
+                    next_release.assert_called_once()
+                    self.assertEqual(inspection.call_count, 2)
+            finally:
+                worker.join(5)
+                listener.close()
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(failures, ["denied"])
+        self.assertEqual(events, ["successor_manifest_probe"])
+        self.assertEqual(replay.begin_calls, [])
+        self.assertEqual(replay.finish_calls, [])
+
+    def test_broker_invalid_detached_owner_signature_does_not_send_successor(self):
+        """Reject tampered real OpenSSH signature before any sealed-FD send.
+
+        Original OIDC and signed-review mocks are isolated test fixtures;
+        actual owner Ed25519 verification is NOT mocked on this path.
+        """
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        from deployment.tests.test_analytics_promotion_broker import (
+            make_broker, evidence, ReadOnlySuccessorProbeTransport,
+            AnalyticsFirstSuccessorBrokerReviewTests,
+        )
+        from deployment.broker import BrokerUnavailableError
+        request, context = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(request)
+        with signed_owner_fixture(context["selected"]) as (approval, signature, _):
+            signed = signature.read_bytes()
+            signature.write_bytes(signed[:-5] + b"AAAAA")
+            candidate = ReadOnlySuccessorProbeTransport()
+            broker, replay, _ = make_broker(
+                owner_files=(approval, signature), transport=candidate,
+            )
+            with (
+                patch("deployment.analytics_registry_review_composition.acquire_and_review_analytics_release",
+                      return_value=evidence()) as original,
+                patch("deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release") as successor,
+                patch("deployment.analytics_promotion_broker.create_sealed_credential") as seal,
+                self.assertRaises(BrokerUnavailableError),
+            ):
+                broker.forward_verified_first_successor_probe_without_deployment(
+                    **AnalyticsFirstSuccessorBrokerReviewTests.kwargs(raw)
+                )
+            original.assert_called_once()
+            successor.assert_not_called()
+            seal.assert_not_called()
+            self.assertEqual(candidate.checked, [])
+            self.assertEqual(replay.calls, [])
 
     def test_real_analytics_unix_socket_and_sealed_fd_roundtrip(self):
         """Reuse original metadata, peer, expiry, framing and response checks."""
