@@ -173,6 +173,38 @@ approval bureaucracy for ordinary product changes.
    Declare DONE only when the accepted user journey works on the intended
    live environment, not when CI or isolated tests alone are green.
 
+## Cross-boundary integration and stateful changes
+
+For changes spanning release/source admission, installed runtime, service,
+network, database, or traffic-switch boundaries:
+
+1. **Verify the complete executable chain.** Trace one reviewed exact source
+   and immutable artifact through actual installed source/configuration,
+   transitive imports, identity and credential handoffs, the live effect, and
+   recovery. Validate the closed file/import manifest for each installed
+   runtime generation before promotion. A passing isolated helper, synthetic
+   broker, source-only validator or deny-only receiver is not an integrated
+   release, even when its unit tests and CI pass.
+2. **Test every authorized transition state.** Define normal, candidate,
+   in-flight, committed, interrupted and recovery states before implementing
+   health probes, routes or process replacements. Ensure stage-specific
+   fail-closed checks agree with the intended action order; re-observe real
+   state immediately before privileged mutation. Test both switch directions,
+   restart and rollback without resetting customer writes. Never resolve a
+   transition mismatch by broadly allowing unknown containers, ports or
+   identities.
+3. **Prioritize the missing join over more independent adapters.** At the
+   earliest authorized isolated boundary, exercise one production-shaped
+   end-to-end path with its negative and interruption cases. If multiple
+   iterations add locally passing adapters but the user operation remains
+   disconnected, identify and close the owning handoff before expanding scope.
+   Label evidence precisely as synthetic, GitHub CI, real host or real user
+   acceptance, and keep unexecuted or permission-blocked checks UNKNOWN.
+
+Keep exact product ports, scripts, identities and per-release actions in their
+existing operational checklists rather than turning this section into a new
+release framework or additional approval process.
+
 ## Cross-chat continuity and source of truth
 
 ChatGPT conversation memory is useful context but is not a complete or reliable
