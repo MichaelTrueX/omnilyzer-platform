@@ -962,6 +962,10 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
                         broker.forward_verified_first_successor_probe_without_deployment(
                             **AnalyticsFirstSuccessorBrokerReviewTests.kwargs(payload)
                         )
+                    # A response can precede receiver socket close by one
+                    # scheduling quantum. Join before assessing actual FD leaks.
+                    worker.join(5)
+                    self.assertFalse(worker.is_alive())
                     self.assertEqual(before, set(os.listdir("/proc/self/fd")))
                     self.assertEqual(broker_replay.calls, [])
                     old.assert_called_once()
@@ -1056,6 +1060,11 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
                     reply = transport._send_analytics_private(
                         REQUEST, credential_fd=fd,
                     )
+                    # Wait for the receiver's finally/socket close. The
+                    # client receiving a reply does not imply the other
+                    # thread has already closed its accepted descriptor.
+                    server.join(5)
+                    self.assertFalse(server.is_alive())
                     after = set(os.listdir("/proc/self/fd"))
                     self.assertEqual(before, after)
                     self.assertEqual(
