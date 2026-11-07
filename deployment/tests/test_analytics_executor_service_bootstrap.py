@@ -104,6 +104,7 @@ class InstalledSourceConfigTests(unittest.TestCase):
         v1 = sample_config()
         v2 = {
             **v1, "schema_version": 2,
+            "expected_workflow_sha": "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
             "source_sha256": {
                 name: "b" * 64 for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
             },
@@ -114,6 +115,8 @@ class InstalledSourceConfigTests(unittest.TestCase):
         self.assertEqual(parsed["source_sha256"], tuple(
             (name, "b" * 64) for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
         ))
+        self.assertEqual(parsed["expected_workflow_sha"],
+                         "9d29fa1a4010e6e72676580c36a94c1e97e8794b")
         self.assertEqual(
             parse_analytics_executor_service_config(canonical_bytes(v1))[
                 "source_sha256"],
@@ -130,6 +133,11 @@ class InstalledSourceConfigTests(unittest.TestCase):
                                          "release/unapproved.py": "a" * 64}},
             {**v2, "source_sha256": {**v2["source_sha256"],
                                          extra: "0" * 63 + "X"}},
+            {**v2, "expected_workflow_sha": "0" * 40},
+            {**v2, "expected_workflow_sha": "a" * 39},
+            {k: v for k, v in v2.items() if k != "expected_workflow_sha"},
+            {**v1, "expected_workflow_sha":
+                "9d29fa1a4010e6e72676580c36a94c1e97e8794b"},
             {**v2, "schema_version": 3},
             {**v2, "schema_version": True},
         )
@@ -452,6 +460,7 @@ class InstalledSourceConfigTests(unittest.TestCase):
         value = sample_config()
         if successor:
             value["schema_version"] = 2
+            value["expected_workflow_sha"] = "9d29fa1a4010e6e72676580c36a94c1e97e8794b"
             value["source_sha256"] = {
                 name: "b" * 64 for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
             }

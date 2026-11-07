@@ -1500,6 +1500,91 @@ class AnalyticsSuccessorIndependentJWTTests(unittest.TestCase):
         finally:
             os.close(fd)
 
+    def test_root_pinned_v2_unix_receiver_checks_three_signatures_but_denies(self):
+        """V2 pin is consumed inside real deny-only handler before OCI check.
+
+        Synthetic RSA/JWKS is substituted ONLY for cryptographic test keys.
+        A real signed owner Ed25519 fixture and actual sealed memfd validate
+        the path without connecting Docker, Zot or a protected service.
+        """
+        import time
+        from deployment.tests.test_broker_integration import KEY
+        from deployment.tests.test_identity import WORKFLOW_SHA
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+        candidate, context = AnalyticsSuccessorRequestTests().candidate()
+        self.enterContext(signed_owner_fixture(context["selected"]))
+        raw = canonical_bytes(candidate)
+        fd = self.proof(raw)
+        from deployment.tests.test_broker_integration import ZOT_TOKEN
+        executor, replay, events = receiver(token=ZOT_TOKEN)
+        handler = AnalyticsUnixExecutorConnectionHandler(
+            executor=executor, expected_broker_uid=os.getuid(),
+            expected_broker_gid=os.getgid(),
+            reviewed_installed_source=EXPECTED,
+            verified_successor_preflight_only=True,
+            expected_workflow_sha=WORKFLOW_SHA,
+        )
+        verified = object.__getattribute__(handler, "_configuration")[0]
+        state = AnalyticsActiveState(
+            schema_version=1, active_slot="blue", active_digest=PINNED_DIGEST,
+            active_image=PINNED_IMAGE, active_container_id="a" * 64,
+            active_child_ip="172.20.0.3", active_network_id="f" * 64,
+            private_ingress_port=3141, candidate_slot="green",
+            candidate_port=3142, candidate_probe_present=True,
+            candidate_digest=candidate["manifest_digest"],
+            candidate_container_id="b" * 64,
+        )
+        try:
+            with (
+                patch("deployment.jwks.GitHubJWKSCache.get_key",
+                      return_value=KEY.public_key()) as trusted,
+                patch("deployment.private_registry_fd.time.time",
+                      return_value=NOW),
+                patch("deployment.analytics_executor.time.time",
+                      return_value=NOW),
+                patch("deployment.analytics_executor.os.geteuid",
+                      return_value=991),
+                patch("deployment.analytics_active_state_review.inspect_analytics_active_state",
+                      return_value=state) as live,
+                self.assertRaises(ExecutorRejectedError),
+            ):
+                verified(raw, credential_fd=fd)
+            self.assertEqual(trusted.call_count, 3)
+            self.assertEqual(live.call_count, 2)
+            self.assertEqual(events, ["successor_manifest_probe"])
+            self.assertEqual(replay.begin_calls, [])
+            self.assertEqual(replay.finish_calls, [])
+        finally:
+            os.close(fd)
+
+    def test_v2_unix_workflow_input_can_never_enable_original_v1_mode(self):
+        """An untrusted or empty workflow pin cannot activate a receiver."""
+        from deployment.tests.test_identity import WORKFLOW_SHA
+        executor, replay, events = receiver()
+        for wrong in ("0" * 40, "a" * 39, None, {}, True):
+            if wrong is None:
+                continue
+            with self.subTest(wrong=wrong), self.assertRaises(TypeError):
+                AnalyticsUnixExecutorConnectionHandler(
+                    executor=executor, expected_broker_uid=os.getuid(),
+                    expected_broker_gid=os.getgid(),
+                    reviewed_installed_source=EXPECTED,
+                    verified_successor_preflight_only=True,
+                    expected_workflow_sha=wrong,
+                )
+        with self.assertRaises(TypeError):
+            AnalyticsUnixExecutorConnectionHandler(
+                executor=executor, expected_broker_uid=os.getuid(),
+                expected_broker_gid=os.getgid(),
+                reviewed_installed_source=EXPECTED,
+                verified_successor_preflight_only=False,
+                expected_workflow_sha=WORKFLOW_SHA,
+            )
+        self.assertEqual(events, [])
+        self.assertEqual(replay.begin_calls, [])
+
     def test_original_schema_one_successor_readonly_probe_is_not_validated_jwt(self):
         """Legacy one-Zot-only FD can never acquire three-signature status."""
         from deployment.private_registry_fd import create_sealed_credential

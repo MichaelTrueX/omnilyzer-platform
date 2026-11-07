@@ -37,6 +37,7 @@ from .analytics_unix_boundary import (
 )
 from .docker_runtime import SubprocessCommandRunner
 from .replay_sqlite import PRODUCTION_REPLAY_DATABASE, SQLiteReplayGuard
+from .identity import validate_expected_workflow_sha
 
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 
@@ -54,6 +55,7 @@ class AnalyticsExecutorComposition:
         expected_broker_uid: int, expected_broker_gid: int,
         expected_executor_uid: int, expected_executor_gid: int,
         expected_socket_owner_uid: int, expected_socket_group_gid: int,
+        expected_workflow_sha: str | None = None,
     ) -> None:
         """Wire the original same replay DB and a strictly separate product.
 
@@ -63,6 +65,17 @@ class AnalyticsExecutorComposition:
         """
         try:
             source = _root_reviewed_source(reviewed_installed_source)
+            # The V1 source/config has no workflow pin and keeps the exact
+            # historical schema-2 first-install listener. A root-installed
+            # V2 source adds this separately attested Task014 workflow SHA,
+            # selecting strictly deny-only *authenticated* successor review.
+            workflow = None
+            if expected_workflow_sha is not None:
+                workflow = validate_expected_workflow_sha(
+                    expected_workflow_sha,
+                )
+                if workflow == "0" * 40:
+                    raise ValueError("no root-reviewed workflow")
             replay = SQLiteReplayGuard(
                 PRODUCTION_REPLAY_DATABASE,
                 expected_directory_uid=expected_replay_directory_uid,
@@ -88,6 +101,8 @@ class AnalyticsExecutorComposition:
                 executor=executor, expected_broker_uid=expected_broker_uid,
                 expected_broker_gid=expected_broker_gid,
                 reviewed_installed_source=dict(source),
+                verified_successor_preflight_only=(workflow is not None),
+                expected_workflow_sha=workflow,
             )
             secured = AnalyticsUnixExecutorListener(
                 listener=listener, handler=handler,

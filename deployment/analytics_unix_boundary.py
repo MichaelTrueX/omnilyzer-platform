@@ -187,6 +187,7 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
         timeout_ms: int = 3000,
         structural_successor_receive_only: bool = False,
         verified_successor_preflight_only: bool = False,
+        expected_workflow_sha: str | None = None,
     ) -> None:
         """Capture exact Analytics parser/FD at construction, never per-call.
 
@@ -203,6 +204,23 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
                 and verified_successor_preflight_only)
         ):
             raise TypeError("invalid successor receive boundary")
+        # Only a root-trusted V2 configuration may enable cryptographic
+        # successor preflight. Never accept a workflow revision from the
+        # broker/request/FD, and never attach this to original V1 mode.
+        reviewed_workflow = None
+        if expected_workflow_sha is not None:
+            if (
+                type(expected_workflow_sha) is not str
+                or not verified_successor_preflight_only
+                or structural_successor_receive_only
+            ):
+                raise TypeError("unreviewed successor workflow input")
+            try:
+                reviewed_workflow = validate_source_sha(expected_workflow_sha)
+            except _CONTROL:
+                raise
+            except Exception:
+                raise TypeError("invalid reviewed successor workflow") from None
         if type(executor) is not AnalyticsPrivilegedExecutor:
             raise TypeError("Analytics receiver must have exact executor type")
         source = _root_reviewed_source(reviewed_installed_source)
@@ -265,6 +283,17 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
             private manifest probe must NOT become a promotion success.
             Existing V1 execute_private/replay/deploy remain uncalled.
             """
+            if reviewed_workflow is not None:
+                # V2 must verify *all three real signed JWTs* independently
+                # before even reading the rootless state or Zot manifest.
+                # This is never a release approval or a success response.
+                from .analytics_executor import (
+                    _verify_executor_successor_identity,
+                )
+                _verify_executor_successor_identity(
+                    canonical_request, credential_fd,
+                    expected_workflow_sha=reviewed_workflow,
+                )
             executor.preflight_first_successor_without_deployment(
                 canonical_request, credential_fd=credential_fd,
             )

@@ -101,7 +101,15 @@ def run_analytics_executor_service_once() -> None:
             "expected_executor_uid", "expected_executor_gid",
             "expected_socket_owner_uid", "expected_socket_group_gid",
         }
-        if type(identities) is not dict or set(identities) != identity_keys:
+        # Original V1 has exactly the historical eight numeric identities.
+        # Root-selected V2 additionally binds the reviewed workflow SHA;
+        # it can never be supplied from the request or an environment value.
+        if (
+            type(identities) is not dict
+            or set(identities) not in (
+                identity_keys, identity_keys | {"expected_workflow_sha"},
+            )
+        ):
             raise TypeError
         phase = "systemd_socket"
         listener = _acquire_analytics_systemd_socket()

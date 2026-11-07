@@ -1608,6 +1608,30 @@ The original 0.15.0 module import remains compatible with its historical
 one-token FD: the schema-2 symbol is imported only when this future helper
 is explicitly invoked.
 
+The root-reviewed **schema-2 Analytics executor configuration** now
+contains one additional, exact `expected_workflow_sha` field. The signed
+historical Task014 DEV workflow revision is pinned once in the existing
+unsigned V2 source-input builder; it is never accepted from the promotion
+request, FD, HTTP header or broker assertion. Schema-1 keeps its original
+eight keys and byte contract and rejects this extra field. Schema-2 rejects
+missing/zero/invalid workflow SHA and uses the existing root-owned
+fd-relative source reader to bind it to all 24 immutable V2 sources.
+
+The original Analytics executor bootstrap accepts this pin only from its
+root-verified schema-2 configuration. The existing product-specific
+composition then selects the pre-existing **deny-only** UID991 schema-3
+handler; this handler now performs **actual three-JWT cryptographic
+verification before host OCI/manifest checks**, and it **still rejects
+every request** before replay, pull, service, traffic or DB mutation.
+Direct read-only probe test fixtures without the root V2 pin remain
+synthetic and may never stand in for runtime deployment evidence.
+
+This is a real protected source/interface change but **not** an
+installation or release. A one-time separately approved root V2 source
+upgrade is still required. The positive release-consumer verification,
+replay-admitted candidate start, journaled cutover and rollback are not
+implemented in the live schema-3 dispatcher and remain mandatory blockers.
+
 **Important not-yet-wired trust boundary:** The helper intentionally requires
 `expected_workflow_sha` as a separate *independently reviewed* input. This
 must be obtained from a root-owned, V2-verified executor configuration,

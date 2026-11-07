@@ -103,6 +103,14 @@ _ROOTLESS_BIND = (
     "BindReadOnlyPaths=/run/user/991/docker.sock:"
     "/run/omnilyzer/deployment/rootless-docker/docker.sock"
 )
+# Historical accepted DEV platform-promotion workflow commit. V2's fixed
+# root-owned candidate config pins this once; per-Analytics-version changes
+# NEVER select their own workflow identity. Changing the platform workflow
+# is a separate owner-reviewed platform source/config update, not a product
+# release parameter or mutable request field.
+_REVIEWED_TASK014_DEV_WORKFLOW_SHA = (
+    "9d29fa1a4010e6e72676580c36a94c1e97e8794b"
+)
 _ERROR = "Analytics Task014 source activation inputs are unavailable"
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 
@@ -177,6 +185,8 @@ def build_unsigned_analytics_activation_inputs(
         generation = 2 if successor_source else 1
         product_config = canonical_bytes({
             "schema_version": generation, "product_id": "analytics", "stage": "dev",
+            **({"expected_workflow_sha": _REVIEWED_TASK014_DEV_WORKFLOW_SHA}
+               if successor_source else {}),
             "reviewed_installed_commit": reviewed_commit,
             "reviewed_compose_sha256": baseline["reviewed_compose_sha256"],
             "reviewed_product_profile_sha256":
@@ -189,7 +199,9 @@ def build_unsigned_analytics_activation_inputs(
         })
         parsed = parse_analytics_executor_service_config(product_config)
         if (
-            parsed["reviewed_installed_commit"] != reviewed_commit
+            (successor_source and parsed.get("expected_workflow_sha")
+                != _REVIEWED_TASK014_DEV_WORKFLOW_SHA)
+            or parsed["reviewed_installed_commit"] != reviewed_commit
             or parsed["reviewed_compose_sha256"]
                 != baseline["reviewed_compose_sha256"]
             or parsed["reviewed_product_profile_sha256"]

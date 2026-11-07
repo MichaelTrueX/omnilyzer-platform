@@ -248,6 +248,7 @@ class OriginalRootOwnedOptInTests(unittest.TestCase):
         self.raw = canonical_bytes({
             "schema_version": 2, "product_id": "analytics", "stage": "dev",
             **EXPECTED,
+            "expected_workflow_sha": "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
             "source_sha256": {
                 name: "b" * 64 for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
             },
@@ -277,6 +278,7 @@ class OriginalRootOwnedOptInTests(unittest.TestCase):
         self.raw = canonical_bytes({
             "schema_version": 2, "product_id": "analytics", "stage": "dev",
             **EXPECTED,
+            "expected_workflow_sha": "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
             "source_sha256": {
                 name: "b" * 64 for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
             },

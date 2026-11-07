@@ -135,6 +135,16 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
             successor[activation.EXECUTOR_CONFIG],
         )
         self.assertEqual(
+            parsed["expected_workflow_sha"],
+            "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
+        )
+        self.assertNotIn(
+            "expected_workflow_sha",
+            parse_analytics_executor_service_config(
+                self.artifacts[activation.EXECUTOR_CONFIG],
+            ),
+        )
+        self.assertEqual(
             tuple(name for name, _ in parsed["source_sha256"]),
             ANALYTICS_SUCCESSOR_INSTALLED_FILES,
         )

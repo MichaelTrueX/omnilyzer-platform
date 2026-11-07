@@ -35,6 +35,7 @@ from .executor_service_config_loader import (
     _bounded_read, _revalidate_directories, _close_owned,
 )
 from .policy import canonical_bytes
+from .identity import validate_expected_workflow_sha
 from .rootless_docker_authority import RootlessDockerAuthority
 from .saas_product_contract import SaaSProductProfile
 from .saas_product_runtime import SaaSRuntimeProfile
@@ -116,6 +117,10 @@ _FIELDS = frozenset({
     "reviewed_compose_sha256", "reviewed_product_profile_sha256",
     "reviewed_runtime_profile_sha256", "source_sha256",
 })
+# Only a root-installed V2 source is allowed to carry the independent
+# workflow trust anchor used by UID991 for three-audience signature checking.
+# Historical V1 schema/bytes and source allowlist remain exactly unchanged.
+_SUCCESSOR_FIELDS = _FIELDS | frozenset({"expected_workflow_sha"})
 _MAX_BYTES = 4096
 _FILE_BOUND = 1024 * 1024
 _TOTAL_BOUND = 12 * 1024 * 1024
@@ -146,13 +151,16 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
             raw.decode("ascii"), object_pairs_hook=_exact_json,
             parse_constant=lambda _: (_ for _ in ()).throw(ValueError),
         )
-        if type(value) is not dict or set(value) != _FIELDS:
+        if type(value) is not dict:
             raise ValueError
-        # Section: two explicit, disjoint source generations. An installed
-        # schema-1 file MUST retain exactly its original 20 Python modules.
-        # Schema-2 source is a fixed 23-module plus one Compose-override V2 generation;
-        # selecting an arbitrary path or mixing source generations is denied.
-        generation = value["schema_version"]
+        # Section: disjoint exact V1/V2 schemas; a successor-only workflow
+        # SHA can never make historical schema-1 bytes newly acceptable.
+        generation = value.get("schema_version")
+        if (
+            type(generation) is not int or generation not in (1, 2)
+            or set(value) != (_FIELDS if generation == 1 else _SUCCESSOR_FIELDS)
+        ):
+            raise ValueError
         if (type(generation) is not int or generation not in (1, 2)
                 or value["product_id"] != "analytics"
                 or type(value["product_id"]) is not str
@@ -176,6 +184,13 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
                    for key, v in source.items())
         ):
             raise ValueError
+        workflow = None
+        if generation == 2:
+            workflow = validate_expected_workflow_sha(
+                value["expected_workflow_sha"],
+            )
+            if workflow == "0" * 40:
+                raise ValueError("missing reviewed workflow")
         reviewed = _root_reviewed_source({
             key: value[key] for key in (
                 "reviewed_installed_commit",
@@ -191,6 +206,8 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
         return {
             **dict(reviewed),
             "source_generation": generation,
+            **({"expected_workflow_sha": workflow}
+               if generation == 2 else {}),
             "source_sha256": tuple((p, source[p]) for p in paths),
         }
     except _CONTROL:
@@ -407,6 +424,8 @@ def load_analytics_executor_service_config(
                 )},
                 "expected_executor_uid": base.executor_uid,
                 "expected_executor_gid": base.executor_gid,
+                **({"expected_workflow_sha": product["expected_workflow_sha"]}
+                   if product["source_generation"] == 2 else {}),
             },
         )
     except _CONTROL:
