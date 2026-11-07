@@ -505,7 +505,14 @@ RestrictNamespaces=yes
         )
         # V2 now includes the SHA-pinned Compose !reset host-port overlay.
         # The original V1 70-file installed source remains unchanged.
-        self.assertEqual(len(verified_sources), 74)
+        # Schema-2 successor now attests the original immutable C32I
+        # Sigstore toolchain provenance in addition to the route overlay.
+        # This source-only native handoff must track its exact 75-file set.
+        self.assertEqual(len(verified_sources), 75)
+        self.assertIn(
+            'deployment/sigstore_authority_provenance.py',
+            dict(verified_sources),
+        )
         package = self.base / 'package'
         package.mkdir(mode=0o755)
         for path, source in verified_sources:
