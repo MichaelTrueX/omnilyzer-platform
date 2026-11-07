@@ -28,7 +28,9 @@ from deployment.analytics_private_registry import (
 )
 from deployment.analytics_signed_release_consumer import PINNED_IMAGE, PINNED_DIGEST
 from deployment.analytics_execution import AnalyticsExecutorRequest
-from deployment.private_registry_fd import create_sealed_credential
+from deployment.private_registry_fd import (
+    create_sealed_credential, create_sealed_successor_review_credentials,
+)
 from deployment.private_registry_pull import scoped_private_zot_request
 from deployment.tests.test_analytics_execution import EXPECTED, fixture
 from deployment.tests.test_identity import NOW
@@ -76,6 +78,19 @@ def make_fd(*, expires_at=NOW + 270, canonical_request=REQUEST):
     return create_sealed_credential(
         TOKEN, expires_at=expires_at, image=PINNED_IMAGE,
         canonical_request=canonical_request, now=NOW, product_id="analytics",
+    )
+
+
+def make_full_successor_fd(raw: bytes, image: str) -> int:
+    """Use the real sealed three-JWT schema; synthetic JWTs have no authority.
+
+    UID991 cryptographic validation is deliberately outside this low-level
+    rootless Docker adapter test, and must occur before any future deployment.
+    """
+    return create_sealed_successor_review_credentials(
+        TOKEN, forgejo_token="header.forgejo.signature",
+        github_oidc_token="header.deployment.signature",
+        expires_at=NOW + 270, image=image, canonical_request=raw, now=NOW,
     )
 
 
@@ -291,10 +306,7 @@ class RootlessAnalyticsZotTests(unittest.TestCase):
         request = parse_analytics_successor_request(raw, **context)
         image = request.exact_image_reference
         self.runner.expected_image = image
-        fd = create_sealed_credential(
-            TOKEN, expires_at=NOW + 270, image=image,
-            canonical_request=raw, now=NOW, product_id="analytics-successor",
-        )
+        fd = make_full_successor_fd(raw, image)
         try:
             with (
                 signed_owner_fixture(context["selected"]),
@@ -364,6 +376,11 @@ class RootlessAnalyticsZotTests(unittest.TestCase):
                     with scoped_private_zot_request(legacy_fd, raw):
                         with self.assertRaises(AnalyticsPrivateRegistryError):
                             self.adapter.pull_analytics_successor(request)
+                    # Even with UID991 and real owner Ed25519 approval,
+                    # a legacy one-token schema-1 FD cannot authorize pull.
+                    with scoped_private_zot_request(fd, raw):
+                        with self.assertRaises(AnalyticsPrivateRegistryError):
+                            self.adapter.pull_analytics_successor(request)
                     with scoped_private_zot_request(fd, raw):
                         with self.assertRaises(AnalyticsPrivateRegistryError):
                             self.adapter.pull_analytics_successor(
@@ -386,10 +403,7 @@ class RootlessAnalyticsZotTests(unittest.TestCase):
         image = data["exact_image_reference"]
         request = parse_analytics_successor_request(raw, **context)
         self.runner.expected_image = image
-        fd = create_sealed_credential(
-            TOKEN, expires_at=NOW + 270, image=image,
-            canonical_request=raw, now=NOW, product_id="analytics-successor",
-        )
+        fd = make_full_successor_fd(raw, image)
         before = first_successor_empty_active_state()
         after = replace(before, active_container_id="d" * 64)
         try:

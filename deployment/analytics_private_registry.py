@@ -43,6 +43,7 @@ from .docker_runtime import (
 )
 from .private_registry_fd import (
     _successor_request_image, read_sealed_credential,
+    read_sealed_successor_review_credentials,
 )
 from .private_registry_pull import (
     MIN_POST_PREFLIGHT_VALIDITY_SECONDS, MIN_VALIDITY_SECONDS,
@@ -144,10 +145,20 @@ class AnalyticsPrivateZotPullAdapter:
                 image = PINNED_IMAGE
                 product_scope = "analytics"
             now = int(time.time())
-            credential = read_sealed_credential(
-                credential_fd, canonical_request=raw, image=image,
-                product_id=product_scope, now=now,
-            )
+            # Section: a mutating successor pull must carry ALL three original
+            # JWTs in a kernel-sealed schema-2 FD. The original single-token
+            # schema-1 successor envelope remains a read-only probe input;
+            # silently accepting its compatibility fallback here would erase
+            # the future UID991 independent-verification requirement.
+            if successor_pull:
+                credential = read_sealed_successor_review_credentials(
+                    credential_fd, canonical_request=raw, image=image, now=now,
+                ).zot
+            else:
+                credential = read_sealed_credential(
+                    credential_fd, canonical_request=raw, image=image,
+                    product_id=product_scope, now=now,
+                )
             threshold = (
                 MIN_POST_PREFLIGHT_VALIDITY_SECONDS
                 if operation == PROBE else MIN_VALIDITY_SECONDS
