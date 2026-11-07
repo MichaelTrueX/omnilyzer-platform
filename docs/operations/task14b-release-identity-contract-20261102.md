@@ -1233,3 +1233,37 @@ remains read-only and the Unix handler still hard-rejects promotion after
 preflight. Actual persistent replay, immutable OCI pull, rootless 3141
 cutover and journaled rollback are not implemented here. Signed Analytics
 0.15.0 continues unchanged.
+
+## 2026-11-07: closed broker successor-to-UID991 read-only transport composition
+
+The existing `AnalyticsPrivatePromotionBroker` now has a separate internal
+`forward_verified_first_successor_probe_without_deployment` method. It first
+runs the already implemented, real triple JWT/OIDC + independently rooted
+owner approval + original 0.15.0 signed evidence + successor verified
+Sigstore/Cosign source/OCI review and exact schema-3 parser. It re-verifies
+all nine GitHub OIDC identity fields against the reviewed schema-3 request
+without loosening the original schema-2 identity binder; it independently
+rechecks the actual Zot/Forgejo JWT audiences, credential validity and
+remaining TTL, then creates a Linux sealed `analytics-successor` Zot FD bound
+to the exact reviewed canonical request and future immutable image digest.
+The FD is closed on all branches. The original schema-2 sender, registry
+scopes, bearer transport, durable replay, source pin and service composition
+are preserved byte-for-byte. No new transport or release framework exists.
+
+The method is NOT registered in the active HTTPS router or installed broker
+service, and deliberately does **not** consume broker replay. The separate
+UID991 read-only successor receiver also rejects after verified preflight.
+A failed socket or even a counterfeit `accepted` reply is always an
+unavailable error; there is no product deployment success status and no
+privileged image pull, traffic switch or database modification. Synthetic
+signed/registry test fixtures verify concrete kernel-sealed image/FD scope,
+source identity checks, no replay, FD cleanup and no fallback to legacy 0.15.0
+or Canary. These synthetic fixtures are not real release proof or permission.
+
+**Remaining HOLD:** A real receiver must still independently authenticate
+full GitHub/OIDC, Sigstore/Cosign, original Task013 SBOM and signed provenance
+through a verifiable cross-privilege evidence mechanism, then use persistent
+anti-replay, a qualified immutable candidate image pull, health checks and
+journaled blue/green cutover/rollback. The root-owned signer/approval sources
+must be provisioned only under separately authorized DEV policy. A normal
+successor release is not ready, and signed Analytics 0.15.0 remains active.

@@ -376,6 +376,34 @@ class AnalyticsSignedBrokerTests(unittest.TestCase):
         self.assertEqual(transport.requests, [])
 
 
+# Section: a full original OIDC/owner/signed-release-reviewed successor can
+# reach only the already hard-rejecting UID991 manifest/OCI test probe.
+class ReadOnlySuccessorProbeTransport(PrivateAnalyticsTransport):
+    """Inspect the real Linux sealed successor FD; never claim promotion."""
+
+    def __init__(self, *, positive_response: bool = False):
+        super().__init__()
+        self.checked: list[tuple[bytes, str]] = []
+        self.positive_response = positive_response
+
+    def _send_analytics_successor_private(
+        self, request: bytes, *, credential_fd: int,
+    ) -> bytes:
+        """Read scoped memfd, simulate hard executor rejection afterward."""
+        from deployment.private_registry_fd import _successor_request_image
+        image = _successor_request_image(request)
+        scoped = read_sealed_credential(
+            credential_fd, canonical_request=request,
+            image=image, product_id="analytics-successor", now=NOW,
+        )
+        assert scoped.token == ZOT_TOKEN
+        assert image != PINNED_IMAGE
+        self.checked.append((request, image))
+        if self.positive_response:
+            return b'{"accepted":true}\n'
+        raise OSError("test-only UID991 read-only receiver denied")
+
+
 # Section: first successor is a read-only ROOT broker review, not dispatch.
 class AnalyticsFirstSuccessorBrokerReviewTests(unittest.TestCase):
     """Prove actual original OIDC+two signed reviews+live image integration."""
@@ -520,6 +548,87 @@ class AnalyticsFirstSuccessorBrokerReviewTests(unittest.TestCase):
         inspector.assert_not_called()
         self.assertEqual(replay.calls, [])
         self.assertEqual(transport.requests, [])
+
+    def test_verified_owner_oidc_and_signed_successor_fd_probes_but_never_go(self):
+        """Broker securely seals exact next image; UID991 denial cannot GO."""
+        raw, context, _live = self.candidate()
+        paths = (Path("/root/owner.json"), Path("/root/owner.json.sig"))
+        transport = ReadOnlySuccessorProbeTransport()
+        broker, replay, _ = make_broker(owner_files=paths, transport=transport)
+        before = set(os.listdir("/proc/self/fd"))
+        with (
+            patch("deployment.analytics_promotion_broker.time.time", return_value=NOW),
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_analytics_release",
+                  return_value=evidence()) as original,
+            patch("deployment.analytics_registry_review_composition.load_and_verify_owner_signed_source",
+                  return_value=(context["selected"], context["owner_approval"])) as owner,
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release",
+                  return_value=context["signed_release"]) as signed,
+            self.assertRaises(BrokerUnavailableError),
+        ):
+            broker.forward_verified_first_successor_probe_without_deployment(
+                **self.kwargs(raw),
+            )
+        self.assertEqual(len(transport.checked), 1)
+        self.assertEqual(transport.checked[0], (
+            raw, context["signed_release"].image,
+        ))
+        self.assertNotIn(ZOT_TOKEN.encode(), raw)
+        self.assertEqual(len(owner.call_args_list), 1)
+        original.assert_called_once()
+        signed.assert_called_once()
+        self.assertEqual(replay.calls, [])
+        self.assertEqual(before, set(os.listdir("/proc/self/fd")))
+
+        # Even a forged 'accepted' reply is not returned as promotion GO.
+        positive = ReadOnlySuccessorProbeTransport(positive_response=True)
+        positive_broker, replay2, _ = make_broker(owner_files=paths, transport=positive)
+        with (
+            patch("deployment.analytics_promotion_broker.time.time", return_value=NOW),
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_analytics_release",
+                  return_value=evidence()),
+            patch("deployment.analytics_registry_review_composition.load_and_verify_owner_signed_source",
+                  return_value=(context["selected"], context["owner_approval"])),
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release",
+                  return_value=context["signed_release"]),
+            self.assertRaises(BrokerUnavailableError),
+        ):
+            positive_broker.forward_verified_first_successor_probe_without_deployment(
+                **self.kwargs(raw),
+            )
+        self.assertEqual(len(positive.checked), 1)
+        self.assertEqual(replay2.calls, [])
+        self.assertEqual(before, set(os.listdir("/proc/self/fd")))
+
+    def test_successor_probe_missing_sender_or_owner_never_opens_fd(self):
+        """Neither a missing trusted owner nor missing exact sender falls back."""
+        raw, context, _ = self.candidate()
+        broker, replay, legacy = make_broker()
+        with patch(
+            "deployment.analytics_promotion_broker.create_sealed_credential"
+        ) as sealed, self.assertRaises(BrokerUnavailableError):
+            broker.forward_verified_first_successor_probe_without_deployment(
+                **self.kwargs(raw),
+            )
+        sealed.assert_not_called()
+        self.assertEqual(replay.calls, [])
+        self.assertEqual(legacy.requests, [])
+        transport = ReadOnlySuccessorProbeTransport()
+        denied, replay2, _ = make_broker(transport=transport)
+        with (
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_analytics_release",
+                  return_value=evidence()),
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release") as signed,
+            patch("deployment.analytics_promotion_broker.create_sealed_credential") as sealed,
+            self.assertRaises(BrokerUnavailableError),
+        ):
+            denied.forward_verified_first_successor_probe_without_deployment(
+                **self.kwargs(raw),
+            )
+        signed.assert_not_called()
+        sealed.assert_not_called()
+        self.assertEqual(transport.checked, [])
+        self.assertEqual(replay2.calls, [])
 
     def test_missing_root_owner_key_has_no_registry_or_executor_side_effect(self):
         raw, _context, _live = self.candidate()

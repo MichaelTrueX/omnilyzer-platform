@@ -73,7 +73,7 @@ class AnalyticsPrivatePromotionBroker:
 
     __slots__ = (
         "_verify", "_review", "_review_successor",
-        "_registry", "_replay", "_transport",
+        "_registry", "_replay", "_transport", "_successor_transport",
         "_expected_workflow_sha", "_reviewed_source",
     )
 
@@ -119,6 +119,16 @@ class AnalyticsPrivatePromotionBroker:
                 self, "_transport",
                 _bound_operation(analytics_transport, "_send_analytics_private"),
             )
+            # Original signed 0.15.0 tests may use a transport that has no
+            # successor method. That original production contract stays valid;
+            # successor is *not* registered if no exact kernel sender exists.
+            try:
+                successor_sender = _bound_operation(
+                    analytics_transport, "_send_analytics_successor_private",
+                )
+            except TypeError:
+                successor_sender = None
+            object.__setattr__(self, "_successor_transport", successor_sender)
             object.__setattr__(self, "_expected_workflow_sha", workflow)
             object.__setattr__(self, "_reviewed_source", tuple(sorted(source.items())))
         except _CONTROL:
@@ -279,6 +289,116 @@ class AnalyticsPrivatePromotionBroker:
         except Exception:
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
+
+    def forward_verified_first_successor_probe_without_deployment(
+        self, *, compact_token: str, zot_token: str, forgejo_token: str,
+        canonical_request: bytes, received_at: int,
+    ) -> None:
+        """Prove broker OIDC+owner+signed OCI admission over real sealed FD.
+
+        NOT registered in the installed HTTPS promotion router. Even a fully
+        verified request is sent only to the read-only UID991 probe, which
+        always rejects. No broker replay consume, no executor replay begin,
+        no OCI pull, no Docker/route mutation, and no success response is
+        permitted. An absent successor sender fails BEFORE any network read.
+        """
+        sender = object.__getattribute__(self, "_successor_transport")
+        if sender is None:
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        # This existing review runs real GitHub OIDC, original signed 0.15.0,
+        # owner-held detached Ed25519 source, successor Sigstore/Cosign,
+        # independent Zot/Forgejo registry audiences and exact request binding.
+        selected = self.review_first_successor_without_forwarding(
+            compact_token=compact_token, zot_token=zot_token,
+            forgejo_token=forgejo_token, canonical_request=canonical_request,
+            received_at=received_at,
+        )
+        if (type(selected) is not AnalyticsSuccessorRequest
+                or selected.canonical_bytes() != canonical_request):
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        # Recheck the same independently authorized OIDC identity before
+        # binding a *new* short-lived manifest-only Zot credential to the
+        # exact signed successor image (not legacy PINNED_IMAGE).
+        try:
+            identity = _normalize_identity(
+                object.__getattribute__(self, "_verify")(
+                    compact_token, received_at=received_at,
+                ),
+                received_at=received_at,
+                expected_workflow_sha=object.__getattribute__(
+                    self, "_expected_workflow_sha"
+                ),
+                authorization=authorize_verified_github_oidc,
+                expected_fields=IDENTITY_FIELDS,
+            )
+            # Original bind_analytics_request_to_identity intentionally
+            # accepts EXACT schema-2 class only. Preserve that restriction:
+            # independently compare all nine GitHub OIDC identity fields
+            # for exact schema-3 instead of broadening the legacy binder.
+            if (
+                type(selected) is not AnalyticsSuccessorRequest
+                or (
+                    selected.requested_by_actor_id,
+                    selected.github_repository_id,
+                    selected.github_workflow_ref,
+                    selected.github_workflow_sha,
+                    selected.github_run_id,
+                    selected.github_run_attempt,
+                    selected.oidc_jti,
+                    selected.oidc_issued_at,
+                    selected.oidc_expires_at,
+                ) != (
+                    identity.actor_id, identity.repository_id,
+                    identity.workflow_ref, identity.workflow_sha,
+                    identity.run_id, identity.run_attempt, identity.jti,
+                    identity.issued_at, identity.expires_at,
+                )
+            ):
+                raise AnalyticsRequestError("successor OIDC identity changed")
+        except OIDCVerificationUnavailable:
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        except (OIDCVerificationError, OIDCAuthorizationError, AnalyticsRequestError):
+            raise BrokerRejectedError(REJECTED_MESSAGE) from None
+        except _CONTROL:
+            raise
+        except Exception:
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        try:
+            registry = object.__getattribute__(self, "_registry")(
+                identity, zot_token=zot_token, forgejo_token=forgejo_token,
+                received_at=received_at,
+            )
+            if type(registry) is not VerifiedRegistryCredentials:
+                raise ValueError("unverified registry audience")
+            scoped = registry.zot_read_credential()
+            now = int(time.time())
+            if (type(scoped.expires_at) is not int
+                    or scoped.expires_at - now < MIN_POST_PREFLIGHT_VALIDITY_SECONDS):
+                raise ValueError("insufficient credential lifetime")
+            descriptor = create_sealed_credential(
+                scoped.token, expires_at=scoped.expires_at,
+                image=selected.exact_image_reference,
+                canonical_request=canonical_request,
+                product_id="analytics-successor", now=now,
+            )
+        except RegistryCredentialRejectedError:
+            raise BrokerRejectedError(REJECTED_MESSAGE) from None
+        except _CONTROL:
+            raise
+        except Exception:
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        try:
+            try:
+                # UID991 can never report a deployment success from this
+                # probe; a forged positive response is treated as UNAVAILABLE.
+                sender(canonical_request, credential_fd=descriptor)
+            except _CONTROL:
+                raise
+            except Exception:
+                raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        finally:
+            os.close(descriptor)
 
     def authorize_and_forward(
         self, *, compact_token: str, zot_token: str, forgejo_token: str,
