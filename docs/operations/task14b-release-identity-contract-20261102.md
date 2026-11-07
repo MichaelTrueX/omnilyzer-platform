@@ -1813,3 +1813,28 @@ SQLite `finish_execution`; on failure after committed switch call this
 new durable rollback BEFORE stopping exact candidate. Independent final
 M04 review and explicit owner release/deployment authorization remain
 mandatory.
+
+
+## Task013 Canary Critical zlib regression, 7 November 2026 (M05)
+
+On exact successor source SHA `b0f6b5a65cd7f9da7c8b38772ba8aa29d5b5507d`,
+the otherwise successful Task013 unpublished build+SBOM+Grype gate
+[GitHub run 42351612800](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/42351612800)
+correctly blocked **Critical CVE-2026-4738** in Alpine package
+`zlib 1.3.2-r1`, target `oci`. The original fixed policy required
+zero Critical/High; the scanner's reported patched `zlib 1.4-r0` package
+was NOT in the pinned, separately GitHub-attested Astral image. No policy
+exception, SBOM deletion, severity downgrade or signature bypass is allowed.
+
+The Canary does not import/use zlib or SQLite. In the original digest-pinned,
+network-disabled `release/fixtures/task013-canary/oci/Dockerfile`, M05
+extends the existing actual `apk del --no-network` cleanup to remove zlib
+together with unused SQLite and its Python optional dynamic module, and
+independently checks both APK absence and Python zlib module absence before
+removing the shell and apk executable. The retained genuine APK database
+must still show every remaining OS package to Syft and Grype. The original
+base image digest, upstream GitHub attestation, nonroot UID10001, exact
+Python entrypoint, source SHA, C34D and all original Task013/014 checks stay
+the same. Source-level tests are necessary but NOT sufficient: only the
+exact new GitHub CI build and unchanged Critical/High Grype policy can
+confirm this removal is viable and the successor remains releasable.

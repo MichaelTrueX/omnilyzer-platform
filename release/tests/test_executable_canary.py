@@ -307,9 +307,21 @@ class ImageAndPipelineTests(unittest.TestCase):
         self.assertEqual(BASE_IMAGE_DIGEST, "sha256:df6ea28f3caf5eb77ebae34d38e9b177b41a4e58ee963b1cbc5c8c1c92710238")
         self.assertEqual(dockerfile.splitlines()[0], f"FROM ghcr.io/astral-sh/uv@{BASE_IMAGE_DIGEST}")
         self.assertNotIn("FROM scratch", dockerfile)
-        self.assertIn("apk del --no-network .python-rundeps sqlite-libs", dockerfile)
-        self.assertIn("find /usr/local/lib /usr/lib -iname '*sqlite*'", dockerfile)
-        self.assertIn("find /usr/local/lib/python3.14 -iname '*sqlite*' -exec rm -rf {} +", dockerfile)
+        self.assertIn("apk del --no-network .python-rundeps sqlite-libs zlib", dockerfile)
+        self.assertIn("apk info -e zlib", dockerfile)
+        self.assertIn("! apk info -e zlib", dockerfile)
+        self.assertIn("importlib.util.find_spec(\"zlib\") is None", dockerfile)
+        self.assertIn(
+            "find /usr/local/lib /usr/lib \\( -iname '*sqlite*' -o -iname '*zlib*' \\)",
+            dockerfile,
+        )
+        self.assertNotIn("apk add", dockerfile)
+        self.assertNotIn("pip install", dockerfile)
+        self.assertNotIn("sed -i /lib/apk/db/installed", dockerfile)
+        self.assertIn(
+            r"find /usr/local/lib/python3.14 \( -iname '*sqlite*' -o -iname '*zlib*' \) -exec rm -rf {} +",
+            dockerfile,
+        )
         self.assertNotIn("FROM cgr.dev/chainguard/python", dockerfile)
         self.assertIn("COPY --chown=10001:10001", dockerfile)
         self.assertIn("USER 10001:10001", dockerfile)
