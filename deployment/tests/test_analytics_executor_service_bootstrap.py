@@ -1,7 +1,8 @@
 """File: deployment/tests/test_analytics_executor_service_bootstrap.py
 
-Purpose: Test the exact Task014 Analytics root-owned service-admission schema,
-         inherited named-FD checks and one-shot service lifecycle.
+Purpose: Test original Analytics Task014 exact root-owned schema-1 service
+         admission and separate V2 static AST/source closure before release,
+         inherited socket FD checks and unchanged one-shot service lifecycle.
 Related: deployment/analytics_executor_service_config.py,
          deployment/analytics_executor_service_bootstrap.py,
          deployment/analytics_executor_service_entrypoint.py,
@@ -35,7 +36,9 @@ from deployment.analytics_executor_service_bootstrap import (
     run_analytics_executor_service_once,
 )
 from deployment.analytics_executor_service_config import (
-    ANALYTICS_INSTALLED_FILES, AnalyticsInstalledAuthorityError,
+    ANALYTICS_INSTALLED_FILES, ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+    ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES,
+    ANALYTICS_SUCCESSOR_RELEASE_FILES, AnalyticsInstalledAuthorityError,
     load_analytics_executor_service_config,
     parse_analytics_executor_service_config,
 )
@@ -96,6 +99,109 @@ class InstalledSourceConfigTests(unittest.TestCase):
             self.assertEqual(parsed[name], EXPECTED[name])
         self.assertLessEqual(len(encoded), 4096)
 
+    def test_v2_canonical_config_is_exactly_23_sources_and_v1_never_widens(self):
+        """A root-selected V2 grammar cannot contaminate installed schema V1."""
+        v1 = sample_config()
+        v2 = {
+            **v1, "schema_version": 2,
+            "expected_workflow_sha": "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
+            "source_sha256": {
+                name: "b" * 64 for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+            },
+        }
+        encoded = canonical_bytes(v2)
+        self.assertLessEqual(len(encoded), config._MAX_BYTES)
+        parsed = parse_analytics_executor_service_config(encoded)
+        self.assertEqual(parsed["source_sha256"], tuple(
+            (name, "b" * 64) for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+        ))
+        self.assertEqual(parsed["expected_workflow_sha"],
+                         "9d29fa1a4010e6e72676580c36a94c1e97e8794b")
+        self.assertEqual(
+            parse_analytics_executor_service_config(canonical_bytes(v1))[
+                "source_sha256"],
+            tuple((name, "a" * 64) for name in ANALYTICS_INSTALLED_FILES),
+        )
+        extra = ANALYTICS_SUCCESSOR_RELEASE_FILES[0]
+        missing = ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES[0]
+        cases = (
+            {**v1, "source_sha256": v2["source_sha256"]},
+            {**v2, "source_sha256": v1["source_sha256"]},
+            {**v2, "source_sha256": {key: value for key, value in
+                                        v2["source_sha256"].items() if key != missing}},
+            {**v2, "source_sha256": {**v2["source_sha256"],
+                                         "release/unapproved.py": "a" * 64}},
+            {**v2, "source_sha256": {**v2["source_sha256"],
+                                         extra: "0" * 63 + "X"}},
+            {**v2, "expected_workflow_sha": "0" * 40},
+            {**v2, "expected_workflow_sha": "a" * 39},
+            {k: v for k, v in v2.items() if k != "expected_workflow_sha"},
+            {**v1, "expected_workflow_sha":
+                "9d29fa1a4010e6e72676580c36a94c1e97e8794b"},
+            {**v2, "schema_version": 3},
+            {**v2, "schema_version": True},
+        )
+        for candidate in cases:
+            with self.subTest(schema=candidate["schema_version"],
+                              count=len(candidate["source_sha256"])), self.assertRaises(
+                AnalyticsInstalledAuthorityError
+            ):
+                parse_analytics_executor_service_config(canonical_bytes(candidate))
+
+    def test_root_owned_generation_three_requires_exact_explicit_positive_selection(self):
+        """Signed V2 review can never become release permission by omission.
+
+        The separately root-installed schema3 configuration uses the same
+        exact V2 closed Git source graph, but uniquely requires literal true
+        owner approval. V1 and ordinary generation2 remain DENY-only.
+        """
+        original = sample_config()
+        candidate = {
+            **original, "schema_version": 2,
+            "expected_workflow_sha":
+                "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
+            "source_sha256": {
+                path: "b" * 64 for path in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+            },
+        }
+        approved = {
+            **candidate, "schema_version": 3,
+            "owner_authorized_first_successor": True,
+        }
+        parsed = parse_analytics_executor_service_config(
+            canonical_bytes(approved)
+        )
+        self.assertEqual(parsed["source_generation"], 3)
+        self.assertIs(parsed["owner_authorized_first_successor"], True)
+        self.assertEqual(parsed["source_sha256"], tuple(
+            (path, "b" * 64) for path in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+        ))
+        self.assertEqual(
+            parse_analytics_executor_service_config(
+                canonical_bytes(candidate),
+            )["source_generation"], 2,
+        )
+        for wrong in (
+            {**approved, "owner_authorized_first_successor": False},
+            {**approved, "owner_authorized_first_successor": 1},
+            {**approved, "owner_authorized_first_successor": "true"},
+            {key: value for key, value in approved.items()
+             if key != "owner_authorized_first_successor"},
+            {**candidate, "owner_authorized_first_successor": True},
+            {**original, "owner_authorized_first_successor": True},
+            {**approved, "schema_version": 4},
+            {**approved, "expected_workflow_sha": "0" * 40},
+            {**approved, "source_sha256": {
+                **approved["source_sha256"], "deployment/evil.py": "f" * 64,
+            }},
+        ):
+            with self.subTest(case=wrong), self.assertRaises(
+                AnalyticsInstalledAuthorityError,
+            ):
+                parse_analytics_executor_service_config(
+                    canonical_bytes(wrong),
+                )
+
     def test_privileged_analytics_import_closure_exactly_attested(self):
         """Mirror the original Task014 AST closure, without changing canary.
 
@@ -129,9 +235,52 @@ class InstalledSourceConfigTests(unittest.TestCase):
             tree = ast.parse(source.read_text(), filename=path)
             module = path.removesuffix(".py").replace("/", ".")
             pending.update(local_imports(tree, module) - visited)
-        self.assertEqual(len(ANALYTICS_INSTALLED_FILES), len(set(ANALYTICS_INSTALLED_FILES)))
-        self.assertEqual(set(ANALYTICS_INSTALLED_FILES), visited - original)
-        self.assertTrue(original.isdisjoint(ANALYTICS_INSTALLED_FILES))
+        original_analytics = set(ANALYTICS_INSTALLED_FILES)
+        successor_deployment = set(ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES)
+        successor_release = set(ANALYTICS_SUCCESSOR_RELEASE_FILES)
+        self.assertEqual(len(original_analytics), 20)
+        self.assertEqual(len(ANALYTICS_SUCCESSOR_INSTALLED_FILES), 26)
+        self.assertEqual(
+            (ROOT / "deployment/runtime/dev/analytics.compose.successor-ports.yaml").is_symlink(),
+            False,
+        )
+        self.assertEqual(
+            set(ANALYTICS_SUCCESSOR_INSTALLED_FILES),
+            original_analytics | successor_deployment | successor_release
+            | {"deployment/runtime/dev/analytics.compose.successor-ports.yaml"},
+        )
+        self.assertEqual(visited - original,
+                         original_analytics | successor_deployment)
+        self.assertTrue(original.isdisjoint(ANALYTICS_SUCCESSOR_INSTALLED_FILES))
+        # The original resolver follows only deployment.* imports. Prove
+        # that each new release.* import is deliberately attested, with
+        # no silent editable import or omitted crypto verification module.
+        successor_imports = set()
+        for path in visited:
+            tree = ast.parse((ROOT / path).read_text(), filename=path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and (
+                    node.module and node.module.startswith("release.")
+                ):
+                    successor_imports.add(node.module.replace(".", "/") + ".py")
+                if isinstance(node, ast.Import):
+                    successor_imports.update(
+                        alias.name.replace(".", "/") + ".py"
+                        for alias in node.names
+                        if alias.name.startswith("release.")
+                    )
+        self.assertEqual(successor_imports, successor_release)
+        for path in successor_release:
+            source = ROOT / path
+            self.assertTrue(source.is_file() and not source.is_symlink(), path)
+            source_ast = ast.parse(source.read_text(), filename=path)
+            self.assertFalse(any(
+                isinstance(node, (ast.ImportFrom, ast.Import))
+                and (
+                    getattr(node, "module", "") or ""
+                ).startswith(("deployment.", "release."))
+                for node in ast.walk(source_ast)
+            ))
 
     def test_duplicate_unknown_wrong_noncanonical_and_missing_files_denied(self):
         """No attacker-chosen path, extra config or unsigned source is admitted."""
@@ -274,6 +423,71 @@ class InstalledSourceConfigTests(unittest.TestCase):
                 with self.assertRaises(AnalyticsInstalledAuthorityError):
                     config._verify_source_bytes(expected, root=root)
 
+    def test_v2_real_fd_source_closure_checks_extra_release_module(self):
+        """Read all 24 V2 files (23 Python modules and pinned YAML) via O_NOFOLLOW and reject extra-file drift."""
+        source_files = ANALYTICS_SUCCESSOR_INSTALLED_FILES
+        with tempfile.TemporaryDirectory(prefix="task14b-v2-fd-") as temp:
+            root = Path(temp) / "installed"
+            root.mkdir()
+            hashes = []
+            for name in (*source_files, *config._INSTALLED_RUNTIME_FILES):
+                file = root / name
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_bytes(b"A")
+                file.chmod(0o644)
+                hashes.append((name, hashlib.sha256(b"A").hexdigest()))
+            actual_fstat, actual_stat = os.fstat, os.stat
+
+            def root_owned(info):
+                values = list(info)
+                values[4] = 0
+                if stat.S_ISDIR(info.st_mode):
+                    values[0] = (values[0] & ~0o7777) | 0o755
+                return os.stat_result(values)
+
+            class Profile:
+                """Stub only the profile decoder; exercise actual file reads."""
+                def sha256(self):
+                    return hashlib.sha256(b"A").hexdigest()
+
+            with (
+                patch.object(config, "_SUCCESSOR_INSTALLED_ROOT", root),
+                patch.object(config.os, "fstat", side_effect=lambda fd: root_owned(actual_fstat(fd))),
+                patch.object(config.os, "stat", side_effect=lambda path, *args, **kwargs:
+                             root_owned(actual_stat(path, *args, **kwargs))),
+                patch.object(config.SaaSProductProfile, "from_json_bytes", return_value=Profile()),
+                patch.object(config.SaaSRuntimeProfile, "from_json_bytes", return_value=Profile()),
+            ):
+                self.assertIsNone(config._verify_source_bytes(tuple(hashes), root=root))
+                # Wrong-generation root must fail BEFORE any filesystem open.
+                with patch.object(config.os, "open", side_effect=AssertionError(
+                    "wrong generation must not open a source path"
+                )) as opened, self.assertRaises(AnalyticsInstalledAuthorityError):
+                    config._verify_source_bytes(
+                        tuple(hashes), root=config._INSTALLED_ROOT,
+                    )
+                opened.assert_not_called()
+                # A valid V2 vector cannot be accepted with a missing file or
+                # a byte modification in the additional release trust module.
+                file = root / ANALYTICS_SUCCESSOR_RELEASE_FILES[0]
+                file.write_bytes(b"B")
+                with self.assertRaises(AnalyticsInstalledAuthorityError):
+                    config._verify_source_bytes(tuple(hashes), root=root)
+                file.write_bytes(b"A")
+                file.unlink()
+                file.symlink_to(root / source_files[0])
+                with self.assertRaises(AnalyticsInstalledAuthorityError):
+                    config._verify_source_bytes(tuple(hashes), root=root)
+                file.unlink()
+                file.write_bytes(b"A")
+                file.chmod(0o644)
+                self.assertIsNone(config._verify_source_bytes(tuple(hashes), root=root))
+                # Do not allow a partial V2 inventory or reordered list.
+                with self.assertRaises(AnalyticsInstalledAuthorityError):
+                    config._verify_source_bytes(tuple(hashes[:-5] + hashes[-4:]), root=root)
+                with self.assertRaises(AnalyticsInstalledAuthorityError):
+                    config._verify_source_bytes(tuple(reversed(hashes)), root=root)
+
     def test_missing_privileged_file_denied_before_any_listener(self):
         """Ordinary unprivileged test process cannot spoof owner/config."""
         with patch.object(
@@ -287,7 +501,7 @@ class InstalledSourceConfigTests(unittest.TestCase):
                 load_analytics_executor_service_config()
 
 
-    def installed_source_preflight(self, *, product_commit=None):
+    def installed_source_preflight(self, *, product_commit=None, successor=False):
         """Simulate protected descriptor reads with independent real C17 config."""
         from contextlib import ExitStack
         from deployment.executor_service_config import DevExecutorServiceConfiguration
@@ -298,6 +512,12 @@ class InstalledSourceConfigTests(unittest.TestCase):
             replay_group_gid=992, socket_group_gid=993, reviewed_commit="d" * 40,
         ))
         value = sample_config()
+        if successor:
+            value["schema_version"] = 2
+            value["expected_workflow_sha"] = "9d29fa1a4010e6e72676580c36a94c1e97e8794b"
+            value["source_sha256"] = {
+                name: "b" * 64 for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+            }
         if product_commit is not None:
             value["reviewed_installed_commit"] = product_commit
         raw = canonical_bytes(value)
@@ -334,6 +554,53 @@ class InstalledSourceConfigTests(unittest.TestCase):
         self.assertEqual(identities["expected_executor_gid"], 991)
         verified.assert_called_once()
         self.assertEqual(verified.call_args.args[0][0][0], ANALYTICS_INSTALLED_FILES[0])
+        self.assertEqual(verified.call_args.kwargs["root"], config._INSTALLED_ROOT)
+
+    def test_v2_root_config_verifies_only_fixed_inactive_candidate_path(self):
+        """Original executor identities are retained with 26-object V2 pin."""
+        stack, base, verified = self.installed_source_preflight(successor=True)
+        with stack:
+            source, identities = load_analytics_executor_service_config()
+        self.assertEqual(source, EXPECTED)
+        self.assertEqual(identities["expected_executor_uid"], 991)
+        verified.assert_called_once()
+        self.assertEqual(
+            verified.call_args.kwargs["root"], config._SUCCESSOR_INSTALLED_ROOT,
+        )
+        self.assertEqual(
+            tuple(name for name, _sha in verified.call_args.args[0][:26]),
+            ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+        )
+
+    def test_successor_loader_requires_root_pinned_generation_two(self):
+        """Source-only candidate can never adopt the existing V1 source root."""
+        stack, _base, verified = self.installed_source_preflight(
+            successor=False,
+        )
+        with stack, self.assertRaises(AnalyticsInstalledAuthorityError):
+            load_analytics_executor_service_config(require_successor=True)
+        verified.assert_not_called()
+
+        stack, _base, verified = self.installed_source_preflight(
+            successor=True,
+        )
+        with stack:
+            source, identities = load_analytics_executor_service_config(
+                require_successor=True,
+            )
+        self.assertEqual(source, EXPECTED)
+        self.assertEqual(identities["expected_executor_uid"], 991)
+        verified.assert_called_once()
+        self.assertEqual(
+            verified.call_args.kwargs["root"],
+            config._SUCCESSOR_INSTALLED_ROOT,
+        )
+        for invalid in (1, "true", None, [], {}):
+            with self.subTest(value=invalid):
+                with self.assertRaises(AnalyticsInstalledAuthorityError):
+                    load_analytics_executor_service_config(
+                        require_successor=invalid,
+                    )
 
     def test_real_loader_identity_result_reaches_the_actual_bootstrap_contract(self):
         """Keep the real C17 producer and Analytics consumer joined.
@@ -506,6 +773,39 @@ class SocketActivationTests(unittest.TestCase):
             side_effect=AnalyticsExecutorBootstrapError("denied"),
         ):
             self.assertEqual(main(), 1)
+
+
+    def test_root_generation_three_reconciles_before_unix_fd_accept(self):
+        """No inherited FD or new release after an unresolved old cutover."""
+        from deployment.executor import ExecutorUnavailableError
+        ids = {
+            **sample_identities(),
+            "expected_workflow_sha":
+                "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
+            "owner_authorized_first_successor": True,
+        }
+        with (
+            patch(
+                "deployment.analytics_executor_service_bootstrap."
+                "load_analytics_executor_service_config",
+                return_value=(EXPECTED, ids),
+            ),
+            patch(
+                "deployment.analytics_executor."
+                "_reconcile_interrupted_first_successor_before_receive",
+                side_effect=ExecutorUnavailableError(
+                    "protected former writer requires recovery",
+                ),
+            ) as recovery,
+            patch(
+                "deployment.analytics_executor_service_bootstrap."
+                "_acquire_analytics_systemd_socket",
+            ) as fd,
+            self.assertRaises(AnalyticsExecutorBootstrapError),
+        ):
+            run_analytics_executor_service_once()
+        recovery.assert_called_once_with()
+        fd.assert_not_called()
 
 
 class StaticSystemdTests(unittest.TestCase):

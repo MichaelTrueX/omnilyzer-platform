@@ -304,11 +304,43 @@ def _oci_archive(path: Path, mutate=None) -> str:
 class ImageAndPipelineTests(unittest.TestCase):
     def test_dockerfile_is_digest_pinned_and_has_non_root_runtime_contract(self) -> None:
         dockerfile = (CANARY / "Dockerfile").read_text()
-        self.assertEqual(BASE_IMAGE_DIGEST, "sha256:549f3ba5e588ebab80dcf5a5a3536aa7f4b5c384bc6955c0347d372414197386")
-        self.assertEqual(dockerfile.splitlines()[0], f"FROM cgr.dev/chainguard/python@{BASE_IMAGE_DIGEST}")
-        self.assertNotIn("cgr.dev/chainguard/python:", dockerfile)
-        self.assertNotRegex(dockerfile, r"(?im)^\s*RUN\b")
-        self.assertNotRegex(dockerfile, r"\b(apk|apt-get|bash|busybox|pip|gcc)\b")
+        self.assertEqual(BASE_IMAGE_DIGEST, "sha256:df6ea28f3caf5eb77ebae34d38e9b177b41a4e58ee963b1cbc5c8c1c92710238")
+        self.assertEqual(dockerfile.splitlines()[0], f"FROM ghcr.io/astral-sh/uv@{BASE_IMAGE_DIGEST}")
+        self.assertNotIn("FROM scratch", dockerfile)
+        fixed_package = (
+            "zlib-1.4-r0.apk"
+        )
+        fixed_sha = "22ff5ae6b704ac1786d6565dcb3f5dde489e44a5038297a565382b76f656ee08"
+        self.assertIn(
+            "ADD --checksum=sha256:" + fixed_sha, dockerfile,
+        )
+        self.assertIn(
+            "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/" + fixed_package,
+            dockerfile,
+        )
+        self.assertIn("apk add --no-network /tmp/" + fixed_package, dockerfile)
+        self.assertIn("apk del --no-network .python-rundeps sqlite-libs", dockerfile)
+        self.assertIn("test -s /lib/apk/db/installed", dockerfile)
+        self.assertIn("test \"$(grep -xc 'P:zlib' /lib/apk/db/installed)\" = 1", dockerfile)
+        self.assertIn(
+            "grep -A1 -x 'P:zlib' /lib/apk/db/installed | grep -qx 'V:1.4-r0'",
+            dockerfile,
+        )
+        self.assertIn(
+            'import fcntl,binascii,hashlib,http.server,json,socket,threading,zlib',
+            dockerfile,
+        )
+        self.assertIn('zlib.ZLIB_RUNTIME_VERSION.startswith("1.4")', dockerfile)
+        self.assertIn("rm -f /tmp/" + fixed_package, dockerfile)
+        self.assertIn("find /usr/local/lib/python3.14 -iname '*sqlite*' -exec rm -rf {} +", dockerfile)
+        self.assertIn("find /usr/local/lib /usr/lib -iname '*sqlite*'", dockerfile)
+        self.assertNotIn("apk add --allow-untrusted", dockerfile)
+        self.assertNotIn("apk add --update", dockerfile)
+        self.assertNotIn("apk add --no-cache", dockerfile)
+        self.assertNotIn("pip install", dockerfile)
+        self.assertNotIn("sed -i /lib/apk/db/installed", dockerfile)
+        self.assertNotIn("apk del --no-network .python-rundeps sqlite-libs zlib", dockerfile)
+        self.assertNotIn("FROM cgr.dev/chainguard/python", dockerfile)
         self.assertIn("COPY --chown=10001:10001", dockerfile)
         self.assertIn("USER 10001:10001", dockerfile)
         self.assertIn("EXPOSE 8080", dockerfile)
@@ -436,8 +468,12 @@ class ImageAndPipelineTests(unittest.TestCase):
             with self.subTest(legacy_job=name):
                 legacy = dict(workflow["jobs"][name])
                 if name == "gate":
+                    # The original canary job is only MORE restrictive:
+                    # successor-only owner signature inputs must be empty.
+                    # Removing this admission wrapper reproduces the exact
+                    # historical protected job's original byte hash.
                     self.assertEqual(legacy.pop("if"),
-                                     "${{ inputs.auth_probe == false && inputs.product == 'canary' }}")
+                                     "${{ inputs.auth_probe == false && inputs.product == 'canary' && inputs.analytics_source_sha == '' && inputs.analytics_owner_signature_base64 == '' }}")
                 encoded = json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
                 self.assertEqual(hashlib.sha256(encoded).hexdigest(), expected_hash)
 

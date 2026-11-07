@@ -20,17 +20,22 @@ No general-purpose pluggable route or generic framework is introduced.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from .analytics_execution import (
     MAX_ANALYTICS_REQUEST_BYTES, parse_analytics_request,
 )
 from .analytics_executor import AnalyticsPrivilegedExecutor
 from .analytics_signed_release_consumer import PINNED_IMAGE
 from .executor_server import UnixExecutorConnectionHandler
+from .executor import ExecutorRejectedError, EXECUTOR_REJECTED_MESSAGE
 from .executor_listener import (
     UnixExecutorListener, PRODUCTION_EXECUTOR_SOCKET_PATH as CANARY_LISTENER_PATH,
 )
 from .execution import parse_canonical_request
-from .private_registry_fd import read_sealed_credential
+from .private_registry_fd import (
+    _successor_request_image, read_sealed_credential,
+)
 from .unix_transport import (
     PRODUCTION_EXECUTOR_SOCKET_PATH, UnixExecutorTransport, _validate_path,
     ExecutorTransportUnavailableError, TRANSPORT_UNAVAILABLE_MESSAGE,
@@ -118,6 +123,32 @@ class AnalyticsUnixExecutorTransport(UnixExecutorTransport):
             TRANSPORT_UNAVAILABLE_MESSAGE
         ) from None
 
+    def _send_analytics_successor_private(
+        self, canonical_request: bytes, *, credential_fd: int,
+    ) -> bytes:
+        """Carry only a structurally scoped successor on the ORIGINAL socket.
+
+        This method is not used by the installed broker and does not grant
+        deployment. The receiving schema-2 executor will still reject it
+        before replay. Only an independently reviewed successor receiver
+        may subsequently be enabled with the owner/OIDC/source trust chain.
+        """
+        try:
+            image = _successor_request_image(canonical_request)
+            read_sealed_credential(
+                credential_fd, canonical_request=canonical_request,
+                image=image, product_id="analytics-successor",
+            )
+        except _CONTROL:
+            raise
+        except Exception:
+            raise ExecutorTransportUnavailableError(
+                TRANSPORT_UNAVAILABLE_MESSAGE
+            ) from None
+        return UnixExecutorTransport._send(
+            self, canonical_request, credential_fd=credential_fd,
+        )
+
     def _send_analytics_private(
         self, canonical_request: bytes, *, credential_fd: int,
     ) -> bytes:
@@ -154,8 +185,63 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
         expected_broker_uid: int, expected_broker_gid: int,
         reviewed_installed_source: dict[str, str],
         timeout_ms: int = 3000,
+        structural_successor_receive_only: bool = False,
+        verified_successor_preflight_only: bool = False,
+        full_signed_successor_review_only: bool = False,
+        owner_authorized_first_successor: bool = False,
+        candidate_operation: object | None = None,
+        route_journal: object | None = None,
+        expected_workflow_sha: str | None = None,
     ) -> None:
-        """Capture exact Analytics parser/FD at construction, never per-call."""
+        """Capture exact Analytics parser/FD at construction, never per-call.
+
+        Original V2 successor modes are read-only and strictly deny deployment.
+        Structural mode rejects immediately. Historical private-manifest
+        preflight mode remains unchanged for earlier Task14B regression tests.
+        Full signed-review mode runs original independent UID991 JWT, owner
+        Ed25519, Sigstore/Cosign/provenance/SBOM/Grype and local active-state
+        verification, then ALWAYS denies. A distinct root-owned V3 generation
+        may execute the independently signed UID991 transaction only after
+        the original checked Unix peer and sealed-FD admission.
+        """
+        if (
+            type(structural_successor_receive_only) is not bool
+            or type(verified_successor_preflight_only) is not bool
+            or type(full_signed_successor_review_only) is not bool
+            or type(owner_authorized_first_successor) is not bool
+            or sum((
+                structural_successor_receive_only,
+                verified_successor_preflight_only,
+                full_signed_successor_review_only,
+                owner_authorized_first_successor,
+            )) > 1
+        ):
+            raise TypeError("invalid successor receive boundary")
+        # Only a root-trusted V2 configuration may enable cryptographic
+        # successor preflight. Never accept a workflow revision from the
+        # broker/request/FD, and never attach this to original V1 mode.
+        reviewed_workflow = None
+        if expected_workflow_sha is not None:
+            if (
+                type(expected_workflow_sha) is not str
+                or not (
+                    verified_successor_preflight_only
+                    or full_signed_successor_review_only
+                    or owner_authorized_first_successor
+                )
+            ):
+                raise TypeError("unreviewed successor workflow input")
+            try:
+                reviewed_workflow = validate_source_sha(expected_workflow_sha)
+            except _CONTROL:
+                raise
+            except Exception:
+                raise TypeError("invalid reviewed successor workflow") from None
+        # An installation must not construct an inert V2-like handler with a
+        # missing root-reviewed immutable workflow identity. Fail at startup,
+        # not after accepting a privileged Unix FD.
+        if (full_signed_successor_review_only or owner_authorized_first_successor) and reviewed_workflow is None:
+            raise TypeError("missing root-reviewed successor workflow")
         if type(executor) is not AnalyticsPrivilegedExecutor:
             raise TypeError("Analytics receiver must have exact executor type")
         source = _root_reviewed_source(reviewed_installed_source)
@@ -184,9 +270,131 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
                 image=image, product_id="analytics",
             )
 
+        def parse_successor(raw: bytes):
+            """Return only exact request/image scope, never signed authority."""
+            return SimpleNamespace(
+                exact_image_reference=_successor_request_image(raw),
+            )
+
+        def read_successor(fd: int, *, canonical_request: bytes, image: str):
+            """Revalidate the exact future kernel-sealed analytics-only FD."""
+            return read_sealed_credential(
+                fd, canonical_request=canonical_request,
+                image=image, product_id="analytics-successor",
+            )
+
+        def reject_successor(
+            canonical_request: bytes, *, credential_fd: int,
+        ) -> bytes:
+            """NEVER delegate probe-only successor input to any executor.
+
+            This must remain a hard denial even if the original executor
+            later gains real successor support. The real signed release
+            receiver needs separate owner-approved source and replay gating.
+            """
+            raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE)
+
+        def preflight_and_reject_successor(
+            canonical_request: bytes, *, credential_fd: int,
+        ) -> bytes:
+            """Enforce REAL read-only UID991 checks, then always refuse GO.
+
+            Kernel peer identity and verified SCM_RIGHTS FD have already
+            passed the original handler. Even a successful live-state and
+            private manifest probe must NOT become a promotion success.
+            Existing V1 execute_private/replay/deploy remain uncalled.
+            """
+            if reviewed_workflow is not None:
+                # V2 must verify *all three real signed JWTs* independently
+                # before even reading the rootless state or Zot manifest.
+                # This is never a release approval or a success response.
+                from .analytics_executor import (
+                    _verify_executor_successor_identity,
+                )
+                _verify_executor_successor_identity(
+                    canonical_request, credential_fd,
+                    expected_workflow_sha=reviewed_workflow,
+                )
+            executor.preflight_first_successor_without_deployment(
+                canonical_request, credential_fd=credential_fd,
+            )
+            raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE)
+
+        def review_full_signed_and_reject(
+            canonical_request: bytes, *, credential_fd: int,
+        ) -> bytes:
+            """Recheck signed release on UID991 and ALWAYS deny promotion.
+
+            The peer-authenticated SCM_RIGHTS FD contains all three original
+            JWTs. No prior broker-created receipt or untrusted Python object
+            is accepted in lieu of independent original Task013 verification.
+            The separate signed-review helper binds live state before/after
+            immutable signature checks and returns a read-only parsed request.
+            """
+            if reviewed_workflow is None:
+                raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE)
+            from .analytics_executor import (
+                _review_executor_successor_signed_release,
+            )
+            _review_executor_successor_signed_release(
+                canonical_request, credential_fd,
+                expected_workflow_sha=reviewed_workflow,
+                reviewed_installed_source=dict(source),
+            )
+            raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE)
+
+        def execute_owner_authorized_successor(
+            canonical_request: bytes, *, credential_fd: int,
+        ) -> bytes:
+            """Perform the ROOT-only, signed, exact first successor transaction.
+
+            The original secure Unix frame already checked SO_PEERCRED,
+            SCM_RIGHTS, sealed FD and exact immutable candidate image.
+            Still recheck the UID991 root config and every original Task013
+            signed release proof inside the independent executor transaction.
+            """
+            from .analytics_executor import (
+                _execute_reviewed_first_successor_transaction,
+            )
+            return _execute_reviewed_first_successor_transaction(
+                canonical_request, credential_fd=credential_fd,
+                expected_workflow_sha=reviewed_workflow,
+                executor=executor, candidate_operation=candidate_operation,
+                journal=route_journal,
+            )
+
+        if owner_authorized_first_successor:
+            from .analytics_first_install import AnalyticsSuccessorCandidateOperation
+            from .analytics_route_journal import AnalyticsRouteJournal
+            if (
+                type(candidate_operation) is not AnalyticsSuccessorCandidateOperation
+                or type(route_journal) is not AnalyticsRouteJournal
+                or reviewed_workflow is None
+            ):
+                raise TypeError("missing root-installed successor collaborators")
+        elif candidate_operation is not None or route_journal is not None:
+            raise TypeError("candidate resources require root-approved mode")
+
         settings[13] = MAX_ANALYTICS_REQUEST_BYTES
-        settings[30] = read_analytics
-        settings[31] = parse_analytics
+        if owner_authorized_first_successor:
+            settings[0] = execute_owner_authorized_successor
+            settings[30] = read_successor
+            settings[31] = parse_successor
+        elif full_signed_successor_review_only:
+            settings[0] = review_full_signed_and_reject
+            settings[30] = read_successor
+            settings[31] = parse_successor
+        elif verified_successor_preflight_only:
+            settings[0] = preflight_and_reject_successor
+            settings[30] = read_successor
+            settings[31] = parse_successor
+        elif structural_successor_receive_only:
+            settings[0] = reject_successor
+            settings[30] = read_successor
+            settings[31] = parse_successor
+        else:
+            settings[30] = read_analytics
+            settings[31] = parse_analytics
         object.__setattr__(self, "_configuration", tuple(settings))
 
 

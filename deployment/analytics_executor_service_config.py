@@ -8,9 +8,10 @@ Related: deployment/executor_service_config_loader.py (existing hardened C17
          deployment/analytics_executor_service_bootstrap.py (socket activation),
          deployment/tests/test_analytics_executor_service_config.py.
 
-Sections: exact pinned source selection, canonical JSON configuration,
-          descriptor-relative root-owned config load, immutable installed
-          file hash checking, and original C17 executor identity binding.
+Sections: original closed 20-source schema-1 installation, separate
+          closed 26-object V2 source and owner-installed generation-3 runtime grammar, canonical JSON configuration,
+          descriptor-relative owner verification, immutable installed
+          file hash checking and original C17 executor identity binding.
 
 SECURITY: This module is inert until load_analytics_executor_service_config()
 is explicitly called by the separate installed root-owned systemd service.
@@ -34,6 +35,7 @@ from .executor_service_config_loader import (
     _bounded_read, _revalidate_directories, _close_owned,
 )
 from .policy import canonical_bytes
+from .identity import validate_expected_workflow_sha
 from .rootless_docker_authority import RootlessDockerAuthority
 from .saas_product_contract import SaaSProductProfile
 from .saas_product_runtime import SaaSRuntimeProfile
@@ -63,6 +65,33 @@ ANALYTICS_INSTALLED_FILES = (
     "deployment/saas_product_contract.py",
     "deployment/saas_product_runtime.py",
 )
+# Section: future V2 upgrade source graph. The 20-source original
+# Analytics 0.15.0 installed schema-1 set above MUST remain unchanged.
+# An owner-reviewed future source-generation-2 installer must attest each
+# EXTRA file and approve a separately bound source/config version.
+# Merely having the files in this source tree confers no deployment authority.
+ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES = (
+    "deployment/analytics_active_state_review.py",
+    "deployment/analytics_loopback_guard.py",
+    "deployment/analytics_route_journal.py",
+    "deployment/sigstore_authority_provenance.py",
+)
+ANALYTICS_SUCCESSOR_RELEASE_FILES = (
+    "release/analytics_owner_source_selection.py",
+)
+# The existing candidate Compose reset overlay is a privileged routing
+# input: bind its immutable Git blob in the SAME root-controlled V2 source
+# closure. The historical 0.15.0 V1 source set remains byte-identical.
+ANALYTICS_SUCCESSOR_COMPOSE_FILES = (
+    "deployment/runtime/dev/analytics.compose.successor-ports.yaml",
+)
+ANALYTICS_SUCCESSOR_INSTALLED_FILES = tuple(sorted((
+    *ANALYTICS_INSTALLED_FILES,
+    *ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES,
+    *ANALYTICS_SUCCESSOR_RELEASE_FILES,
+    *ANALYTICS_SUCCESSOR_COMPOSE_FILES,
+)))
+
 # These three are already bound inside the signed Analytics source claim.
 # Product/runtime profile hashes are SHA256(canonical parsed profile), NOT
 # SHA256(raw JSON file bytes); the original exact profile classes own them.
@@ -81,12 +110,20 @@ _INSTALLED_RUNTIME_FILES = (
 )
 CONFIG_PATH = "/etc/omnilyzer/deployment/dev/analytics-executor.json"
 _INSTALLED_ROOT = Path("/opt/omnilyzer/deployment/analytics-app")
+# A separately owner-installed schema-2 source is verified only beside V1.
+# This is NOT a generic source root or permission to alter active service.
+_SUCCESSOR_INSTALLED_ROOT = Path("/opt/omnilyzer/deployment/analytics-app-candidate")
 _CONFIGURATION_NAME = "analytics-executor.json"
 _FIELDS = frozenset({
     "schema_version", "product_id", "stage", "reviewed_installed_commit",
     "reviewed_compose_sha256", "reviewed_product_profile_sha256",
     "reviewed_runtime_profile_sha256", "source_sha256",
 })
+# Only a root-installed V2 source is allowed to carry the independent
+# workflow trust anchor used by UID991 for three-audience signature checking.
+# Historical V1 schema/bytes and source allowlist remain exactly unchanged.
+_SUCCESSOR_FIELDS = _FIELDS | frozenset({"expected_workflow_sha"})
+_EXECUTION_FIELDS = _SUCCESSOR_FIELDS | frozenset({"owner_authorized_first_successor"})
 _MAX_BYTES = 4096
 _FILE_BOUND = 1024 * 1024
 _TOTAL_BOUND = 12 * 1024 * 1024
@@ -117,27 +154,54 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
             raw.decode("ascii"), object_pairs_hook=_exact_json,
             parse_constant=lambda _: (_ for _ in ()).throw(ValueError),
         )
-        if type(value) is not dict or set(value) != _FIELDS:
+        if type(value) is not dict:
             raise ValueError
+        # Section: disjoint exact V1/V2 schemas; a successor-only workflow
+        # SHA can never make historical schema-1 bytes newly acceptable.
+        generation = value.get("schema_version")
         if (
-            type(value["schema_version"]) is not int
-            or value["schema_version"] != 1
-            or type(value["product_id"]) is not str
-            or value["product_id"] != "analytics"
-            or type(value["stage"]) is not str or value["stage"] != "dev"
+            type(generation) is not int or generation not in (1, 2, 3)
+            or set(value) != (
+                _FIELDS if generation == 1 else
+                _SUCCESSOR_FIELDS if generation == 2 else _EXECUTION_FIELDS
+            )
         ):
             raise ValueError
+        if (type(generation) is not int or generation not in (1, 2, 3)
+                or value["product_id"] != "analytics"
+                or type(value["product_id"]) is not str
+                or type(value["stage"]) is not str or value["stage"] != "dev"):
+            raise ValueError
+        paths = (ANALYTICS_INSTALLED_FILES if generation == 1
+                 else ANALYTICS_SUCCESSOR_INSTALLED_FILES)
         source = value["source_sha256"]
         if (
-            len(ANALYTICS_INSTALLED_FILES) != len(set(ANALYTICS_INSTALLED_FILES))
-            or
-            type(source) is not dict
-            or set(source) != set(ANALYTICS_INSTALLED_FILES)
+            len(ANALYTICS_INSTALLED_FILES) != 20
+            or len(set(ANALYTICS_INSTALLED_FILES)) != 20
+            or len(ANALYTICS_SUCCESSOR_INSTALLED_FILES) != 26
+            or len(set(ANALYTICS_SUCCESSOR_INSTALLED_FILES)) != 26
+            or set(ANALYTICS_SUCCESSOR_INSTALLED_FILES) - set(ANALYTICS_INSTALLED_FILES)
+                != set(ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES)
+                | set(ANALYTICS_SUCCESSOR_RELEASE_FILES)
+                | set(ANALYTICS_SUCCESSOR_COMPOSE_FILES)
+            or type(source) is not dict or set(source) != set(paths)
             or any(type(key) is not str or type(v) is not str
                    or len(v) != 64 or any(c not in "0123456789abcdef" for c in v)
                    for key, v in source.items())
         ):
             raise ValueError
+        workflow = None
+        if generation in (2, 3):
+            workflow = validate_expected_workflow_sha(
+                value["expected_workflow_sha"],
+            )
+            if workflow == "0" * 40:
+                raise ValueError("missing reviewed workflow")
+        if generation == 3 and (
+            type(value["owner_authorized_first_successor"]) is not bool
+            or value["owner_authorized_first_successor"] is not True
+        ):
+            raise ValueError("unsigned positive successor mode")
         reviewed = _root_reviewed_source({
             key: value[key] for key in (
                 "reviewed_installed_commit",
@@ -152,7 +216,12 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
             raise ValueError
         return {
             **dict(reviewed),
-            "source_sha256": tuple((p, source[p]) for p in ANALYTICS_INSTALLED_FILES),
+            "source_generation": generation,
+            **({"expected_workflow_sha": workflow}
+               if generation in (2, 3) else {}),
+            **({"owner_authorized_first_successor": True}
+               if generation == 3 else {}),
+            "source_sha256": tuple((p, source[p]) for p in paths),
         }
     except _CONTROL:
         raise
@@ -164,13 +233,27 @@ def _verify_source_bytes(
     expected: tuple[tuple[str, str], ...],
     *, root: Path = _INSTALLED_ROOT,
 ) -> None:
-    """Read only exact root-owned source via fd-relative O_NOFOLLOW paths.
+    """Read exact generation-specific source via fd-relative O_NOFOLLOW.
 
+    Root-owned schema 1 accepts only the original 20-file live directory;
+    schema2/3 accept only the exact 26-file inactive candidate directory.
     The real installed root and all ancestors must be root-owned and not
     writable by any unprivileged role. Files must be single-link, mode0644,
     bounded, regular and byte-hash identical to root-owned installed policy.
     """
-    if root != _INSTALLED_ROOT or type(expected) is not tuple:
+    if type(expected) is not tuple or root not in (
+        _INSTALLED_ROOT, _SUCCESSOR_INSTALLED_ROOT,
+    ):
+        raise AnalyticsInstalledAuthorityError(_ERROR)
+    # Check generation/root pairing before opening even one host descriptor.
+    # V2 cannot self-authorize a read of the V1 active path and vice versa.
+    v1_names = (*ANALYTICS_INSTALLED_FILES, *_INSTALLED_RUNTIME_FILES)
+    v2_names = (*ANALYTICS_SUCCESSOR_INSTALLED_FILES, *_INSTALLED_RUNTIME_FILES)
+    names = tuple(name for name, _sha in expected)
+    if (
+        (root == _INSTALLED_ROOT and names != v1_names)
+        or (root == _SUCCESSOR_INSTALLED_ROOT and names != v2_names)
+    ):
         raise AnalyticsInstalledAuthorityError(_ERROR)
     descriptors: list[int] = []
     try:
@@ -194,20 +277,19 @@ def _verify_source_bytes(
             parent = directory
         assert parent is not None
         total = 0
-        approved_names = set(ANALYTICS_INSTALLED_FILES) | set(
-            _INSTALLED_RUNTIME_FILES
-        )
-        if tuple(name for name, _sha in expected) != (
-            *ANALYTICS_INSTALLED_FILES, *_INSTALLED_RUNTIME_FILES,
-        ):
-            raise ValueError
+        # Only a complete schema-1 or schema-2 ordered source vector is
+        # accepted, followed by the SAME four original runtime assets.
+        # V2 additionally pins the Compose reset override as a SHA source.
+        approved_names = set(v2_names)
         for name, digest in expected:
             if name not in approved_names or type(digest) is not str:
                 raise ValueError
             parts = name.split("/")
             if (
                 not 2 <= len(parts) <= 5
-                or not (parts[0] == "deployment" or name == _SOURCE_CLAIM_PATH)
+                or not (parts[0] == "deployment"
+                        or name in (_SOURCE_CLAIM_PATH,
+                                    *ANALYTICS_SUCCESSOR_RELEASE_FILES))
             ):
                 raise ValueError
             # All components are literally selected from reviewed module
@@ -276,14 +358,21 @@ def _verify_source_bytes(
             os.close(desc)
 
 
-def load_analytics_executor_service_config() -> tuple[dict[str, str], dict[str, int]]:
-    """Check original hardened C17 config, then product root-owned hash source.
+def load_analytics_executor_service_config(
+    *, require_successor: bool = False,
+) -> tuple[dict[str, str], dict[str, int]]:
+    """Check original hardened C17 identity and selected root-owned source.
 
     This is the only intended runtime route to a reviewed_installed_source
     mapping. A caller-constructible mapping never proves host installation.
+    Default mode preserves original V1. An explicitly selected successor
+    candidate requires schema2 plus the exact root-owned port-reset overlay.
+    Neither successful read nor the flag confers release/deployment authority.
     """
     owned: list[int] = []
     try:
+        if type(require_successor) is not bool:
+            raise ValueError("invalid source-generation selection")
         base = load_dev_executor_service_configuration()
         initial = _process_identity()
         directory_flags, file_flags = _required_flags()
@@ -301,6 +390,11 @@ def load_analytics_executor_service_config() -> tuple[dict[str, str], dict[str, 
         # This separate root-owned config owns the Analytics generation;
         # verify its exact source bytes below without equating product releases.
         product = parse_analytics_executor_service_config(raw)
+        # The original V1 service may keep its unchanged default, but a
+        # successor Docker operation must never run against a V1-only root
+        # source manifest that did not attest the port-reset overlay.
+        if require_successor and product["source_generation"] not in (2, 3):
+            raise ValueError("candidate requires protected generation two")
         if (
             _configuration_file(os.fstat(desc)) != opened
             or _configuration_file(os.stat(
@@ -316,13 +410,17 @@ def load_analytics_executor_service_config() -> tuple[dict[str, str], dict[str, 
             or base.executor_gid != RootlessDockerAuthority().executor_gid
         ):
             raise ValueError
+        source_root = (
+            _SUCCESSOR_INSTALLED_ROOT if product["source_generation"] in (2, 3)
+            else _INSTALLED_ROOT
+        )
         _verify_source_bytes((
             *product["source_sha256"],
             (_PRODUCT_PATH, product["reviewed_product_profile_sha256"]),
             (_RUNTIME_PATH, product["reviewed_runtime_profile_sha256"]),
             (_COMPOSE_PATH, product["reviewed_compose_sha256"]),
             (_SOURCE_CLAIM_PATH, _SOURCE_CLAIM_SHA256),
-        ))
+        ), root=source_root)
         result = (
             {key: product[key] for key in (
                 "reviewed_installed_commit", "reviewed_compose_sha256",
@@ -339,6 +437,10 @@ def load_analytics_executor_service_config() -> tuple[dict[str, str], dict[str, 
                 )},
                 "expected_executor_uid": base.executor_uid,
                 "expected_executor_gid": base.executor_gid,
+                **({"expected_workflow_sha": product["expected_workflow_sha"]}
+                   if product["source_generation"] in (2, 3) else {}),
+                **({"owner_authorized_first_successor": True}
+                   if product["source_generation"] == 3 else {}),
             },
         )
     except _CONTROL:

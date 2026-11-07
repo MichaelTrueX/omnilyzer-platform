@@ -80,11 +80,11 @@ on 17 October 2026 because the September 2026 pinned Python 3.14.7 OCI base cont
 13 blocking findings (one Critical and twelve High). Both registry-publisher jobs
 were skipped. These historical facts and the denial evidence remain authoritative.
 
-The isolated remediation pins the public Chainguard Python image by its exact
-multi-platform OCI index digest
+The October isolated remediation pinned the public Chainguard Python
+image by its exact multi-platform OCI index digest
 `sha256:549f3ba5e588ebab80dcf5a5a3536aa7f4b5c384bc6955c0347d372414197386`.
-The previous pin had an independently verified publisher signature; this
-new digest must obtain independent Cosign publisher-signature verification
+The September pin had an independently verified publisher signature;
+the October candidate required independent Cosign publisher verification
 before promotion. The public `latest` stream moved from Python 3.14 to 3.15,
 so this is **not** an ordinary patch-level replacement. The canary uses only the Python standard library, but its executable
 image and full Grype policy must be retested before any publication approval.
@@ -116,6 +116,44 @@ production-tools release would require a fresh version, exact merged source
 SHA, explicit release authorization and real downstream Sigstore/registry
 verification. No PR merge, release dispatch, registry update or DEV/PROD
 deployment follows automatically from this review.
+
+## November 4, 2026 canary base-image refresh (review-only)
+
+PR #282 Task013 no-publish security review run 41756851074 correctly
+failed the unchanged zero-Critical/High Grype policy. The independently
+retained `vulnerability-policy-result.json` has six blocked findings
+in the **OCI base only**: Critical CVE-2026-115557 across
+`python-3.15`, `python-3.15-base` and `python-3.15-runtime` at
+`3.15.1_git20261024-r1`; High CVE-2026-114613 in
+`py3-pip-wheel 26.2.2-r0`; and High CVE-2026-113351 and
+CVE-2026-115506 in `libexpat1 2.9.0-r0`. The scanner reported
+fixed packages `3.15.2_git20261030-r0`, `26.2.2-r1` and
+`2.10.0-r0`, respectively. The Python wheel and npm scans found
+zero matches, and no vulnerability-policy exceptions were applied.
+
+The new **PROPOSED**, exact immutable Chainguard Python OCI INDEX pin is
+`sha256:31dd69d84fe5235fe18f8ceb5b76620e6f44a0ce1f9b0d3a46c491576f8b453b`.
+On 2026-11-04 the public `cgr.dev/chainguard/python:latest` OCI
+registry returned this exact digest; SHA256 of its actual index bytes
+matched the HTTP Docker-Content-Digest header. Its linux/amd64
+manifest was separately identified as
+`sha256:26c63a31f4b8bfc4c6b2404e16fd5fd37481f4bb871b31147def1af2202c71b2`
+and its manifest bytes also matched their digest. The production
+release never uses the mutable `latest` tag: the reviewed Dockerfile,
+runtime label, archive verifier and test expected value now all bind
+the fixed index digest.
+
+This is a **candidate source repair only, NOT a security GO**.
+The full no-publish OCI build and pinned Syft/Grype policy must PASS
+against the new exact digest. Independently verify the Chainguard
+publisher's Sigstore/Fulcio identity and issuer against the exact
+digest with Cosign before any publication authorization, per the
+existing prior-image constraint. An image registry content hash or
+zero scan findings alone does not prove publisher identity. The
+signed Analytics 0.15.0 DEV release, Canary runtime, signature
+policy, publishing credentials, source provenance, auth and DB are
+not changed by this source-review candidate. Any new execution,
+merge or publication still requires its ordinary independent gates.
 
 ## Phase 1 non-claims
 

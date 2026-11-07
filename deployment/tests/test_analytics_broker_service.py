@@ -87,6 +87,53 @@ class OriginalBrokerCompositionTests(unittest.TestCase):
             object.__getattribute__(selected, "_canary").__self__, original,
         )
         analytics = object.__getattribute__(selected, "_analytics").__self__
+        self.assertIsNone(object.__getattribute__(selected, "_successor"))
+        # A root-reviewed V2 generation binds only the EXISTING read-only
+        # successor sender with the exact fixed root owner trust files.
+        selected_v2 = broker_service.compose_approved_analytics_broker_router(
+            configuration=config, canary_handler=original,
+            verifier=verifier, replay_guard=replay,
+            blob_signatures=blob, jwks_cache=cache,
+            reviewed_installed_source=EXPECTED, source_generation=2,
+        )
+        self.assertIsNotNone(object.__getattribute__(selected_v2, "_successor"))
+        self.assertIs(
+            object.__getattribute__(selected_v2, "_allow_first_successor"),
+            False,
+        )
+        # Separately root-config-selected schema3 may choose the exact
+        # source-only signed replay method, never from a V2 manifest alone.
+        selected_v3 = broker_service.compose_approved_analytics_broker_router(
+            configuration=config, canary_handler=original,
+            verifier=verifier, replay_guard=replay,
+            blob_signatures=blob, jwks_cache=cache,
+            reviewed_installed_source=EXPECTED, source_generation=3,
+        )
+        self.assertIs(
+            object.__getattribute__(selected_v3, "_allow_first_successor"),
+            True,
+        )
+        self.assertEqual(
+            object.__getattribute__(
+                selected_v3, "_successor",
+            ).__name__, "authorize_and_forward_first_successor",
+        )
+        v2_broker = object.__getattribute__(selected_v2, "_analytics").__self__
+        review = object.__getattribute__(v2_broker, "_review_successor").__self__
+        from deployment.analytics_executor import (
+            _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
+        )
+        self.assertEqual(
+            object.__getattribute__(review, "_owner_files"),
+            (_OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE),
+        )
+        with self.assertRaises(TypeError):
+            broker_service.compose_approved_analytics_broker_router(
+                configuration=config, canary_handler=original,
+                verifier=verifier, replay_guard=replay,
+                blob_signatures=blob, jwks_cache=cache,
+                reviewed_installed_source=EXPECTED, source_generation=True,
+            )
         self.assertIs(
             object.__getattribute__(analytics, "_replay").__self__, replay,
         )
@@ -199,6 +246,8 @@ class OriginalRootOwnedOptInTests(unittest.TestCase):
             result = broker_service.load_analytics_broker_installed_source(self.cfg)
         self.assertEqual(result, EXPECTED)
         verified.assert_called_once()
+        self.assertEqual(verified.call_args.kwargs["root"],
+                         broker_service._INSTALLED_ROOT)
         names = tuple(name for name, _digest in verified.call_args.args[0])
         self.assertEqual(names[:len(ANALYTICS_INSTALLED_FILES)], ANALYTICS_INSTALLED_FILES)
         self.assertEqual(names[-4:], (
@@ -211,6 +260,115 @@ class OriginalRootOwnedOptInTests(unittest.TestCase):
             verified.call_args.args[0][-1][1],
             "45e13536c413a5e5c0a39a4d8c98daf412614dec535398b2ba204039772c88b9",
         )
+
+    def test_v2_source_verifier_uses_only_fixed_candidate_root(self):
+        """Protected broker schema-2 config cannot redirect live source."""
+        from deployment.analytics_executor_service_config import (
+            ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+        )
+        self.raw = canonical_bytes({
+            "schema_version": 2, "product_id": "analytics", "stage": "dev",
+            **EXPECTED,
+            "expected_workflow_sha": "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
+            "source_sha256": {
+                name: "b" * 64 for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+            },
+        })
+        metadata = list(self.file_stat)
+        metadata[6] = len(self.raw)
+        self.file_stat = os.stat_result(metadata)
+        stack, verified = self.preflight()
+        with stack:
+            result = broker_service.load_analytics_broker_installed_source(self.cfg)
+        self.assertEqual(result, EXPECTED)
+        verified.assert_called_once()
+        self.assertEqual(
+            verified.call_args.kwargs["root"],
+            broker_service._SUCCESSOR_INSTALLED_ROOT,
+        )
+        self.assertEqual(
+            tuple(path for path, _ in verified.call_args.args[0][:26]),
+            ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+        )
+
+    def test_only_root_attested_generation_requests_schema3_readonly_probe(self):
+        """The unchanged four-hash API stays V1; V2 generation is opt-in."""
+        from deployment.analytics_executor_service_config import (
+            ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+        )
+        self.raw = canonical_bytes({
+            "schema_version": 2, "product_id": "analytics", "stage": "dev",
+            **EXPECTED,
+            "expected_workflow_sha": "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
+            "source_sha256": {
+                name: "b" * 64 for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+            },
+        })
+        st = list(self.file_stat)
+        st[6] = len(self.raw)
+        self.file_stat = os.stat_result(st)
+        stack, verified = self.preflight()
+        with stack:
+            received = broker_service.load_analytics_broker_installed_source(
+                self.cfg, include_generation=True,
+            )
+        self.assertEqual(received, (EXPECTED, 2))
+        verified.assert_called_once()
+        self.assertEqual(
+            verified.call_args.kwargs["root"],
+            broker_service._SUCCESSOR_INSTALLED_ROOT,
+        )
+
+    def test_only_root_verified_generation_three_can_select_execution(self):
+        """Broker root-loader must verify exact V2 candidate + explicit schema3.
+
+        No request, source manifest, non-boolean flag or unsigned approval may
+        promote review-only V2 into a privileged runtime operation.
+        """
+        from deployment.analytics_executor_service_config import (
+            ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+        )
+        candidate = {
+            "schema_version": 3, "product_id": "analytics",
+            "stage": "dev", **EXPECTED,
+            "owner_authorized_first_successor": True,
+            "expected_workflow_sha":
+                "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
+            "source_sha256": {
+                name: "b" * 64 for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+            },
+        }
+        self.raw = canonical_bytes(candidate)
+        metadata = list(self.file_stat)
+        metadata[6] = len(self.raw)
+        self.file_stat = os.stat_result(metadata)
+        stack, verified = self.preflight()
+        with stack:
+            result = broker_service.load_analytics_broker_installed_source(
+                self.cfg, include_generation=True,
+            )
+        self.assertEqual(result, (EXPECTED, 3))
+        self.assertEqual(
+            verified.call_args.kwargs["root"],
+            broker_service._SUCCESSOR_INSTALLED_ROOT,
+        )
+        for flag in (None, False, 1, "true"):
+            changed = dict(candidate)
+            if flag is None:
+                changed.pop("owner_authorized_first_successor")
+            else:
+                changed["owner_authorized_first_successor"] = flag
+            self.raw = canonical_bytes(changed)
+            metadata = list(self.file_stat)
+            metadata[6] = len(self.raw)
+            self.file_stat = os.stat_result(metadata)
+            ctx, _ = self.preflight()
+            with ctx, self.subTest(flag=flag), self.assertRaises(
+                broker_service.AnalyticsBrokerSourceError,
+            ):
+                broker_service.load_analytics_broker_installed_source(
+                    self.cfg, include_generation=True,
+                )
 
     def test_distinct_canary_revision_preserves_product_source_checks(self):
         """Independent reviewed generations need not have equal commit IDs."""
@@ -277,7 +435,7 @@ class ApprovedReplacementServiceTests(unittest.TestCase):
             patch.object(original, "_load_configuration", return_value=config),
             patch.object(
                 broker_service, "load_analytics_broker_installed_source",
-                return_value=dict(EXPECTED),
+                return_value=(dict(EXPECTED), 1),
             ) as source,
             patch.object(SQLiteReplayGuard, "validate", return_value=None),
             patch.object(
@@ -290,7 +448,7 @@ class ApprovedReplacementServiceTests(unittest.TestCase):
                     stop_controller=stopper,
                 )
             )
-        source.assert_called_once_with(config)
+        source.assert_called_once_with(config, include_generation=True)
         self.assertEqual([v[0] for v in selected], ["listener", "serve"])
         router = selected[0][1]
         self.assertIs(type(router), AnalyticsDEVPromotionRouter)

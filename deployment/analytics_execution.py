@@ -1,9 +1,9 @@
 """File: deployment/analytics_execution.py
 
-Purpose: Closed, product-specific Task014 Analytics DEV first-install request
-         grammar. The original canary-only ExecutorRequest, private registry
-         credential transfer, broker, privileged executor and controller are
-         deliberately UNCHANGED and DO NOT accept this schema.
+Purpose: Preserve original closed Task014 Analytics DEV first-install
+         request grammar and validate an inert successor blue/green request.
+         Original Canary, sealed credentials, installed broker, privileged
+         executor and controller remain UNCHANGED and reject successors.
 
 Related: deployment/analytics_signed_release_consumer.py (original Sigstore
          and Cosign verified evidence reader; read-only),
@@ -38,6 +38,10 @@ from .analytics_signed_release_consumer import (
     PINNED_RUN_ID, PINNED_VERSION,
 )
 from .analytics_signed_source_pin import SOURCE_COMMIT
+from release.analytics_owner_source_selection import (
+    AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
+    expected_owner_approval_bytes,
+)
 from .execution import DEV_STAGE, EXECUTOR_REQUEST_FIELDS
 from .identity import (
     AuthorizedGitHubIdentity, DEV_REPOSITORY_ID, DEV_WORKFLOW_REF,
@@ -45,7 +49,7 @@ from .identity import (
 )
 from .policy import (
     APPROVED_OCI_ORIGIN, DeploymentPolicyError, canonical_bytes,
-    validate_sha256, validate_source_sha,
+    validate_digest, validate_sha256, validate_source_sha,
 )
 from .saas_product_contract import REQUIRED_ANALYTICS_SECRET_NAMES
 
@@ -60,6 +64,13 @@ ANALYTICS_NETWORK = "omnilyzer-analytics-backend-dev"
 ANALYTICS_FIRST_SLOT = "blue"
 ANALYTICS_FIRST_PORT = 3141
 ANALYTICS_ROLLBACK_MODE = "stop-first-private-slot-preserve-writes"
+# Section: successor-only inert request shape. Original schema 2 stays immutable.
+ANALYTICS_SUCCESSOR_SCHEMA = 3
+ANALYTICS_PRIVATE_SLOT_PORTS = {"blue": 3141, "green": 3142}
+# Separate stable Analytics ingress3141 from successor candidate health3142.
+# The new runtime override has no Docker-published host slot ports.
+ANALYTICS_SUCCESSOR_CANDIDATE_PORT = 3142
+ANALYTICS_UPGRADE_ROLLBACK_MODE = "switch-private-slot-preserve-writes"
 MAX_ANALYTICS_REQUEST_BYTES = 16 * 1024
 ERROR = "TASK014_ANALYTICS_REQUEST_REJECTED"
 
@@ -82,6 +93,9 @@ _INGRESS_FIELDS = frozenset({
 _ROLLBACK_FIELDS = frozenset({
     "kind", "previous_digest", "previous_slot", "preserve_database_writes",
 })
+
+# Closed additional field for a successor. No modification to schema-v2 grammar.
+_SUCCESSOR_REQUEST_FIELDS = _REQUIRED_REQUEST_FIELDS | {"owner_approval_sha256"}
 
 
 class AnalyticsRequestError(DeploymentPolicyError):
@@ -380,3 +394,285 @@ def bind_analytics_request_to_verified_evidence(
         )
     ):
         raise AnalyticsRequestError(ERROR)
+
+
+# Section 4: root-owned read-only live-state binding. NO deployment route.
+def review_analytics_successor_with_live_active(
+    raw: bytes, *, signed_previous: AnalyticsSignedEvidenceReview,
+    reviewed_installed_commit: str, reviewed_compose_sha256: str,
+    reviewed_product_profile_sha256: str,
+    reviewed_runtime_profile_sha256: str,
+    signed_release: AnalyticsSignedEvidenceReview,
+    selected: AnalyticsOwnerSourceSelection,
+    owner_approval: AnalyticsOwnerSignatureReceipt,
+    identity: AuthorizedGitHubIdentity,
+    require_staged_candidate: bool = False,
+) -> AnalyticsSuccessorRequest:
+    """Compare real routes and, when staged, probe the signed next image.
+
+    No client-provided active-slot/digest is admitted as installed authority.
+    This function does NOT authenticate passed Python objects. The
+    restricted broker authenticates the original/new signed releases and
+    GitHub OIDC; only the separate UID991 executor can measure actual Docker
+    state. A future installed executor must obtain its evidence through
+    the protected broker-to-executor trust boundary, not public dataclasses,
+    and remeasure live state before any route mutation to prevent TOCTOU.
+    """
+    try:
+        from .analytics_active_state_review import (
+            AnalyticsActiveState, inspect_analytics_active_state,
+        )
+
+        live = inspect_analytics_active_state()
+        if (
+            type(live) is not AnalyticsActiveState
+            or type(signed_previous) is not AnalyticsSignedEvidenceReview
+            or live.read_only is not True
+            or live.deployment_authorized is not False
+            or type(live.active_slot) is not str
+            or live.active_slot not in ANALYTICS_PRIVATE_SLOT_PORTS
+            or type(live.active_digest) is not str
+            or type(live.active_image) is not str
+            or live.private_ingress_port != ANALYTICS_FIRST_PORT
+            or live.candidate_slot != (
+                "green" if live.active_slot == "blue" else "blue"
+            )
+            or live.candidate_port != ANALYTICS_SUCCESSOR_CANDIDATE_PORT
+            or type(require_staged_candidate) is not bool
+            or (
+                require_staged_candidate
+                and live.candidate_probe_present is not True
+            )
+            or (
+                live.candidate_probe_present
+                and (
+                    type(signed_release) is not AnalyticsSignedEvidenceReview
+                    or live.candidate_digest
+                        != signed_release.source.oci_manifest_digest
+                    or type(live.candidate_container_id) is not str
+                    or len(live.candidate_container_id) != 64
+                )
+            )
+            or live.active_image != signed_previous.image
+            or live.active_digest != signed_previous.source.oci_manifest_digest
+            or signed_previous.deployment_authorized is not False
+            or signed_previous.source.release_authorized is not False
+            or signed_previous.source.deployment_authorized is not False
+            or type(selected) is not AnalyticsOwnerSourceSelection
+            or type(signed_previous.release_version) is not str
+            or tuple(map(int, signed_previous.release_version.split(".")))
+                >= tuple(map(int, selected.release_version.split(".")))
+        ):
+            raise ValueError("current private signed release not verified")
+        return parse_analytics_successor_request(
+            raw,
+            reviewed_installed_commit=reviewed_installed_commit,
+            reviewed_compose_sha256=reviewed_compose_sha256,
+            reviewed_product_profile_sha256=reviewed_product_profile_sha256,
+            reviewed_runtime_profile_sha256=reviewed_runtime_profile_sha256,
+            signed_release=signed_release,
+            selected=selected, owner_approval=owner_approval,
+            identity=identity,
+            observed_active_digest=live.active_digest,
+            observed_active_slot=live.active_slot,
+        )
+    except Exception:
+        raise AnalyticsRequestError(ERROR) from None
+
+
+# Section 3: reusable successor from independently reviewed active slot.
+# This is an inert read-only request review. The installed broker/executor
+# still rejects schema 3 and MUST independently verify real owner signature,
+# Sigstore/Cosign, three OIDC audiences, replay and actual active-slot state.
+@dataclass(frozen=True, slots=True)
+class AnalyticsSuccessorRequest(AnalyticsExecutorRequest):
+    """Review-only closed schema-3 upgrade request, never deploy authority."""
+
+    owner_approval_sha256: str
+
+
+def parse_analytics_successor_request(
+    raw: bytes, *, reviewed_installed_commit: str,
+    reviewed_compose_sha256: str,
+    reviewed_product_profile_sha256: str,
+    reviewed_runtime_profile_sha256: str,
+    signed_release: AnalyticsSignedEvidenceReview,
+    selected: AnalyticsOwnerSourceSelection,
+    owner_approval: AnalyticsOwnerSignatureReceipt,
+    identity: AuthorizedGitHubIdentity,
+    observed_active_digest: str,
+    observed_active_slot: str,
+) -> AnalyticsSuccessorRequest:
+    """Bind opposite candidate slot to trusted active signed version.
+
+    Externally supplied dataclasses, even if internally consistent, cannot
+    authenticate their own contents. Broker-verified signature/OIDC data and
+    rootless-executor-verified active state are separate authority domains.
+    This parser has NO executor routing, registry or state-changing operations.
+    """
+    try:
+        if type(raw) is not bytes or not 0 < len(raw) <= MAX_ANALYTICS_REQUEST_BYTES:
+            raise ValueError
+        # Reject duplicate JSON keys even in nested rollback and runtime maps.
+        def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError
+                result[key] = value
+            return result
+
+        parsed = _closed(
+            json.loads(raw.decode("ascii"), object_pairs_hook=unique),
+            _SUCCESSOR_REQUEST_FIELDS,
+        )
+        runtime = _closed(parsed["runtime_configuration_reference"], _RUNTIME_FIELDS)
+        ingress = _closed(parsed["ingress_reference"], _INGRESS_FIELDS)
+        rollback = _closed(parsed["rollback_reference"], _ROLLBACK_FIELDS)
+        secrets = _closed(parsed["secrets_reference"], _SECRET_FIELDS)
+        if (
+            type(observed_active_slot) is not str
+            or observed_active_slot not in ANALYTICS_PRIVATE_SLOT_PORTS
+        ):
+            raise ValueError
+        validate_digest(observed_active_digest)
+        candidate_slot = (
+            "green" if observed_active_slot == "blue" else "blue"
+        )
+        if (
+            type(signed_release) is not AnalyticsSignedEvidenceReview
+            or type(selected) is not AnalyticsOwnerSourceSelection
+            or type(owner_approval) is not AnalyticsOwnerSignatureReceipt
+            or type(identity) is not AuthorizedGitHubIdentity
+            or observed_active_digest == signed_release.source.oci_manifest_digest
+            or type(parsed["schema_version"]) is not int
+            or parsed["schema_version"] != ANALYTICS_SUCCESSOR_SCHEMA
+            or parsed["release_version"] != selected.release_version
+            or signed_release.release_version != selected.release_version
+            or signed_release.source.source_commit != selected.source_commit
+            or signed_release.source.source_tree != selected.source_tree
+            or owner_approval.source_commit != selected.source_commit
+            or owner_approval.source_tree != selected.source_tree
+            or owner_approval.release_version != selected.release_version
+            or parsed["source_sha"] != selected.platform_workflow_commit
+            or parsed["product_source_sha"] != selected.source_commit
+            or parsed["originating_release_run_id"] != signed_release.release_run_id
+            or type(parsed["originating_release_run_id"]) is not int
+            or parsed["manifest_digest"] != signed_release.source.oci_manifest_digest
+            or parsed["exact_image_reference"] != signed_release.image
+            or parsed["release_manifest_sha256"] != signed_release.manifest_sha256
+            or parsed["provenance_sha256"] != signed_release.provenance_sha256
+            or parsed["source_claim_sha256"] != signed_release.source.claim_sha256
+            or parsed["owner_approval_sha256"] != owner_approval.approval_sha256
+            or owner_approval.approval_sha256 != hashlib.sha256(
+                expected_owner_approval_bytes(selected)
+            ).hexdigest()
+            or owner_approval.owner_signature_verified is not True
+            or selected.release_authorized is not False
+            or selected.deployment_authorized is not False
+            or owner_approval.release_authorized is not False
+            or owner_approval.deployment_authorized is not False
+            or signed_release.deployment_authorized is not False
+            or signed_release.source.release_authorized is not False
+            or signed_release.source.deployment_authorized is not False
+            or selected.source_commit == SOURCE_COMMIT
+            or selected.owner_actor_id != "130741173"
+            or tuple(map(int, selected.release_version.split("."))) <= (0, 15, 0)
+            or runtime["product_profile_sha256"] != signed_release.source.product_profile_sha256
+            or runtime["runtime_profile_sha256"] != signed_release.source.runtime_profile_sha256
+            or parsed["github_workflow_sha"] != identity.workflow_sha
+            or parsed["requested_by_actor_id"] != identity.actor_id
+            or parsed["github_repository_id"] != identity.repository_id
+            or parsed["github_workflow_ref"] != identity.workflow_ref
+            or parsed["github_run_id"] != identity.run_id
+            or parsed["github_run_attempt"] != identity.run_attempt
+            or parsed["oidc_jti"] != identity.jti
+            or parsed["oidc_issued_at"] != identity.issued_at
+            or parsed["oidc_expires_at"] != identity.expires_at
+            or type(ingress["loopback_port"]) is not int
+            or ingress != {
+                "kind": "private-no-public-ingress",
+                "slot": candidate_slot,
+                "loopback_address": "127.0.0.1",
+                "loopback_port": ANALYTICS_SUCCESSOR_CANDIDATE_PORT,
+                "backend_network": ANALYTICS_NETWORK,
+                "public_origin": None,
+                "active_slot": observed_active_slot,
+            }
+            or type(rollback["preserve_database_writes"]) is not bool
+            or rollback != {
+                "kind": ANALYTICS_UPGRADE_ROLLBACK_MODE,
+                "previous_digest": observed_active_digest,
+                "previous_slot": observed_active_slot,
+                "preserve_database_writes": True,
+            }
+        ):
+            raise ValueError
+        # Reuse the ORIGINAL schema-2 validator for every unchanged
+        # reviewed runtime/profile/secret/identity field, without widening it.
+        legacy = dict(parsed)
+        del legacy["owner_approval_sha256"]
+        legacy.update({
+            "schema_version": ANALYTICS_REQUEST_SCHEMA,
+            "release_version": PINNED_VERSION,
+            "source_sha": PINNED_PLATFORM_COMMIT,
+            "product_source_sha": SOURCE_COMMIT,
+            "manifest_digest": PINNED_DIGEST,
+            "exact_image_reference": PINNED_IMAGE,
+            "originating_release_run_id": PINNED_RUN_ID,
+            "ingress_reference": {
+                "kind": "private-no-public-ingress", "slot": ANALYTICS_FIRST_SLOT,
+                "loopback_address": "127.0.0.1",
+                "loopback_port": ANALYTICS_FIRST_PORT,
+                "backend_network": ANALYTICS_NETWORK,
+                "public_origin": None, "active_slot": None,
+            },
+            "rollback_reference": {
+                "kind": ANALYTICS_ROLLBACK_MODE,
+                "previous_digest": None, "previous_slot": None,
+                "preserve_database_writes": True,
+            },
+        })
+        baseline = AnalyticsExecutorRequest.from_dict(
+            legacy,
+            reviewed_installed_commit=reviewed_installed_commit,
+            reviewed_compose_sha256=reviewed_compose_sha256,
+            reviewed_product_profile_sha256=reviewed_product_profile_sha256,
+            reviewed_runtime_profile_sha256=reviewed_runtime_profile_sha256,
+        )
+        if (baseline.github_workflow_sha != identity.workflow_sha
+                or type(secrets["rootless_required"]) is not bool):
+            raise ValueError
+        for key in (
+            "owner_approval_sha256", "source_claim_sha256",
+            "release_manifest_sha256", "provenance_sha256",
+            "promotion_request_sha256",
+        ):
+            _sha(parsed[key])
+        if parsed["exact_image_reference"] != (
+            "oci-dev.omnilyzer.ai/omnilyzer/analytics@" + parsed["manifest_digest"]
+        ):
+            raise ValueError
+        # Same audit-intent construction as original CI request, extended
+        # with the owner's approval and exact previously active digest.
+        intent = canonical_bytes({
+            "product_id": "analytics",
+            "release_version": selected.release_version,
+            "source_sha": selected.platform_workflow_commit,
+            "image": signed_release.image,
+            "run_id": identity.run_id,
+            "run_attempt": identity.run_attempt,
+            "release_manifest_sha256": signed_release.manifest_sha256,
+            "provenance_sha256": signed_release.provenance_sha256,
+            "source_claim_sha256": signed_release.source.claim_sha256,
+            "owner_approval_sha256": owner_approval.approval_sha256,
+            "previous_digest": observed_active_digest,
+        })
+        if parsed["promotion_request_sha256"] != hashlib.sha256(intent).hexdigest():
+            raise ValueError
+        result = AnalyticsSuccessorRequest(**parsed)
+        if result.canonical_bytes() != raw:
+            raise ValueError
+        return result
+    except Exception:
+        raise AnalyticsRequestError(ERROR) from None

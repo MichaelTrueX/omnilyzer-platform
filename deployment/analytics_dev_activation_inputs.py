@@ -1,8 +1,9 @@
 """File: deployment/analytics_dev_activation_inputs.py
 
-Purpose: Construct exact UNSIGNED Task014 Analytics 0.15.0 DEV review
-         inputs from the previously reviewed immutable Git source archive,
-         including the original C32ZF rootless socket source contract.
+Purpose: Construct exact UNSIGNED Task014 Analytics 0.15.0/V2 DEV review
+         inputs from independently verified immutable Git source archives,
+         including the original C32ZF rootless socket source contract and inert,
+         generation-specific broker/executor service override inputs.
 Related: deployment/analytics_source_handoff.py (32 Git objects),
          deployment/analytics_source_archive.py (canonical USTAR),
          deployment/analytics_isolated_source_install.py (root approval),
@@ -28,14 +29,19 @@ import json
 from . import application_manifest as _original_git
 from .rootless_docker_authority import AUTHORITY
 from .analytics_executor_service_config import (
-    ANALYTICS_INSTALLED_FILES, _INSTALLED_RUNTIME_FILES,
+    ANALYTICS_INSTALLED_FILES, ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+    _INSTALLED_RUNTIME_FILES,
     _SOURCE_CLAIM_SHA256, parse_analytics_executor_service_config,
 )
 from .analytics_isolated_source_install import _approval
 from .analytics_source_archive import (
     build_analytics_source_archive, verify_analytics_source_archive,
+    build_analytics_successor_source_archive,
+    verify_analytics_successor_source_archive,
 )
-from .analytics_source_handoff import review_analytics_source_handoff
+from .analytics_source_handoff import (
+    review_analytics_source_handoff, review_analytics_successor_source_handoff,
+)
 from .policy import canonical_bytes
 
 SOURCE_ARCHIVE = "/opt/omnilyzer/deployment/.analytics-source-review.tar"
@@ -43,6 +49,9 @@ SOURCE_APPROVAL = "/etc/omnilyzer/deployment/dev/analytics-source-install.json"
 EXECUTOR_CONFIG = "/etc/omnilyzer/deployment/dev/analytics-executor.json"
 BROKER_CONFIG = "/etc/omnilyzer/deployment/broker/analytics.json"
 DESTINATION = "/opt/omnilyzer/deployment/analytics-app"
+# V2 reviewed candidate must be independently installed *beside* V1.
+# The original V1 active service continues to refer to DESTINATION.
+SUCCESSOR_DESTINATION = "/opt/omnilyzer/deployment/analytics-app-candidate"
 _CLOSED_PATHS = (SOURCE_ARCHIVE, SOURCE_APPROVAL, EXECUTOR_CONFIG, BROKER_CONFIG)
 # These systemd objects remain inert until separately installed by root.
 # Exactly three are already bound in the canonical 32-object reviewed archive.
@@ -61,6 +70,39 @@ _ANALYTICS_RUNTIME_DROPIN = (
     "/etc/systemd/system/"
     "omnilyzer-deployment-analytics-executor.service.d/"
     "rootless-runtime.conf"
+)
+# The *inactive* successor source must never overwrite either original unit
+# or the original installed V1 broker/executor WorkingDirectory. These two
+# fixed drop-in filenames are generated as uninstalled review inputs ONLY.
+_SUCCESSOR_BROKER_DROPIN = (
+    "/etc/systemd/system/omnilyzer-deployment-broker.service.d/"
+    "analytics-v2-source.conf"
+)
+_SUCCESSOR_EXECUTOR_DROPIN = (
+    "/etc/systemd/system/omnilyzer-deployment-analytics-executor.service.d/"
+    "analytics-v2-source.conf"
+)
+# The original Cosign and TrustedRoot reader requires two protected directories
+# to have the *current verifier principal's* group, not broker UID990's group.
+# Systemd binds separately root-provisioned 0:991 copies into the old paths
+# INSIDE the UID991 service mount namespace. No shared broker file becomes
+# group-readable, and neither signed binary nor original verifier is modified.
+_SUCCESSOR_VERIFIER_BINDS = (
+    "BindReadOnlyPaths="
+    "/etc/omnilyzer/deployment/dev/analytics-executor-sigstore:"
+    "/etc/omnilyzer/deployment/broker "
+    "/opt/omnilyzer/deployment/analytics-executor-tools:"
+    "/opt/omnilyzer/deployment/tools"
+)
+# The original original C32G/C32I verifier demands independently private
+# 0700 workspaces for its sealed evidence and Docker OIDC auth. The private
+# parent mount is already in rootless-runtime.conf and is never shared with
+# Canary/UID990. Nested mounts grant only UID991 temporary write capability.
+_SUCCESSOR_VERIFIER_TMPFS = (
+    "TemporaryFileSystem="
+    "/run/omnilyzer/deployment/dev:mode=0755,uid=0,gid=0 "
+    "/run/omnilyzer/deployment/dev/blob-verifier:mode=0700,uid=991,gid=991 "
+    "/run/omnilyzer/deployment/dev/oci-verifier:mode=0700,uid=991,gid=991"
 )
 _ORIGINAL_RUNTIME_DIRECTORY = (
     "RuntimeDirectory=omnilyzer/deployment/rootless-docker"
@@ -83,6 +125,14 @@ _ROOTLESS_BIND = (
     "BindReadOnlyPaths=/run/user/991/docker.sock:"
     "/run/omnilyzer/deployment/rootless-docker/docker.sock"
 )
+# Historical accepted DEV platform-promotion workflow commit. V2's fixed
+# root-owned candidate config pins this once; per-Analytics-version changes
+# NEVER select their own workflow identity. Changing the platform workflow
+# is a separate owner-reviewed platform source/config update, not a product
+# release parameter or mutable request field.
+_REVIEWED_TASK014_DEV_WORKFLOW_SHA = (
+    "9d29fa1a4010e6e72676580c36a94c1e97e8794b"
+)
 _ERROR = "Analytics Task014 source activation inputs are unavailable"
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 
@@ -93,76 +143,124 @@ class AnalyticsActivationInputsError(Exception):
 
 def build_unsigned_analytics_activation_inputs(
     *, repository_root: str, reviewed_commit: str,
+    successor_source: bool = False,
+    owner_authorized_first_successor: bool = False,
 ) -> dict[str, bytes]:
-    """Bind four review inputs to the SAME exact immutable Git source.
+    """Bind four review inputs to exactly one verified Git source generation.
 
-    The original Analytics parser validates the broker/executor config and
-    original root-only approval parser validates the installation request.
-    Return values are publicly constructible and NEVER grant root authority.
+    The default retains the independently accepted V1 root-install request.
+    Explicit V2 emits unsigned successor review data and schema-2 config;
+    generation3 emits only unsigned future owner-install review inputs,
+    which the CURRENT root-only installer still rejects. This is never an
+    installation, deployment authorization or signature acceptance.
     """
     try:
-        manifest = review_analytics_source_handoff(
-            repository_root=repository_root, reviewed_commit=reviewed_commit,
+        if (
+            type(successor_source) is not bool
+            or type(owner_authorized_first_successor) is not bool
+            or (owner_authorized_first_successor and not successor_source)
+        ):
+            raise ValueError
+        manifest = (
+            review_analytics_successor_source_handoff(
+                repository_root=repository_root, reviewed_commit=reviewed_commit,
+            ) if successor_source else review_analytics_source_handoff(
+                repository_root=repository_root, reviewed_commit=reviewed_commit,
+            )
         )
         metadata = json.loads(manifest)
         manifest_sha = hashlib.sha256(manifest).hexdigest()
-        archive = build_analytics_source_archive(
-            repository_root=repository_root, reviewed_commit=reviewed_commit,
+        archive = (
+            build_analytics_successor_source_archive(
+                repository_root=repository_root, reviewed_commit=reviewed_commit,
+            ) if successor_source else build_analytics_source_archive(
+                repository_root=repository_root, reviewed_commit=reviewed_commit,
+            )
         )
-        contents = dict(verify_analytics_source_archive(
+        contents = dict((
+            verify_analytics_successor_source_archive if successor_source
+            else verify_analytics_source_archive
+        )(
             archive, expected_manifest_sha256=manifest_sha,
             reviewed_commit=reviewed_commit,
         ))
+        baseline = metadata["baseline_review"] if successor_source else metadata
+        paths = (
+            ANALYTICS_SUCCESSOR_INSTALLED_FILES if successor_source
+            else ANALYTICS_INSTALLED_FILES
+        )
+        expected_count = 38 if successor_source else 32
         entries = {
             item["path"]: item["sha256"]
             for item in metadata["source_entries"]
         }
         if (
-            len(contents) != 32 or len(entries) != 32
-            or len(ANALYTICS_INSTALLED_FILES) != 20
-            or not set(ANALYTICS_INSTALLED_FILES).issubset(entries)
+            len(contents) != expected_count or len(entries) != expected_count
+            or len(paths) != (26 if successor_source else 20)
+            or not set(paths).issubset(entries)
             or not set(_INSTALLED_RUNTIME_FILES).issubset(entries)
-            or metadata["reviewed_source_claim_sha256"] != _SOURCE_CLAIM_SHA256
+            or any(hashlib.sha256(contents[path]).hexdigest() != entries[path]
+                   for path in paths)
+            or baseline["reviewed_source_claim_sha256"] != _SOURCE_CLAIM_SHA256
             or metadata["source_commit"] != reviewed_commit
-            or metadata["isolation_target"] != DESTINATION
+            or baseline["isolation_target"] != DESTINATION
             or metadata["deployment_authorized"] is not False
             or metadata["signed_release_authorized"] is not False
+            or baseline["deployment_authorized"] is not False
+            or baseline["signed_release_authorized"] is not False
         ):
             raise ValueError
+        generation = (3 if owner_authorized_first_successor
+                      else 2 if successor_source else 1)
         product_config = canonical_bytes({
-            "schema_version": 1, "product_id": "analytics", "stage": "dev",
+            "schema_version": generation, "product_id": "analytics", "stage": "dev",
+            **({"expected_workflow_sha": _REVIEWED_TASK014_DEV_WORKFLOW_SHA}
+               if successor_source else {}),
+            **({"owner_authorized_first_successor": True}
+               if owner_authorized_first_successor else {}),
             "reviewed_installed_commit": reviewed_commit,
-            "reviewed_compose_sha256": metadata["reviewed_compose_sha256"],
+            "reviewed_compose_sha256": baseline["reviewed_compose_sha256"],
             "reviewed_product_profile_sha256":
-                metadata["reviewed_product_profile_sha256"],
+                baseline["reviewed_product_profile_sha256"],
             "reviewed_runtime_profile_sha256":
-                metadata["reviewed_runtime_profile_sha256"],
+                baseline["reviewed_runtime_profile_sha256"],
             "source_sha256": {
-                path: entries[path] for path in ANALYTICS_INSTALLED_FILES
+                path: entries[path] for path in paths
             },
         })
         parsed = parse_analytics_executor_service_config(product_config)
         if (
-            parsed["reviewed_installed_commit"] != reviewed_commit
+            (successor_source and parsed.get("expected_workflow_sha")
+                != _REVIEWED_TASK014_DEV_WORKFLOW_SHA)
+            or parsed["reviewed_installed_commit"] != reviewed_commit
             or parsed["reviewed_compose_sha256"]
-                != metadata["reviewed_compose_sha256"]
+                != baseline["reviewed_compose_sha256"]
             or parsed["reviewed_product_profile_sha256"]
-                != metadata["reviewed_product_profile_sha256"]
+                != baseline["reviewed_product_profile_sha256"]
             or parsed["reviewed_runtime_profile_sha256"]
-                != metadata["reviewed_runtime_profile_sha256"]
+                != baseline["reviewed_runtime_profile_sha256"]
             or tuple(parsed["source_sha256"]) != tuple(
-                (path, entries[path]) for path in ANALYTICS_INSTALLED_FILES
+                (path, entries[path]) for path in paths
             )
         ):
             raise ValueError
+        # Source archive approval remains V2 schema2: generation3 is a
+        # distinct root-owned *runtime execution* selection, not permission
+        # to weaken or replace the immutable 38-entry source archive.
         approval = canonical_bytes({
-            "schema_version": 1, "product_id": "analytics", "stage": "dev",
+            "schema_version": 2 if successor_source else 1,
+            "product_id": "analytics", "stage": "dev",
             "reviewed_commit": reviewed_commit,
             "manifest_sha256": manifest_sha,
             "archive_sha256": hashlib.sha256(archive).hexdigest(),
-            "destination": DESTINATION,
+            "destination": (SUCCESSOR_DESTINATION if successor_source
+                            else DESTINATION),
         })
-        if _approval(approval)["archive_sha256"] != hashlib.sha256(archive).hexdigest():
+        # Original ROOT installer still accepts V1 ONLY: allowing V2 here
+        # makes a reproducible reviewed input, not a usable root install.
+        if not successor_source and _approval(approval)["archive_sha256"] != (
+            hashlib.sha256(archive).hexdigest()
+        ):
             raise ValueError
         result = {
             SOURCE_ARCHIVE: archive,
@@ -181,6 +279,8 @@ def build_unsigned_analytics_activation_inputs(
 
 def build_unsigned_analytics_service_inputs(
     *, repository_root: str, reviewed_commit: str,
+    successor_source: bool = False,
+    owner_authorized_first_successor: bool = False,
 ) -> dict[str, bytes]:
     """Bind EXACT service review bytes to one Git generation and original C32ZF.
 
@@ -202,6 +302,36 @@ def build_unsigned_analytics_service_inputs(
     Neither unit is installed or started by this review-only builder.
     """
     try:
+        if (
+            type(successor_source) is not bool
+            or type(owner_authorized_first_successor) is not bool
+            or (owner_authorized_first_successor and not successor_source)
+        ):
+            raise ValueError("invalid source generation")
+        # Always preserve the historical 4 original service files byte-for-byte.
+        # V2 add-ons may only be returned after the full immutable 38-source
+        # V2 archive, 25 modules + pinned Compose override and root-config shape pass.
+        if successor_source:
+            candidate = build_unsigned_analytics_activation_inputs(
+                repository_root=repository_root, reviewed_commit=reviewed_commit,
+                successor_source=True,
+                owner_authorized_first_successor=owner_authorized_first_successor,
+            )
+            from .analytics_isolated_source_install import _successor_approval
+            approved_candidate = _successor_approval(candidate[SOURCE_APPROVAL])
+            parsed_candidate = parse_analytics_executor_service_config(
+                candidate[EXECUTOR_CONFIG]
+            )
+            if (
+                approved_candidate["destination"] != SUCCESSOR_DESTINATION
+                or parsed_candidate["source_generation"] != (
+                    3 if owner_authorized_first_successor else 2
+                )
+                or tuple(name for name, _ in parsed_candidate["source_sha256"])
+                    != ANALYTICS_SUCCESSOR_INSTALLED_FILES
+                or candidate[EXECUTOR_CONFIG] != candidate[BROKER_CONFIG]
+            ):
+                raise ValueError("candidate service source identity mismatch")
         sources = build_unsigned_analytics_activation_inputs(
             repository_root=repository_root, reviewed_commit=reviewed_commit,
         )
@@ -281,11 +411,34 @@ def build_unsigned_analytics_service_inputs(
         result[_ANALYTICS_RUNTIME_DROPIN] = (
             "[Service]\n" + _PRIVATE_TMPFS + "\n" + _LISTENER_BIND + "\n"
         ).encode("ascii")
+        # Appending these two separately installed override inputs does not
+        # grant a service restart, source selection or signed release GO.
+        # Neither overrides ExecStart, identity, secrets, sockets nor ports.
+        if successor_source:
+            candidate_bytes = (
+                "[Service]\nWorkingDirectory=" + SUCCESSOR_DESTINATION + "\n"
+            ).encode("ascii")
+            result[_SUCCESSOR_BROKER_DROPIN] = candidate_bytes
+            # The broker uses its own already-qualified UID990 signer assets.
+            # Only UID991's *private* V2 mount namespace receives isolated
+            # signer copies and writable temporary verifier workspaces.
+            result[_SUCCESSOR_EXECUTOR_DROPIN] = (
+                candidate_bytes
+                + (_SUCCESSOR_VERIFIER_BINDS + "\n"
+                   + _SUCCESSOR_VERIFIER_TMPFS + "\n").encode("ascii")
+                + (b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1\n"
+                   if owner_authorized_first_successor else b"")
+            )
+        expected_paths = {
+            _ANALYTICS_RUNTIME_DROPIN,
+            *(destination for _source, destination in _SERVICE_SOURCES),
+        }
+        if successor_source:
+            expected_paths.update((
+                _SUCCESSOR_BROKER_DROPIN, _SUCCESSOR_EXECUTOR_DROPIN,
+            ))
         if (
-            set(result) != {
-                _ANALYTICS_RUNTIME_DROPIN,
-                *(destination for _source, destination in _SERVICE_SOURCES),
-            }
+            set(result) != expected_paths
             or any(type(raw) is not bytes or not raw for raw in result.values())
         ):
             raise ValueError

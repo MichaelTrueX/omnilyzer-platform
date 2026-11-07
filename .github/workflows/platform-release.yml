@@ -21,6 +21,14 @@ on:
         description: Exact 40-character commit SHA selected from main
         required: true
         type: string
+      analytics_source_sha:
+        description: Optional exact reviewed Analytics Git SHA for a successor (leave empty for legacy 0.15.0)
+        required: false
+        type: string
+      analytics_owner_signature_base64:
+        description: Detached SSH Ed25519 approval of exact Analytics source/version/platform SHA (public signature)
+        required: false
+        type: string
       auth_probe:
         description: Read-only Forgejo OIDC diagnostic, skips build and publication
         required: false
@@ -45,7 +53,7 @@ jobs:
   # Section 0: an API-dispatched unknown product or Analytics auth-probe mode
   # must produce a FAILED run, not a deceptively green all-skipped workflow.
   deny-unsupported-dispatch:
-    if: ${{ (inputs.product != 'canary' && inputs.product != 'analytics') || (inputs.product == 'analytics' && inputs.auth_probe == true) }}
+    if: ${{ (inputs.product != 'canary' && inputs.product != 'analytics') || (inputs.product == 'analytics' && inputs.auth_probe == true) || (inputs.analytics_source_sha != '' && inputs.analytics_owner_signature_base64 == '') || (inputs.analytics_source_sha == '' && inputs.analytics_owner_signature_base64 != '') || (inputs.product != 'analytics' && inputs.analytics_source_sha != '') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -126,11 +134,11 @@ jobs:
             echo 'TASK013_ANALYTICS_PRIVATE_DEPLOY_KEY_MISSING' >&2
             exit 1
           fi
-      - name: Check out exact reviewed Analytics PR52 Git objects
+      - name: Check out explicitly selected Analytics Git objects
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: MichaelTrueX/omnilyzer
-          ref: 4cdda7faeba57abb3388f9be5c450fe6afb1140d
+          ref: ${{ inputs.analytics_source_sha || '4cdda7faeba57abb3388f9be5c450fe6afb1140d' }}
           # Cross-repository private checkout needs its own least-privilege
           # read-only credential; platform GITHUB_TOKEN cannot access it.
           ssh-key: ${{ secrets.ANALYTICS_SOURCE_DEPLOY_KEY }}
@@ -145,6 +153,8 @@ jobs:
           DISPATCH_SHA: ${{ github.sha }}
           REQUESTED_SHA: ${{ github.event.inputs.source_sha }}
           RELEASE_WORKFLOW_REF: ${{ github.workflow_ref }}
+          ANALYTICS_SOURCE_COMMIT: ${{ inputs.analytics_source_sha }}
+          ANALYTICS_OWNER_SIGNATURE_BASE64: ${{ inputs.analytics_owner_signature_base64 }}
         run: |
           set -euo pipefail
           test "$DISPATCH_REPOSITORY" = "MichaelTrueX/omnilyzer-platform"
@@ -152,11 +162,19 @@ jobs:
           test "$REQUESTED_SHA" = "$DISPATCH_SHA"
           test "$(git rev-parse HEAD)" = "$DISPATCH_SHA"
           test "$RELEASE_WORKFLOW_REF" = "MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main"
-          test "$(git -C analytics-review-source rev-parse HEAD)" = "4cdda7faeba57abb3388f9be5c450fe6afb1140d"
           git -C analytics-review-source remote set-url origin https://github.com/MichaelTrueX/omnilyzer.git
-          python3 -m release.analytics_source_admission --analytics-checkout analytics-review-source
-          python3 -m release.analytics_task013_build_input --analytics-checkout analytics-review-source
-          echo "ANALYTICS_SOURCE_ONLY_ACCEPTED: NO SIGNATURE, NO REGISTRY, NO EXECUTOR"
+          if test -n "$ANALYTICS_SOURCE_COMMIT"; then
+            test -n "$ANALYTICS_OWNER_SIGNATURE_BASE64"
+            [[ "$ANALYTICS_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+            test "$(git -C analytics-review-source rev-parse HEAD)" = "$ANALYTICS_SOURCE_COMMIT"
+            echo "ANALYTICS_SUCCESSOR_SOURCE_SHAPE_PASS: AWAIT_OWNER_SIGNATURE_AND_BUILD"
+          else
+            test -z "$ANALYTICS_OWNER_SIGNATURE_BASE64"
+            test "$(git -C analytics-review-source rev-parse HEAD)" = "4cdda7faeba57abb3388f9be5c450fe6afb1140d"
+            python3 -m release.analytics_source_admission --analytics-checkout analytics-review-source
+            python3 -m release.analytics_task013_build_input --analytics-checkout analytics-review-source
+            echo "ANALYTICS_ORIGINAL_SOURCE_ONLY_ACCEPTED: NO REGISTRY, NO EXECUTOR"
+          fi
       # Section 1c: original Task013 pinned build and scanner; all outputs
       # remain LOCAL, unsigned, and inaccessible to the canary publishers.
       - name: Set up pinned Analytics Python runtime
@@ -170,21 +188,30 @@ jobs:
           version: v0.36.1
           driver: docker-container
           driver-opts: image=moby/buildkit:v0.24.0@sha256:6eceb8971ce4fceb3daca562832642706238b7eea72941fcf9896c93c3c4a53e
-      - name: Build and verify immutable original Analytics OCI archive
+      - name: Build and verify immutable owner-approved Analytics OCI archive
         shell: bash
+        env:
+          ANALYTICS_SOURCE_COMMIT: ${{ inputs.analytics_source_sha }}
+          ANALYTICS_RELEASE_VERSION: ${{ inputs.version }}
+          ANALYTICS_OWNER_SIGNATURE_BASE64: ${{ inputs.analytics_owner_signature_base64 }}
+          ANALYTICS_OWNER_ALLOWED_SIGNERS: ${{ secrets.ANALYTICS_OWNER_ALLOWED_SIGNERS }}
         run: |
           set -euo pipefail
           umask 077
           handoff="$RUNNER_TEMP/analytics-task013-unsigned"
           mkdir -m 0700 "$handoff"
+          successor_args=()
+          if test -n "$ANALYTICS_SOURCE_COMMIT"; then
+            successor_args=(--successor)
+          fi
           python3 -m release.analytics_task013_build_candidate \
             --analytics-checkout analytics-review-source \
-            --builder m01-analytics-task013 --build \
+            --builder m01-analytics-task013 --build "${successor_args[@]}" \
             --retain-verified-artifacts "$handoff/candidate"
           test -s "$handoff/candidate/source.tar"
           test -s "$handoff/candidate/analytics.oci.tar"
           python3 -m release.analytics_release_source_binding \
-            --analytics-checkout analytics-review-source \
+            --analytics-checkout analytics-review-source "${successor_args[@]}" \
             --immutable-context "$handoff/candidate/source.tar" \
             --oci-archive "$handoff/candidate/analytics.oci.tar" \
             > "$handoff/unsigned-source-claim.json"
@@ -192,12 +219,24 @@ jobs:
           import json, sys
           from pathlib import Path
           receipt = json.loads(Path(sys.argv[1]).read_bytes())
+          claim = receipt.get('claim', {})
+          selected = __import__('os').environ['ANALYTICS_SOURCE_COMMIT']
           if (receipt.get('signed') is not False
                   or receipt.get('release_authorized') is not False
                   or receipt.get('deployment_authorized') is not False
-                  or receipt.get('claim', {}).get('source_files_verified') != 78
-                  or receipt.get('claim', {}).get('source_commit') !=
-                  '4cdda7faeba57abb3388f9be5c450fe6afb1140d'):
+                  or type(claim) is not dict
+                  or (selected and (
+                      receipt.get('schema_version') != 2
+                      or claim.get('schema_version') != 2
+                      or claim.get('source_commit') != selected
+                      or claim.get('release_version') !=
+                         __import__('os').environ['ANALYTICS_RELEASE_VERSION']
+                      or not claim.get('owner_approval_sha256')))
+                  or (not selected and (
+                      receipt.get('schema_version') != 1
+                      or claim.get('source_files_verified') != 78
+                      or claim.get('source_commit') !=
+                         '4cdda7faeba57abb3388f9be5c450fe6afb1140d'))):
               raise SystemExit('ORIGINAL_ANALYTICS_SOURCE_CLAIM_DENIED')
           print('ORIGINAL_ANALYTICS_UNSIGNED_SOURCE_BINDING_PASS')
           PYCODE
@@ -320,7 +359,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: MichaelTrueX/omnilyzer
-          ref: 4cdda7faeba57abb3388f9be5c450fe6afb1140d
+          ref: ${{ inputs.analytics_source_sha || '4cdda7faeba57abb3388f9be5c450fe6afb1140d' }}
           # Cross-repository private checkout needs its own least-privilege
           # read-only credential; platform GITHUB_TOKEN cannot access it.
           ssh-key: ${{ secrets.ANALYTICS_SOURCE_DEPLOY_KEY }}
@@ -347,6 +386,10 @@ jobs:
       - name: Verify source, registry absence, then publish exact OCI digest
         shell: bash
         env:
+          ANALYTICS_SOURCE_COMMIT: ${{ inputs.analytics_source_sha }}
+          ANALYTICS_RELEASE_VERSION: ${{ inputs.version }}
+          ANALYTICS_OWNER_SIGNATURE_BASE64: ${{ inputs.analytics_owner_signature_base64 }}
+          ANALYTICS_OWNER_ALLOWED_SIGNERS: ${{ secrets.ANALYTICS_OWNER_ALLOWED_SIGNERS }}
           RELEASE_VERSION: ${{ inputs.version }}
           REQUESTED_SHA: ${{ inputs.source_sha }}
           RELEASE_SHA: ${{ github.sha }}
@@ -364,8 +407,14 @@ jobs:
           zot_token="$RUNNER_TEMP/analytics-preflight-zot.jwt"
           publish_token="$RUNNER_TEMP/analytics-zot-publish.jwt"
           trap 'rm -f "$forgejo_token" "$zot_token" "$publish_token"' EXIT
+          successor_args=()
+          publication_args=()
+          if test -n "$ANALYTICS_SOURCE_COMMIT"; then
+            successor_args=(--successor)
+            publication_args=(--successor-claim-file "$handoff/analytics-source-claim.json")
+          fi
           python3 -m release.analytics_release_source_binding \
-            --analytics-checkout analytics-review-source \
+            --analytics-checkout analytics-review-source "${successor_args[@]}" \
             --immutable-context "$handoff/candidate/source.tar" \
             --oci-archive "$handoff/candidate/analytics.oci.tar" \
             > "$RUNNER_TEMP/analytics-reverified.json"
@@ -386,7 +435,7 @@ jobs:
             --immutable-context "$handoff/candidate/source.tar" \
             --oci-archive "$handoff/candidate/analytics.oci.tar" \
             --token-file "$publish_token" --version "$RELEASE_VERSION" \
-            --output "$RUNNER_TEMP/analytics-oci-publication.json"
+            "${publication_args[@]}" --output "$RUNNER_TEMP/analytics-oci-publication.json"
       - name: Upload authenticated Analytics Zot publication receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
         with:
@@ -436,6 +485,10 @@ jobs:
       - name: Enforce protected identity and build exact Analytics evidence
         shell: bash
         env:
+          ANALYTICS_SOURCE_COMMIT: ${{ inputs.analytics_source_sha }}
+          ANALYTICS_RELEASE_VERSION: ${{ inputs.version }}
+          ANALYTICS_OWNER_SIGNATURE_BASE64: ${{ inputs.analytics_owner_signature_base64 }}
+          ANALYTICS_OWNER_ALLOWED_SIGNERS: ${{ secrets.ANALYTICS_OWNER_ALLOWED_SIGNERS }}
           RELEASE_VERSION: ${{ inputs.version }}
           REQUESTED_SHA: ${{ inputs.source_sha }}
           RELEASE_REF: ${{ github.ref }}
@@ -456,7 +509,11 @@ jobs:
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           test "$RELEASE_WORKFLOW_SHA" = "$RELEASE_SHA"
           test "$RELEASE_WORKFLOW_REF" = 'MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main'
-          python3 -m release.analytics_release_evidence \
+          successor_args=()
+          if test -n "$ANALYTICS_SOURCE_COMMIT"; then
+            successor_args=(--successor)
+          fi
+          python3 -m release.analytics_release_evidence "${successor_args[@]}" \
             --source-claim "$RUNNER_TEMP/analytics-task013-handoff/analytics-source-claim.json" \
             --publication "$RUNNER_TEMP/analytics-zot-receipt/analytics-oci-publication.json" \
             --scan-dir "$RUNNER_TEMP/analytics-task013-handoff" \
@@ -528,7 +585,7 @@ jobs:
 
   # Section 2: Release gate runs only in the DEFAULT non-diagnostic mode.
   gate:
-    if: ${{ inputs.auth_probe == false && inputs.product == 'canary' }}
+    if: ${{ inputs.auth_probe == false && inputs.product == 'canary' && inputs.analytics_source_sha == '' && inputs.analytics_owner_signature_base64 == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

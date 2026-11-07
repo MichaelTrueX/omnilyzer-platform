@@ -25,11 +25,12 @@ from unittest.mock import patch
 
 from deployment import analytics_dev_activation_inputs as activation
 from deployment.analytics_executor_service_config import (
-    ANALYTICS_INSTALLED_FILES, parse_analytics_executor_service_config,
+    ANALYTICS_INSTALLED_FILES, ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+    parse_analytics_executor_service_config,
 )
 from deployment.analytics_isolated_source_install import _approval
 from deployment.analytics_source_archive import (
-    verify_analytics_source_archive,
+    verify_analytics_source_archive, verify_analytics_successor_source_archive,
 )
 from deployment.policy import canonical_bytes
 
@@ -98,6 +99,212 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         self.assertEqual(len(entries), 32)
         self.assertNotIn("deployment/analytics_dev_activation_inputs.py", entries)
         self.assertNotIn("deployment/analytics_isolated_source_install.py", entries)
+
+    def test_v2_exact_git_review_inputs_are_not_installed_authority(self):
+        """Tie all 26 successor source hashes to one immutable V2 Git TAR."""
+        successor = activation.build_unsigned_analytics_activation_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        self.assertEqual(set(successor), set(self.artifacts))
+        self.assertEqual(successor[activation.EXECUTOR_CONFIG],
+                         successor[activation.BROKER_CONFIG])
+        self.assertEqual(
+            activation.build_unsigned_analytics_activation_inputs(
+                repository_root=str(ROOT), reviewed_commit=self.sha,
+            ), self.artifacts,
+        )
+        approval = json.loads(successor[activation.SOURCE_APPROVAL])
+        self.assertEqual(approval["schema_version"], 2)
+        self.assertEqual(approval["reviewed_commit"], self.sha)
+        self.assertEqual(approval["destination"], activation.SUCCESSOR_DESTINATION)
+        from deployment import analytics_isolated_source_install as stage
+        self.assertEqual(activation.SUCCESSOR_DESTINATION,
+                         stage._PARENT + "/" + stage._SUCCESSOR_DESTINATION)
+        self.assertEqual(
+            approval["archive_sha256"],
+            hashlib.sha256(successor[activation.SOURCE_ARCHIVE]).hexdigest(),
+        )
+        archived = dict(verify_analytics_successor_source_archive(
+            successor[activation.SOURCE_ARCHIVE],
+            expected_manifest_sha256=approval["manifest_sha256"],
+            reviewed_commit=self.sha,
+        ))
+        self.assertEqual(len(archived), 38)
+        parsed = parse_analytics_executor_service_config(
+            successor[activation.EXECUTOR_CONFIG],
+        )
+        self.assertEqual(
+            parsed["expected_workflow_sha"],
+            "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
+        )
+        self.assertNotIn(
+            "expected_workflow_sha",
+            parse_analytics_executor_service_config(
+                self.artifacts[activation.EXECUTOR_CONFIG],
+            ),
+        )
+        self.assertEqual(
+            tuple(name for name, _ in parsed["source_sha256"]),
+            ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+        )
+        for name, expected in parsed["source_sha256"]:
+            with self.subTest(path=name):
+                self.assertEqual(hashlib.sha256(archived[name]).hexdigest(), expected)
+        # Current first-install root approval parses ONLY schema1. This is
+        # reviewed source evidence, never a second implicit live installer.
+        with self.assertRaises(ValueError):
+            _approval(successor[activation.SOURCE_APPROVAL])
+        self.assertNotEqual(
+            self.artifacts[activation.EXECUTOR_CONFIG],
+            successor[activation.EXECUTOR_CONFIG],
+        )
+
+    def test_generation_three_unsigned_source_is_separate_and_never_installs(self):
+        """Only an explicit root-controlled generation3 may gain a positive path.
+
+        All outputs are source-only review bytes, with no signer, root install,
+        Docker, service start, image publish or operator approval implied.
+        """
+        baseline = activation.build_unsigned_analytics_activation_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        approved = activation.build_unsigned_analytics_activation_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_first_successor=True,
+        )
+        self.assertEqual(set(approved), set(baseline))
+        self.assertEqual(approved[activation.SOURCE_ARCHIVE],
+                         baseline[activation.SOURCE_ARCHIVE])
+        self.assertNotEqual(approved[activation.EXECUTOR_CONFIG],
+                            baseline[activation.EXECUTOR_CONFIG])
+        import json
+        parsed = json.loads(approved[activation.EXECUTOR_CONFIG])
+        self.assertEqual(parsed["schema_version"], 3)
+        self.assertIs(parsed["owner_authorized_first_successor"], True)
+        self.assertEqual(
+            activation.parse_analytics_executor_service_config(
+                approved[activation.EXECUTOR_CONFIG]
+            )["source_generation"], 3,
+        )
+        original = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        preview = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_first_successor=True,
+        )
+        self.assertEqual(set(original), set(preview))
+        for name in original:
+            if name != activation._SUCCESSOR_EXECUTOR_DROPIN:
+                self.assertEqual(original[name], preview[name])
+        self.assertEqual(
+            preview[activation._SUCCESSOR_EXECUTOR_DROPIN],
+            original[activation._SUCCESSOR_EXECUTOR_DROPIN]
+            + b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1\n",
+        )
+        self.assertNotIn(
+            b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1",
+            original[activation._SUCCESSOR_EXECUTOR_DROPIN],
+        )
+        for bad in (
+            {"owner_authorized_first_successor": True},
+            {"successor_source": True, "owner_authorized_first_successor": 1},
+            {"successor_source": True, "owner_authorized_first_successor": "true"},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(
+                activation.AnalyticsActivationInputsError,
+            ):
+                activation.build_unsigned_analytics_activation_inputs(
+                    repository_root=str(ROOT), reviewed_commit=self.sha,
+                    **bad,
+                )
+
+    def test_v2_bad_generation_or_changed_git_blob_is_denied(self):
+        """No caller-selected generation/manifest or tampered TAR can pass."""
+        with self.assertRaises(activation.AnalyticsActivationInputsError):
+            activation.build_unsigned_analytics_activation_inputs(
+                repository_root=str(ROOT), reviewed_commit=self.sha,
+                successor_source=1,
+            )
+        with self.assertRaises(activation.AnalyticsActivationInputsError):
+            activation.build_unsigned_analytics_activation_inputs(
+                repository_root=str(ROOT), reviewed_commit="a" * 40,
+                successor_source=True,
+            )
+        successor = activation.build_unsigned_analytics_activation_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        good = verify_analytics_successor_source_archive(
+            successor[activation.SOURCE_ARCHIVE],
+            expected_manifest_sha256=json.loads(
+                successor[activation.SOURCE_APPROVAL]
+            )["manifest_sha256"],
+            reviewed_commit=self.sha,
+        )
+        corrupt = tuple(
+            (name, b"modified" if name == ANALYTICS_SUCCESSOR_INSTALLED_FILES[-1]
+             else blob) for name, blob in good
+        )
+        with patch.object(activation, "verify_analytics_successor_source_archive",
+                          return_value=corrupt), self.assertRaises(
+                activation.AnalyticsActivationInputsError):
+            activation.build_unsigned_analytics_activation_inputs(
+                repository_root=str(ROOT), reviewed_commit=self.sha,
+                successor_source=True,
+            )
+
+    def test_v2_compose_reset_overlay_is_git_exact_and_tamper_denied(self):
+        """An unsigned alternate port mapping never becomes root-owned V2 input.
+
+        Check the real Git blob is present in the fixed candidate bundle,
+        then tamper ONLY that YAML while the manifest/source SHA is unchanged.
+        The existing activation builder must reject before any installation.
+        """
+        from deployment.analytics_executor_service_config import (
+            ANALYTICS_SUCCESSOR_COMPOSE_FILES,
+        )
+        self.assertEqual(ANALYTICS_SUCCESSOR_COMPOSE_FILES, (
+            "deployment/runtime/dev/analytics.compose.successor-ports.yaml",
+        ))
+        successor = activation.build_unsigned_analytics_activation_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        approved = json.loads(successor[activation.SOURCE_APPROVAL])
+        original = verify_analytics_successor_source_archive(
+            successor[activation.SOURCE_ARCHIVE],
+            expected_manifest_sha256=approved["manifest_sha256"],
+            reviewed_commit=self.sha,
+        )
+        overlay = ANALYTICS_SUCCESSOR_COMPOSE_FILES[0]
+        original_map = dict(original)
+        self.assertIn(b"ports: !reset []", original_map[overlay])
+        self.assertEqual(
+            hashlib.sha256(original_map[overlay]).hexdigest(),
+            json.loads(successor[activation.EXECUTOR_CONFIG])[
+                "source_sha256"
+            ][overlay],
+        )
+        corrupted = tuple(
+            (path, blob.replace(b"ports: !reset []", b"ports: []")
+             if path == overlay else blob)
+            for path, blob in original
+        )
+        with (
+            patch.object(
+                activation, "verify_analytics_successor_source_archive",
+                return_value=corrupted,
+            ),
+            self.assertRaises(activation.AnalyticsActivationInputsError),
+        ):
+            activation.build_unsigned_analytics_activation_inputs(
+                repository_root=str(ROOT), reviewed_commit=self.sha,
+                successor_source=True,
+            )
 
     def test_unsigned_inputs_alone_never_install_or_confer_permission(self):
         """No privileged source/data writes can happen from a review builder."""
@@ -190,6 +397,129 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         self.assertNotIn(
             b"User=", services[activation._ANALYTICS_RUNTIME_DROPIN],
         )
+
+    def test_v2_service_overrides_preserve_original_units_and_authority(self):
+        """Review-only broker/executor working dirs change as ONE source pair.
+
+        No active service, port, identity, rootless Docker mount, command or
+        root installer is changed by these generated bytes.
+        """
+        first = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+        )
+        second = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        self.assertEqual(len(first), 4)
+        self.assertEqual(len(second), 6)
+        for path, expected in first.items():
+            with self.subTest(path=path):
+                self.assertEqual(second[path], expected)
+        appended = set(second) - set(first)
+        self.assertEqual(appended, {
+            activation._SUCCESSOR_BROKER_DROPIN,
+            activation._SUCCESSOR_EXECUTOR_DROPIN,
+        })
+        self.assertEqual(activation.SUCCESSOR_DESTINATION,
+                         "/opt/omnilyzer/deployment/analytics-app-candidate")
+        self.assertNotEqual(activation.SUCCESSOR_DESTINATION,
+                            activation.DESTINATION)
+        for path in appended:
+            with self.subTest(override=path):
+                content = second[path].decode("ascii")
+                expected = (
+                    "[Service]\nWorkingDirectory="
+                    + activation.SUCCESSOR_DESTINATION + "\n"
+                )
+                if path == activation._SUCCESSOR_EXECUTOR_DROPIN:
+                    expected += (
+                        activation._SUCCESSOR_VERIFIER_BINDS + "\n"
+                        + activation._SUCCESSOR_VERIFIER_TMPFS + "\n"
+                    )
+                self.assertEqual(content, expected)
+                parser = configparser.ConfigParser(interpolation=None, strict=True)
+                parser.read_string(content)
+                keys = {"workingdirectory": activation.SUCCESSOR_DESTINATION}
+                if path == activation._SUCCESSOR_EXECUTOR_DROPIN:
+                    keys.update({
+                        "bindreadonlypaths": activation._SUCCESSOR_VERIFIER_BINDS.partition("=")[2],
+                        "temporaryfilesystem": activation._SUCCESSOR_VERIFIER_TMPFS.partition("=")[2],
+                    })
+                self.assertEqual(dict(parser["Service"]), keys)
+                for forbidden in (
+                    "ExecStart", "User=", "Group=", "ReadWritePaths=",
+                    "BindPaths=", "Environment=",
+                    "RuntimeDirectory=", "Restart=", "ConditionPathExists=",
+                ):
+                    self.assertNotIn(forbidden, content)
+                if path == activation._SUCCESSOR_BROKER_DROPIN:
+                    self.assertNotIn("BindReadOnlyPaths=", content)
+                    self.assertNotIn("TemporaryFileSystem=", content)
+        # Original broker first-install override still selects original V1,
+        # so rollback is removal of ONLY both V2 drop-ins after approval.
+        self.assertIn(b"WorkingDirectory=/opt/omnilyzer/deployment/analytics-app\n",
+            first[activation._SERVICE_SOURCES[0][1]])
+        self.assertIn(b"WorkingDirectory=/opt/omnilyzer/deployment/analytics-app\n",
+            first[activation._SERVICE_SOURCES[1][1]])
+        with self.assertRaises(activation.AnalyticsActivationInputsError):
+            activation.build_unsigned_analytics_service_inputs(
+                repository_root=str(ROOT), reviewed_commit=self.sha,
+                successor_source=1,
+            )
+        with patch.object(activation, "SUCCESSOR_DESTINATION", "/tmp/attacker"):
+            with self.assertRaises(activation.AnalyticsActivationInputsError):
+                activation.build_unsigned_analytics_service_inputs(
+                    repository_root=str(ROOT), reviewed_commit=self.sha,
+                    successor_source=True,
+                )
+
+    def test_v2_uid991_private_signer_mounts_preserve_broker_secrecy(self):
+        """Exact isolated Cosign and TrustedRoot mirror source, UID991 workspace.
+
+        Existing original read-only blob/OCI verifier expects 0:991 root-held
+        sources in its namespace. The V1 and broker bytes MUST NOT change.
+        A future approved root installer must separately provision identical
+        verified binary and root content under these dedicated directories.
+        """
+        from deployment.broker_service_config import (
+            PRODUCTION_COSIGN_PATH, PRODUCTION_SIGSTORE_TRUSTED_ROOT_PATH,
+        )
+        from deployment import blob_verifier, oci_verifier
+        original = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+        )
+        successor = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        candidate = successor[activation._SUCCESSOR_EXECUTOR_DROPIN].decode("ascii")
+        broker = successor[activation._SUCCESSOR_BROKER_DROPIN].decode("ascii")
+        self.assertEqual(
+            PRODUCTION_COSIGN_PATH,
+            "/opt/omnilyzer/deployment/tools/cosign-v3.1.2-linux-amd64",
+        )
+        self.assertEqual(
+            PRODUCTION_SIGSTORE_TRUSTED_ROOT_PATH,
+            "/etc/omnilyzer/deployment/broker/sigstore-trusted-root.json",
+        )
+        self.assertEqual(blob_verifier.RUNTIME_DIRECTORY,
+                         "/run/omnilyzer/deployment/dev/blob-verifier")
+        self.assertEqual(oci_verifier._RUNTIME_DIRECTORY,
+                         "/run/omnilyzer/deployment/dev/oci-verifier")
+        self.assertIn(activation._SUCCESSOR_VERIFIER_BINDS, candidate)
+        self.assertIn(activation._SUCCESSOR_VERIFIER_TMPFS, candidate)
+        self.assertNotIn("/var/lib/omnilyzer/deployment", candidate)
+        self.assertNotIn("Environment=", candidate)
+        self.assertNotIn("SupplementaryGroups=", candidate)
+        self.assertNotIn("BindReadOnlyPaths=", broker)
+        self.assertEqual(
+            original[activation._ANALYTICS_RUNTIME_DROPIN],
+            successor[activation._ANALYTICS_RUNTIME_DROPIN],
+        )
+        for key in original:
+            self.assertEqual(original[key], successor[key])
+        self.assertNotIn("analytics-executor-sigstore", str(original))
 
     def test_private_tmpfs_is_not_shadowed_by_read_write_paths(self):
         """Regression for real systemd255 226/NAMESPACE while Canary is idle.

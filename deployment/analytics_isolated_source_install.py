@@ -1,7 +1,8 @@
 """File: deployment/analytics_isolated_source_install.py
 
-Purpose: Prepare ONE approved Analytics Task014 root-owned source generation
-         without modifying the original protected canary application.
+Purpose: Preserve original root-approved 70-file Analytics Task014 source
+         installation and reuse protected FD staging for an independently
+         root-approved, inert 76-file V2 candidate beside the live source.
 Related: deployment/analytics_source_archive.py (32 exact review objects),
          deployment/analytics_source_handoff.py (38 historical inherited
          source hashes), deployment/dev_host_provisioning_mechanics.py (C31B
@@ -35,14 +36,21 @@ from . import dev_host_provisioning_mechanics as _original
 from .application_manifest import ApplicationManifestEntry
 from .application_source_set import DevApplicationSourceSet
 from .analytics_source_archive import (
-    _validate_manifest, verify_analytics_source_archive,
+    _validate_manifest, _validate_successor_manifest,
+    verify_analytics_source_archive,
+    verify_analytics_successor_source_archive,
 )
 from .policy import canonical_bytes
 
 _PARENT = "/opt/omnilyzer/deployment"
 _LEGACY = _PARENT + "/app"
 _DESTINATION = "analytics-app"
+# The successor has a separate fixed destination. Staging must never rename
+# into, delete, or replace the live 0.15.0 source directory.
+_SUCCESSOR_DESTINATION = "analytics-app-candidate"
 _STAGING = ".analytics-app-reviewed-staging"
+_SUCCESSOR_APPROVAL_PATH = "/etc/omnilyzer/deployment/dev/analytics-successor-source-install.json"
+_SUCCESSOR_ARCHIVE_PATH = "/opt/omnilyzer/deployment/.analytics-successor-source-review.tar"
 _APPROVAL_PATH = "/etc/omnilyzer/deployment/dev/analytics-source-install.json"
 _ARCHIVE_PATH = "/opt/omnilyzer/deployment/.analytics-source-review.tar"
 _APPROVAL_FIELDS = {
@@ -96,6 +104,45 @@ def _approval(raw: bytes) -> dict[str, str]:
     ):
         raise ValueError
     return obj
+
+
+def _successor_approval(raw: bytes) -> dict[str, str]:
+    """Parse exact root-installed V2 review authority, not promotion permission.
+
+    It is intentionally a separate schema and destination from the legacy
+    0.15.0 install grant. It accepts neither the public V1 destination nor a
+    request-selected path. The actual caller still needs root, O_NOFOLLOW
+    protected 0600 files and independently approved immutable source bytes.
+    """
+    try:
+        if type(raw) is not bytes or not 0 < len(raw) <= _MAX_APPROVAL:
+            raise ValueError
+        model = json.loads(
+            raw.decode("ascii"),
+            object_pairs_hook=_unique,
+            parse_constant=lambda _: (_ for _ in ()).throw(ValueError),
+        )
+        if (
+            type(model) is not dict or set(model) != _APPROVAL_FIELDS
+            or type(model["schema_version"]) is not int
+            or model["schema_version"] != 2
+            or model["product_id"] != "analytics"
+            or model["stage"] != "dev"
+            or model["destination"] != _PARENT + "/" + _SUCCESSOR_DESTINATION
+            or type(model["reviewed_commit"]) is not str
+            or re.fullmatch(r"[0-9a-f]{40}", model["reviewed_commit"]) is None
+            or model["reviewed_commit"] == "0" * 40
+            or any(type(model[name]) is not str
+                   or re.fullmatch(r"[0-9a-f]{64}", model[name]) is None
+                   for name in ("manifest_sha256", "archive_sha256"))
+            or canonical_bytes(model) != raw
+        ):
+            raise ValueError
+        return model
+    except _CONTROL:
+        raise
+    except Exception:
+        raise AnalyticsIsolatedSourceInstallError(_ERROR) from None
 
 
 def _open_checked_root(path: str, owned: list[int], uid: int, gid: int) -> int:
@@ -216,9 +263,16 @@ def _read_legacy_sources(
 def _review_and_combine(
     old: dict[str, bytes], archive: bytes, *,
     manifest_sha: str, reviewed_commit: str,
+    successor_source: bool = False,
 ) -> tuple[tuple[str, bytes], ...]:
-    """Require exact 43 host preimages + 32 reviewed Git blobs, yielding 70."""
-    updated = verify_analytics_source_archive(
+    """Combine closed V1 70 or explicitly reviewed successor V2 76 sources."""
+    if type(successor_source) is not bool:
+        raise ValueError
+    verifier = (
+        verify_analytics_successor_source_archive
+        if successor_source else verify_analytics_source_archive
+    )
+    updated = verifier(
         archive, expected_manifest_sha256=manifest_sha,
         reviewed_commit=reviewed_commit,
     )
@@ -226,8 +280,14 @@ def _review_and_combine(
         manifest_file = tar.extractfile(".omnilyzer-analytics-source-review.json")
         if manifest_file is None:
             raise ValueError
-        model = _validate_manifest(
-            manifest_file.read(16385), manifest_sha, reviewed_commit,
+        raw = manifest_file.read(32769 if successor_source else 16385)
+        model = (
+            _validate_successor_manifest(
+                raw, expected_sha256=manifest_sha,
+                reviewed_commit=reviewed_commit,
+            )["baseline_review"]
+            if successor_source else
+            _validate_manifest(raw, manifest_sha, reviewed_commit)
         )
     baseline = dict(model["inherited_canary_sha256"])
     baseline.update(model["shared_preimage_sha256"])
@@ -238,7 +298,8 @@ def _review_and_combine(
         raise ValueError
     union = {**old, **dict(updated)}
     if (
-        len(union) != 70 or len(updated) != 32
+        len(union) != (76 if successor_source else 70)
+        or len(updated) != (38 if successor_source else 32)
         or sum(len(blob) for blob in union.values()) > _MAX_GENERATION
     ):
         raise ValueError
@@ -247,16 +308,20 @@ def _review_and_combine(
 
 def _stage_new_generation(
     parentfd: int, selected: tuple[tuple[str, bytes], ...], *,
-    uid: int, gid: int,
+    uid: int, gid: int, successor_source: bool = False,
 ) -> None:
-    """Build and verify one CLOSED 70-file root-owned private staging tree.
+    """Build and verify closed V1 70-file or opt-in V2 76-file staging.
 
     The stage must not preexist. The old canary app is never opened for write.
     On pre-publication failure only the exact files/dirs created here are
     deleted; an unrecognized object forces manual remediation, not recursion.
     """
     paths = tuple(path for path, _ in selected)
-    if len(paths) != 70 or paths != tuple(sorted(set(paths))):
+    if (
+        type(successor_source) is not bool
+        or len(paths) != (76 if successor_source else 70)
+        or paths != tuple(sorted(set(paths)))
+    ):
         raise ValueError
     os.mkdir(_STAGING, 0o700, dir_fd=parentfd)
     stagefd = os.open(_STAGING, _FD_DIR, dir_fd=parentfd)
@@ -377,15 +442,19 @@ def _remove_verified_stage(
 def _publish_isolated_generation(
     *, parent_root: str, original_root: str, archive: bytes,
     manifest_sha: str, reviewed_commit: str, uid: int, gid: int,
+    successor_source: bool = False, candidate_only: bool = False,
 ) -> str:
-    """Private testable mechanics; publication is inert until service opt-in.
+    """Write a verified V1 first install or a separate V2 source candidate.
 
-    Explicit roots are accepted ONLY here for isolated disposable tests. The
-    public ROOT-ONLY function never forwards external paths; it uses the fixed
-    original and isolated product roots above.
+    Explicit roots are accepted ONLY inside this private reviewed/fixture
+    function. Root-only public entrypoints supply fixed host paths, not HTTP
+    or owner-selected directories. An active generation is never overwritten.
+    The V2 candidate is source staging only: no process, slot, route or DB.
     """
     if (
         type(parent_root) is not str or type(original_root) is not str
+        or type(successor_source) is not bool or type(candidate_only) is not bool
+        or (candidate_only and not successor_source)
         or type(archive) is not bytes or not 0 < len(archive) <= _MAX_ARCHIVE
         or type(uid) is not int or type(gid) is not int
     ):
@@ -394,8 +463,14 @@ def _publish_isolated_generation(
         handle = tar.extractfile(".omnilyzer-analytics-source-review.json")
         if handle is None:
             raise ValueError
-        model = _validate_manifest(
-            handle.read(16385), manifest_sha, reviewed_commit,
+        raw = handle.read(32769 if successor_source else 16385)
+        model = (
+            _validate_successor_manifest(
+                raw, expected_sha256=manifest_sha,
+                reviewed_commit=reviewed_commit,
+            )["baseline_review"]
+            if successor_source else
+            _validate_manifest(raw, manifest_sha, reviewed_commit)
         )
     expected = dict(model["inherited_canary_sha256"])
     expected.update(model["shared_preimage_sha256"])
@@ -405,23 +480,40 @@ def _publish_isolated_generation(
     combined = _review_and_combine(
         old, archive, manifest_sha=manifest_sha,
         reviewed_commit=reviewed_commit,
+        successor_source=successor_source,
     )
     owned: list[int] = []
     try:
         parent = _open_checked_root(parent_root, owned, uid, gid)
-        for name in (_DESTINATION, _STAGING):
+        destination = _SUCCESSOR_DESTINATION if candidate_only else _DESTINATION
+        if candidate_only:
+            # The original live 0.15.0 source must exist and remain owned by
+            # the approved root identity. No symlink or writable directory is
+            # accepted, and the live directory is not opened for writing.
+            active = os.stat(_DESTINATION, dir_fd=parent, follow_symlinks=False)
+            if (
+                not stat.S_ISDIR(active.st_mode)
+                or (active.st_uid, active.st_gid) != (uid, gid)
+                or stat.S_IMODE(active.st_mode) != 0o755
+                or active.st_nlink < 2
+            ):
+                raise OSError("no trusted active source to preserve")
+        for name in (destination, _STAGING):
             try:
                 os.stat(name, dir_fd=parent, follow_symlinks=False)
             except FileNotFoundError:
                 pass
             else:
                 raise OSError  # no existing source overwrite or stale stage
-        _stage_new_generation(parent, combined, uid=uid, gid=gid)
+        _stage_new_generation(
+            parent, combined, uid=uid, gid=gid,
+            successor_source=successor_source,
+        )
         # The parent is root-controlled, unprivileged users cannot race
         # publication. The existing canary directory is NEVER the target.
         try:
             os.rename(
-                _STAGING, _DESTINATION,
+                _STAGING, destination,
                 src_dir_fd=parent, dst_dir_fd=parent,
             )
         except OSError:
@@ -430,7 +522,7 @@ def _publish_isolated_generation(
             _remove_verified_stage(parent, combined, uid=uid, gid=gid)
             raise
         os.fsync(parent)
-        return parent_root + "/" + _DESTINATION
+        return parent_root + "/" + destination
     finally:
         _original._finish_close(owned)
 
@@ -470,8 +562,41 @@ def install_approved_analytics_source_generation() -> str:
         raise AnalyticsIsolatedSourceInstallError(_ERROR) from None
 
 
+def stage_approved_analytics_successor_candidate_generation() -> str:
+    """Stage exact V2 source in a distinct root-owned *inactive* directory.
+
+    Root must separately install canonical schema-2 approval and exact V2 TAR
+    as two fixed protected 0600 files. Never overwrite live Analytics source,
+    alter systemd, broker, executor, Docker, DB, secrets, slot or ingress.
+    An existing candidate or staging directory is an error, never replaced.
+    This function itself is not a signed-release authorization.
+    """
+    try:
+        if (os.getuid(), os.geteuid(), os.getgid(), os.getegid()) != (0, 0, 0, 0):
+            raise PermissionError
+        approval = _successor_approval(_read_protected_file(
+            _SUCCESSOR_APPROVAL_PATH, limit=_MAX_APPROVAL, mode=0o600,
+        ))
+        archive = _read_protected_file(
+            _SUCCESSOR_ARCHIVE_PATH, limit=_MAX_ARCHIVE, mode=0o600,
+        )
+        if hashlib.sha256(archive).hexdigest() != approval["archive_sha256"]:
+            raise ValueError
+        return _publish_isolated_generation(
+            parent_root=_PARENT, original_root=_LEGACY,
+            archive=archive, manifest_sha=approval["manifest_sha256"],
+            reviewed_commit=approval["reviewed_commit"],
+            uid=0, gid=0, successor_source=True, candidate_only=True,
+        )
+    except _CONTROL:
+        raise
+    except Exception:
+        raise AnalyticsIsolatedSourceInstallError(_ERROR) from None
+
+
 __all__ = (
     "AnalyticsIsolatedSourceInstallError",
     "install_approved_analytics_source_generation",
+    "stage_approved_analytics_successor_candidate_generation",
 )
 

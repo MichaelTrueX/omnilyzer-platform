@@ -1,8 +1,8 @@
 """File: deployment/analytics_source_handoff.py
 
-Purpose: Produce a read-only, deterministic Git-object handoff for the EXACT
-         Analytics Task014 DEV source, including five explicit shared-file updates. This is the missing input to
-         an independently authorized root-owned application installation.
+Purpose: Produce original immutable 32-source Analytics Task014 Git-object
+         review and a separate exact 38-source Task14B V2 handoff. Neither
+         review changes the independently approved historical installation.
 Related: deployment/application_manifest.py (original closed Git-object reader),
          deployment/application_source_set.py (original canary source boundary),
          deployment/analytics_executor_service_config.py (20 mandatory Python
@@ -23,6 +23,7 @@ source hashes, protected config, process identities and existing canary state.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -279,7 +280,99 @@ def review_analytics_source_handoff(
         raise AnalyticsSourceHandoffError(_ERROR) from None
 
 
+# Section 3: future generation-2 exact source graph. The old 32-entry
+# schema-1 handoff above is unchanged and remains separately reproducible.
+def review_analytics_successor_source_handoff(
+    *, repository_root: str, reviewed_commit: str,
+) -> bytes:
+    """Bind the complete successor import graph to exact reviewed Git blobs.
+
+    This is a separate inert schema-2 source inventory. Original Task014
+    Analytics 0.15.0 and Canary installed source configurations are unchanged.
+    Real root installation still requires independently approved protected
+    manifest and exact file/UID/GID policy; this read-only function is NOT GO.
+    """
+    try:
+        from .analytics_executor_service_config import (
+            ANALYTICS_INSTALLED_FILES, ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+            ANALYTICS_SUCCESSOR_COMPOSE_FILES,
+        )
+        base_raw = review_analytics_source_handoff(
+            repository_root=repository_root, reviewed_commit=reviewed_commit,
+        )
+        base = json.loads(base_raw)
+        extra = tuple(sorted(
+            set(ANALYTICS_SUCCESSOR_INSTALLED_FILES)
+            - set(ANALYTICS_INSTALLED_FILES)
+        ))
+        if (
+            len(extra) != 6
+            or len(ANALYTICS_INSTALLED_FILES) != 20
+            or len(ANALYTICS_SUCCESSOR_INSTALLED_FILES) != 26
+            or set(ANALYTICS_SUCCESSOR_COMPOSE_FILES) - set(extra)
+            or not all(
+                (path.startswith(("deployment/", "release/"))
+                 and path.endswith(".py"))
+                or path in ANALYTICS_SUCCESSOR_COMPOSE_FILES
+                for path in extra
+            )
+        ):
+            raise ValueError
+        records = _git._tree(_git._output(
+            repository_root,
+            ("ls-tree", "-r", "-z", "--full-tree", reviewed_commit, "--", *extra),
+            8192,
+        ), extra)
+        entries = list(base["source_entries"])
+        for path, blob in records:
+            size_raw = _git._output(
+                repository_root, ("cat-file", "-s", blob), 32,
+            )
+            if re.fullmatch(rb"[1-9][0-9]*\n", size_raw) is None:
+                raise ValueError
+            size = int(size_raw[:-1])
+            if size > _MAX_ONE_FILE:
+                raise ValueError
+            source = _git._output(
+                repository_root, ("cat-file", "blob", blob), size,
+            )
+            if type(source) is not bytes or len(source) != size:
+                raise ValueError
+            entries.append({
+                "path": path, "mode": "0644",
+                "sha256": hashlib.sha256(source).hexdigest(),
+            })
+        entries.sort(key=lambda item: item["path"])
+        if (
+            len(entries) != 38
+            or len({item["path"] for item in entries}) != 38
+            or _git._output(
+                repository_root,
+                ("rev-parse", "--verify", "HEAD^{commit}"), 41,
+            ) != reviewed_commit.encode("ascii") + b"\n"
+        ):
+            raise ValueError
+        manifest = canonical_bytes({
+            "schema_version": 2,
+            "purpose": "analytics-task014-successor-source-review-only",
+            "source_commit": reviewed_commit,
+            "source_file_count": 38,
+            "source_entries": entries,
+            "baseline_review": base,
+            "deployment_authorized": False,
+            "signed_release_authorized": False,
+        })
+        if len(manifest) > 32768:
+            raise ValueError
+        return manifest
+    except _CONTROL:
+        raise
+    except Exception:
+        raise AnalyticsSourceHandoffError(_ERROR) from None
+
+
 __all__ = (
     "AnalyticsSourceHandoffError", "review_analytics_source_handoff",
+    "review_analytics_successor_source_handoff",
 )
 

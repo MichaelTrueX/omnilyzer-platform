@@ -14,16 +14,23 @@ Sections: complete authentic-schema fixture, positive review, negative signer,
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import gzip
 import hashlib
 import io
 import json
 import tarfile
+import tempfile
+import subprocess
 import unittest
+from unittest.mock import patch
 
 from deployment.analytics_signed_release_consumer import (
     _analytics_archive, acquire_and_review_analytics_release,
-    verify_analytics_signed_evidence, AnalyticsSignedEvidenceError,
+    acquire_and_review_owner_approved_analytics_release,
+    verify_analytics_signed_evidence,
+    verify_owner_selected_analytics_signed_evidence,
+    review_owner_approved_analytics_signed_evidence, AnalyticsSignedEvidenceError,
     PINNED_DIGEST, PINNED_IMAGE, PINNED_PLATFORM_COMMIT, PINNED_RUN_ID,
     PINNED_VERSION,
 )
@@ -42,6 +49,11 @@ from deployment.release_consumer import (
 from deployment.saas_product_contract import load_reviewed_profile
 from deployment.saas_product_runtime import load_review_profile
 from pathlib import Path
+
+from release.analytics_owner_source_selection import (
+    AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
+    expected_owner_approval_bytes,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 SCANNERS = (
@@ -201,6 +213,91 @@ class SyntheticOCISignatureVerifier:
         }
 
 
+class SyntheticSuccessorOCISignatureVerifier:
+    """A synthetic version-specific Cosign stub, NEVER signature proof."""
+
+    def __init__(self, digest):
+        self.digest = digest
+
+    def verify(self, image_reference, now):
+        if image_reference != (
+            f"oci-dev.omnilyzer.ai/omnilyzer/analytics@{self.digest}"
+        ) or now != 1700000000:
+            raise ValueError("mismatched synthetic successor digest")
+        return {
+            "verified": True,
+            "repository": ANALYTICS_REPOSITORY,
+            "manifest_digest": self.digest,
+            "certificate_identity": EXPECTED_CERTIFICATE_IDENTITY,
+            "issuer": EXPECTED_CERTIFICATE_ISSUER,
+        }
+
+
+def synthetic_successor(*, digest_override=None):
+    """Bind synthetic next-version evidence to a synthetic owner review.
+
+    Tests a coherent schema, not an actual owner key, signing authority,
+    full source-to-OCI build, or independent real CI/Task014 deployment.
+    """
+    selected = AnalyticsOwnerSourceSelection(
+        source_commit="f" * 40, source_tree="e" * 40,
+        release_version="0.15.1", platform_workflow_commit="d" * 40,
+        owner_actor_id="130741173",
+    )
+    owner = AnalyticsOwnerSignatureReceipt(
+        source_commit=selected.source_commit,
+        source_tree=selected.source_tree,
+        release_version=selected.release_version,
+        approval_sha256=sha(expected_owner_approval_bytes(selected)),
+        signature_sha256="a" * 64, owner_signature_verified=True,
+    )
+    evidence, scanner = fixture()
+    claim = json.loads(evidence["analytics-source-claim.json"])
+    for old_field in (
+        "source_manifest_sha256", "source_binding_sha256", "source_files_verified",
+    ):
+        claim.pop(old_field)
+    claim.update({
+        "schema_version": 2,
+        "full_git_tree_file_count": 612,
+        "owner_approval_sha256": owner.approval_sha256,
+        "release_version": selected.release_version,
+        "source_commit": selected.source_commit,
+        "source_tree": selected.source_tree,
+        "build_context_sha256": "d" * 64,
+        "platform_source_commit": selected.platform_workflow_commit,
+        "oci_manifest_digest": "sha256:" + "b" * 64,
+    })
+    digest = claim["oci_manifest_digest"] if digest_override is None else digest_override
+    claim["oci_manifest_digest"] = digest
+    evidence["analytics-source-claim.json"] = canonical_bytes(claim)
+    provenance = json.loads(evidence["release-provenance.json"])
+    provenance["version"] = selected.release_version
+    provenance["source_commit"] = selected.platform_workflow_commit
+    provenance["execution"].update({
+        "workflow_sha": selected.platform_workflow_commit,
+        "source_commit": selected.platform_workflow_commit,
+        "run_id": 5010,
+    })
+    provenance["external_source"] = claim
+    provenance["subjects"]["oci_manifest_digest"] = digest
+    evidence["release-provenance.json"] = canonical_bytes(provenance)
+    manifest = json.loads(evidence["release-manifest.json"])
+    manifest["version"] = selected.release_version
+    manifest["source_commit"] = selected.platform_workflow_commit
+    manifest["external_source"] = claim
+    manifest["oci"]["manifest_digest"] = digest
+    manifest["oci"]["deployment_identity"] = ANALYTICS_REPOSITORY + "@" + digest
+    manifest["signing"]["oci_signature"] = ANALYTICS_REPOSITORY + "@" + digest
+    manifest["provenance"]["sha256"] = sha(evidence["release-provenance.json"])
+    evidence["release-manifest.json"] = canonical_bytes(manifest)
+    receipt = json.loads(evidence["oci-publication.json"])
+    receipt["tag"] = selected.release_version
+    receipt["manifest_digest"] = digest
+    evidence["oci-publication.json"] = canonical_bytes(receipt)
+    return selected, owner, evidence, scanner, digest
+
+
 class DeniedBlobSignatureVerifier(SyntheticBlobSignatureVerifier):
     """Return explicit signature rejection despite valid-looking signed JSON."""
 
@@ -215,8 +312,286 @@ class DeniedOCISignatureVerifier(SyntheticOCISignatureVerifier):
         return dict(super().verify(*args), verified=False)
 
 
+class OwnerCryptographicSuccessorReviewTests(unittest.TestCase):
+    """Real disposable Ed25519 approval plus synthetic original release proofs."""
+
+    def test_local_owner_signature_is_required_before_successor_review(self):
+        """No untrusted approval receipt or source can bypass owner-key checks."""
+        selected, _fake_owner, evidence, scanner, digest = synthetic_successor()
+        signed_evidence = {k: v for k, v in evidence.items() if k not in SCANNERS}
+        with tempfile.TemporaryDirectory(prefix="task14b-real-owner-sig-") as tmp:
+            root = Path(tmp)
+            key = root / "temporary-ed25519-key"
+            subprocess.run(
+                ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)],
+                capture_output=True, check=True, timeout=10,
+            )
+            public = (root / "temporary-ed25519-key.pub").read_text().strip()
+            signers = (
+                'MichaelTrueX namespaces="omnilyzer-analytics-source-v1" '
+                + public + "\n"
+            ).encode("ascii")
+            approval = root / "source-approval.json"
+            approval.write_bytes(expected_owner_approval_bytes(selected))
+            subprocess.run(
+                ["ssh-keygen", "-Y", "sign", "-f", str(key),
+                 "-n", "omnilyzer-analytics-source-v1", str(approval)],
+                capture_output=True, check=True, timeout=10,
+            )
+            signature = root / "source-approval.json.sig"
+            def check():
+                return review_owner_approved_analytics_signed_evidence(
+                    signed_evidence, scanner, SyntheticBlobSignatureVerifier(),
+                    SyntheticSuccessorOCISignatureVerifier(digest),
+                    received_at=1700000000,
+                    approval_file=approval, signature_file=signature,
+                )
+
+            with patch(
+                "release.analytics_owner_source_selection._root_controlled_signers",
+                return_value=signers,
+            ):
+                reviewed = check()
+                self.assertEqual(reviewed.release_version, selected.release_version)
+                self.assertEqual(reviewed.source.source_commit, selected.source_commit)
+                self.assertEqual(reviewed.source.source_tree, selected.source_tree)
+                self.assertEqual(reviewed.image,
+                                 "oci-dev.omnilyzer.ai/omnilyzer/analytics@" + digest)
+                self.assertFalse(reviewed.deployment_authorized)
+                self.assertFalse(reviewed.source.deployment_authorized)
+
+                raw = approval.read_bytes()
+                for bad in (
+                    raw.replace(b'"0.15.1"', b'"0.16.0"'),
+                    raw.replace(selected.source_commit.encode(), b"a" * 40),
+                    raw.rstrip() + b" ",
+                    raw.replace(
+                        b'"product":"analytics"',
+                        b'"product":"canary"'
+                    ),
+                    raw.replace(b'"schema_version":1', b'"schema_version":true'),
+                    raw.replace(b'"owner_actor_id":"130741173"',
+                                b'"owner_actor_id":"999"'),
+                ):
+                    with self.subTest(raw=bad[-80:]):
+                        approval.write_bytes(bad)
+                        with self.assertRaises(AnalyticsSignedEvidenceError):
+                            check()
+                approval.write_bytes(raw)
+
+                original_sig = signature.read_bytes()
+                signature.write_bytes(original_sig[:-2] + b"XX")
+                with self.assertRaises(AnalyticsSignedEvidenceError):
+                    check()
+                signature.write_bytes(original_sig)
+
+                with self.assertRaises(AnalyticsSignedEvidenceError):
+                    review_owner_approved_analytics_signed_evidence(
+                        signed_evidence, scanner, DeniedBlobSignatureVerifier(),
+                        SyntheticSuccessorOCISignatureVerifier(digest),
+                        received_at=1700000000,
+                        approval_file=approval, signature_file=signature,
+                    )
+                with self.assertRaises(AnalyticsSignedEvidenceError):
+                    review_owner_approved_analytics_signed_evidence(
+                        signed_evidence, scanner, SyntheticBlobSignatureVerifier(),
+                        SyntheticSuccessorOCISignatureVerifier("sha256:" + "f" * 64),
+                        received_at=1700000000,
+                        approval_file=approval, signature_file=signature,
+                    )
+                with self.assertRaises(AnalyticsSignedEvidenceError):
+                    review_owner_approved_analytics_signed_evidence(
+                        signed_evidence, {**scanner, "oci-grype.json": "0" * 64},
+                        SyntheticBlobSignatureVerifier(),
+                        SyntheticSuccessorOCISignatureVerifier(digest),
+                        received_at=1700000000,
+                        approval_file=approval, signature_file=signature,
+                    )
+
+            # An actual missing/uninstalled trusted host key fails closed.
+            with self.assertRaises(AnalyticsSignedEvidenceError):
+                check()
+
+
+class OwnerSignedRegistryAcquisitionTests(unittest.TestCase):
+    """Original read-only HTTPS/TLS envelope with synthetic signed objects."""
+
+    def test_signed_successor_registry_digest_readback_and_wrong_bytes(self):
+        """Never trust a tag or an unverified Zot header as an OCI digest."""
+        from deployment.tests.test_release_consumer import Factory, Response
+        from deployment.release_consumer import ForgejoReadCredential
+
+        oci_bytes = canonical_bytes({
+            "schemaVersion": 2, "mediaType": OCI_MEDIA_TYPE,
+            "config": {}, "layers": [],
+        })
+        digest = "sha256:" + sha(oci_bytes)
+        selected, owner, evidence, scanner, _ = synthetic_successor(
+            digest_override=digest,
+        )
+
+        class ZotProvider:
+            """Synthetic short-lived read-only bearer credential provider."""
+
+            def zot_read_credential(self):
+                return ZotReadCredential("SYNTHETIC.TEST.ONLY", 1700000100)
+
+        class ForgejoProvider:
+            """Synthetic original Forgejo-scoped credential provider."""
+
+            def forgejo_read_credential(self):
+                return ForgejoReadCredential("SYNTHETIC.TEST.ONLY", 1700000100)
+
+        forgejo = Factory(Response(archive(evidence), "application/octet-stream"))
+
+        def make_zot(body, reported_digest):
+            return Factory(Response(
+                body, OCI_MEDIA_TYPE,
+                extra=[("Docker-Content-Digest", reported_digest)],
+            ))
+
+        def acquire(zot):
+            return acquire_and_review_owner_approved_analytics_release(
+                ZotProvider(), ForgejoProvider(),
+                SyntheticBlobSignatureVerifier(),
+                SyntheticSuccessorOCISignatureVerifier(digest),
+                received_at=1700000000,
+                approval_file=Path("/not/used/in/isolated/test"),
+                signature_file=Path("/not/used/in/isolated/test"),
+                zot_factory=zot, forgejo_factory=forgejo,
+            )
+
+        # The independent owner Ed25519 validation is covered above with
+        # real ephemeral keys; patch ONLY its result in this HTTPS boundary.
+        with patch(
+            "deployment.analytics_signed_release_consumer."
+            "load_and_verify_owner_signed_source",
+            return_value=(selected, owner),
+        ):
+            zot = make_zot(oci_bytes, digest)
+            reviewed = acquire(zot)
+            self.assertEqual(reviewed.source.oci_manifest_digest, digest)
+            self.assertEqual(reviewed.source.source_commit, selected.source_commit)
+            self.assertFalse(reviewed.deployment_authorized)
+            self.assertEqual(forgejo.calls[1][1],
+                "/api/packages/omnilyzer/generic/analytics-release-evidence/"
+                "0.15.1/release-evidence.tar.gz")
+            self.assertEqual(zot.calls[1][1],
+                "/v2/omnilyzer/analytics/manifests/" + digest)
+            for body, head in (
+                (oci_bytes + b" ", digest),
+                (oci_bytes, "sha256:" + "0" * 64),
+                (b'{"schemaVersion":1}', digest),
+            ):
+                with self.subTest(body=body, head=head):
+                    with self.assertRaises(AnalyticsSignedEvidenceError):
+                        acquire(make_zot(body, head))
+            bad_forgejo = Factory(Response(
+                b"unverified archive", "application/octet-stream",
+            ))
+            with self.assertRaises(AnalyticsSignedEvidenceError):
+                acquire_and_review_owner_approved_analytics_release(
+                    ZotProvider(), ForgejoProvider(),
+                    SyntheticBlobSignatureVerifier(),
+                    SyntheticSuccessorOCISignatureVerifier(digest),
+                    received_at=1700000000,
+                    approval_file=Path("/not/used/in/isolated/test"),
+                    signature_file=Path("/not/used/in/isolated/test"),
+                    zot_factory=make_zot(oci_bytes, digest),
+                    forgejo_factory=bad_forgejo,
+                )
+
+        # No root-owned trust anchor means no registry credential or GET.
+        with self.assertRaises(AnalyticsSignedEvidenceError):
+            acquire(make_zot(oci_bytes, digest))
+
+
 class AnalyticsSignedReleaseConsumerTests(unittest.TestCase):
     """Protect actual v1 schema and signer controls without deployment."""
+
+    def test_successor_signed_review_preserves_signature_and_source_chain(self):
+        """One synthetic future release must pass all existing source checks."""
+        selected, owner, evidence, scanner, digest = synthetic_successor()
+        small = {k: v for k, v in evidence.items() if k not in SCANNERS}
+        with self.assertRaises(AnalyticsSignedEvidenceError):
+            verify_analytics_signed_evidence(
+                small, scanner, SyntheticBlobSignatureVerifier(),
+                SyntheticSuccessorOCISignatureVerifier(digest),
+                received_at=1700000000,
+            )
+        report = verify_owner_selected_analytics_signed_evidence(
+            small, scanner, SyntheticBlobSignatureVerifier(),
+            SyntheticSuccessorOCISignatureVerifier(digest),
+            received_at=1700000000, selected=selected, owner_approval=owner,
+        )
+        self.assertEqual(report.release_version, "0.15.1")
+        self.assertEqual(report.release_run_id, 5010)
+        self.assertEqual(report.source.source_commit, selected.source_commit)
+        self.assertEqual(report.source.source_tree, selected.source_tree)
+        self.assertTrue(report.image.endswith(digest))
+        self.assertFalse(report.deployment_authorized)
+        self.assertFalse(report.source.release_authorized)
+
+    def test_successor_rejects_oversized_early_evidence_before_json_parse(self):
+        """The untrusted preview parse must preserve original 4MiB cap."""
+        selected, owner, evidence, scanner, digest = synthetic_successor()
+        small = {k: v for k, v in evidence.items() if k not in SCANNERS}
+        small["release-manifest.json"] = b"x" * (4 * 1024 * 1024 + 1)
+        with self.assertRaises(AnalyticsSignedEvidenceError):
+            verify_owner_selected_analytics_signed_evidence(
+                small, scanner, SyntheticBlobSignatureVerifier(),
+                SyntheticSuccessorOCISignatureVerifier(digest),
+                received_at=1700000000, selected=selected,
+                owner_approval=owner,
+            )
+
+    def test_successor_synthetic_signed_approval_mutations_rejected(self):
+        """Changing any actor/workflow/source/version/subject must deny review."""
+        selected, owner, evidence, scanner, digest = synthetic_successor()
+        original = {k: v for k, v in evidence.items() if k not in SCANNERS}
+        cases = (
+            (replace(selected, platform_workflow_commit="a" * 40), owner, original),
+            (replace(selected, source_tree="c" * 40), owner, original),
+            (replace(selected, release_version="0.15.2"), owner, original),
+            (selected, replace(owner, signature_sha256="invalid"), original),
+            (selected, replace(owner, owner_signature_verified=False), original),
+            (selected, replace(owner, approval_sha256="0" * 64), original),
+            (selected, replace(owner, release_authorized=True), original),
+            (selected, owner, change(original, "release-provenance.json",
+                                   lambda d: d["execution"].update(
+                                       workflow_ref="attacker/workflow",
+                                   ))),
+            (selected, owner, change(original, "release-provenance.json",
+                                   lambda d: d["subjects"].update(
+                                       security_exceptions=1,
+                                   ))),
+            (selected, owner, change(original, "oci-publication.json",
+                                   lambda d: d.update(manifest_digest=PINNED_DIGEST))),
+        )
+        for proposed, approval, sample in cases:
+            with self.subTest(source=proposed, approval=approval), self.assertRaises(
+                AnalyticsSignedEvidenceError
+            ):
+                verify_owner_selected_analytics_signed_evidence(
+                    sample, scanner, SyntheticBlobSignatureVerifier(),
+                    SyntheticSuccessorOCISignatureVerifier(digest),
+                    received_at=1700000000, selected=proposed,
+                    owner_approval=approval,
+                )
+        with self.assertRaises(AnalyticsSignedEvidenceError):
+            verify_owner_selected_analytics_signed_evidence(
+                original, scanner, DeniedBlobSignatureVerifier(),
+                SyntheticSuccessorOCISignatureVerifier(digest),
+                received_at=1700000000, selected=selected,
+                owner_approval=owner,
+            )
+        with self.assertRaises(AnalyticsSignedEvidenceError):
+            verify_owner_selected_analytics_signed_evidence(
+                original, scanner, SyntheticBlobSignatureVerifier(),
+                DeniedOCISignatureVerifier(),
+                received_at=1700000000, selected=selected,
+                owner_approval=owner,
+            )
 
     def test_matching_synthetic_schema_yields_inert_review_receipt(self):
         evidence, scanner = fixture()

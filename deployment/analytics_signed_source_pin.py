@@ -22,9 +22,15 @@ trusted Sigstore + OCI verification, not instantiate the public dataclass.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
+
+from release.analytics_owner_source_selection import (
+    AnalyticsOwnerSignatureReceipt, AnalyticsOwnerSourceSelection,
+    AnalyticsOwnerSourceSelectionDenied, expected_owner_approval_bytes,
+)
 
 from .policy import (
     APPROVED_OCI_HOST,
@@ -112,13 +118,15 @@ def _load_pinned_source() -> dict[str, Any]:
     return data
 
 
-def review_signed_analytics_source(release: TrustedRelease) -> AnalyticsSourceReviewReceipt:
-    """Review exact signed source and product profiles without authorizing.
+def _review_exact_signed_analytics_source(
+    release: TrustedRelease, *,
+    expected_source_commit: str, expected_source_tree: str,
+    expected_context_sha256: str,
+) -> AnalyticsSourceReviewReceipt:
+    """Check signed source/OCI and installed profile boundaries without grants.
 
-    The original Task014 Sigstore/Cosign verifier must run BEFORE this helper.
-    A manually constructed TrustedRelease may produce a matching *receipt*,
-    so the return value MUST NEVER be used as permission to build an executor
-    request, install secrets, expose ingress or deploy any image.
+    Caller must first validate source approval and original Sigstore/Cosign
+    evidence. This helper is deliberately NOT an authorization primitive.
     """
     if type(release) is not TrustedRelease or type(release.external_source) is not SignedExternalSource:
         raise DeploymentPolicyError(ERROR)
@@ -138,7 +146,6 @@ def review_signed_analytics_source(release: TrustedRelease) -> AnalyticsSourceRe
     except (TypeError, ValueError) as exc:
         raise DeploymentPolicyError(ERROR) from exc
 
-    _load_pinned_source()
     product = load_reviewed_profile(ROOT / "deployment/products/analytics-dev.json")
     runtime = load_review_profile(ROOT / "deployment/products/analytics-runtime-dev.json")
     if (
@@ -151,9 +158,9 @@ def review_signed_analytics_source(release: TrustedRelease) -> AnalyticsSourceRe
         )
         or claim.product_id != "analytics"
         or claim.source_repository != SOURCE_REPOSITORY
-        or claim.source_commit != SOURCE_COMMIT
-        or claim.source_tree != SOURCE_TREE
-        or claim.build_context_sha256 != CONTEXT_SHA256
+        or claim.source_commit != expected_source_commit
+        or claim.source_tree != expected_source_tree
+        or claim.build_context_sha256 != expected_context_sha256
         or claim.oci_manifest_digest != release.manifest_digest
         or claim.product_profile_sha256 != product.sha256()
         or claim.runtime_profile_sha256 != runtime.sha256()
@@ -172,10 +179,79 @@ def review_signed_analytics_source(release: TrustedRelease) -> AnalyticsSourceRe
     ):
         raise DeploymentPolicyError(ERROR)
     return AnalyticsSourceReviewReceipt(
-        source_commit=SOURCE_COMMIT,
-        source_tree=SOURCE_TREE,
+        source_commit=expected_source_commit,
+        source_tree=expected_source_tree,
         oci_manifest_digest=release.manifest_digest,
         claim_sha256=claim.claim_sha256,
         product_profile_sha256=product.sha256(),
         runtime_profile_sha256=runtime.sha256(),
     )
+
+
+# Section 2: separate read-only successor comparison. No production gate is
+# changed. Installed 0.15.0 still calls the old exact-source function above.
+def review_signed_analytics_source(release: TrustedRelease) -> AnalyticsSourceReviewReceipt:
+    """Retain original 0.15.0 accepted static source and profile identity."""
+    _load_pinned_source()
+    return _review_exact_signed_analytics_source(
+        release, expected_source_commit=SOURCE_COMMIT,
+        expected_source_tree=SOURCE_TREE,
+        expected_context_sha256=CONTEXT_SHA256,
+    )
+
+
+def review_owner_selected_signed_analytics_source(
+    release: TrustedRelease, *, selected: AnalyticsOwnerSourceSelection,
+    owner_approval: AnalyticsOwnerSignatureReceipt,
+) -> AnalyticsSourceReviewReceipt:
+    """Compare owner-bound successor identity with signed Task013 source claim.
+
+    The owner signature receipt must result from real root-key verification,
+    NOT caller input. This pure helper CANNOT prove receipt provenance,
+    validate original Sigstore/OCI signatures or authorize execution.
+    Task014 must call trusted verification before entering this helper.
+    """
+    try:
+        if (
+            type(selected) is not AnalyticsOwnerSourceSelection
+            or type(owner_approval) is not AnalyticsOwnerSignatureReceipt
+            or type(release) is not TrustedRelease
+            or selected.release_authorized is not False
+            or selected.deployment_authorized is not False
+            or selected.independent_review_verified is not False
+            or owner_approval.owner_signature_verified is not True
+            or owner_approval.release_authorized is not False
+            or owner_approval.deployment_authorized is not False
+            or owner_approval.independent_review_verified is not False
+            or owner_approval.source_commit != selected.source_commit
+            or owner_approval.source_tree != selected.source_tree
+            or owner_approval.release_version != selected.release_version
+            or release.release_version != selected.release_version
+            or release.source_sha != selected.platform_workflow_commit
+            or selected.owner_actor_id != "130741173"
+            or selected.source_commit == SOURCE_COMMIT
+            or tuple(map(int, selected.release_version.split("."))) <= (0, 15, 0)
+            or validate_sha256(
+                owner_approval.signature_sha256, "owner signature hash"
+            ) == "0" * 64
+            or owner_approval.approval_sha256 != hashlib.sha256(
+                expected_owner_approval_bytes(selected)
+            ).hexdigest()
+            or release.external_source is None
+            or release.external_source.owner_approval_sha256
+               != owner_approval.approval_sha256
+        ):
+            raise DeploymentPolicyError(ERROR)
+        # Product profile/secret/health/OCI contracts are still checked by
+        # original common reviewer. Source context is signed by Task013;
+        # its production producer must independently validate the exact Git
+        # tree/context and provide authenticated original release evidence.
+        if type(release.external_source) is not SignedExternalSource:
+            raise DeploymentPolicyError(ERROR)
+        return _review_exact_signed_analytics_source(
+            release, expected_source_commit=selected.source_commit,
+            expected_source_tree=selected.source_tree,
+            expected_context_sha256=release.external_source.build_context_sha256,
+        )
+    except (AnalyticsOwnerSourceSelectionDenied, ValueError, TypeError, AttributeError):
+        raise DeploymentPolicyError(ERROR) from None

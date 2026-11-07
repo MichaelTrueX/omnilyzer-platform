@@ -27,6 +27,7 @@ Docker, secret, PostgreSQL or production operation is authorized by this PR.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import math
 import os
@@ -35,11 +36,13 @@ import re
 import sys
 import time
 
-from .analytics_execution import AnalyticsExecutorRequest
+from .analytics_execution import (
+    AnalyticsExecutorRequest, AnalyticsSuccessorRequest,
+)
 from .analytics_private_registry import (
     AnalyticsPrivateZotPullAdapter, ANALYTICS_PULL_TIMEOUT_SECONDS,
 )
-from .analytics_signed_release_consumer import PINNED_IMAGE
+from .analytics_signed_release_consumer import PINNED_IMAGE, PINNED_DIGEST
 from .analytics_dev_release_review import (
     COMPOSE_FILE, REQUIRED_SECRET_NAMES, SECRET_DIRECTORY,
     review_private_secret_paths,
@@ -469,4 +472,467 @@ class AnalyticsFirstInstallOperation:
         return None
 
 
-__all__ = ("AnalyticsFirstInstallError", "AnalyticsFirstInstallOperation")
+# Section: first-successor-only, still UNWIRED candidate container staging.
+# Reuse the original Task014 rootless Docker runner, sealed Zot image pull,
+# UID-mapped secret checks, and closed two-profile Compose sources. The
+# protected V2 root manifest now attests the exact port-reset overlay YAML.
+_SUCCESSOR_COMPOSE_OVERLAY = (
+    COMPOSE_FILE.parent / "analytics.compose.successor-ports.yaml"
+)
+# Independently check both healthy endpoints inside the candidate without
+# Docker host publishing or importing browser/session/user tokens.
+_SUCCESSOR_LIVE_SCRIPT = _READY_SCRIPT.replace("/readyz", "/livez")
+_SUCCESSOR_ENV = {
+    "PATH": "/usr/bin:/bin",
+    "LANG": "C.UTF-8",
+    "ANALYTICS_BLUE_IMAGE": PINNED_IMAGE,
+}
+
+
+class AnalyticsSuccessorCandidateOperation:
+    """Stage only a signed first successor green image, not public activation.
+
+    The future schema-3 executor MUST first authenticate broker OIDC, signed
+    Task013 evidence, the owner-held signature and durable SQLite replay.
+    A caller-constructible schema-3 dataclass is never a release grant.
+    The installed V1 broker/executor do not call this class.
+    """
+
+    __slots__ = (
+        "_run", "_pull", "_source", "_completed_hash", "_completed_id",
+        "_deadline", "_clock",
+    )
+
+    def __init__(
+        self, *, runner: object,
+        private_registry: AnalyticsPrivateZotPullAdapter,
+        reviewed_installed_source: dict[str, str],
+    ) -> None:
+        """Bind precisely the existing Task014 runner and same source scope."""
+        from .analytics_unix_boundary import _root_reviewed_source
+        try:
+            if type(private_registry) is not AnalyticsPrivateZotPullAdapter:
+                raise TypeError
+            source = _root_reviewed_source(reviewed_installed_source)
+            if object.__getattribute__(private_registry, "_source") != source:
+                raise TypeError
+            object.__setattr__(self, "_run", _candidate_command_run(runner))
+            object.__setattr__(
+                self, "_pull", private_registry.pull_analytics_successor,
+            )
+            object.__setattr__(self, "_source", source)
+            object.__setattr__(self, "_completed_hash", None)
+            object.__setattr__(self, "_completed_id", None)
+            object.__setattr__(self, "_deadline", None)
+            object.__setattr__(self, "_clock", time.monotonic)
+        except _CONTROL:
+            raise
+        except Exception:
+            raise TypeError(_ERROR) from None
+
+    def __setattr__(self, _name: str, _value: object) -> None:
+        """Prevent a runtime caller from substituting source or Docker runner."""
+        raise AttributeError("Analytics candidate operation is immutable")
+
+    def __delattr__(self, _name: str) -> None:
+        """Prevent deletion of captured protected collaborators."""
+        raise AttributeError("Analytics candidate operation is immutable")
+
+    def _docker(
+        self, image: str, *parts: str, timeout: float = _RUN_TIMEOUT,
+    ) -> CommandResult:
+        """Execute the existing fixed rootless Docker CLI with no token in env."""
+        from .docker_runtime import _docker as docker_cli
+        _require_rootless_socket()
+        if (
+            type(image) is not str
+            or not image.startswith("oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:")
+            or type(timeout) is not float
+            or not math.isfinite(timeout) or not 0 < timeout <= 45.0
+        ):
+            raise AnalyticsFirstInstallError(_ERROR)
+        deadline = object.__getattribute__(self, "_deadline")
+        if deadline is not None:
+            # One coherent bound for preflight, 500s pull, candidate start
+            # and health, well inside the original 720s Unix reply limit.
+            # Emergency stop has a separate original 45s reserve.
+            timeout = min(timeout, deadline.remaining())
+        result = object.__getattribute__(self, "_run")(
+            docker_cli(*parts), cwd=WORKING_DIRECTORY,
+            environment={**_SUCCESSOR_ENV, "ANALYTICS_GREEN_IMAGE": image},
+            timeout=timeout,
+        )
+        if (
+            type(result) is not CommandResult
+            or type(result.returncode) is not int or result.returncode != 0
+            or type(result.stdout) is not str
+            or len(result.stdout.encode("utf-8")) > _MAX_OUTPUT
+        ):
+            raise AnalyticsFirstInstallError(_ERROR)
+        if deadline is not None:
+            deadline.remaining()
+        return result
+
+    def _compose(self, image: str, *parts: str) -> CommandResult:
+        """Use only two independently root-attested Compose files and green."""
+        args = (
+            "compose", "--project-name", _PROJECT,
+            "--file", str(COMPOSE_FILE),
+            "--file", str(_SUCCESSOR_COMPOSE_OVERLAY),
+            "--profile", "green", *parts,
+        )
+        return self._docker(image, *args)
+
+    def _stop_green_if_owned(
+        self, image: str, *, expected_id: str | None = None,
+    ) -> bool:
+        """Stop only the exact-digest green, binding a completed rollout to its ID.
+
+        During failed startup the ID may not yet be known, so only the original
+        restricted Compose service and image are available for cleanup. Once
+        startup returned an ID, a replaced or missing container must NEVER be
+        stopped or treated as a confirmed rollback. Preserve all other services,
+        networks, volumes and database writes.
+        """
+        try:
+            candidate = self._compose(
+                image, "ps", "--all", "-q", "analytics-green",
+            ).stdout.strip()
+            if expected_id is not None and (
+                type(expected_id) is not str
+                or _CONTAINER_ID.fullmatch(expected_id) is None
+                or candidate != expected_id
+            ):
+                return False
+            if not candidate:
+                return True
+            if _CONTAINER_ID.fullmatch(candidate) is None:
+                return False
+            actual = _strict_json(self._docker(
+                image, "container", "inspect", "--format",
+                "{{json .Config.Image}}", candidate,
+            ).stdout.strip())
+            if actual != image:
+                return False
+            if expected_id is not None:
+                # Compose resolves the service name AGAIN during stop, which
+                # could target a replacement created after the ID check.
+                # The completed rollout instead stops only its exact ID.
+                stopped = self._docker(
+                    image, "container", "stop", "--time", "15", expected_id,
+                ).stdout.strip()
+                if stopped != expected_id:
+                    return False
+                running = _strict_json(self._docker(
+                    image, "container", "inspect", "--format",
+                    "{{json .State.Running}}", expected_id,
+                ).stdout.strip())
+                return running is False
+            self._compose(
+                image, "stop", "--timeout", "15", "analytics-green",
+            )
+            running = self._compose(
+                image, "ps", "--status", "running", "--format",
+                "json", "analytics-green",
+            ).stdout.strip()
+            return running in ("", "[]")
+        except _CONTROL:
+            raise
+        except Exception:
+            return False
+
+    def stage_first_successor_green(
+        self, request: AnalyticsSuccessorRequest,
+    ) -> str:
+        """Start only a locally healthy green container, never route traffic.
+
+        Requires an independently root-approved V2 source generation and
+        exact UID991, genuine owner signature, sealed scoped successor FD,
+        signed previous blue runtime, actual empty green, immutable local
+        RepoDigest, rootless UID-mapped secrets, exact hardened Compose,
+        and private in-container health. No root/user data is modified.
+        A result is a container ID, NOT a deployment receipt or 3141 switch.
+        """
+        candidate_may_exist = False
+        object.__setattr__(
+            self, "_deadline",
+            _Deadline(
+                object.__getattribute__(self, "_clock"),
+                int(ANALYTICS_OPERATION_TIMEOUT_SECONDS * 1000),
+            ),
+        )
+        try:
+            from .analytics_executor import _verify_executor_owner_source
+            from .analytics_executor_service_config import (
+                load_analytics_executor_service_config,
+                _SUCCESSOR_INSTALLED_ROOT,
+            )
+            from .analytics_active_state_review import (
+                AnalyticsActiveState, inspect_analytics_active_state,
+                verify_empty_analytics_successor_slot,
+            )
+            from .private_registry_fd import _successor_request_image
+            if (
+                type(request) is not AnalyticsSuccessorRequest
+                or (
+                    os.getuid(), os.geteuid(),
+                    os.getgid(), os.getegid()
+                ) != (991, 991, 991, 991)
+                or request.ingress_reference.get("slot") != "green"
+                or request.ingress_reference.get("active_slot") != "blue"
+                or request.ingress_reference.get("loopback_port") != 3142
+                or request.rollback_reference.get("previous_digest")
+                    != PINNED_DIGEST
+                or request.rollback_reference.get("previous_slot") != "blue"
+                or request.rollback_reference.get("preserve_database_writes")
+                    is not True
+                or request.secrets_reference.get("required")
+                    != list(REQUIRED_SECRET_NAMES)
+            ):
+                raise ValueError("wrong source, principal or rollout stage")
+            raw = request.canonical_bytes()
+            image = _successor_request_image(raw)
+            if image != request.exact_image_reference or image == PINNED_IMAGE:
+                raise ValueError("mutable or original release image")
+            _verify_executor_owner_source(request.to_dict())
+            source, identity = load_analytics_executor_service_config(
+                require_successor=True,
+            )
+            if (
+                type(source) is not dict
+                or source != dict(object.__getattribute__(self, "_source"))
+                or type(identity) is not dict
+                or identity.get("expected_executor_uid") != 991
+                or identity.get("expected_executor_gid") != 991
+                # The Docker CLI MUST consume those exact installed files
+                # whose bytes the root-owned V2 verifier just checked.
+                # Otherwise a test/dev worktree YAML could be substituted
+                # while the protected installed hashes remained correct.
+                or COMPOSE_FILE != (
+                    _SUCCESSOR_INSTALLED_ROOT
+                    / "deployment/runtime/dev/analytics.compose.review.yaml"
+                )
+                or _SUCCESSOR_COMPOSE_OVERLAY != (
+                    _SUCCESSOR_INSTALLED_ROOT
+                    / "deployment/runtime/dev/analytics.compose.successor-ports.yaml"
+                )
+                or COMPOSE_FILE.is_symlink()
+                or _SUCCESSOR_COMPOSE_OVERLAY.is_symlink()
+                or not COMPOSE_FILE.is_file()
+                or not _SUCCESSOR_COMPOSE_OVERLAY.is_file()
+                or hashlib.sha256(COMPOSE_FILE.read_bytes()).hexdigest()
+                    != source["reviewed_compose_sha256"]
+            ):
+                raise ValueError("unreviewed source generation")
+            authority = RootlessDockerAuthority()
+            mapped_uid = authority.subuid_start + _CONTAINER_UID - 1
+            mapped_gid = authority.subgid_start + _CONTAINER_UID - 1
+            if (
+                mapped_uid != authority.canary_host_uid
+                or mapped_gid != authority.canary_host_gid
+                or request.secrets_reference.get("container_uid") != _CONTAINER_UID
+                or request.secrets_reference.get("file_mode") != "0600"
+                or request.secrets_reference.get("rootless_required") is not True
+                or tuple(review_private_secret_paths(
+                    directory=SECRET_DIRECTORY, owner_uid=mapped_uid,
+                    directory_owner_uid=0,
+                    directory_group_gid=authority.executor_gid,
+                )) != REQUIRED_SECRET_NAMES
+            ):
+                raise ValueError("UID-mapped secret files unavailable")
+            _require_mapped_secret_groups(mapped_gid)
+            previous = inspect_analytics_active_state()
+            if (
+                type(previous) is not AnalyticsActiveState
+                or previous.active_slot != "blue"
+                or previous.active_image != PINNED_IMAGE
+                or previous.active_digest != PINNED_DIGEST
+                or previous.candidate_slot != "green"
+                or previous.candidate_probe_present is not False
+                or previous.candidate_container_id is not None
+                or previous.candidate_digest is not None
+                or previous.read_only is not True
+                or previous.deployment_authorized is not False
+            ):
+                raise ValueError("previous signed 0.15.0 unavailable")
+            verify_empty_analytics_successor_slot()
+            # The existing named bridge is not sufficient. The next
+            # runtime must use the same immutable internal network ID as
+            # the signed active 0.15.0, never an externally reachable bridge.
+            network_name = self._docker(
+                image, "network", "inspect", "--format",
+                "{{json .Name}}", _NETWORK,
+            )
+            network_id = self._docker(
+                image, "network", "inspect", "--format",
+                "{{json .Id}}", _NETWORK,
+            )
+            network_internal = self._docker(
+                image, "network", "inspect", "--format",
+                "{{json .Internal}}", _NETWORK,
+            )
+            if (
+                _strict_json(network_name.stdout.strip()) != _NETWORK
+                or _strict_json(network_id.stdout.strip())
+                    != previous.active_network_id
+                or _strict_json(network_internal.stdout.strip()) is not True
+            ):
+                raise ValueError("wrong existing private network")
+            if self._compose(image, "config", "--quiet").stdout != "":
+                raise ValueError("invalid protected two-file Compose")
+            present = self._compose(
+                image, "ps", "--all", "--format",
+                "json", "analytics-green",
+            ).stdout.strip()
+            if present not in ("", "[]"):
+                raise ValueError("previous green instance exists")
+            # This pull is scoped to the broker's genuine sealed capability;
+            # only its future durable replay-admitted executor may call us.
+            object.__getattribute__(self, "_pull")(
+                request,
+                timeout=min(
+                    ANALYTICS_PULL_TIMEOUT_SECONDS,
+                    object.__getattribute__(self, "_deadline").remaining(),
+                ),
+            )
+            if (
+                inspect_analytics_active_state() != previous
+            ):
+                raise ValueError("active image/route moved during pull")
+            verify_empty_analytics_successor_slot()
+            digest = _strict_json(self._docker(
+                image, "image", "inspect", "--format",
+                "{{json .RepoDigests}}", image,
+            ).stdout.strip())
+            if digest != [image]:
+                raise ValueError("pulled OCI RepoDigest mismatch")
+            # From this instant a failed Docker command MAY have created
+            # green. Cleanup is limited to the exact image and green service.
+            candidate_may_exist = True
+            self._compose(
+                image, "up", "--detach", "--no-deps", "--no-recreate",
+                "--no-build", "--pull", "never", "analytics-green",
+            )
+            identifier = self._compose(
+                image, "ps", "-q", "analytics-green",
+            ).stdout.strip()
+            if _CONTAINER_ID.fullmatch(identifier) is None:
+                raise ValueError("unconfirmed candidate container")
+            checks = (
+                ("{{json .Config.Image}}", image),
+                ("{{json .Config.User}}", "10001:10001"),
+                ("{{json .HostConfig.ReadonlyRootfs}}", True),
+                ("{{json .HostConfig.Privileged}}", False),
+                ("{{json .HostConfig.CapDrop}}", ["ALL"]),
+                ("{{json .HostConfig.SecurityOpt}}", ["no-new-privileges:true"]),
+                ("{{json .HostConfig.PortBindings}}", {}),
+            )
+            for template, wanted in checks:
+                actual = _strict_json(self._docker(
+                    image, "container", "inspect", "--format",
+                    template, identifier,
+                ).stdout.strip())
+                if actual != wanted:
+                    raise ValueError("candidate runtime hardening weakened")
+            networks = _strict_json(self._docker(
+                image, "container", "inspect", "--format",
+                "{{json .NetworkSettings.Networks}}", identifier,
+            ).stdout.strip())
+            if type(networks) is not dict or set(networks) != {_NETWORK}:
+                raise ValueError("candidate has unreviewed network")
+            connected = networks[_NETWORK]
+            if (
+                type(connected) is not dict
+                or connected.get("NetworkID") != previous.active_network_id
+                or connected.get("Gateway") not in ("", None)
+            ):
+                raise ValueError("candidate network differs from previous writer")
+            address = ipaddress.ip_address(connected.get("IPAddress"))
+            if (
+                type(address) is not ipaddress.IPv4Address
+                or not address.is_private or address.is_loopback
+                or address.is_link_local or address.is_reserved
+                or address.is_multicast or address.is_unspecified
+                or str(address) == previous.active_child_ip
+            ):
+                raise ValueError("candidate has nonprivate or shared address")
+            healthy = False
+            for _ in range(_HEALTH_PROBES):
+                status = _strict_json(self._docker(
+                    image, "container", "inspect", "--format",
+                    "{{json .State.Health.Status}}", identifier,
+                ).stdout.strip())
+                if status == "healthy":
+                    result = self._compose(
+                        image, "exec", "--no-TTY", "analytics-green",
+                        "node", "-e", _READY_SCRIPT,
+                    )
+                    if result.stdout != "READY\n":
+                        raise ValueError("candidate readiness denied")
+                    live = self._compose(
+                        image, "exec", "--no-TTY", "analytics-green",
+                        "node", "-e", _SUCCESSOR_LIVE_SCRIPT,
+                    )
+                    if live.stdout != "READY\n":
+                        raise ValueError("candidate liveness denied")
+                    healthy = True
+                    break
+                if status != "starting":
+                    raise ValueError("unhealthy signed candidate")
+                time.sleep(min(
+                    _INTERVAL_SECONDS,
+                    object.__getattribute__(self, "_deadline").remaining(),
+                ))
+            if not healthy or inspect_analytics_active_state() != previous:
+                raise ValueError("active writer changed during startup")
+            # Candidate is running but NOT exposed on 3142 or switched on 3141.
+            object.__getattribute__(self, "_deadline").remaining()
+            object.__setattr__(
+                self, "_completed_hash", hashlib.sha256(raw).hexdigest(),
+            )
+            object.__setattr__(self, "_completed_id", identifier)
+            object.__setattr__(self, "_deadline", None)
+            return identifier
+        except _CONTROL:
+            # Preserve an independent 45s stop reserve when the original
+            # full operation has exhausted its own 570s budget.
+            object.__setattr__(self, "_deadline", None)
+            if candidate_may_exist:
+                self._stop_green_if_owned(request.exact_image_reference)
+            raise
+        except Exception:
+            object.__setattr__(self, "_deadline", None)
+            if candidate_may_exist:
+                safe = self._stop_green_if_owned(request.exact_image_reference)
+                sys.stderr.write(
+                    "TASK014_ANALYTICS_SUCCESSOR_CANDIDATE_HOLD "
+                    + ("rollback=stopped" if safe else "rollback=unconfirmed")
+                    + "\n"
+                )
+            raise AnalyticsFirstInstallError(_ERROR) from None
+
+    def rollback_staged_successor(
+        self, request: AnalyticsSuccessorRequest, identifier: str,
+    ) -> None:
+        """Stop only this exact green after a later replay/finalization error."""
+        if (
+            type(request) is not AnalyticsSuccessorRequest
+            or type(identifier) is not str
+            or _CONTAINER_ID.fullmatch(identifier) is None
+            or hashlib.sha256(request.canonical_bytes()).hexdigest()
+                != object.__getattribute__(self, "_completed_hash")
+            or identifier != object.__getattribute__(self, "_completed_id")
+            or not self._stop_green_if_owned(
+                request.exact_image_reference, expected_id=identifier,
+            )
+        ):
+            raise AnalyticsFirstInstallError(_ERROR)
+        object.__setattr__(self, "_completed_hash", None)
+        object.__setattr__(self, "_completed_id", None)
+        return None
+
+
+__all__ = (
+    "AnalyticsFirstInstallError", "AnalyticsFirstInstallOperation",
+    "AnalyticsSuccessorCandidateOperation",
+)
