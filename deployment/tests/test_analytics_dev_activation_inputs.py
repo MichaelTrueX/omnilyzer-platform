@@ -366,21 +366,34 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         for path in appended:
             with self.subTest(override=path):
                 content = second[path].decode("ascii")
-                self.assertEqual(content,
+                expected = (
                     "[Service]\nWorkingDirectory="
                     + activation.SUCCESSOR_DESTINATION + "\n"
                 )
+                if path == activation._SUCCESSOR_EXECUTOR_DROPIN:
+                    expected += (
+                        activation._SUCCESSOR_VERIFIER_BINDS + "\n"
+                        + activation._SUCCESSOR_VERIFIER_TMPFS + "\n"
+                    )
+                self.assertEqual(content, expected)
                 parser = configparser.ConfigParser(interpolation=None, strict=True)
                 parser.read_string(content)
-                self.assertEqual(dict(parser["Service"]), {
-                    "workingdirectory": activation.SUCCESSOR_DESTINATION,
-                })
+                keys = {"workingdirectory": activation.SUCCESSOR_DESTINATION}
+                if path == activation._SUCCESSOR_EXECUTOR_DROPIN:
+                    keys.update({
+                        "bindreadonlypaths": activation._SUCCESSOR_VERIFIER_BINDS.partition("=")[2],
+                        "temporaryfilesystem": activation._SUCCESSOR_VERIFIER_TMPFS.partition("=")[2],
+                    })
+                self.assertEqual(dict(parser["Service"]), keys)
                 for forbidden in (
                     "ExecStart", "User=", "Group=", "ReadWritePaths=",
-                    "BindPaths=", "BindReadOnlyPaths=", "Environment=",
+                    "BindPaths=", "Environment=",
                     "RuntimeDirectory=", "Restart=", "ConditionPathExists=",
                 ):
                     self.assertNotIn(forbidden, content)
+                if path == activation._SUCCESSOR_BROKER_DROPIN:
+                    self.assertNotIn("BindReadOnlyPaths=", content)
+                    self.assertNotIn("TemporaryFileSystem=", content)
         # Original broker first-install override still selects original V1,
         # so rollback is removal of ONLY both V2 drop-ins after approval.
         self.assertIn(b"WorkingDirectory=/opt/omnilyzer/deployment/analytics-app\n",
@@ -398,6 +411,53 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
                     repository_root=str(ROOT), reviewed_commit=self.sha,
                     successor_source=True,
                 )
+
+    def test_v2_uid991_private_signer_mounts_preserve_broker_secrecy(self):
+        """Exact isolated Cosign and TrustedRoot mirror source, UID991 workspace.
+
+        Existing original read-only blob/OCI verifier expects 0:991 root-held
+        sources in its namespace. The V1 and broker bytes MUST NOT change.
+        A future approved root installer must separately provision identical
+        verified binary and root content under these dedicated directories.
+        """
+        from deployment.broker_service_config import (
+            PRODUCTION_COSIGN_PATH, PRODUCTION_SIGSTORE_TRUSTED_ROOT_PATH,
+        )
+        from deployment import blob_verifier, oci_verifier
+        original = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+        )
+        successor = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        candidate = successor[activation._SUCCESSOR_EXECUTOR_DROPIN].decode("ascii")
+        broker = successor[activation._SUCCESSOR_BROKER_DROPIN].decode("ascii")
+        self.assertEqual(
+            PRODUCTION_COSIGN_PATH,
+            "/opt/omnilyzer/deployment/tools/cosign-v3.1.2-linux-amd64",
+        )
+        self.assertEqual(
+            PRODUCTION_SIGSTORE_TRUSTED_ROOT_PATH,
+            "/etc/omnilyzer/deployment/broker/sigstore-trusted-root.json",
+        )
+        self.assertEqual(blob_verifier.RUNTIME_DIRECTORY,
+                         "/run/omnilyzer/deployment/dev/blob-verifier")
+        self.assertEqual(oci_verifier._RUNTIME_DIRECTORY,
+                         "/run/omnilyzer/deployment/dev/oci-verifier")
+        self.assertIn(activation._SUCCESSOR_VERIFIER_BINDS, candidate)
+        self.assertIn(activation._SUCCESSOR_VERIFIER_TMPFS, candidate)
+        self.assertNotIn("/var/lib/omnilyzer/deployment", candidate)
+        self.assertNotIn("Environment=", candidate)
+        self.assertNotIn("SupplementaryGroups=", candidate)
+        self.assertNotIn("BindReadOnlyPaths=", broker)
+        self.assertEqual(
+            original[activation._ANALYTICS_RUNTIME_DROPIN],
+            successor[activation._ANALYTICS_RUNTIME_DROPIN],
+        )
+        for key in original:
+            self.assertEqual(original[key], successor[key])
+        self.assertNotIn("analytics-executor-sigstore", str(original))
 
     def test_private_tmpfs_is_not_shadowed_by_read_write_paths(self):
         """Regression for real systemd255 226/NAMESPACE while Canary is idle.
