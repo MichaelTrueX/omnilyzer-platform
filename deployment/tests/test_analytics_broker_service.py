@@ -87,6 +87,32 @@ class OriginalBrokerCompositionTests(unittest.TestCase):
             object.__getattribute__(selected, "_canary").__self__, original,
         )
         analytics = object.__getattribute__(selected, "_analytics").__self__
+        self.assertIsNone(object.__getattribute__(selected, "_successor"))
+        # A root-reviewed V2 generation binds only the EXISTING read-only
+        # successor sender with the exact fixed root owner trust files.
+        selected_v2 = broker_service.compose_approved_analytics_broker_router(
+            configuration=config, canary_handler=original,
+            verifier=verifier, replay_guard=replay,
+            blob_signatures=blob, jwks_cache=cache,
+            reviewed_installed_source=EXPECTED, source_generation=2,
+        )
+        self.assertIsNotNone(object.__getattribute__(selected_v2, "_successor"))
+        v2_broker = object.__getattribute__(selected_v2, "_analytics").__self__
+        review = object.__getattribute__(v2_broker, "_review_successor").__self__
+        from deployment.analytics_executor import (
+            _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
+        )
+        self.assertEqual(
+            object.__getattribute__(review, "_owner_files"),
+            (_OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE),
+        )
+        with self.assertRaises(TypeError):
+            broker_service.compose_approved_analytics_broker_router(
+                configuration=config, canary_handler=original,
+                verifier=verifier, replay_guard=replay,
+                blob_signatures=blob, jwks_cache=cache,
+                reviewed_installed_source=EXPECTED, source_generation=True,
+            )
         self.assertIs(
             object.__getattribute__(analytics, "_replay").__self__, replay,
         )
@@ -243,6 +269,33 @@ class OriginalRootOwnedOptInTests(unittest.TestCase):
             ANALYTICS_SUCCESSOR_INSTALLED_FILES,
         )
 
+    def test_only_root_attested_generation_requests_schema3_readonly_probe(self):
+        """The unchanged four-hash API stays V1; V2 generation is opt-in."""
+        from deployment.analytics_executor_service_config import (
+            ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+        )
+        self.raw = canonical_bytes({
+            "schema_version": 2, "product_id": "analytics", "stage": "dev",
+            **EXPECTED,
+            "source_sha256": {
+                name: "b" * 64 for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+            },
+        })
+        st = list(self.file_stat)
+        st[6] = len(self.raw)
+        self.file_stat = os.stat_result(st)
+        stack, verified = self.preflight()
+        with stack:
+            received = broker_service.load_analytics_broker_installed_source(
+                self.cfg, include_generation=True,
+            )
+        self.assertEqual(received, (EXPECTED, 2))
+        verified.assert_called_once()
+        self.assertEqual(
+            verified.call_args.kwargs["root"],
+            broker_service._SUCCESSOR_INSTALLED_ROOT,
+        )
+
     def test_distinct_canary_revision_preserves_product_source_checks(self):
         """Independent reviewed generations need not have equal commit IDs."""
         self.cfg = DevBrokerServiceConfiguration(**configuration_values())
@@ -308,7 +361,7 @@ class ApprovedReplacementServiceTests(unittest.TestCase):
             patch.object(original, "_load_configuration", return_value=config),
             patch.object(
                 broker_service, "load_analytics_broker_installed_source",
-                return_value=dict(EXPECTED),
+                return_value=(dict(EXPECTED), 1),
             ) as source,
             patch.object(SQLiteReplayGuard, "validate", return_value=None),
             patch.object(
@@ -321,7 +374,7 @@ class ApprovedReplacementServiceTests(unittest.TestCase):
                     stop_controller=stopper,
                 )
             )
-        source.assert_called_once_with(config)
+        source.assert_called_once_with(config, include_generation=True)
         self.assertEqual([v[0] for v in selected], ["listener", "serve"])
         router = selected[0][1]
         self.assertIs(type(router), AnalyticsDEVPromotionRouter)
