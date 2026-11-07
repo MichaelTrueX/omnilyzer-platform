@@ -33,7 +33,9 @@ from deployment.broker_https_ingress import (
     dispatch_inert_dev_promotion_ingress,
 )
 from deployment.policy import canonical_bytes
-from deployment.tests.test_analytics_execution import EXPECTED, fixture as analytics_request
+from deployment.tests.test_analytics_execution import (
+    EXPECTED, fixture as analytics_request, AnalyticsSuccessorRequestTests,
+)
 from deployment.tests.test_analytics_promotion_broker import (
     evidence, make_broker,
 )
@@ -146,6 +148,61 @@ class ProductRouterTests(unittest.TestCase):
         self.assertEqual(self.analytics_transport.requests, [])
         self.assertEqual(self.canary_replay.calls, [])
         self.assertEqual(self.analytics_replay.calls, [])
+
+    def test_schema3_is_v1_denied_but_v2_routes_only_to_signed_deny_probe(self):
+        """Only explicit V2 may reach the existing still-denying broker path."""
+        request, _context = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(request)
+        self.assertLessEqual(len(raw), 4096)
+        denied = dispatch_inert_dev_promotion_ingress(
+            self.router, method="POST", path=PROMOTION_PATH,
+            headers=original_headers(raw), body=raw, received_at=NOW,
+        )
+        self.assertEqual(denied.status, 403)
+        self.assertEqual(self.analytics_replay.calls, [])
+        self.assertEqual(self.canary_replay.calls, [])
+
+        v2 = AnalyticsDEVPromotionRouter(
+            canary=self.canary, analytics=self.analytics,
+            reviewed_installed_source=EXPECTED,
+            successor_preflight_only=True,
+        )
+        # The local test broker deliberately lacks an authorized successor
+        # sender; V2 may route to the existing preflight but NEVER report GO.
+        unavailable = dispatch_inert_dev_promotion_ingress(
+            v2, method="POST", path=PROMOTION_PATH,
+            headers=original_headers(raw), body=raw, received_at=NOW,
+        )
+        self.assertEqual(unavailable.status, 503)
+        self.assertEqual(unavailable.body, b'{"status":"unavailable"}\n')
+        self.assertEqual(self.analytics_replay.calls, [])
+        self.assertEqual(self.canary_replay.calls, [])
+        self.assertEqual(self.analytics_transport.requests, [])
+        self.assertEqual(self.canary_transport.calls, [])
+
+    def test_v2_schema3_bad_source_never_enters_broker(self):
+        """Root V2 does not let malformed requests reach crypto or executor."""
+        request, _context = AnalyticsSuccessorRequestTests().candidate()
+        v2 = AnalyticsDEVPromotionRouter(
+            canary=self.canary, analytics=self.analytics,
+            reviewed_installed_source=EXPECTED,
+            successor_preflight_only=True,
+        )
+        for bad in (
+            canonical_bytes({**request, "schema_version": 2}),
+            canonical_bytes({**request, "product_id": "canary"}),
+            canonical_bytes({**request, "exact_image_reference": "analytics:latest"}),
+            canonical_bytes({**request, "stage": "prod"}),
+        ):
+            with self.subTest(case=bad[:80]):
+                reply = dispatch_inert_dev_promotion_ingress(
+                    v2, method="POST", path=PROMOTION_PATH,
+                    headers=original_headers(bad), body=bad,
+                    received_at=NOW,
+                )
+                self.assertEqual(reply.status, 403)
+        self.assertEqual(self.analytics_replay.calls, [])
+        self.assertEqual(self.canary_replay.calls, [])
 
     def test_unauthorized_headers_cannot_trigger_any_product(self):
         """No cookie, duplicate bearer, changed Host/path or unsigned claims."""
