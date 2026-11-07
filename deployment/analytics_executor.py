@@ -201,8 +201,16 @@ class AnalyticsPrivilegedExecutor:
 
     def preflight_first_successor_without_deployment(
         self, canonical_request: bytes, *, credential_fd: int,
+        candidate_ready: bool = True,
     ) -> None:
-        """Read-only first-successor proof against the *actual* UID991 host.
+        """Read-only two-stage successor proof against the *actual* UID991 host.
+
+        The strict default verifies a staged green candidate before traffic
+        cutover. An explicitly internal `candidate_ready=False` check verifies
+        the original blue source and Zot manifest BEFORE cold image pull.
+        This avoids requiring an already-running candidate before the only
+        authorized code would be able to create one. Neither phase grants
+        pull, replay, routing, DB, systemd or deployment authority.
 
         This is NOT an executable promotion receiver: it deliberately has no
         replay begin/finish, pull, OCI install, 3141 switch, rollback mutation
@@ -215,9 +223,12 @@ class AnalyticsPrivilegedExecutor:
         """
         if type(credential_fd) is not int or credential_fd < 0:
             raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE) from None
+        if type(candidate_ready) is not bool:
+            raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE) from None
         try:
             from .analytics_active_state_review import (
                 AnalyticsActiveState, inspect_analytics_active_state,
+                verify_empty_analytics_successor_slot,
             )
             # A root script may review host state independently but MUST NOT
             # use this executor method. Only the existing UID991 principal.
@@ -255,10 +266,17 @@ class AnalyticsPrivilegedExecutor:
                 or observed.private_ingress_port != 3141
                 or observed.candidate_slot != "green"
                 or observed.candidate_port != ANALYTICS_SUCCESSOR_CANDIDATE_PORT
-                or observed.candidate_probe_present is not True
-                or observed.candidate_digest != parsed["manifest_digest"]
-                or type(observed.candidate_container_id) is not str
-                or len(observed.candidate_container_id) != 64
+                or (candidate_ready and (
+                    observed.candidate_probe_present is not True
+                    or observed.candidate_digest != parsed["manifest_digest"]
+                    or type(observed.candidate_container_id) is not str
+                    or len(observed.candidate_container_id) != 64
+                ))
+                or (not candidate_ready and (
+                    observed.candidate_probe_present is not False
+                    or observed.candidate_digest is not None
+                    or observed.candidate_container_id is not None
+                ))
                 or parsed["rollback_reference"] != {
                     "kind": "switch-private-slot-preserve-writes",
                     "previous_digest": PINNED_DIGEST,
@@ -274,6 +292,10 @@ class AnalyticsPrivilegedExecutor:
                 }
             ):
                 raise ValueError("independently observed OCI state does not match")
+            # No 3142 route is not enough: stale/stopped green containers
+            # must be rejected, not silently adopted or overwritten.
+            if not candidate_ready:
+                verify_empty_analytics_successor_slot()
             now = int(time.time())
             credential = read_sealed_credential(
                 credential_fd, canonical_request=canonical_request,
@@ -288,6 +310,8 @@ class AnalyticsPrivilegedExecutor:
             # after the bounded remote registry read; reject any TOCTOU drift.
             if inspect_analytics_active_state() != observed:
                 raise ValueError("host state changed during review")
+            if not candidate_ready:
+                verify_empty_analytics_successor_slot()
             return None
         except _CONTROL:
             raise

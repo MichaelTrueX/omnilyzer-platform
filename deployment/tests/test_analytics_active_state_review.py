@@ -359,6 +359,41 @@ class AnalyticsActiveStateReviewTests(unittest.TestCase):
                 _candidate_health()
             self.assertEqual(len(PrivateConnection.calls), 1)
 
+    def test_pre_pull_requires_true_absence_of_green_container(self):
+        """A stopped/unrouted green cannot be silently adopted on first pull."""
+        from deployment import analytics_active_state_review as source
+        from unittest.mock import call
+
+        target = "/containers/omnilyzer-analytics-dev-analytics-green-1/json"
+        with (
+            patch.object(source.os, "geteuid", return_value=991),
+            patch.object(source, "_unix_get", return_value=None) as read,
+        ):
+            self.assertIsNone(source.verify_empty_analytics_successor_slot())
+        read.assert_called_once_with(source._DOCKER, target)
+        for existing in (container("green", "172.20.0.4", PREFIX + DIGEST_GREEN),
+                         {"State": {"Running": False}}):
+            with (
+                patch.object(source.os, "geteuid", return_value=991),
+                patch.object(source, "_unix_get", return_value=existing),
+                self.assertRaises(AnalyticsActiveStateDenied),
+            ):
+                source.verify_empty_analytics_successor_slot()
+        for actor in (0, 1000):
+            with (
+                patch.object(source.os, "geteuid", return_value=actor),
+                patch.object(source, "_unix_get") as read,
+                self.assertRaises(AnalyticsActiveStateDenied),
+            ):
+                source.verify_empty_analytics_successor_slot()
+            read.assert_not_called()
+        with (
+            patch.object(source.os, "geteuid", return_value=991),
+            patch.object(source, "_unix_get", side_effect=OSError("no docker socket")),
+            self.assertRaises(AnalyticsActiveStateDenied),
+        ):
+            source.verify_empty_analytics_successor_slot()
+
     def test_absent_or_stopped_candidate_still_allows_verified_active_image(self):
         for candidate in (None, {
             **container("green", "172.20.0.4", PREFIX + DIGEST_GREEN),

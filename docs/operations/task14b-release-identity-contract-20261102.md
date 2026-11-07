@@ -1294,3 +1294,33 @@ correctly signed and health-checked candidates. A real schema-3 deployment
 with independent UID991 Task013/Sigstore/Cosign evidence, persistent replay,
 image pull, health/route transaction, restart reconciliation and rollback
 remains HOLD until separately authorized and independently reviewed.
+
+## 2026-11-07: resolve first-successor pre-pull/post-pull ordering
+
+The original schema-3 **read-only** executor preflight had required an
+already-running and privately healthy green candidate, creating a circular
+prerequisite for a first, as-yet-unpulled successor. The same existing method
+now retains a **strict default** `candidate_ready=True` for post-startup
+health/digest/3142 verification and accepts an internally selected
+`candidate_ready=False` *pre-pull review* only for an independently verified,
+healthy signed 0.15.0 blue image with **no** candidate probe/route/digest.
+Both stages independently verify the exact root-owned Ed25519 source approval,
+sealed successor Zot FD, rollback identity and immutable registry manifest;
+both re-read live OCI and the route after the bounded manifest read.
+
+Crucially, the pre-pull phase now also reads the FIXED green container endpoint
+using the original allowlisted, read-only UID991 rootless Docker client and
+requires a genuine 404/absent container (not merely no port 3142). A stopped,
+unrouted, stale or unknown green container requires separate recovery and is
+never silently adopted. The exact green-absence check is repeated after the
+Zot probe to close a simple create/reuse race. Missing rootless API, wrong UID
+or noncanonical boolean phase fails closed. The installed Unix handler still
+invokes the strict post-startup default and still rejects every schema-3
+promotion; the new pre-pull option is NOT wired to a deployment action.
+
+This corrects the safety/release sequencing contract, not the remaining
+functionality: owner-signed full Task013 evidence, durable request replay,
+actual authorized image pull, candidate creation/health, durable RootlessKit
+route switch, restart reconciliation and rollback still need one integrated
+end-to-end acceptance under independent M04 review. No signed 0.15.0 source,
+service, Docker container, route or database is changed by this code.

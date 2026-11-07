@@ -383,6 +383,95 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
         finally:
             os.close(fd)
 
+    def test_first_successor_pre_pull_and_post_pull_gates_are_disjoint(self):
+        """Avoid a first-release startup deadlock without relaxing final GO.
+
+        The new, internally selected pre-pull phase requires a healthy signed
+        blue 0.15.0 with *no* candidate route. The existing default continues
+        to require independently probed, healthy green before any cutover.
+        Both paths perform real owner Ed25519 fixture verification, sealed-FD
+        scope and the same successor manifest probe, but never deploy.
+        """
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        from dataclasses import replace
+
+        data, context = AnalyticsSuccessorRequestTests().candidate()
+        self.enterContext(signed_owner_fixture(context["selected"]))
+        raw = canonical_bytes(data)
+        staged = AnalyticsActiveState(
+            schema_version=1, active_slot="blue", active_digest=PINNED_DIGEST,
+            active_image=PINNED_IMAGE, active_container_id="a" * 64,
+            active_child_ip="172.20.0.3", active_network_id="f" * 64,
+            private_ingress_port=3141, candidate_slot="green",
+            candidate_port=3142, candidate_probe_present=True,
+            candidate_digest=data["manifest_digest"],
+            candidate_container_id="b" * 64,
+        )
+        empty = replace(
+            staged, candidate_probe_present=False,
+            candidate_digest=None, candidate_container_id=None,
+        )
+        executor, replay, events = receiver()
+        fd = credential(
+            request=raw, image=data["exact_image_reference"],
+            product_id="analytics-successor",
+        )
+        try:
+            with (
+                patch("deployment.analytics_executor.os.geteuid", return_value=991),
+                patch("deployment.analytics_active_state_review.inspect_analytics_active_state",
+                      return_value=empty) as inspection,
+                patch("deployment.analytics_active_state_review.verify_empty_analytics_successor_slot",
+                      return_value=None) as absent_inventory,
+            ):
+                self.assertIsNone(
+                    executor.preflight_first_successor_without_deployment(
+                        raw, credential_fd=fd, candidate_ready=False,
+                    )
+                )
+            self.assertEqual(inspection.call_count, 2)
+            self.assertEqual(absent_inventory.call_count, 2)
+            self.assertEqual(events, ["successor_manifest_probe"])
+            for candidate_state, required in (
+                (empty, True), (staged, False),
+                (replace(empty, candidate_digest=data["manifest_digest"]), False),
+                (replace(empty, candidate_probe_present=True), False),
+            ):
+                with (
+                    self.subTest(ready=required, observed=candidate_state),
+                    patch("deployment.analytics_executor.os.geteuid", return_value=991),
+                    patch("deployment.analytics_active_state_review.inspect_analytics_active_state",
+                          return_value=candidate_state),
+                    self.assertRaises(ExecutorUnavailableError),
+                ):
+                    executor.preflight_first_successor_without_deployment(
+                        raw, credential_fd=fd, candidate_ready=required,
+                    )
+            # Even a verified 3141 route is insufficient when an orphaned
+            # candidate or an uncertain Docker inventory blocks cold pull.
+            with (
+                patch("deployment.analytics_executor.os.geteuid", return_value=991),
+                patch("deployment.analytics_active_state_review.inspect_analytics_active_state",
+                      return_value=empty),
+                patch("deployment.analytics_active_state_review.verify_empty_analytics_successor_slot",
+                      side_effect=RuntimeError("existing green container")),
+                self.assertRaises(ExecutorUnavailableError),
+            ):
+                executor.preflight_first_successor_without_deployment(
+                    raw, credential_fd=fd, candidate_ready=False,
+                )
+            for value in (None, 1, "false", [], {}):
+                with self.subTest(candidate_ready=value), self.assertRaises(
+                        ExecutorRejectedError):
+                    executor.preflight_first_successor_without_deployment(
+                        raw, credential_fd=fd, candidate_ready=value,
+                    )
+            self.assertEqual(events, ["successor_manifest_probe"])
+            self.assertEqual(replay.begin_calls, [])
+            self.assertEqual(replay.finish_calls, [])
+        finally:
+            os.close(fd)
+
     def test_first_successor_preflight_denies_wrong_live_state_and_fd(self):
         """No credential, forged state, wrong UID or callback invokes replay."""
         from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
