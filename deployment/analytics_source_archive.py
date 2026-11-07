@@ -1,8 +1,8 @@
 """File: deployment/analytics_source_archive.py
 
 Purpose: Build and independently verify historical exact 32-entry Task014
-         Analytics unsigned source archive and a separate exact 37-entry
-         Task14B successor V2 archive with three additional Git modules.
+         Analytics unsigned source archive and a separate exact 38-entry
+         Task14B successor V2 archive with five separately reviewed Python modules.
 Related: deployment/analytics_source_handoff.py (original C26 Git-object
          evidence), deployment/analytics_executor_service_config.py (closed
          exact service source set), deployment/application_manifest.py (Git
@@ -284,13 +284,13 @@ def verify_analytics_source_archive(
 # review archive. Never broaden the 32-entry accepted historical schema-1
 # source handoff or its original 0.15.0 installation/approval path.
 _V2_MANIFEST_LIMIT = 32768
-_V2_COUNT = 37
+_V2_COUNT = 38
 
 
 def _validate_successor_manifest(
     raw: bytes, *, expected_sha256: str, reviewed_commit: str,
 ) -> dict[str, object]:
-    """Require original V1 and exactly five additional V2 Git blob hashes."""
+    """Require original V1 and exactly six additional V2 Git blob hashes."""
     from .analytics_executor_service_config import (
         ANALYTICS_INSTALLED_FILES, ANALYTICS_SUCCESSOR_INSTALLED_FILES,
         _INSTALLED_RUNTIME_FILES,
@@ -349,7 +349,7 @@ def _validate_successor_manifest(
         *_ADDITIVE_UNITS, *_SHARED_COMPATIBILITY_FILES,
     )))
     if (
-        len(extras) != 5 or len(expected_names) != _V2_COUNT
+        len(extras) != 6 or len(expected_names) != _V2_COUNT
         or len(set(expected_names)) != _V2_COUNT
         or len(original_names) != 32
         or tuple(item["path"] for item in obj["source_entries"]) != expected_names

@@ -415,6 +415,26 @@ class ReadOnlySuccessorProbeTransport(PrivateAnalyticsTransport):
         raise OSError("test-only UID991 read-only receiver denied")
 
 
+# Section: positive reply fake proves original FD/replay parser gate only,
+# NEVER a signed or installed release. Original HTTPS router remains read-only.
+class SyntheticPositiveSuccessorTransport(ReadOnlySuccessorProbeTransport):
+    """Validate the authentic test FD then project a canonical signed-reply shape."""
+
+    def __init__(self):
+        """Retain full sealed JWT verification from existing test receiver."""
+        super().__init__(positive_response=True)
+
+    def _send_analytics_successor_private(
+        self, request: bytes, *, credential_fd: int,
+    ) -> bytes:
+        """Return an original response only after the real test FD is opened."""
+        from deployment.executor import _build_success_response
+        super()._send_analytics_successor_private(
+            request, credential_fd=credential_fd,
+        )
+        return _build_success_response(hashlib.sha256(request).hexdigest())
+
+
 # Section: first successor is a read-only ROOT broker review, not dispatch.
 class AnalyticsFirstSuccessorBrokerReviewTests(unittest.TestCase):
     """Prove actual original OIDC+two signed reviews+live image integration."""
@@ -640,6 +660,144 @@ class AnalyticsFirstSuccessorBrokerReviewTests(unittest.TestCase):
         sealed.assert_not_called()
         self.assertEqual(transport.checked, [])
         self.assertEqual(replay2.calls, [])
+
+    def test_source_only_first_successor_consumes_original_jti_and_checks_reply(self):
+        """Original full signatures -> 3 signed JWTs -> replay -> canonical reply."""
+        from deployment.executor import parse_canonical_response
+        raw, context, _ = self.candidate()
+        transport = SyntheticPositiveSuccessorTransport()
+        broker, replay, _ = make_broker(
+            transport=transport,
+            owner_files=(Path("/root/owner.json"), Path("/root/owner.json.sig")),
+        )
+        before = set(os.listdir("/proc/self/fd"))
+        with (
+            patch("deployment.analytics_promotion_broker.time.time",
+                  return_value=NOW),
+            patch(
+                "deployment.analytics_registry_review_composition."
+                "acquire_and_review_analytics_release",
+                return_value=evidence(),
+            ) as old_signed,
+            patch(
+                "deployment.analytics_registry_review_composition."
+                "load_and_verify_owner_signed_source",
+                return_value=(context["selected"], context["owner_approval"]),
+            ) as owner,
+            patch(
+                "deployment.analytics_registry_review_composition."
+                "acquire_and_review_owner_approved_analytics_release",
+                return_value=context["signed_release"],
+            ) as new_signed,
+        ):
+            result = broker.authorize_and_forward_first_successor(
+                **self.kwargs(raw),
+            )
+        self.assertEqual(
+            parse_canonical_response(result).executor_request_sha256,
+            hashlib.sha256(raw).hexdigest(),
+        )
+        self.assertEqual(len(replay.calls), 1)
+        self.assertEqual(transport.checked[0][0], raw)
+        self.assertEqual(len(transport.checked), 1)
+        self.assertEqual(before, set(os.listdir("/proc/self/fd")))
+        old_signed.assert_called_once()
+        owner.assert_called_once()
+        new_signed.assert_called_once()
+
+    def test_source_only_uninstalled_successor_cannot_accept_fake_reply(self):
+        """Even a forged positive JSON response consumes JTI, never reports GO."""
+        raw, context, _ = self.candidate()
+        transport = ReadOnlySuccessorProbeTransport(positive_response=True)
+        broker, replay, _ = make_broker(
+            transport=transport,
+            owner_files=(Path("/root/owner.json"), Path("/root/owner.json.sig")),
+        )
+        with (
+            patch("deployment.analytics_promotion_broker.time.time", return_value=NOW),
+            patch("deployment.analytics_registry_review_composition."
+                  "acquire_and_review_analytics_release", return_value=evidence()),
+            patch("deployment.analytics_registry_review_composition."
+                  "load_and_verify_owner_signed_source",
+                  return_value=(context["selected"], context["owner_approval"])),
+            patch("deployment.analytics_registry_review_composition."
+                  "acquire_and_review_owner_approved_analytics_release",
+                  return_value=context["signed_release"]),
+            self.assertRaises(BrokerUnavailableError),
+        ):
+            broker.authorize_and_forward_first_successor(**self.kwargs(raw))
+        self.assertEqual(len(transport.checked), 1)
+        self.assertEqual(len(replay.calls), 1)
+
+    def test_source_only_successor_signer_denial_never_consumes_or_sends(self):
+        """No signature, owner selection or 0.15.0 proof means no original JTI."""
+        raw, context, _ = self.candidate()
+        transport = SyntheticPositiveSuccessorTransport()
+        broker, replay, _ = make_broker(
+            transport=transport, owner_files=None,
+        )
+        with (
+            patch("deployment.analytics_registry_review_composition."
+                  "acquire_and_review_analytics_release", return_value=evidence()),
+            patch("deployment.analytics_registry_review_composition."
+                  "acquire_and_review_owner_approved_analytics_release") as review,
+            self.assertRaises(BrokerUnavailableError),
+        ):
+            broker.authorize_and_forward_first_successor(**self.kwargs(raw))
+        review.assert_not_called()
+        self.assertEqual(replay.calls, [])
+        self.assertEqual(transport.checked, [])
+
+    def test_source_only_successor_requires_unique_original_replay_record(self):
+        """Replay refusal must close FD without entering future UID991 socket."""
+        raw, context, _ = self.candidate()
+        transport = SyntheticPositiveSuccessorTransport()
+
+        class RejectDuplicateReplay(Replay):
+            """Mirror the genuine SQLite guard's one-use JTI contract."""
+
+            def consume(self, jti, *, expires_at, request_hash,
+                        run_id, run_attempt):
+                """Reject a previously consumed JTI, never send it twice."""
+                from deployment.identity import ReplayError
+                if self.calls:
+                    raise ReplayError("synthetic original durable replay denial")
+                return super().consume(
+                    jti, expires_at=expires_at, request_hash=request_hash,
+                    run_id=run_id, run_attempt=run_attempt,
+                )
+
+        replay = RejectDuplicateReplay()
+        broker, replay, _ = make_broker(
+            replay=replay, transport=transport,
+            owner_files=(Path("/root/owner.json"), Path("/root/owner.json.sig")),
+        )
+        before = set(os.listdir("/proc/self/fd"))
+        with (
+            patch("deployment.analytics_promotion_broker.time.time", return_value=NOW),
+            patch("deployment.analytics_registry_review_composition."
+                  "acquire_and_review_analytics_release", return_value=evidence()),
+            patch("deployment.analytics_registry_review_composition."
+                  "load_and_verify_owner_signed_source",
+                  return_value=(context["selected"], context["owner_approval"])),
+            patch("deployment.analytics_registry_review_composition."
+                  "acquire_and_review_owner_approved_analytics_release",
+                  return_value=context["signed_release"]),
+        ):
+            broker.authorize_and_forward_first_successor(**self.kwargs(raw))
+            with self.assertRaises(BrokerRejectedError):
+                broker.authorize_and_forward_first_successor(**self.kwargs(raw))
+        self.assertEqual(before, set(os.listdir("/proc/self/fd")))
+        self.assertEqual(len(transport.checked), 1)
+
+    def test_no_future_transport_never_consumes_replay(self):
+        """Original V1-only transport cannot be substituted as V2 listener."""
+        raw, _, _ = self.candidate()
+        broker, replay, transport = make_broker()
+        with self.assertRaises(BrokerUnavailableError):
+            broker.authorize_and_forward_first_successor(**self.kwargs(raw))
+        self.assertEqual(replay.calls, [])
+        self.assertEqual(transport.requests, [])
 
     def test_missing_root_owner_key_has_no_registry_or_executor_side_effect(self):
         raw, _context, _live = self.candidate()

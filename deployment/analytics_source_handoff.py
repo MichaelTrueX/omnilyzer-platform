@@ -1,7 +1,7 @@
 """File: deployment/analytics_source_handoff.py
 
 Purpose: Produce original immutable 32-source Analytics Task014 Git-object
-         review and a separate exact 37-source Task14B V2 handoff. Neither
+         review and a separate exact 38-source Task14B V2 handoff. Neither
          review changes the independently approved historical installation.
 Related: deployment/application_manifest.py (original closed Git-object reader),
          deployment/application_source_set.py (original canary source boundary),
@@ -306,9 +306,9 @@ def review_analytics_successor_source_handoff(
             - set(ANALYTICS_INSTALLED_FILES)
         ))
         if (
-            len(extra) != 5
+            len(extra) != 6
             or len(ANALYTICS_INSTALLED_FILES) != 20
-            or len(ANALYTICS_SUCCESSOR_INSTALLED_FILES) != 25
+            or len(ANALYTICS_SUCCESSOR_INSTALLED_FILES) != 26
             or set(ANALYTICS_SUCCESSOR_COMPOSE_FILES) - set(extra)
             or not all(
                 (path.startswith(("deployment/", "release/"))
@@ -344,8 +344,8 @@ def review_analytics_successor_source_handoff(
             })
         entries.sort(key=lambda item: item["path"])
         if (
-            len(entries) != 37
-            or len({item["path"] for item in entries}) != 37
+            len(entries) != 38
+            or len({item["path"] for item in entries}) != 38
             or _git._output(
                 repository_root,
                 ("rev-parse", "--verify", "HEAD^{commit}"), 41,
@@ -356,7 +356,7 @@ def review_analytics_successor_source_handoff(
             "schema_version": 2,
             "purpose": "analytics-task014-successor-source-review-only",
             "source_commit": reviewed_commit,
-            "source_file_count": 37,
+            "source_file_count": 38,
             "source_entries": entries,
             "baseline_review": base,
             "deployment_authorized": False,

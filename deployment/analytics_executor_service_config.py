@@ -72,6 +72,7 @@ ANALYTICS_INSTALLED_FILES = (
 # Merely having the files in this source tree confers no deployment authority.
 ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES = (
     "deployment/analytics_active_state_review.py",
+    "deployment/analytics_loopback_guard.py",
     "deployment/analytics_route_journal.py",
     "deployment/sigstore_authority_provenance.py",
 )
@@ -173,8 +174,8 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
         if (
             len(ANALYTICS_INSTALLED_FILES) != 20
             or len(set(ANALYTICS_INSTALLED_FILES)) != 20
-            or len(ANALYTICS_SUCCESSOR_INSTALLED_FILES) != 25
-            or len(set(ANALYTICS_SUCCESSOR_INSTALLED_FILES)) != 25
+            or len(ANALYTICS_SUCCESSOR_INSTALLED_FILES) != 26
+            or len(set(ANALYTICS_SUCCESSOR_INSTALLED_FILES)) != 26
             or set(ANALYTICS_SUCCESSOR_INSTALLED_FILES) - set(ANALYTICS_INSTALLED_FILES)
                 != set(ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES)
                 | set(ANALYTICS_SUCCESSOR_RELEASE_FILES)

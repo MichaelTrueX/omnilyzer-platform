@@ -1891,3 +1891,105 @@ Only the exact-HEAD Task013 OCI build, unchanged Task013 security policy
 and Task014 native CI can establish final acceptance. No installed
 0.15.0, public server, source signer key, OCI image push, Task013 dispatch
 or privileged system service is touched by this change.
+
+
+## M05 complete FIRST-successor source transaction, 7 Nov 2026
+
+The existing Task014 V1 source, V1 replay, V1 socket activation, Canary3020,
+signed private Analytics 0.15.0 and its fixed release/source hashes remain
+**unchanged**. This successor work is currently UNINSTALLED, not a release GO.
+
+The original `deployment/analytics_executor.py` now contains an
+Analytics-specific `_execute_reviewed_first_successor_transaction` with a
+closed, root-installed-only UID991 service trust boundary. It verifies the
+actual root-pinned workflow/source identity, then independently invokes the
+**existing** UID991 original GitHub 3-JWT, owner Ed25519, Sigstore/Cosign,
+SBOM/provenance, original signed blue0.15.0, immutable Zot evidence reviewer.
+Only exact canonical schema3 and same-source rootless registry/pull collaborators
+can continue. It reuses the existing original broker-consumed SQLite replay
+begin/finish, kernel-sealed FD, source-pinned green candidate, private 3142
+candidate health, fsync journal and stable 3141 cutover. A post-switch
+`inspect_committed_analytics_route` must match the signed immutable green
+container/image and the same JTI before replay can finish and the original
+exact-format executor success response is returned.
+
+At every pre/post 3141 error, the coordinator requires safe state, restores
+the original signed blue0.15.0 ONLY under the original durable journal and
+same request/image/container IDs, then stops only the exact candidate. On a
+post-commit replay fsync failure it explicitly uses the new
+`switched -> rollback_pending -> restored` durable transition before stopping
+green. A foreign or unrecoverable journal emits HOLD and MUST NEVER stop a
+container that could still be serving, claim rollback, or reuse the same
+SQLite JTI. Crash/cancellation never yields a success receipt and still
+requires independently authorized restart recovery. All database writes are
+preserved. No public ingress, cookie, JWT transport or new release framework.
+
+To preserve the strict AST import closure, the **distinct V2 only** successor
+source list now additionally attests
+`deployment/analytics_loopback_guard.py`, the real fixed route supervisor
+code which was previously absent from the V2 source manifest. This is an
+explicit narrow material expansion from **25 to 26** reviewed V2 installed
+objects and from **37 to 38** separately Git-SHA-attested V2 source entries.
+The inert exact V2 isolated staging now contains **76** source files instead
+of 75. The original V1 remains 20 installed objects, 32 additive source
+entries and 70 staged files, byte-for-byte unchanged. Every source byte is
+read from the exact Git object, independently SHA-checked, owner-scoped and
+not automatically installed.
+
+Tests in `deployment/tests/test_analytics_first_successor_transaction.py`
+qualify all phases against synthetic typed collaborators: positive exact
+success, root workflow/source mismatch, UID denial, signed review failure,
+unconsumed replay, live source/manifest drift, green start failure, 3142
+probe failure, candidate preflight denial, failed 3141 switch, wrong
+committed image, replay finish fsync failure, verified blue rollback, failed
+rollback HOLD with candidate retained, and original V1/V2 Unix socket
+remaining **DENY-only**. The original real AF_UNIX+SCM_RIGHTS and SQLite
+replay tests remain independently enabled, including host permissions cases
+which need CI/QA host.
+
+**Not yet ready for real DEV release:** the present broker first-successor
+probe, HTTPS router and installed socket receiver remain explicitly
+DENY-only and do not call the positive source coordinator. The protected
+root-owned V2 source/install, approved Cosign/TrustedRoot readonly mounts,
+positive broker replay dispatch and independently authorized interrupted
+restart recovery still require source-bound integration and M04 acceptance.
+No signing, registry publication, merge or privileged host operation is
+authorized by this change.
+
+### M05 rootless first-successor broker handoff, source-only
+
+The existing `deployment/analytics_promotion_broker.py` now has the
+**uninstalled** Analytics-only method
+`authorize_and_forward_first_successor`, completing the source-level
+broker half of the candidate coordinator. It uses the actual original
+OIDC verifier and both original and owner-signed successor Sigstore/Cosign
+review handlers, rechecks all nine signed GitHub actor/workflow/run fields,
+verifies independent Zot/Forgejo JWT audiences and expiration, and puts
+all three original signed JWTs in the existing Linux sealed-FD schema2
+bound to precisely the canonical request and immutable OCI image. The
+original broker `SQLiteReplayGuard.consume` must durably record the
+exact JTI/run/attempt/request hash before the only permitted successor
+Unix sender can be invoked. A closed, canonical executor response must
+contain the identical request SHA or the broker fails unavailable;
+a forged positive JSON response never yields acceptance. A failed
+forward consumes the JTI, closing the sealed FD, so ordinary replay
+cannot silently trigger a second candidate.
+
+The *present HTTPS broker/router and root-owned V2 Unix receiver remain
+strictly DENY-only*. Neither existing public/private routing nor the
+installed signed 0.15.0 can invoke this future method or its positive
+UID991 coordinator. The additional method is not a permission to begin
+a real release. The future positive authorization must be selected from
+a separately verified, owner-approved root-owned V2 generation, preserve
+the original SO_PEERCRED and SCM_RIGHTS checks, and receive an independent
+M04 security/recovery acceptance before any installation. It must not
+reuse the current read-only probe as positive admission.
+
+Synthetic test cases in
+`deployment/tests/test_analytics_promotion_broker.py` validate original
+owner/OIDC/old+new signature review, the real sealed three-JWT format,
+one original replay consume, exact response binding, signer failure,
+forged success denial, missing successor sender denial, and replay
+rejection before any second forward. Existing SGID SQLite and actual
+Unix socket tests remain enabled and must be qualified by CI or an
+authorized host with compatible filesystem permissions.

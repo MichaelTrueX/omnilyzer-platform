@@ -161,14 +161,14 @@ def build_unsigned_analytics_activation_inputs(
             ANALYTICS_SUCCESSOR_INSTALLED_FILES if successor_source
             else ANALYTICS_INSTALLED_FILES
         )
-        expected_count = 37 if successor_source else 32
+        expected_count = 38 if successor_source else 32
         entries = {
             item["path"]: item["sha256"]
             for item in metadata["source_entries"]
         }
         if (
             len(contents) != expected_count or len(entries) != expected_count
-            or len(paths) != (25 if successor_source else 20)
+            or len(paths) != (26 if successor_source else 20)
             or not set(paths).issubset(entries)
             or not set(_INSTALLED_RUNTIME_FILES).issubset(entries)
             or any(hashlib.sha256(contents[path]).hexdigest() != entries[path]
@@ -269,8 +269,8 @@ def build_unsigned_analytics_service_inputs(
         if type(successor_source) is not bool:
             raise ValueError("invalid source generation")
         # Always preserve the historical 4 original service files byte-for-byte.
-        # V2 add-ons may only be returned after the full immutable 37-source
-        # V2 archive, 24 modules + pinned Compose override and root-config shape pass.
+        # V2 add-ons may only be returned after the full immutable 38-source
+        # V2 archive, 25 modules + pinned Compose override and root-config shape pass.
         if successor_source:
             candidate = build_unsigned_analytics_activation_inputs(
                 repository_root=repository_root, reviewed_commit=reviewed_commit,

@@ -1,7 +1,7 @@
 """File: deployment/tests/test_analytics_source_archive.py
 
 Purpose: Original C26 exact 32-entry Analytics source archive regression,
-         plus V2 37-entry successor deterministic Git-object evidence,
+         plus V2 38-entry successor deterministic Git-object evidence,
          canonical manifests and negative cross-schema/archive security tests.
 Related: deployment/analytics_source_archive.py,
          deployment/analytics_source_handoff.py,
@@ -371,7 +371,7 @@ class SuccessorC26SourceArchiveTests(unittest.TestCase):
         )
 
     def test_exact_source_graph_and_original_version_still_separate(self):
-        """V2 has three extra Python sources and one exact Compose overlay."""
+        """V2 attests five added Python sources and the exact Compose overlay."""
         original = dict(verify_analytics_source_archive(
             build_analytics_source_archive(
                 repository_root=self.root, reviewed_commit=self.sha,
@@ -381,10 +381,11 @@ class SuccessorC26SourceArchiveTests(unittest.TestCase):
         ))
         future = dict(self.contents)
         self.assertEqual(len(original), 32)
-        self.assertEqual(len(future), 37)
+        self.assertEqual(len(future), 38)
         self.assertEqual(
             set(future) - set(original), {
                 "deployment/analytics_active_state_review.py",
+                "deployment/analytics_loopback_guard.py",
                 "deployment/analytics_route_journal.py",
                 "deployment/sigstore_authority_provenance.py",
                 "release/analytics_owner_source_selection.py",

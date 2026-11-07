@@ -10,12 +10,14 @@ Related: deployment/analytics_execution.py (exact reviewed request grammar),
          deployment/executor_server.py (SO_PEERCRED and SCM_RIGHTS handler),
          deployment/executor.py (original response and replay primitives),
          deployment/analytics_promotion_broker.py (caller, not a trust anchor),
-         deployment/tests/test_analytics_executor.py.
+         deployment/tests/test_analytics_first_successor_transaction.py,
+         deployment/analytics_loopback_guard.py and analytics_route_journal.py.
 
 Sections: root-reviewed input capture, original FD+request execution, separate
           first-successor read-only live OCI/manifest proof and independent
          three-JWT successor identity verification, original replay
-          transitions and protected product-only operation.
+          transitions, protected product-only operation and source-only
+          end-to-end first-successor staging/cutover/rollback coordinator.
 
 NOT A DEPLOYMENT: This class is not installed in the Task014 application
 source set; no host listener, rootless runtime, secret, DB, Docker or release
@@ -745,6 +747,308 @@ class AnalyticsPrivilegedExecutor:
             return _build_success_response(request_hash)
         finally:
             _LEAVE_EXECUTION(self)
+
+
+# Section 8: exact first signed successor coordinator, UNINSTALLED and never
+# selected by the existing SO_PEERCRED/SCM_RIGHTS listener. This is deliberately
+# Analytics-specific, not a generic release orchestration framework.
+def _execute_reviewed_first_successor_transaction(
+    canonical_request: bytes, *, credential_fd: int,
+    expected_workflow_sha: str, executor: AnalyticsPrivilegedExecutor,
+    candidate_operation: object, journal: object,
+) -> bytes:
+    """Complete one original-blue0.15 -> signed-green private DEV transaction.
+
+    Reuse original UID991 independent Task013 owner/OIDC/Zot/Forgejo/Cosign
+    verification, original SQLite replay, sealed FD and hardened Docker
+    candidate, then original private 3142 probe and journaled 3141 cutover.
+    Verify the committed writer BEFORE finishing replay or returning success.
+
+    On failure after candidate creation, restore the verified old writer
+    BEFORE stopping the exact green container. A crash is never interpreted as
+    success; the protected journal retains the original request and unfinished
+    phase for an independently authorized recovery. No database rollback,
+    public port mutation, canary removal, unsignaled image adoption or token
+    logging is permitted.
+
+    The real Unix handler remains full-signed-review DENY-only. This helper is
+    NOT installed, registered as a request handler or exposed as an operator
+    CLI. A future separately owner-approved root-owned service installation
+    and independent M04 acceptance must authorize actual invocation.
+    """
+    from .analytics_active_state_review import (
+        AnalyticsActiveState, inspect_analytics_active_state,
+        inspect_committed_analytics_route,
+        verify_empty_analytics_successor_slot,
+    )
+    from .analytics_execution import AnalyticsSuccessorRequest
+    from .analytics_executor_service_config import (
+        load_analytics_executor_service_config,
+    )
+    from .analytics_first_install import AnalyticsSuccessorCandidateOperation
+    from .analytics_loopback_guard import (
+        _recover_reviewed_private_route,
+        _rollback_committed_private_successor,
+        _stage_reviewed_private_candidate_probe,
+        _switch_reviewed_private_route,
+    )
+    from .analytics_private_registry import AnalyticsPrivateZotPullAdapter
+    from .analytics_route_journal import (
+        AnalyticsRouteJournal, ROUTE_JOURNAL_DIRECTORY,
+    )
+    from .identity import validate_expected_workflow_sha
+
+    # Section: reject unreviewed generations, collaborators and principals
+    # BEFORE reading any host state, registry, journal, replay or Docker.
+    try:
+        if (
+            type(canonical_request) is not bytes
+            or not 0 < len(canonical_request) <= 16 * 1024
+            or type(credential_fd) is not int or credential_fd < 0
+            or (os.getuid(), os.geteuid(), os.getgid(), os.getegid())
+                != (991, 991, 991, 991)
+            or type(executor) is not AnalyticsPrivilegedExecutor
+            or type(candidate_operation) is not AnalyticsSuccessorCandidateOperation
+            or type(journal) is not AnalyticsRouteJournal
+            or object.__getattribute__(journal, "_directory")
+                != ROUTE_JOURNAL_DIRECTORY
+            or object.__getattribute__(journal, "_uid") != 991
+            or object.__getattribute__(journal, "_gid") != 991
+        ):
+            raise ValueError("unreviewed private release principal")
+        workflow = validate_expected_workflow_sha(expected_workflow_sha)
+        source = dict(object.__getattribute__(executor, "_reviewed_source"))
+        if (
+            object.__getattribute__(candidate_operation, "_source")
+                != tuple(sorted(source.items()))
+        ):
+            raise ValueError("candidate has a different installed source")
+        preflight = object.__getattribute__(executor, "_preflight_successor")
+        pull = object.__getattribute__(candidate_operation, "_pull")
+        if (
+            preflight is None
+            or type(preflight.__self__) is not AnalyticsPrivateZotPullAdapter
+            or type(pull.__self__) is not AnalyticsPrivateZotPullAdapter
+            or preflight.__self__ is not pull.__self__
+        ):
+            raise ValueError("successor registry/pull uses a different authority")
+        # The root-installed source manifest is the ONLY workflow selector,
+        # not the request's source_sha field or an environmental variable.
+        installed_source, identities = load_analytics_executor_service_config(
+            require_successor=True,
+        )
+        if (
+            type(installed_source) is not dict
+            or installed_source != source
+            or type(identities) is not dict
+            or identities.get("expected_workflow_sha") != workflow
+            or identities.get("expected_executor_uid") != 991
+            or identities.get("expected_executor_gid") != 991
+        ):
+            raise ValueError("no root-approved successor service source")
+    except _CONTROL:
+        raise
+    except Exception:
+        raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+
+    # Section: independently verify signed Task013 evidence and all three
+    # original JWTs with the root-pinned workflow and actual signed blue.
+    # Never accept a caller-built AnalyticsSuccessorRequest as authority.
+    request = _review_executor_successor_signed_release(
+        canonical_request, credential_fd,
+        expected_workflow_sha=workflow,
+        reviewed_installed_source=source,
+    )
+    if (
+        type(request) is not AnalyticsSuccessorRequest
+        or request.canonical_bytes() != canonical_request
+        or request.exact_image_reference == PINNED_IMAGE
+    ):
+        raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+
+    request_hash = hashlib.sha256(canonical_request).hexdigest()
+    route = None
+    candidate_id = None
+    began = False
+    replay_begin, replay_finish = object.__getattribute__(executor, "_replay")
+
+    # Section: no replay or mutation before original live-state and sealed
+    # credential / registry preflight. The source and original JWTs have
+    # already been independently authenticated by the same UID991.
+    try:
+        original = inspect_analytics_active_state()
+        if (
+            type(original) is not AnalyticsActiveState
+            or original.active_slot != "blue"
+            or original.active_image != PINNED_IMAGE
+            or original.active_digest != PINNED_DIGEST
+            or original.private_ingress_port != 3141
+            or original.candidate_slot != "green"
+            or original.candidate_probe_present is not False
+            or original.candidate_container_id is not None
+            or original.candidate_digest is not None
+            or original.read_only is not True
+            or original.deployment_authorized is not False
+        ):
+            raise ValueError("original private writer not verified")
+        verify_empty_analytics_successor_slot()
+        executor.preflight_first_successor_without_deployment(
+            canonical_request, credential_fd=credential_fd,
+            candidate_ready=False,
+        )
+        now = int(time.time())
+        credential = read_sealed_credential(
+            credential_fd, canonical_request=canonical_request,
+            image=request.exact_image_reference,
+            product_id="analytics-successor", now=now,
+        )
+        if (
+            credential.expires_at - now < MIN_POST_PREFLIGHT_VALIDITY_SECONDS
+            or inspect_analytics_active_state() != original
+        ):
+            raise ValueError("original state or sealed capability changed")
+    except _CONTROL:
+        raise
+    except Exception:
+        raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+
+    # Section: one original process-local execution gate and SQLite JTI
+    # transition. No candidate or route can start until the broker's
+    # original durable consume and this executor's begin both succeed.
+    if not _ENTER_EXECUTION(executor):
+        raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+    try:
+        try:
+            result = replay_begin(
+                request.oidc_jti, request_hash=request_hash,
+                run_id=request.github_run_id,
+                run_attempt=request.github_run_attempt,
+            )
+            if result is not None:
+                raise ValueError("invalid replay transition")
+            began = True
+        except ReplayError:
+            raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE) from None
+        except _CONTROL:
+            raise
+        except Exception:
+            raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+
+        # Section: candidate->3142->3141->replay finish. The original
+        # scoped FD never enters subprocess argv or service environment.
+        try:
+            with scoped_private_zot_request(credential_fd, canonical_request):
+                candidate_id = candidate_operation.stage_first_successor_green(
+                    request,
+                )
+            if (
+                type(candidate_id) is not str
+                or len(candidate_id) != 64
+                or any(c not in "0123456789abcdef" for c in candidate_id)
+            ):
+                raise ValueError("unreviewed candidate container identity")
+            route = dict(
+                previous_slot="blue",
+                previous_image=PINNED_IMAGE,
+                previous_id=original.active_container_id,
+                next_slot="green",
+                next_image=request.exact_image_reference,
+                next_id=candidate_id,
+                journal=journal,
+                request_sha256=request_hash,
+            )
+            if _stage_reviewed_private_candidate_probe(**route) is not None:
+                raise ValueError("candidate probe not durably staged")
+            # The existing preflight rechecks original Ed25519 source,
+            # private 3142 health, actual container digest and signed Zot.
+            executor.preflight_first_successor_without_deployment(
+                canonical_request, credential_fd=credential_fd,
+                candidate_ready=True,
+            )
+            if _switch_reviewed_private_route(**route) is not None:
+                raise ValueError("3141 cutover not durably switched")
+            final = inspect_committed_analytics_route(
+                journal=journal, reviewed_image=request.exact_image_reference,
+                reviewed_slot="green", reviewed_container_id=candidate_id,
+                reviewed_request_sha256=request_hash,
+            )
+            if (
+                type(final) is not AnalyticsActiveState
+                or final.active_slot != "green"
+                or final.active_container_id != candidate_id
+            ):
+                raise ValueError("green writer does not match durable journal")
+            if replay_finish(
+                request.oidc_jti, request_hash=request_hash,
+                run_id=request.github_run_id,
+                run_attempt=request.github_run_attempt,
+            ) is not None:
+                raise ValueError("invalid replay completion")
+            return _build_success_response(request_hash)
+        except _CONTROL:
+            # Leave the exact fsync journal for a separately reviewed restart
+            # recovery after a crash. Never report success during interruption.
+            raise
+        except Exception:
+            # Section: recovery on post-replay failure, avoiding a false
+            # rollback claim. A candidate is NEVER stopped while a route
+            # could still be serving it. Preserve database writes and Canary.
+            if candidate_id is not None and route is not None:
+                try:
+                    record = journal.read()
+                    if (
+                        type(record) is not dict
+                        or record.get("request_sha256") != request_hash
+                        or record.get("previous_container_id")
+                            != original.active_container_id
+                        or record.get("next_container_id") != candidate_id
+                        or record.get("previous_image") != PINNED_IMAGE
+                        or record.get("next_image") != request.exact_image_reference
+                    ):
+                        raise ValueError("foreign or lost route journal")
+                    if record["phase"] == "switched":
+                        _rollback_committed_private_successor(**route)
+                    elif record["phase"] in ("prepared", "candidate_ready", "rollback_pending"):
+                        _recover_reviewed_private_route(**route)
+                    elif record["phase"] != "restored":
+                        raise ValueError("unknown journal recovery state")
+                    if journal.read().get("phase") != "restored":
+                        raise ValueError("unconfirmed 3141 restoration")
+                    inspect_committed_analytics_route(
+                        journal=journal, reviewed_image=PINNED_IMAGE,
+                        reviewed_slot="blue",
+                        reviewed_container_id=original.active_container_id,
+                        reviewed_request_sha256=request_hash,
+                    )
+                    candidate_operation.rollback_staged_successor(
+                        request, candidate_id,
+                    )
+                except _CONTROL:
+                    raise
+                except Exception:
+                    sys.stderr.write(
+                        "TASK014_ANALYTICS_SUCCESSOR_HOLD phase=recovery_unconfirmed\n"
+                    )
+            elif candidate_id is not None:
+                # A failure before the route dictionary was constructed.
+                # Stop only when independent route inspection proves the
+                # unchanged original writer and ABSENT 3142 candidate probe.
+                try:
+                    observed = inspect_analytics_active_state()
+                    if observed != original:
+                        raise ValueError("unreviewed route after stage failure")
+                    candidate_operation.rollback_staged_successor(
+                        request, candidate_id,
+                    )
+                except _CONTROL:
+                    raise
+                except Exception:
+                    sys.stderr.write(
+                        "TASK014_ANALYTICS_SUCCESSOR_HOLD phase=candidate_unconfirmed\n"
+                    )
+            raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+    finally:
+        _LEAVE_EXECUTION(executor)
 
 
 __all__ = ("AnalyticsPrivilegedExecutor",)

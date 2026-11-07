@@ -3,7 +3,8 @@
 Purpose: Preserve original Task014 OIDC -> signed 0.15.0 release ->
          sealed Zot credential -> replay -> private first-install transport,
          and read-only verify first-successor signed source and the original
-         rollback hint WITHOUT Docker access, dispatch or replay consumption.
+         rollback hint WITHOUT Docker access, plus an UNINSTALLED positive
+         source-only replay/FD handoff that requires future owner approval.
 Related: deployment/analytics_registry_review_composition.py,
          deployment/analytics_signed_release_consumer.py,
          deployment/analytics_execution.py,
@@ -14,7 +15,8 @@ Related: deployment/analytics_registry_review_composition.py,
 
 Sections: root-controlled authority capture; canonical successor and
           signed-original/owner/GitHub/registry read-only review;
-          original sealed Zot handoff, replay and bounded private transport.
+          original sealed Zot handoff, replay and bounded private transport;
+          future independently signed schema3 broker replay/FD handoff.
 
 NOT ACTIVATED FOR SUCCESSORS: The original Analytics executor systemd
 socket is installed and listens, but its signed 0.15.0 receiver cannot admit
@@ -400,6 +402,158 @@ class AnalyticsPrivatePromotionBroker:
             except Exception:
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        finally:
+            os.close(descriptor)
+
+    # Section: future source-only original broker replay/FD/Unix handoff
+    # for the independently reviewed first successor. NOT installed in
+    # HTTPS routing; the original active receiver remains DENY-only.
+    def authorize_and_forward_first_successor(
+        self, *, compact_token: str, zot_token: str, forgejo_token: str,
+        canonical_request: bytes, received_at: int,
+    ) -> bytes:
+        """Consume the ORIGINAL broker JTI only after signed review and FD.
+
+        This is the second half of the first-successor source transaction.
+        Independently verify original GitHub actor/run/workflow and both signed
+        original/next release proofs, then bind three scoped source JWTs in one
+        kernel-sealed FD. The original SQLite replay consume occurs BEFORE
+        sending to the exact Analytics-successor Unix transport; a wrong,
+        partial or forged executor success is always UNAVAILABLE, never GO.
+        The current live HTTPS router NEVER calls this method and the root
+        UID991 generation-2 Unix receiver is still signed-review DENY-only.
+
+        Do not install/enable this path without original root-owned V2,
+        protected positive UID991 coordinator, explicit owner approval and
+        independently accepted restart recovery; no generic public API added.
+        """
+        from .executor import parse_canonical_response
+        sender = object.__getattribute__(self, "_successor_transport")
+        if sender is None:
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+
+        # Section: mandatory complete original broker signing admission.
+        # This performs original owner Ed25519, OIDC, Cosign, provenance, OCI
+        # SBOM, zero-High and exact original 0.15.0 rollback source binding.
+        selected = self.review_first_successor_without_forwarding(
+            compact_token=compact_token, zot_token=zot_token,
+            forgejo_token=forgejo_token,
+            canonical_request=canonical_request, received_at=received_at,
+        )
+        if (
+            type(selected) is not AnalyticsSuccessorRequest
+            or selected.canonical_bytes() != canonical_request
+            or selected.exact_image_reference == PINNED_IMAGE
+        ):
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        # Re-verify original signed OIDC for the second replay transition,
+        # never accept request fields or a caller-created receipt as identity.
+        try:
+            identity = _normalize_identity(
+                object.__getattribute__(self, "_verify")(
+                    compact_token, received_at=received_at,
+                ),
+                received_at=received_at,
+                expected_workflow_sha=object.__getattribute__(
+                    self, "_expected_workflow_sha",
+                ),
+                authorization=authorize_verified_github_oidc,
+                expected_fields=IDENTITY_FIELDS,
+            )
+            if (
+                (
+                    selected.requested_by_actor_id,
+                    selected.github_repository_id,
+                    selected.github_workflow_ref,
+                    selected.github_workflow_sha,
+                    selected.github_run_id,
+                    selected.github_run_attempt,
+                    selected.oidc_jti,
+                    selected.oidc_issued_at,
+                    selected.oidc_expires_at,
+                ) != (
+                    identity.actor_id, identity.repository_id,
+                    identity.workflow_ref, identity.workflow_sha,
+                    identity.run_id, identity.run_attempt, identity.jti,
+                    identity.issued_at, identity.expires_at,
+                )
+            ):
+                raise AnalyticsRequestError("changed signed identity")
+        except OIDCVerificationUnavailable:
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        except (OIDCVerificationError, OIDCAuthorizationError, AnalyticsRequestError):
+            raise BrokerRejectedError(REJECTED_MESSAGE) from None
+        except _CONTROL:
+            raise
+        except Exception:
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+
+        # Section: three original signed JWTs bound to exact immutable OCI
+        # digest and canonical schema3 request. Reuse the original narrow
+        # registry-audience verifier and sealed kernel memfd schema2.
+        try:
+            registry = object.__getattribute__(self, "_registry")(
+                identity, zot_token=zot_token, forgejo_token=forgejo_token,
+                received_at=received_at,
+            )
+            if type(registry) is not VerifiedRegistryCredentials:
+                raise ValueError("unverified registry audiences")
+            scoped = registry.zot_read_credential()
+            now = int(time.time())
+            if (
+                type(scoped.expires_at) is not int
+                or scoped.expires_at - now < MIN_POST_PREFLIGHT_VALIDITY_SECONDS
+            ):
+                raise ValueError("expired future pull window")
+            descriptor = create_sealed_successor_review_credentials(
+                scoped.token, forgejo_token=forgejo_token,
+                github_oidc_token=compact_token, expires_at=scoped.expires_at,
+                image=selected.exact_image_reference,
+                canonical_request=canonical_request, now=now,
+            )
+        except RegistryCredentialRejectedError:
+            raise BrokerRejectedError(REJECTED_MESSAGE) from None
+        except _CONTROL:
+            raise
+        except Exception:
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+
+        # Section: the exact original cross-process broker replay store must
+        # CONSUME before any private executor message is sent. An executor
+        # failure consumes the JTI, prevents replay, and never grants success.
+        request_hash = hashlib.sha256(canonical_request).hexdigest()
+        try:
+            try:
+                consumed = object.__getattribute__(self, "_replay")(
+                    identity.jti, expires_at=identity.expires_at,
+                    request_hash=request_hash,
+                    run_id=identity.run_id,
+                    run_attempt=identity.run_attempt,
+                )
+                if consumed is not None:
+                    raise ValueError("invalid replay consume")
+            except ReplayError:
+                raise BrokerRejectedError(REJECTED_MESSAGE) from None
+            except _CONTROL:
+                raise
+            except Exception:
+                raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+            try:
+                result = sender(
+                    canonical_request, credential_fd=descriptor,
+                )
+                if (
+                    type(result) is not bytes
+                    or not 0 < len(result) <= MAX_EXECUTOR_RESPONSE_BYTES
+                    or parse_canonical_response(result).executor_request_sha256
+                        != request_hash
+                ):
+                    raise ValueError("wrong signed executor receipt")
+                return result
+            except _CONTROL:
+                raise
+            except Exception:
+                raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         finally:
             os.close(descriptor)
 

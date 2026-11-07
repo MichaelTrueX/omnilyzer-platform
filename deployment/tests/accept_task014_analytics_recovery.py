@@ -507,7 +507,7 @@ RestrictNamespaces=yes
         # The original V1 70-file installed source remains unchanged.
         # Schema-2 successor now attests the original immutable C32I
         # Sigstore toolchain provenance in addition to the route overlay.
-        # This source-only native handoff must track its exact 75-file set.
+        # This source-only native handoff must track its exact 76-file set.
         self.assertEqual(len(verified_sources), 75)
         self.assertIn(
             'deployment/sigstore_authority_provenance.py',

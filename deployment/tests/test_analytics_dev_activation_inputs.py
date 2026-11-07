@@ -101,7 +101,7 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         self.assertNotIn("deployment/analytics_isolated_source_install.py", entries)
 
     def test_v2_exact_git_review_inputs_are_not_installed_authority(self):
-        """Tie all 23 successor source hashes to one immutable V2 Git TAR."""
+        """Tie all 26 successor source hashes to one immutable V2 Git TAR."""
         successor = activation.build_unsigned_analytics_activation_inputs(
             repository_root=str(ROOT), reviewed_commit=self.sha,
             successor_source=True,
@@ -130,7 +130,7 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
             expected_manifest_sha256=approval["manifest_sha256"],
             reviewed_commit=self.sha,
         ))
-        self.assertEqual(len(archived), 37)
+        self.assertEqual(len(archived), 38)
         parsed = parse_analytics_executor_service_config(
             successor[activation.EXECUTOR_CONFIG],
         )

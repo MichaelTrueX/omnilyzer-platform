@@ -1,7 +1,7 @@
 """File: deployment/tests/test_analytics_isolated_source_install.py
 
 Purpose: Exercise genuine C31B FD staging for original 70-source and
-         closed V2 75-source Analytics generations in isolated directories.
+         closed V2 76-source Analytics generations in isolated directories.
          Verify immutable 43-file historical canary and strict V1/V2 denial.
 Related: deployment/analytics_isolated_source_install.py,
          deployment/analytics_source_archive.py,
@@ -159,7 +159,7 @@ class IsolatedSourceGenerationTests(unittest.TestCase):
                 successor_source=successor_source,
             )
 
-    def test_75_successor_sources_are_real_verified_and_legacy_tree_is_identical(self):
+    def test_76_successor_sources_are_real_verified_and_legacy_tree_is_identical(self):
         """Actual isolated V2 broker imports, with original canary bytes intact."""
         before = {
             name: os.stat(self.old_root / name).st_ino for name in self.old
@@ -174,9 +174,9 @@ class IsolatedSourceGenerationTests(unittest.TestCase):
             str(item.relative_to(new_root))
             for item in new_root.rglob("*") if item.is_file()
         }
-        self.assertEqual(len(actual), 75)
+        self.assertEqual(len(actual), 76)
         self.assertEqual(
-            len(actual - set(self.old)), 32,
+            len(actual - set(self.old)), 33,
         )
         for name, payload in self.old.items():
             self.assertEqual((self.old_root / name).read_bytes(), payload)
@@ -191,7 +191,7 @@ class IsolatedSourceGenerationTests(unittest.TestCase):
         }
         self.assertEqual(changed, set(_SHARED_COMPATIBILITY_FILES))
         self.assertFalse((self.parent / install._STAGING).exists())
-        # Real separate Python process imports ONLY the isolated 75-file
+        # Real separate Python process imports ONLY the isolated 76-file
         # V2 generation, not development worktree or the original canary.
         program = (
             "import deployment.analytics_broker_service_entrypoint as b; "
@@ -240,7 +240,7 @@ class IsolatedSourceGenerationTests(unittest.TestCase):
             )
         candidate = self.parent / install._SUCCESSOR_DESTINATION
         self.assertEqual(result, str(candidate))
-        self.assertEqual(sum(1 for path in candidate.rglob("*") if path.is_file()), 75)
+        self.assertEqual(sum(1 for path in candidate.rglob("*") if path.is_file()), 76)
         self.assertEqual(before, {
             str(path.relative_to(live)): (path.read_bytes(), path.stat().st_ino)
             for path in live.rglob("*") if path.is_file()
