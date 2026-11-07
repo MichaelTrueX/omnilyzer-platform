@@ -1,7 +1,7 @@
 """File: deployment/analytics_source_archive.py
 
 Purpose: Build and independently verify historical exact 32-entry Task014
-         Analytics unsigned source archive and a separate exact 35-entry
+         Analytics unsigned source archive and a separate exact 36-entry
          Task14B successor V2 archive with three additional Git modules.
 Related: deployment/analytics_source_handoff.py (original C26 Git-object
          evidence), deployment/analytics_executor_service_config.py (closed
@@ -284,13 +284,13 @@ def verify_analytics_source_archive(
 # review archive. Never broaden the 32-entry accepted historical schema-1
 # source handoff or its original 0.15.0 installation/approval path.
 _V2_MANIFEST_LIMIT = 32768
-_V2_COUNT = 35
+_V2_COUNT = 36
 
 
 def _validate_successor_manifest(
     raw: bytes, *, expected_sha256: str, reviewed_commit: str,
 ) -> dict[str, object]:
-    """Require both original V1 and exact three additional V2 source hashes."""
+    """Require original V1 and exactly four additional V2 Git blob hashes."""
     from .analytics_executor_service_config import (
         ANALYTICS_INSTALLED_FILES, ANALYTICS_SUCCESSOR_INSTALLED_FILES,
         _INSTALLED_RUNTIME_FILES,
@@ -349,7 +349,7 @@ def _validate_successor_manifest(
         *_ADDITIVE_UNITS, *_SHARED_COMPATIBILITY_FILES,
     )))
     if (
-        len(extras) != 3 or len(expected_names) != _V2_COUNT
+        len(extras) != 4 or len(expected_names) != _V2_COUNT
         or len(set(expected_names)) != _V2_COUNT
         or len(original_names) != 32
         or tuple(item["path"] for item in obj["source_entries"]) != expected_names
@@ -375,7 +375,7 @@ def _validate_successor_manifest(
 def build_analytics_successor_source_archive(
     *, repository_root: str, reviewed_commit: str,
 ) -> bytes:
-    """Add exactly three successor source blobs to verified V1 Git evidence.
+    """Add four successor blobs including safe Compose overlay to original Git evidence.
 
     Only local immutable Git objects are read. No installed source, shell
     mutator, registry, credentials or Docker operation is invoked. The

@@ -1,7 +1,7 @@
 """File: deployment/analytics_source_handoff.py
 
 Purpose: Produce original immutable 32-source Analytics Task014 Git-object
-         review and a separate exact 35-source Task14B V2 handoff. Neither
+         review and a separate exact 36-source Task14B V2 handoff. Neither
          review changes the independently approved historical installation.
 Related: deployment/application_manifest.py (original closed Git-object reader),
          deployment/application_source_set.py (original canary source boundary),
@@ -295,6 +295,7 @@ def review_analytics_successor_source_handoff(
     try:
         from .analytics_executor_service_config import (
             ANALYTICS_INSTALLED_FILES, ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+            ANALYTICS_SUCCESSOR_COMPOSE_FILES,
         )
         base_raw = review_analytics_source_handoff(
             repository_root=repository_root, reviewed_commit=reviewed_commit,
@@ -305,11 +306,16 @@ def review_analytics_successor_source_handoff(
             - set(ANALYTICS_INSTALLED_FILES)
         ))
         if (
-            len(extra) != 3
+            len(extra) != 4
             or len(ANALYTICS_INSTALLED_FILES) != 20
-            or len(ANALYTICS_SUCCESSOR_INSTALLED_FILES) != 23
-            or not all(path.startswith(("deployment/", "release/"))
-                       and path.endswith(".py") for path in extra)
+            or len(ANALYTICS_SUCCESSOR_INSTALLED_FILES) != 24
+            or set(ANALYTICS_SUCCESSOR_COMPOSE_FILES) - set(extra)
+            or not all(
+                (path.startswith(("deployment/", "release/"))
+                 and path.endswith(".py"))
+                or path in ANALYTICS_SUCCESSOR_COMPOSE_FILES
+                for path in extra
+            )
         ):
             raise ValueError
         records = _git._tree(_git._output(
@@ -338,8 +344,8 @@ def review_analytics_successor_source_handoff(
             })
         entries.sort(key=lambda item: item["path"])
         if (
-            len(entries) != 35
-            or len({item["path"] for item in entries}) != 35
+            len(entries) != 36
+            or len({item["path"] for item in entries}) != 36
             or _git._output(
                 repository_root,
                 ("rev-parse", "--verify", "HEAD^{commit}"), 41,
@@ -350,7 +356,7 @@ def review_analytics_successor_source_handoff(
             "schema_version": 2,
             "purpose": "analytics-task014-successor-source-review-only",
             "source_commit": reviewed_commit,
-            "source_file_count": 35,
+            "source_file_count": 36,
             "source_entries": entries,
             "baseline_review": base,
             "deployment_authorized": False,

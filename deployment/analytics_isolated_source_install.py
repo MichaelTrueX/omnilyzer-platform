@@ -265,7 +265,7 @@ def _review_and_combine(
     manifest_sha: str, reviewed_commit: str,
     successor_source: bool = False,
 ) -> tuple[tuple[str, bytes], ...]:
-    """Combine closed V1 70 or explicitly reviewed successor V2 73 sources."""
+    """Combine closed V1 70 or explicitly reviewed successor V2 74 sources."""
     if type(successor_source) is not bool:
         raise ValueError
     verifier = (
@@ -298,8 +298,8 @@ def _review_and_combine(
         raise ValueError
     union = {**old, **dict(updated)}
     if (
-        len(union) != (73 if successor_source else 70)
-        or len(updated) != (35 if successor_source else 32)
+        len(union) != (74 if successor_source else 70)
+        or len(updated) != (36 if successor_source else 32)
         or sum(len(blob) for blob in union.values()) > _MAX_GENERATION
     ):
         raise ValueError
@@ -310,7 +310,7 @@ def _stage_new_generation(
     parentfd: int, selected: tuple[tuple[str, bytes], ...], *,
     uid: int, gid: int, successor_source: bool = False,
 ) -> None:
-    """Build and verify closed V1 70-file or opt-in V2 73-file staging.
+    """Build and verify closed V1 70-file or opt-in V2 74-file staging.
 
     The stage must not preexist. The old canary app is never opened for write.
     On pre-publication failure only the exact files/dirs created here are
@@ -319,7 +319,7 @@ def _stage_new_generation(
     paths = tuple(path for path, _ in selected)
     if (
         type(successor_source) is not bool
-        or len(paths) != (73 if successor_source else 70)
+        or len(paths) != (74 if successor_source else 70)
         or paths != tuple(sorted(set(paths)))
     ):
         raise ValueError

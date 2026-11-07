@@ -9,7 +9,7 @@ Related: deployment/executor_service_config_loader.py (existing hardened C17
          deployment/tests/test_analytics_executor_service_config.py.
 
 Sections: original closed 20-source schema-1 installation, separate
-          closed 23-source V2 root-approved installation grammar, canonical JSON configuration,
+          closed 24-object V2 root-approved installation grammar, canonical JSON configuration,
           descriptor-relative owner verification, immutable installed
           file hash checking and original C17 executor identity binding.
 
@@ -76,10 +76,17 @@ ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES = (
 ANALYTICS_SUCCESSOR_RELEASE_FILES = (
     "release/analytics_owner_source_selection.py",
 )
+# The existing candidate Compose reset overlay is a privileged routing
+# input: bind its immutable Git blob in the SAME root-controlled V2 source
+# closure. The historical 0.15.0 V1 source set remains byte-identical.
+ANALYTICS_SUCCESSOR_COMPOSE_FILES = (
+    "deployment/runtime/dev/analytics.compose.successor-ports.yaml",
+)
 ANALYTICS_SUCCESSOR_INSTALLED_FILES = tuple(sorted((
     *ANALYTICS_INSTALLED_FILES,
     *ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES,
     *ANALYTICS_SUCCESSOR_RELEASE_FILES,
+    *ANALYTICS_SUCCESSOR_COMPOSE_FILES,
 )))
 
 # These three are already bound inside the signed Analytics source claim.
@@ -143,7 +150,7 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
             raise ValueError
         # Section: two explicit, disjoint source generations. An installed
         # schema-1 file MUST retain exactly its original 20 Python modules.
-        # Schema-2 source is an owner-installed, fixed 23-module V2 generation;
+        # Schema-2 source is a fixed 23-module plus one Compose-override V2 generation;
         # selecting an arbitrary path or mixing source generations is denied.
         generation = value["schema_version"]
         if (type(generation) is not int or generation not in (1, 2)
@@ -157,11 +164,12 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
         if (
             len(ANALYTICS_INSTALLED_FILES) != 20
             or len(set(ANALYTICS_INSTALLED_FILES)) != 20
-            or len(ANALYTICS_SUCCESSOR_INSTALLED_FILES) != 23
-            or len(set(ANALYTICS_SUCCESSOR_INSTALLED_FILES)) != 23
+            or len(ANALYTICS_SUCCESSOR_INSTALLED_FILES) != 24
+            or len(set(ANALYTICS_SUCCESSOR_INSTALLED_FILES)) != 24
             or set(ANALYTICS_SUCCESSOR_INSTALLED_FILES) - set(ANALYTICS_INSTALLED_FILES)
                 != set(ANALYTICS_SUCCESSOR_DEPLOYMENT_FILES)
                 | set(ANALYTICS_SUCCESSOR_RELEASE_FILES)
+                | set(ANALYTICS_SUCCESSOR_COMPOSE_FILES)
             or type(source) is not dict or set(source) != set(paths)
             or any(type(key) is not str or type(v) is not str
                    or len(v) != 64 or any(c not in "0123456789abcdef" for c in v)
@@ -198,7 +206,7 @@ def _verify_source_bytes(
     """Read exact generation-specific source via fd-relative O_NOFOLLOW.
 
     Root-owned schema 1 accepts only the original 20-file live directory;
-    schema 2 accepts only the exact 23-file inactive candidate directory.
+    schema 2 accepts only the exact 24-file inactive candidate directory.
     The real installed root and all ancestors must be root-owned and not
     writable by any unprivileged role. Files must be single-link, mode0644,
     bounded, regular and byte-hash identical to root-owned installed policy.
@@ -241,6 +249,7 @@ def _verify_source_bytes(
         total = 0
         # Only a complete schema-1 or schema-2 ordered source vector is
         # accepted, followed by the SAME four original runtime assets.
+        # V2 additionally pins the Compose reset override as a SHA source.
         approved_names = set(v2_names)
         for name, digest in expected:
             if name not in approved_names or type(digest) is not str:

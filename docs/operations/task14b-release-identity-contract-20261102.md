@@ -1432,3 +1432,32 @@ authorization must still be independently verified outside these low-level
 routing primitives, and the existing V1 supervisor remains unmodified.
 Synthetic tests now exercise both release generations and a crash between
 retiring 3142 and fsyncing switched. None touch live RootlessKit or data.
+
+## 2026-11-07: V2 Compose override now included in signed source closure
+
+The original V1 20-module/32-Git-object/70-file root-approved source set is
+unchanged. The V2 source graph now consists of the original 23 Python
+modules **plus** exactly one runtime-critical file:
+`deployment/runtime/dev/analytics.compose.successor-ports.yaml`.
+The V2 Git handoff is therefore 36 objects, and the isolated candidate
+root-owned source generation is 74 files including the previously attested
+Canary inheritance. No new general-purpose source loader or release scheme
+is introduced.
+
+This additional file is necessary for safe staging: the successor Compose
+`!reset []` directive must remove both successor host-published port
+mappings so that RootlessKit alone owns localhost3141 and temporary3142.
+The original first-install Compose still has historical port3141 and is
+not rewritten. V2 root configuration lists the overlay's exact Git blob
+SHA256 in `source_sha256`. The existing descriptor-relative root-owned
+file verifier now checks the overlay's exact path, SHA, single-link 0644
+regular file, immutable metadata and entire source closure before a V2
+service can load. Caller-supplied mutable working-tree YAML cannot pass.
+Only schema2 V2 source accepts this path, not the original V1 config.
+
+The existing source archive/unsigned activation tests and one negative
+tamper test verify that a change from `ports: !reset []` to `ports: []`
+is rejected before any root write or Docker invocation. This is only a
+prerequisite for candidate startup; the protected broker/executor still
+have no authorized schema3 replay + Compose execution path, and there is
+no release or deployment permission from this work.

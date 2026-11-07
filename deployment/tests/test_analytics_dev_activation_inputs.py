@@ -130,7 +130,7 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
             expected_manifest_sha256=approval["manifest_sha256"],
             reviewed_commit=self.sha,
         ))
-        self.assertEqual(len(archived), 35)
+        self.assertEqual(len(archived), 36)
         parsed = parse_analytics_executor_service_config(
             successor[activation.EXECUTOR_CONFIG],
         )
@@ -180,6 +180,55 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         with patch.object(activation, "verify_analytics_successor_source_archive",
                           return_value=corrupt), self.assertRaises(
                 activation.AnalyticsActivationInputsError):
+            activation.build_unsigned_analytics_activation_inputs(
+                repository_root=str(ROOT), reviewed_commit=self.sha,
+                successor_source=True,
+            )
+
+    def test_v2_compose_reset_overlay_is_git_exact_and_tamper_denied(self):
+        """An unsigned alternate port mapping never becomes root-owned V2 input.
+
+        Check the real Git blob is present in the fixed candidate bundle,
+        then tamper ONLY that YAML while the manifest/source SHA is unchanged.
+        The existing activation builder must reject before any installation.
+        """
+        from deployment.analytics_executor_service_config import (
+            ANALYTICS_SUCCESSOR_COMPOSE_FILES,
+        )
+        self.assertEqual(ANALYTICS_SUCCESSOR_COMPOSE_FILES, (
+            "deployment/runtime/dev/analytics.compose.successor-ports.yaml",
+        ))
+        successor = activation.build_unsigned_analytics_activation_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        approved = json.loads(successor[activation.SOURCE_APPROVAL])
+        original = verify_analytics_successor_source_archive(
+            successor[activation.SOURCE_ARCHIVE],
+            expected_manifest_sha256=approved["manifest_sha256"],
+            reviewed_commit=self.sha,
+        )
+        overlay = ANALYTICS_SUCCESSOR_COMPOSE_FILES[0]
+        original_map = dict(original)
+        self.assertIn(b"ports: !reset []", original_map[overlay])
+        self.assertEqual(
+            hashlib.sha256(original_map[overlay]).hexdigest(),
+            json.loads(successor[activation.EXECUTOR_CONFIG])[
+                "source_sha256"
+            ][overlay],
+        )
+        corrupted = tuple(
+            (path, blob.replace(b"ports: !reset []", b"ports: []")
+             if path == overlay else blob)
+            for path, blob in original
+        )
+        with (
+            patch.object(
+                activation, "verify_analytics_successor_source_archive",
+                return_value=corrupted,
+            ),
+            self.assertRaises(activation.AnalyticsActivationInputsError),
+        ):
             activation.build_unsigned_analytics_activation_inputs(
                 repository_root=str(ROOT), reviewed_commit=self.sha,
                 successor_source=True,
