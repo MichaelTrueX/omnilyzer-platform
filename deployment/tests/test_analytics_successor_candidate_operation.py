@@ -110,6 +110,12 @@ class SyntheticGreenRunner:
                 if self.failure == "wrong-repodigest" else self.image
             )
             return CommandResult(0, json.dumps([digest]), "")
+        if parts[:2] == ("container", "stop"):
+            assert parts == ("container", "stop", "--time", "15", CID)
+            if self.failure == "stop-error":
+                return CommandResult(1, "", "synthetic stop denial")
+            self.running = False
+            return CommandResult(0, CID + "\n", "")
         if parts[:2] == ("container", "inspect"):
             assert parts[-1] == CID
             wanted = parts[3]
@@ -139,6 +145,7 @@ class SyntheticGreenRunner:
                 "{{json .State.Health.Status}}": (
                     "unhealthy" if self.failure == "unhealthy" else "healthy"
                 ),
+                "{{json .State.Running}}": self.running,
             }
             assert wanted in metadata
             return CommandResult(0, json.dumps(metadata[wanted]), "")
@@ -363,6 +370,31 @@ class AnalyticsSuccessorCandidateStageTests(unittest.TestCase):
             self.operation.rollback_staged_successor(self.request, CID),
         )
         self.assertFalse(self.runner.running)
+
+    def test_completed_rollback_stops_exact_id_not_compose_service_name(self):
+        """A completed rollback cannot follow a mutable Compose name at stop."""
+        self.assertEqual(self.stage(), CID)
+        self.assertIsNone(
+            self.operation.rollback_staged_successor(self.request, CID),
+        )
+        self.assertIn(("container", "stop", "--time", "15", CID),
+                      self.runner.calls)
+        self.assertFalse(any(
+            a and a[0] == "compose" and "stop" in a
+            for a in self.runner.calls
+        ))
+
+    def test_completed_rollback_failed_exact_stop_is_not_reported_success(self):
+        """A failed exact-ID stop cannot consume completed rollback authority."""
+        self.assertEqual(self.stage(), CID)
+        self.runner.failure = "stop-error"
+        with self.assertRaises(AnalyticsFirstInstallError):
+            self.operation.rollback_staged_successor(self.request, CID)
+        self.assertTrue(self.runner.running)
+        self.assertFalse(any(
+            a and a[0] == "compose" and "stop" in a
+            for a in self.runner.calls
+        ))
 
     def test_rollback_rejects_replaced_same_image_container_without_stop(self):
         """A new container ID is not the approved staged release identity."""
