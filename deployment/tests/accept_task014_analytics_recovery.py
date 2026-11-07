@@ -503,7 +503,9 @@ RestrictNamespaces=yes
             manifest_sha=hashlib.sha256(source_manifest).hexdigest(),
             reviewed_commit=reviewed_commit, successor_source=True,
         )
-        self.assertEqual(len(verified_sources), 73)
+        # V2 now includes the SHA-pinned Compose !reset host-port overlay.
+        # The original V1 70-file installed source remains unchanged.
+        self.assertEqual(len(verified_sources), 74)
         package = self.base / 'package'
         package.mkdir(mode=0o755)
         for path, source in verified_sources:

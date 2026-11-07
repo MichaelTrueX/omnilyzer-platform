@@ -328,14 +328,21 @@ def _verify_source_bytes(
             os.close(desc)
 
 
-def load_analytics_executor_service_config() -> tuple[dict[str, str], dict[str, int]]:
+def load_analytics_executor_service_config(
+    *, require_successor: bool = False,
+) -> tuple[dict[str, str], dict[str, int]]:
     """Check original hardened C17 identity and selected root-owned source.
 
     This is the only intended runtime route to a reviewed_installed_source
     mapping. A caller-constructible mapping never proves host installation.
+    Default mode preserves original V1. An explicitly selected successor
+    candidate requires schema2 plus the exact root-owned port-reset overlay.
+    Neither successful read nor the flag confers release/deployment authority.
     """
     owned: list[int] = []
     try:
+        if type(require_successor) is not bool:
+            raise ValueError("invalid source-generation selection")
         base = load_dev_executor_service_configuration()
         initial = _process_identity()
         directory_flags, file_flags = _required_flags()
@@ -353,6 +360,11 @@ def load_analytics_executor_service_config() -> tuple[dict[str, str], dict[str, 
         # This separate root-owned config owns the Analytics generation;
         # verify its exact source bytes below without equating product releases.
         product = parse_analytics_executor_service_config(raw)
+        # The original V1 service may keep its unchanged default, but a
+        # successor Docker operation must never run against a V1-only root
+        # source manifest that did not attest the port-reset overlay.
+        if require_successor and product["source_generation"] != 2:
+            raise ValueError("candidate requires protected generation two")
         if (
             _configuration_file(os.fstat(desc)) != opened
             or _configuration_file(os.stat(

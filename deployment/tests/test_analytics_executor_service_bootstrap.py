@@ -509,6 +509,36 @@ class InstalledSourceConfigTests(unittest.TestCase):
             ANALYTICS_SUCCESSOR_INSTALLED_FILES,
         )
 
+    def test_successor_loader_requires_root_pinned_generation_two(self):
+        """Source-only candidate can never adopt the existing V1 source root."""
+        stack, _base, verified = self.installed_source_preflight(
+            successor=False,
+        )
+        with stack, self.assertRaises(AnalyticsInstalledAuthorityError):
+            load_analytics_executor_service_config(require_successor=True)
+        verified.assert_not_called()
+
+        stack, _base, verified = self.installed_source_preflight(
+            successor=True,
+        )
+        with stack:
+            source, identities = load_analytics_executor_service_config(
+                require_successor=True,
+            )
+        self.assertEqual(source, EXPECTED)
+        self.assertEqual(identities["expected_executor_uid"], 991)
+        verified.assert_called_once()
+        self.assertEqual(
+            verified.call_args.kwargs["root"],
+            config._SUCCESSOR_INSTALLED_ROOT,
+        )
+        for invalid in (1, "true", None, [], {}):
+            with self.subTest(value=invalid):
+                with self.assertRaises(AnalyticsInstalledAuthorityError):
+                    load_analytics_executor_service_config(
+                        require_successor=invalid,
+                    )
+
     def test_real_loader_identity_result_reaches_the_actual_bootstrap_contract(self):
         """Keep the real C17 producer and Analytics consumer joined.
 

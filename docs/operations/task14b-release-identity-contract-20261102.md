@@ -1461,3 +1461,62 @@ is rejected before any root write or Docker invocation. This is only a
 prerequisite for candidate startup; the protected broker/executor still
 have no authorized schema3 replay + Compose execution path, and there is
 no release or deployment permission from this work.
+
+
+## 2026-11-07: isolated green candidate startup primitive, not installed
+
+The existing deployment/analytics_first_install.py now includes a
+strictly separate, **source-only and uninstalled**
+AnalyticsSuccessorCandidateOperation.stage_first_successor_green() that
+reuses the same original Task014 rootless Docker CLI and UID-mapped secret
+review. It does **not** use a new deployment framework, a mutable image tag,
+a new token/session mechanism or a new service. The original signed V1
+first-install path remains unchanged.
+
+This first-successor-only operation requires UID991/GID991; independent
+root-controlled owner Ed25519 source approval; a sealed per-request Zot
+credential bound to the canonical schema-3 request and immutable OCI image;
+the original signed blue 0.15.0 still healthy/active on localhost3141 and
+genuinely empty green Docker slot; and existing Docker/Compose authority.
+It calls the existing root-owned source loader with
+require_successor=True, which explicitly DENIES original schema1 V1.
+It also requires the two actual Compose file paths to live **inside** the
+fixed, root-approved /opt/omnilyzer/deployment/analytics-app-candidate
+generation. Its fixed V2 Git source closure attests the Compose !reset []
+host-port override. An unrelated development worktree or path substitution
+cannot supply a Docker Compose file by merely matching V1 hashes.
+
+The original bounded Zot adapter pulls only the exact signed digest using
+ephemeral 0600 Docker auth; the candidate operation independently checks
+local RepoDigests, the original rootless network's exact ID and Internal=true,
+and the new container's same private network ID, distinct non-public IP,
+UID10001, read-only root, no-extra-capabilities, no new privileges and
+zero host-published ports. Only the inactive analytics-green profile can be
+started (--no-recreate --no-build --pull never). Internal container
+/readyz and /livez plus Docker healthy state must pass before returning
+the exact green container ID. **No 3142 probe, RootlessKit route switch or
+public URL is created at this stage.**
+
+The original Task014 monotonic deadline limits overall review, cold pull
+and startup to 570 seconds, leaving a separate stop-only rollback reserve
+if the partial candidate start fails. Failures never stop signed blue,
+remove a volume/network/image, or touch PostgreSQL. Exact request hash and
+candidate container ID scope an optional stop-only rollback after a later
+executor finalization failure.
+
+Synthetic tests use a real disposable OpenSSH Ed25519 signed source, actual
+Linux sealed FD credentials, real source byte/path contracts, a fake Docker
+runner and negative cases for untrusted UID, missing source, wrong identity,
+wrong image/digest, public port or network, shared IP, unhealthy or delayed
+startup, expiration/rollback, and wrong request/container. No real image
+was pulled, created, stopped, published or routed by these tests.
+
+**IMPORTANT HOLD:** This is only an *unwired low-level capability*. The
+installed schema2 receiver still DENIES schema3. A future separately
+authorized root-owned V2 service and authenticated broker/executor must
+verify the **full** signed Task013 Sigstore/Cosign/SBOM/provenance/zero-high
+policy and GitHub OIDC independently at the UID991 boundary and consume
+the durable SQLite replay **before** invoking this class. After staging,
+a separately authorized stage must journal the private 3142 route, re-check
+health and execute the recoverable 3141 cutover. No such end-to-end DEV
+success, approval or production rollout is claimed by this source change.
