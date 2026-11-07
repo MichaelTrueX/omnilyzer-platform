@@ -438,11 +438,38 @@ were performed.**
    saved progression, CSRF POST denial, refresh/revocation, logout stale
    cookie denial, and cross-user isolation. Reject traffic/leave 503
    if lawful guardian/adult admission or signed rights are unavailable.
-9. Rollback: withdraw `/auth/*` and private `/api/*` upstream routing
-   from the app vhost (restore prior 503), revoke existing S03 sessions
-   under its authorized issuer role, stop this BFF unit, restore previous
-   immutable source and database snapshots if required. Never silently
-   delete valid learner progress or re-enable legacy password paths.
+9. Rollback and recovery (fail closed; do not reinstate obsolete identity
+   authorization): If the real-user acceptance or runtime checks fail, stop
+   the BFF and Native services under the existing authorized operator process.
+   Deny private authentication and learning requests at the NGINX ingress
+   (an inactive loopback upstream returns 502), and withdraw the public app
+   DNS route if it has been activated and the approved rollback requires it.
+   Use the restricted S03 issuer to revoke affected product sessions only
+   under its existing authority; preserve verified encrypted database backups
+   and valid learner progress. Do not serve static, mocked or legacy login
+   fallbacks to disguise an unavailable backend.
+
+   **Do not restore the existing pre-upgrade BFF `d65d14b69d3e5c899ab9291741b9029669244168`.**
+   A read-only production-host diff against the accepted staged BFF
+   `304b5acdc642ec4b26e08867af467e63c1b04c5e` confirms the older
+   release lacks exact-realm OIDC endpoint allowlisting, fail-closed
+   Django-session persistence compensation and exact
+   `https://app.sumlaude.com` origin binding. It is NOT a security-equivalent
+   rollback target, even though it remains the current inactive symlink.
+   Likewise, never activate or roll back Native to the older `d74ed8d1...`
+   release, which lacks the required course/content-key authorization gate.
+   A previous immutable BFF/Native release may only be restored after its
+   identity, admission, session and source hash contracts are independently
+   verified equivalent to the currently approved security boundary.
+   **No such approved earlier BFF rollback release is currently established.**
+   Until there is one, safe rollback is a deliberate PRIVATE APP OUTAGE,
+   with the existing public `sumlaude.com` content unaffected; recover
+   service only with the source-pinned approved release and a fresh
+   authorized ingress/identity/Native/learner acceptance.
+
+   The actual running-service rollback and paired BFF/S03 session
+   revocation checks are acceptance criteria at controlled activation,
+   not claims established by this inactive source review.
 
 **Not done by these files:** Keycloak installation/client provisioning,
 real DNS or TLS, secrets/session DB migration, lawful enrollment, active
