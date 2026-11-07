@@ -385,6 +385,104 @@ class ContractTests(unittest.TestCase):
                 oidc.verify_id(token, "opaque-access", nonce="intended-nonce")
 
 
+
+    # Section: Real cryptographic negative cases missing from earlier ID-token tests.
+    def test_reject_real_rs256_wrong_audience_expiry_and_future_claims(self):
+        """Signed tokens with unsafe claims must never authenticate a learner."""
+        from authlib.jose import JsonWebKey, JsonWebToken
+
+        signer = JsonWebKey.generate_key("RSA", 2048, is_private=True,
+                                         options={"kid": "m01-negative-claims"})
+        now = int(time.time())
+        good = {
+            "iss": settings.OIDC_ISSUER, "aud": settings.OIDC_CLIENT_ID,
+            "sub": "test-only-verified-subject", "iat": now,
+            "exp": now + 120, "nonce": "test-only-expected-nonce",
+        }
+        jwt = JsonWebToken(["RS256"])
+        keys = {"keys": [signer.as_dict(is_private=False)]}
+        bad_claims = {
+            "wrong_audience": {"aud": "other-confidential-client"},
+            "missing_audience": {"aud": None},
+            "expired_token": {"exp": now - 600},
+            "missing_expiry": {"exp": None},
+            "future_not_before": {"nbf": now + 1200},
+            "future_issued_at": {"iat": now + 1200},
+            "empty_subject": {"sub": ""},
+            "short_subject": {"sub": "tiny"},
+        }
+        with mock.patch.object(oidc, "jwks", return_value=keys):
+            valid = jwt.encode({"alg": "RS256", "kid": "m01-negative-claims"},
+                               good, signer).decode()
+            self.assertEqual(
+                oidc.verify_id(valid, "test-only-access",
+                               nonce="test-only-expected-nonce")["sub"],
+                good["sub"],
+            )
+            for case, modified in bad_claims.items():
+                with self.subTest(case=case):
+                    claims = {**good, **modified}
+                    claims = {name: value for name, value in claims.items()
+                              if value is not None}
+                    token = jwt.encode(
+                        {"alg": "RS256", "kid": "m01-negative-claims"},
+                        claims, signer,
+                    ).decode()
+                    with self.assertRaises(oidc.IdentityError):
+                        oidc.verify_id(token, "test-only-access",
+                                       nonce="test-only-expected-nonce")
+
+    def test_reject_real_id_token_algorithm_confusion_and_tampering(self):
+        """Only valid trusted RS256 signatures can authenticate the BFF."""
+        import base64
+        import json
+        from authlib.jose import JsonWebKey, JsonWebToken
+
+        signer = JsonWebKey.generate_key("RSA", 2048, is_private=True,
+                                         options={"kid": "m01-algorithm-qa"})
+        now = int(time.time())
+        claims = {
+            "iss": settings.OIDC_ISSUER, "aud": settings.OIDC_CLIENT_ID,
+            "sub": "test-only-verified-subject", "iat": now,
+            "exp": now + 120, "nonce": "test-only-expected-nonce",
+        }
+        signed = JsonWebToken(["RS256"]).encode(
+            {"alg": "RS256", "kid": "m01-algorithm-qa"}, claims, signer,
+        ).decode()
+        segments = signed.split(".")
+        self.assertEqual(len(segments), 3)
+        signature = segments[2]
+        offset = 20
+        flipped = ("A" if signature[offset] != "A" else "B")
+        tampered = ".".join([
+            segments[0], segments[1],
+            signature[:offset] + flipped + signature[offset + 1:],
+        ])
+        hs256 = JsonWebToken(["HS256"]).encode(
+            {"alg": "HS256"}, claims, b"qa-only-secret-not-production-123456",
+        ).decode()
+        def urlsafe(value):
+            """Encode an unsigned QA-only JWT segment without padding."""
+            return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+        unsigned = (
+            urlsafe(b'{"alg":"none"}') + "." +
+            urlsafe(json.dumps(claims).encode()) + "."
+        )
+        with mock.patch.object(oidc, "jwks", return_value={
+            "keys": [signer.as_dict(is_private=False)],
+        }):
+            for case, token in {
+                "tampered_rs256_signature": tampered,
+                "hs256_algorithm_confusion": hs256,
+                "unsigned_none_algorithm": unsigned,
+            }.items():
+                with self.subTest(case=case):
+                    with self.assertRaises(oidc.IdentityError):
+                        oidc.verify_id(token, "test-only-access",
+                                       nonce="test-only-expected-nonce")
+
+
+
 class SettingsBoundaryTests(unittest.TestCase):
     """Prove only the agreed canonical Sumlaude origin can bind this BFF."""
 
