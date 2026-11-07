@@ -102,15 +102,28 @@ def run_analytics_executor_service_once() -> None:
             "expected_socket_owner_uid", "expected_socket_group_gid",
         }
         # Original V1 has exactly the historical eight numeric identities.
-        # Root-selected V2 additionally binds the reviewed workflow SHA;
-        # it can never be supplied from the request or an environment value.
+        # Root V2 binds the exact signed workflow; distinct owner-installed V3
+        # adds a literal positive runtime authority and crash reconciliation.
+        # Neither source may come from an HTTP request.
         if (
             type(identities) is not dict
             or set(identities) not in (
                 identity_keys, identity_keys | {"expected_workflow_sha"},
+                identity_keys | {"expected_workflow_sha",
+                                 "owner_authorized_first_successor"},
             )
         ):
             raise TypeError
+        # Root-selected generation3 is a distinct privileged release
+        # boundary. Before accepting a new Unix FD, reconcile any durable
+        # incomplete private 3141 transaction to the known signed blue writer
+        # and then fail HOLD; never silently adopt an old green container.
+        if identities.get("owner_authorized_first_successor") is True:
+            phase = "successor_restart_recovery"
+            from .analytics_executor import (
+                _reconcile_interrupted_first_successor_before_receive,
+            )
+            _reconcile_interrupted_first_successor_before_receive()
         phase = "systemd_socket"
         listener = _acquire_analytics_systemd_socket()
         phase = "executor_composition"

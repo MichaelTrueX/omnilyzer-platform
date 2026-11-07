@@ -56,6 +56,7 @@ class AnalyticsExecutorComposition:
         expected_executor_uid: int, expected_executor_gid: int,
         expected_socket_owner_uid: int, expected_socket_group_gid: int,
         expected_workflow_sha: str | None = None,
+        owner_authorized_first_successor: bool = False,
     ) -> None:
         """Wire the original same replay DB and a strictly separate product.
 
@@ -65,11 +66,11 @@ class AnalyticsExecutorComposition:
         """
         try:
             source = _root_reviewed_source(reviewed_installed_source)
-            # The V1 source/config has no workflow pin and keeps the exact
-            # historical schema-2 first-install listener. A root-installed
-            # V2 source adds a separately attested Task014 workflow SHA to
-            # select the complete, independent original Task013 signed-review
-            # receiver, which ALWAYS denies deployment and does no replay.
+            # V1 remains the original first-install graph. Root V2 is signed
+            # review-only DENY. Separately owner-installed root V3 alone
+            # selects the original signed UID991 replay/cutover transaction.
+            if type(owner_authorized_first_successor) is not bool:
+                raise ValueError("invalid owner authorization")
             workflow = None
             if expected_workflow_sha is not None:
                 workflow = validate_expected_workflow_sha(
@@ -98,11 +99,36 @@ class AnalyticsExecutorComposition:
                 replay_guard=replay, private_registry_preflight=registry,
                 operation=operation, reviewed_installed_source=dict(source),
             )
+            # Construction is inert. Only a separately installed,
+            # root-owned generation-3 config may pass the positive Boolean.
+            # Existing V1/V2 service configs cannot select this path.
+            candidate = None
+            journal = None
+            if owner_authorized_first_successor:
+                if workflow is None:
+                    raise ValueError("missing signed successor workflow")
+                from .analytics_first_install import (
+                    AnalyticsSuccessorCandidateOperation,
+                )
+                from .analytics_route_journal import (
+                    AnalyticsRouteJournal, ROUTE_JOURNAL_DIRECTORY,
+                )
+                candidate = AnalyticsSuccessorCandidateOperation(
+                    runner=runner, private_registry=registry,
+                    reviewed_installed_source=dict(source),
+                )
+                journal = AnalyticsRouteJournal(
+                    ROUTE_JOURNAL_DIRECTORY,
+                    expected_uid=expected_executor_uid,
+                    expected_gid=expected_executor_gid,
+                )
             handler = AnalyticsUnixExecutorConnectionHandler(
                 executor=executor, expected_broker_uid=expected_broker_uid,
                 expected_broker_gid=expected_broker_gid,
                 reviewed_installed_source=dict(source),
-                full_signed_successor_review_only=(workflow is not None),
+                full_signed_successor_review_only=(workflow is not None and not owner_authorized_first_successor),
+                owner_authorized_first_successor=owner_authorized_first_successor,
+                candidate_operation=candidate, route_journal=journal,
                 expected_workflow_sha=workflow,
             )
             secured = AnalyticsUnixExecutorListener(

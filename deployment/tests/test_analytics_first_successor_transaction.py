@@ -158,6 +158,7 @@ class FirstSuccessorTransactionTests(unittest.TestCase):
                 "expected_workflow_sha": WORKFLOW_SHA,
                 "expected_executor_uid": 991,
                 "expected_executor_gid": 991,
+                "owner_authorized_first_successor": True,
             }),
         ))
         self.reviewer = self.stack.enter_context(patch(
@@ -515,6 +516,155 @@ class FirstSuccessorTransactionTests(unittest.TestCase):
         )[0]
         self.assertEqual(operation.__name__, "review_full_signed_and_reject")
         self.assertNotEqual(operation.__name__, "_execute_reviewed_first_successor_transaction")
+
+
+# Section: separately root-selected generation3 *startup*, not synthetic
+# replay execution. The product must reconcile one proven incomplete route
+# before it can possibly accept another SCM_RIGHTS Unix request.
+class ProtectedSuccessorRestartTests(unittest.TestCase):
+    """No crash-state adoption, false success or silent public route change."""
+
+    def setUp(self):
+        """Provide fixed root-owned provenance and fake private route readers."""
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        self.image = PINNED_IMAGE
+        self.next = (
+            "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "a" * 64
+        )
+        self.record = {
+            "phase": "candidate_ready",
+            "request_sha256": "c" * 64,
+            "previous_slot": "blue",
+            "previous_image": self.image,
+            "previous_container_id": BLUE_ID,
+            "next_slot": "green",
+            "next_image": self.next,
+            "next_container_id": GREEN_ID,
+        }
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        self.stack.enter_context(patch.dict(
+            os.environ, {"ANALYTICS_REVIEWED_SUPERVISOR_V2": "1"},
+        ))
+        for name in ("getuid", "geteuid", "getgid", "getegid"):
+            self.stack.enter_context(patch(
+                "deployment.analytics_executor.os." + name, return_value=991,
+            ))
+        self.loader = self.stack.enter_context(patch(
+            "deployment.analytics_executor_service_config."
+            "load_analytics_executor_service_config",
+            return_value=(EXPECTED, {
+                "expected_executor_uid": 991,
+                "expected_executor_gid": 991,
+                "owner_authorized_first_successor": True,
+            }),
+        ))
+        self.reader = self.stack.enter_context(patch(
+            "deployment.analytics_route_journal.AnalyticsRouteJournal.read",
+            return_value=None,
+        ))
+        self.recover = self.stack.enter_context(patch(
+            "deployment.analytics_loopback_guard._recover_reviewed_private_route",
+        ))
+        self.observed = self.stack.enter_context(patch(
+            "deployment.analytics_active_state_review."
+            "inspect_committed_analytics_route",
+            return_value=SimpleNamespace(
+                active_slot="blue", active_image=self.image,
+            ),
+        ))
+
+    def attempt(self):
+        """Invoke ONLY source-only protected startup reconciliation."""
+        from deployment.analytics_executor import (
+            _reconcile_interrupted_first_successor_before_receive,
+        )
+        return _reconcile_interrupted_first_successor_before_receive()
+
+    def test_empty_root_verified_journal_permits_initial_receive(self):
+        """No previous release must not mutate Docker, route or durable replay."""
+        self.assertIsNone(self.attempt())
+        self.loader.assert_called_once_with(require_successor=True)
+        self.recover.assert_not_called()
+        self.observed.assert_not_called()
+
+    def test_all_three_incomplete_phases_restore_blue_then_hard_hold(self):
+        """Never serve a new signed request after an interrupted old one."""
+        from deployment.executor import ExecutorUnavailableError
+        for phase in ("prepared", "candidate_ready", "rollback_pending"):
+            with self.subTest(phase=phase):
+                self.reader.return_value = {**self.record, "phase": phase}
+                with self.assertRaises(ExecutorUnavailableError):
+                    self.attempt()
+                self.recover.assert_called_with(
+                    journal=unittest.mock.ANY,
+                    request_sha256="c" * 64,
+                    previous_slot="blue",
+                    previous_image=self.image,
+                    previous_id=BLUE_ID,
+                    next_slot="green",
+                    next_image=self.next,
+                    next_id=GREEN_ID,
+                )
+                self.assertEqual(
+                    self.observed.call_args.kwargs["reviewed_slot"], "blue",
+                )
+
+    def test_committed_or_restored_record_is_hold_not_implicit_rollforward(self):
+        """A SWITCHED journal might have a FINISHED replay; never guess."""
+        from deployment.executor import ExecutorUnavailableError
+        for phase in ("switched", "restored"):
+            with self.subTest(phase=phase):
+                self.reader.return_value = {**self.record, "phase": phase}
+                with self.assertRaises(ExecutorUnavailableError):
+                    self.attempt()
+                self.recover.assert_not_called()
+                self.observed.assert_not_called()
+
+    def test_foreign_image_and_modified_trust_source_reject_before_route(self):
+        """Neither arbitrary OCI nor root V2 review-only source can recover."""
+        from deployment.executor import ExecutorUnavailableError
+        self.reader.return_value = {
+            **self.record, "previous_image": self.next,
+        }
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.recover.assert_not_called()
+        self.reader.return_value = self.record
+        self.loader.return_value = (EXPECTED, {
+            "expected_executor_uid": 991, "expected_executor_gid": 991,
+        })
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.recover.assert_not_called()
+
+    def test_missing_root_scope_or_uid_does_not_even_read_journal(self):
+        """Neither public env nor UID1005 may initiate protected recovery."""
+        from deployment.executor import ExecutorUnavailableError
+        with patch.dict(
+            os.environ, {"ANALYTICS_REVIEWED_SUPERVISOR_V2": "0"},
+        ):
+            with self.assertRaises(ExecutorUnavailableError):
+                self.attempt()
+        with patch(
+            "deployment.analytics_executor.os.geteuid", return_value=1005,
+        ):
+            with self.assertRaises(ExecutorUnavailableError):
+                self.attempt()
+        self.loader.assert_not_called()
+        self.reader.assert_not_called()
+        self.recover.assert_not_called()
+
+    def test_uncertain_old_writer_keeps_hold_without_false_success(self):
+        """A failed actual recovery never reopens root-owned Unix admission."""
+        from deployment.executor import ExecutorUnavailableError
+        self.reader.return_value = self.record
+        self.observed.return_value = SimpleNamespace(
+            active_slot="green", active_image=self.next,
+        )
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.recover.assert_called_once()
 
 
 if __name__ == "__main__":

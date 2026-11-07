@@ -188,26 +188,32 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
         structural_successor_receive_only: bool = False,
         verified_successor_preflight_only: bool = False,
         full_signed_successor_review_only: bool = False,
+        owner_authorized_first_successor: bool = False,
+        candidate_operation: object | None = None,
+        route_journal: object | None = None,
         expected_workflow_sha: str | None = None,
     ) -> None:
         """Capture exact Analytics parser/FD at construction, never per-call.
 
-        Every successor mode is a read-only, deny-only transport boundary.
+        Original V2 successor modes are read-only and strictly deny deployment.
         Structural mode rejects immediately. Historical private-manifest
         preflight mode remains unchanged for earlier Task14B regression tests.
         Full signed-review mode runs original independent UID991 JWT, owner
         Ed25519, Sigstore/Cosign/provenance/SBOM/Grype and local active-state
-        verification, then ALWAYS denies. No mode calls replay, Docker
-        deployment or rollback, or can return a success response.
+        verification, then ALWAYS denies. A distinct root-owned V3 generation
+        may execute the independently signed UID991 transaction only after
+        the original checked Unix peer and sealed-FD admission.
         """
         if (
             type(structural_successor_receive_only) is not bool
             or type(verified_successor_preflight_only) is not bool
             or type(full_signed_successor_review_only) is not bool
+            or type(owner_authorized_first_successor) is not bool
             or sum((
                 structural_successor_receive_only,
                 verified_successor_preflight_only,
                 full_signed_successor_review_only,
+                owner_authorized_first_successor,
             )) > 1
         ):
             raise TypeError("invalid successor receive boundary")
@@ -221,6 +227,7 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
                 or not (
                     verified_successor_preflight_only
                     or full_signed_successor_review_only
+                    or owner_authorized_first_successor
                 )
             ):
                 raise TypeError("unreviewed successor workflow input")
@@ -233,7 +240,7 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
         # An installation must not construct an inert V2-like handler with a
         # missing root-reviewed immutable workflow identity. Fail at startup,
         # not after accepting a privileged Unix FD.
-        if full_signed_successor_review_only and reviewed_workflow is None:
+        if (full_signed_successor_review_only or owner_authorized_first_successor) and reviewed_workflow is None:
             raise TypeError("missing root-reviewed successor workflow")
         if type(executor) is not AnalyticsPrivilegedExecutor:
             raise TypeError("Analytics receiver must have exact executor type")
@@ -336,8 +343,44 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
             )
             raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE)
 
+        def execute_owner_authorized_successor(
+            canonical_request: bytes, *, credential_fd: int,
+        ) -> bytes:
+            """Perform the ROOT-only, signed, exact first successor transaction.
+
+            The original secure Unix frame already checked SO_PEERCRED,
+            SCM_RIGHTS, sealed FD and exact immutable candidate image.
+            Still recheck the UID991 root config and every original Task013
+            signed release proof inside the independent executor transaction.
+            """
+            from .analytics_executor import (
+                _execute_reviewed_first_successor_transaction,
+            )
+            return _execute_reviewed_first_successor_transaction(
+                canonical_request, credential_fd=credential_fd,
+                expected_workflow_sha=reviewed_workflow,
+                executor=executor, candidate_operation=candidate_operation,
+                journal=route_journal,
+            )
+
+        if owner_authorized_first_successor:
+            from .analytics_first_install import AnalyticsSuccessorCandidateOperation
+            from .analytics_route_journal import AnalyticsRouteJournal
+            if (
+                type(candidate_operation) is not AnalyticsSuccessorCandidateOperation
+                or type(route_journal) is not AnalyticsRouteJournal
+                or reviewed_workflow is None
+            ):
+                raise TypeError("missing root-installed successor collaborators")
+        elif candidate_operation is not None or route_journal is not None:
+            raise TypeError("candidate resources require root-approved mode")
+
         settings[13] = MAX_ANALYTICS_REQUEST_BYTES
-        if full_signed_successor_review_only:
+        if owner_authorized_first_successor:
+            settings[0] = execute_owner_authorized_successor
+            settings[30] = read_successor
+            settings[31] = parse_successor
+        elif full_signed_successor_review_only:
             settings[0] = review_full_signed_and_reject
             settings[30] = read_successor
             settings[31] = parse_successor

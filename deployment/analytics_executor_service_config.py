@@ -9,7 +9,7 @@ Related: deployment/executor_service_config_loader.py (existing hardened C17
          deployment/tests/test_analytics_executor_service_config.py.
 
 Sections: original closed 20-source schema-1 installation, separate
-          closed 24-object V2 root-approved installation grammar, canonical JSON configuration,
+          closed 26-object V2 source and owner-installed generation-3 runtime grammar, canonical JSON configuration,
           descriptor-relative owner verification, immutable installed
           file hash checking and original C17 executor identity binding.
 
@@ -123,6 +123,7 @@ _FIELDS = frozenset({
 # workflow trust anchor used by UID991 for three-audience signature checking.
 # Historical V1 schema/bytes and source allowlist remain exactly unchanged.
 _SUCCESSOR_FIELDS = _FIELDS | frozenset({"expected_workflow_sha"})
+_EXECUTION_FIELDS = _SUCCESSOR_FIELDS | frozenset({"owner_authorized_first_successor"})
 _MAX_BYTES = 4096
 _FILE_BOUND = 1024 * 1024
 _TOTAL_BOUND = 12 * 1024 * 1024
@@ -159,11 +160,14 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
         # SHA can never make historical schema-1 bytes newly acceptable.
         generation = value.get("schema_version")
         if (
-            type(generation) is not int or generation not in (1, 2)
-            or set(value) != (_FIELDS if generation == 1 else _SUCCESSOR_FIELDS)
+            type(generation) is not int or generation not in (1, 2, 3)
+            or set(value) != (
+                _FIELDS if generation == 1 else
+                _SUCCESSOR_FIELDS if generation == 2 else _EXECUTION_FIELDS
+            )
         ):
             raise ValueError
-        if (type(generation) is not int or generation not in (1, 2)
+        if (type(generation) is not int or generation not in (1, 2, 3)
                 or value["product_id"] != "analytics"
                 or type(value["product_id"]) is not str
                 or type(value["stage"]) is not str or value["stage"] != "dev"):
@@ -187,12 +191,17 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
         ):
             raise ValueError
         workflow = None
-        if generation == 2:
+        if generation in (2, 3):
             workflow = validate_expected_workflow_sha(
                 value["expected_workflow_sha"],
             )
             if workflow == "0" * 40:
                 raise ValueError("missing reviewed workflow")
+        if generation == 3 and (
+            type(value["owner_authorized_first_successor"]) is not bool
+            or value["owner_authorized_first_successor"] is not True
+        ):
+            raise ValueError("unsigned positive successor mode")
         reviewed = _root_reviewed_source({
             key: value[key] for key in (
                 "reviewed_installed_commit",
@@ -209,7 +218,9 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
             **dict(reviewed),
             "source_generation": generation,
             **({"expected_workflow_sha": workflow}
-               if generation == 2 else {}),
+               if generation in (2, 3) else {}),
+            **({"owner_authorized_first_successor": True}
+               if generation == 3 else {}),
             "source_sha256": tuple((p, source[p]) for p in paths),
         }
     except _CONTROL:
@@ -225,7 +236,7 @@ def _verify_source_bytes(
     """Read exact generation-specific source via fd-relative O_NOFOLLOW.
 
     Root-owned schema 1 accepts only the original 20-file live directory;
-    schema 2 accepts only the exact 24-file inactive candidate directory.
+    schema2/3 accept only the exact 26-file inactive candidate directory.
     The real installed root and all ancestors must be root-owned and not
     writable by any unprivileged role. Files must be single-link, mode0644,
     bounded, regular and byte-hash identical to root-owned installed policy.
@@ -382,7 +393,7 @@ def load_analytics_executor_service_config(
         # The original V1 service may keep its unchanged default, but a
         # successor Docker operation must never run against a V1-only root
         # source manifest that did not attest the port-reset overlay.
-        if require_successor and product["source_generation"] != 2:
+        if require_successor and product["source_generation"] not in (2, 3):
             raise ValueError("candidate requires protected generation two")
         if (
             _configuration_file(os.fstat(desc)) != opened
@@ -400,7 +411,7 @@ def load_analytics_executor_service_config(
         ):
             raise ValueError
         source_root = (
-            _SUCCESSOR_INSTALLED_ROOT if product["source_generation"] == 2
+            _SUCCESSOR_INSTALLED_ROOT if product["source_generation"] in (2, 3)
             else _INSTALLED_ROOT
         )
         _verify_source_bytes((
@@ -427,7 +438,9 @@ def load_analytics_executor_service_config(
                 "expected_executor_uid": base.executor_uid,
                 "expected_executor_gid": base.executor_gid,
                 **({"expected_workflow_sha": product["expected_workflow_sha"]}
-                   if product["source_generation"] == 2 else {}),
+                   if product["source_generation"] in (2, 3) else {}),
+                **({"owner_authorized_first_successor": True}
+                   if product["source_generation"] == 3 else {}),
             },
         )
     except _CONTROL:

@@ -144,16 +144,22 @@ class AnalyticsActivationInputsError(Exception):
 def build_unsigned_analytics_activation_inputs(
     *, repository_root: str, reviewed_commit: str,
     successor_source: bool = False,
+    owner_authorized_first_successor: bool = False,
 ) -> dict[str, bytes]:
     """Bind four review inputs to exactly one verified Git source generation.
 
     The default retains the independently accepted V1 root-install request.
-    Explicit V2 emits unsigned successor review data and schema-2 config,
+    Explicit V2 emits unsigned successor review data and schema-2 config;
+    generation3 emits only unsigned future owner-install review inputs,
     which the CURRENT root-only installer still rejects. This is never an
     installation, deployment authorization or signature acceptance.
     """
     try:
-        if type(successor_source) is not bool:
+        if (
+            type(successor_source) is not bool
+            or type(owner_authorized_first_successor) is not bool
+            or (owner_authorized_first_successor and not successor_source)
+        ):
             raise ValueError
         manifest = (
             review_analytics_successor_source_handoff(
@@ -204,11 +210,14 @@ def build_unsigned_analytics_activation_inputs(
             or baseline["signed_release_authorized"] is not False
         ):
             raise ValueError
-        generation = 2 if successor_source else 1
+        generation = (3 if owner_authorized_first_successor
+                      else 2 if successor_source else 1)
         product_config = canonical_bytes({
             "schema_version": generation, "product_id": "analytics", "stage": "dev",
             **({"expected_workflow_sha": _REVIEWED_TASK014_DEV_WORKFLOW_SHA}
                if successor_source else {}),
+            **({"owner_authorized_first_successor": True}
+               if owner_authorized_first_successor else {}),
             "reviewed_installed_commit": reviewed_commit,
             "reviewed_compose_sha256": baseline["reviewed_compose_sha256"],
             "reviewed_product_profile_sha256":
@@ -235,8 +244,12 @@ def build_unsigned_analytics_activation_inputs(
             )
         ):
             raise ValueError
+        # Source archive approval remains V2 schema2: generation3 is a
+        # distinct root-owned *runtime execution* selection, not permission
+        # to weaken or replace the immutable 38-entry source archive.
         approval = canonical_bytes({
-            "schema_version": generation, "product_id": "analytics", "stage": "dev",
+            "schema_version": 2 if successor_source else 1,
+            "product_id": "analytics", "stage": "dev",
             "reviewed_commit": reviewed_commit,
             "manifest_sha256": manifest_sha,
             "archive_sha256": hashlib.sha256(archive).hexdigest(),
@@ -267,6 +280,7 @@ def build_unsigned_analytics_activation_inputs(
 def build_unsigned_analytics_service_inputs(
     *, repository_root: str, reviewed_commit: str,
     successor_source: bool = False,
+    owner_authorized_first_successor: bool = False,
 ) -> dict[str, bytes]:
     """Bind EXACT service review bytes to one Git generation and original C32ZF.
 
@@ -288,7 +302,11 @@ def build_unsigned_analytics_service_inputs(
     Neither unit is installed or started by this review-only builder.
     """
     try:
-        if type(successor_source) is not bool:
+        if (
+            type(successor_source) is not bool
+            or type(owner_authorized_first_successor) is not bool
+            or (owner_authorized_first_successor and not successor_source)
+        ):
             raise ValueError("invalid source generation")
         # Always preserve the historical 4 original service files byte-for-byte.
         # V2 add-ons may only be returned after the full immutable 38-source
@@ -297,6 +315,7 @@ def build_unsigned_analytics_service_inputs(
             candidate = build_unsigned_analytics_activation_inputs(
                 repository_root=repository_root, reviewed_commit=reviewed_commit,
                 successor_source=True,
+                owner_authorized_first_successor=owner_authorized_first_successor,
             )
             from .analytics_isolated_source_install import _successor_approval
             approved_candidate = _successor_approval(candidate[SOURCE_APPROVAL])
@@ -305,7 +324,9 @@ def build_unsigned_analytics_service_inputs(
             )
             if (
                 approved_candidate["destination"] != SUCCESSOR_DESTINATION
-                or parsed_candidate["source_generation"] != 2
+                or parsed_candidate["source_generation"] != (
+                    3 if owner_authorized_first_successor else 2
+                )
                 or tuple(name for name, _ in parsed_candidate["source_sha256"])
                     != ANALYTICS_SUCCESSOR_INSTALLED_FILES
                 or candidate[EXECUTOR_CONFIG] != candidate[BROKER_CONFIG]
@@ -405,6 +426,8 @@ def build_unsigned_analytics_service_inputs(
                 candidate_bytes
                 + (_SUCCESSOR_VERIFIER_BINDS + "\n"
                    + _SUCCESSOR_VERIFIER_TMPFS + "\n").encode("ascii")
+                + (b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1\n"
+                   if owner_authorized_first_successor else b"")
             )
         expected_paths = {
             _ANALYTICS_RUNTIME_DROPIN,

@@ -129,6 +129,45 @@ class AnalyticsExecutorCompositionTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             composition(invalid_socket, workflow_sha="0" * 40)
 
+    def test_root_generation_three_selects_only_exact_reviewed_positive_handler(self):
+        """No changed V1/V2 listener, journal or rootless resource selector."""
+        from deployment.tests.test_identity import WORKFLOW_SHA
+        old_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        approved_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(old_sock.close)
+        self.addCleanup(approved_sock.close)
+        source = composition(old_sock, workflow_sha=WORKFLOW_SHA)
+        from deployment.analytics_executor_composition import AnalyticsExecutorComposition
+        approved = AnalyticsExecutorComposition(
+            listener=approved_sock, reviewed_installed_source=EXPECTED,
+            expected_replay_directory_uid=0, expected_replay_directory_gid=992,
+            expected_broker_uid=990, expected_broker_gid=990,
+            expected_executor_uid=991, expected_executor_gid=991,
+            expected_socket_owner_uid=991, expected_socket_group_gid=993,
+            expected_workflow_sha=WORKFLOW_SHA,
+            owner_authorized_first_successor=True,
+        )
+
+        def action(value):
+            """Inspect the exact immutable original inherited socket callback."""
+            secure = object.__getattribute__(value, "_serve_once").__self__
+            listener = object.__getattribute__(secure, "_configuration")[1].__self__
+            return object.__getattribute__(listener, "_configuration")[0].__name__
+
+        self.assertEqual(action(source), "review_full_signed_and_reject")
+        self.assertEqual(action(approved), "execute_owner_authorized_successor")
+        invalid_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(invalid_sock.close)
+        with self.assertRaises(TypeError):
+            AnalyticsExecutorComposition(
+                listener=invalid_sock, reviewed_installed_source=EXPECTED,
+                expected_replay_directory_uid=0, expected_replay_directory_gid=992,
+                expected_broker_uid=990, expected_broker_gid=990,
+                expected_executor_uid=991, expected_executor_gid=991,
+                expected_socket_owner_uid=991, expected_socket_group_gid=993,
+                owner_authorized_first_successor=True,
+            )
+
     def test_source_identity_is_strict_and_canary_cannot_substitute(self):
         """Prevent non-reviewed source/profile/hash and source path injection."""
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

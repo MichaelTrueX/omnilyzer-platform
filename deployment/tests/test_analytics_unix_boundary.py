@@ -1719,6 +1719,108 @@ class AnalyticsSuccessorFullSignedUnixReceiverTests(unittest.TestCase):
         self.assertEqual(self.events, [])
         self.assertEqual(self.replay.begin_calls, [])
 
+    def test_separately_selected_root3_positive_mode_uses_same_real_sealed_fd(self):
+        """Real AF_UNIX SO_PEERCRED/SCM_RIGHTS, source-only callback boundary.
+
+        This is NOT a real UID991 service, Docker or original signature
+        acceptance. A synthetic callback stands in for the independently
+        tested signed coordinator. V2 is still DENY-only and original V1 is
+        neither imported into this route nor changed.
+        """
+        from deployment.tests.test_analytics_successor_candidate_operation import (
+            SyntheticGreenRunner,
+        )
+        from deployment.analytics_first_install import (
+            AnalyticsSuccessorCandidateOperation,
+        )
+        from deployment.analytics_private_registry import (
+            AnalyticsPrivateZotPullAdapter,
+        )
+        from deployment.analytics_route_journal import AnalyticsRouteJournal
+        from deployment.executor import _build_success_response
+        import hashlib
+
+        expected = _build_success_response(hashlib.sha256(self.raw).hexdigest())
+        with tempfile.TemporaryDirectory(
+            prefix="task14b-source-positive-unix-",
+        ) as directory:
+            runner = SyntheticGreenRunner(
+                analytics_boundary._successor_request_image(self.raw),
+            )
+            registry = AnalyticsPrivateZotPullAdapter(
+                runner, reviewed_installed_source=EXPECTED,
+            )
+            candidate = AnalyticsSuccessorCandidateOperation(
+                runner=runner, private_registry=registry,
+                reviewed_installed_source=EXPECTED,
+            )
+            journal = AnalyticsRouteJournal(
+                directory, expected_uid=os.getuid(), expected_gid=os.getgid(),
+            )
+            handler = self.handler(
+                full_signed_successor_review_only=False,
+                owner_authorized_first_successor=True,
+                candidate_operation=candidate,
+                route_journal=journal,
+            )
+            socket_path = str(Path(directory) / "one-shot.sock")
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(socket_path)
+            os.chmod(socket_path, 0o660)
+            listener.listen(1)
+            listener.settimeout(3)
+            failures = []
+
+            def accept_once():
+                """Prove the real kernel FD and peer one-connection framing."""
+                try:
+                    accepted, _ = listener.accept()
+                    handler.handle(accepted)
+                except BaseException as exc:
+                    failures.append(type(exc).__name__)
+
+            worker = threading.Thread(target=accept_once, daemon=True)
+            worker.start()
+            try:
+                with (
+                    patch.object(
+                        analytics_boundary,
+                        "ANALYTICS_EXECUTOR_SOCKET_PATH", socket_path,
+                    ),
+                    patch(
+                        "deployment.analytics_executor."
+                        "_execute_reviewed_first_successor_transaction",
+                        return_value=expected,
+                    ) as signed,
+                    patch("deployment.private_registry_fd.time.time",
+                          return_value=NOW),
+                ):
+                    transport = AnalyticsUnixExecutorTransport(
+                        expected_executor_uid=os.getuid(),
+                        expected_executor_gid=os.getgid(),
+                        expected_socket_group_gid=os.getgid(),
+                        reviewed_installed_source=EXPECTED,
+                    )
+                    response = transport._send_analytics_successor_private(
+                        self.raw, credential_fd=self.fd,
+                    )
+                worker.join(5)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(response, expected)
+                signed.assert_called_once_with(
+                    self.raw, credential_fd=unittest.mock.ANY,
+                    expected_workflow_sha=self.workflow,
+                    executor=self.executor, candidate_operation=candidate,
+                    journal=journal,
+                )
+            finally:
+                worker.join(5)
+                listener.close()
+            self.assertEqual(failures, [])
+            self.assertEqual(self.replay.begin_calls, [])
+            self.assertEqual(self.replay.finish_calls, [])
+            self.assertEqual(self.events, [])
+
     def test_exact_real_unix_signed_receive_rejects_without_replay(self):
         """Actual SO_PEERCRED + SCM_RIGHTS sealed three JWTs, then hard DENY."""
         with tempfile.TemporaryDirectory(prefix="task14b-fullsigned-unix-") as tmp:

@@ -160,6 +160,68 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
             successor[activation.EXECUTOR_CONFIG],
         )
 
+    def test_generation_three_unsigned_source_is_separate_and_never_installs(self):
+        """Only an explicit root-controlled generation3 may gain a positive path.
+
+        All outputs are source-only review bytes, with no signer, root install,
+        Docker, service start, image publish or operator approval implied.
+        """
+        baseline = activation.build_unsigned_analytics_activation_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        approved = activation.build_unsigned_analytics_activation_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_first_successor=True,
+        )
+        self.assertEqual(set(approved), set(baseline))
+        self.assertEqual(approved[activation.SOURCE_ARCHIVE],
+                         baseline[activation.SOURCE_ARCHIVE])
+        self.assertNotEqual(approved[activation.EXECUTOR_CONFIG],
+                            baseline[activation.EXECUTOR_CONFIG])
+        import json
+        parsed = json.loads(approved[activation.EXECUTOR_CONFIG])
+        self.assertEqual(parsed["schema_version"], 3)
+        self.assertIs(parsed["owner_authorized_first_successor"], True)
+        self.assertEqual(
+            activation.parse_analytics_executor_service_config(
+                approved[activation.EXECUTOR_CONFIG]
+            )["source_generation"], 3,
+        )
+        original = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        preview = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_first_successor=True,
+        )
+        self.assertEqual(set(original), set(preview))
+        for name in original:
+            if name != activation._SUCCESSOR_EXECUTOR_DROPIN:
+                self.assertEqual(original[name], preview[name])
+        self.assertEqual(
+            preview[activation._SUCCESSOR_EXECUTOR_DROPIN],
+            original[activation._SUCCESSOR_EXECUTOR_DROPIN]
+            + b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1\n",
+        )
+        self.assertNotIn(
+            b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1",
+            original[activation._SUCCESSOR_EXECUTOR_DROPIN],
+        )
+        for bad in (
+            {"owner_authorized_first_successor": True},
+            {"successor_source": True, "owner_authorized_first_successor": 1},
+            {"successor_source": True, "owner_authorized_first_successor": "true"},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(
+                activation.AnalyticsActivationInputsError,
+            ):
+                activation.build_unsigned_analytics_activation_inputs(
+                    repository_root=str(ROOT), reviewed_commit=self.sha,
+                    **bad,
+                )
+
     def test_v2_bad_generation_or_changed_git_blob_is_denied(self):
         """No caller-selected generation/manifest or tampered TAR can pass."""
         with self.assertRaises(activation.AnalyticsActivationInputsError):

@@ -148,6 +148,60 @@ class InstalledSourceConfigTests(unittest.TestCase):
             ):
                 parse_analytics_executor_service_config(canonical_bytes(candidate))
 
+    def test_root_owned_generation_three_requires_exact_explicit_positive_selection(self):
+        """Signed V2 review can never become release permission by omission.
+
+        The separately root-installed schema3 configuration uses the same
+        exact V2 closed Git source graph, but uniquely requires literal true
+        owner approval. V1 and ordinary generation2 remain DENY-only.
+        """
+        original = sample_config()
+        candidate = {
+            **original, "schema_version": 2,
+            "expected_workflow_sha":
+                "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
+            "source_sha256": {
+                path: "b" * 64 for path in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+            },
+        }
+        approved = {
+            **candidate, "schema_version": 3,
+            "owner_authorized_first_successor": True,
+        }
+        parsed = parse_analytics_executor_service_config(
+            canonical_bytes(approved)
+        )
+        self.assertEqual(parsed["source_generation"], 3)
+        self.assertIs(parsed["owner_authorized_first_successor"], True)
+        self.assertEqual(parsed["source_sha256"], tuple(
+            (path, "b" * 64) for path in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+        ))
+        self.assertEqual(
+            parse_analytics_executor_service_config(
+                canonical_bytes(candidate),
+            )["source_generation"], 2,
+        )
+        for wrong in (
+            {**approved, "owner_authorized_first_successor": False},
+            {**approved, "owner_authorized_first_successor": 1},
+            {**approved, "owner_authorized_first_successor": "true"},
+            {key: value for key, value in approved.items()
+             if key != "owner_authorized_first_successor"},
+            {**candidate, "owner_authorized_first_successor": True},
+            {**original, "owner_authorized_first_successor": True},
+            {**approved, "schema_version": 4},
+            {**approved, "expected_workflow_sha": "0" * 40},
+            {**approved, "source_sha256": {
+                **approved["source_sha256"], "deployment/evil.py": "f" * 64,
+            }},
+        ):
+            with self.subTest(case=wrong), self.assertRaises(
+                AnalyticsInstalledAuthorityError,
+            ):
+                parse_analytics_executor_service_config(
+                    canonical_bytes(wrong),
+                )
+
     def test_privileged_analytics_import_closure_exactly_attested(self):
         """Mirror the original Task014 AST closure, without changing canary.
 
@@ -719,6 +773,39 @@ class SocketActivationTests(unittest.TestCase):
             side_effect=AnalyticsExecutorBootstrapError("denied"),
         ):
             self.assertEqual(main(), 1)
+
+
+    def test_root_generation_three_reconciles_before_unix_fd_accept(self):
+        """No inherited FD or new release after an unresolved old cutover."""
+        from deployment.executor import ExecutorUnavailableError
+        ids = {
+            **sample_identities(),
+            "expected_workflow_sha":
+                "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
+            "owner_authorized_first_successor": True,
+        }
+        with (
+            patch(
+                "deployment.analytics_executor_service_bootstrap."
+                "load_analytics_executor_service_config",
+                return_value=(EXPECTED, ids),
+            ),
+            patch(
+                "deployment.analytics_executor."
+                "_reconcile_interrupted_first_successor_before_receive",
+                side_effect=ExecutorUnavailableError(
+                    "protected former writer requires recovery",
+                ),
+            ) as recovery,
+            patch(
+                "deployment.analytics_executor_service_bootstrap."
+                "_acquire_analytics_systemd_socket",
+            ) as fd,
+            self.assertRaises(AnalyticsExecutorBootstrapError),
+        ):
+            run_analytics_executor_service_once()
+        recovery.assert_called_once_with()
+        fd.assert_not_called()
 
 
 class StaticSystemdTests(unittest.TestCase):

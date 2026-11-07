@@ -204,6 +204,58 @@ class ProductRouterTests(unittest.TestCase):
         self.assertEqual(self.analytics_replay.calls, [])
         self.assertEqual(self.canary_replay.calls, [])
 
+    def test_root_generation_three_positive_route_is_distinct_from_v2_review(self):
+        """A source-only receiver choice must not upgrade review-only V2."""
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+        from deployment.analytics_promotion_broker import (
+            AnalyticsPrivatePromotionBroker,
+        )
+        from deployment.executor import _build_success_response
+        import hashlib
+        successor, _ = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(successor)
+        with patch.object(
+            AnalyticsPrivatePromotionBroker, "authorize_and_forward_first_successor",
+            return_value=_build_success_response(hashlib.sha256(raw).hexdigest()),
+        ) as released:
+            reviewed_only = AnalyticsDEVPromotionRouter(
+                canary=self.canary, analytics=self.analytics,
+                reviewed_installed_source=EXPECTED,
+                successor_preflight_only=True,
+            )
+            root_authorized = AnalyticsDEVPromotionRouter(
+                canary=self.canary, analytics=self.analytics,
+                reviewed_installed_source=EXPECTED,
+                owner_authorized_first_successor=True,
+            )
+            self.assertIs(
+                object.__getattribute__(root_authorized, "_allow_first_successor"),
+                True,
+            )
+            self.assertIs(
+                object.__getattribute__(reviewed_only, "_allow_first_successor"),
+                False,
+            )
+            reply = root_authorized.handle(
+                compact_token="test", zot_token="test", forgejo_token="test",
+                promotion_request=raw, received_at=NOW,
+            )
+            self.assertEqual(
+                reply, _build_success_response(hashlib.sha256(raw).hexdigest()),
+            )
+            released.assert_called_once()
+            with self.assertRaises(TypeError):
+                AnalyticsDEVPromotionRouter(
+                    canary=self.canary, analytics=self.analytics,
+                    reviewed_installed_source=EXPECTED,
+                    owner_authorized_first_successor=True,
+                    successor_preflight_only=True,
+                )
+        self.assertEqual(self.canary_replay.calls, [])
+        self.assertEqual(self.analytics_replay.calls, [])
+
     def test_unauthorized_headers_cannot_trigger_any_product(self):
         """No cookie, duplicate bearer, changed Host/path or unsigned claims."""
         bad_headers = original_headers(ANALYTICS)

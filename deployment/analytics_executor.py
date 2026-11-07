@@ -749,6 +749,106 @@ class AnalyticsPrivilegedExecutor:
             _LEAVE_EXECUTION(self)
 
 
+# Section 7b: exact UID991 owner-approved restart reconciliation.
+# This source-only helper is invoked only by the root-owned generation3
+# service before accepting the inherited broker Unix socket.
+def _reconcile_interrupted_first_successor_before_receive() -> None:
+    """Restore original signed blue0.15 from a provable incomplete journal.
+
+    The original signed 0.15.0 is a known immutable trust anchor. Only a
+    generation3 root-owned source and UID991 may inspect this protected
+    per-product durable journal. PREPARED/CANDIDATE_READY/ROLLBACK_PENDING
+    means the signed first successor never completed a replay-confirmed
+    transition. Reuse the existing exact RootlessKit/Canary/old-container
+    recovery, then HARD HOLD for independent review. Do not infer success
+    from an incomplete journal, stop a possibly serving green container,
+    erase data/volume writes, or switch public ingress.
+
+    SWITCHED could mean replay.finish committed before service interruption;
+    without a verified replay status it is intentionally HOLD with NO route
+    mutation. A finished or restored journal is also HOLD until the next
+    source-reviewed transition is separately approved; only an empty journal
+    permits this first-release-only service to receive a new request.
+    """
+    from .analytics_executor_service_config import (
+        load_analytics_executor_service_config,
+    )
+    from .analytics_route_journal import (
+        AnalyticsRouteJournal, ROUTE_JOURNAL_DIRECTORY,
+    )
+    from .analytics_loopback_guard import (
+        _recover_reviewed_private_route, _SUCCESSOR_SCOPE,
+        _SUCCESSOR_REPOSITORY,
+    )
+    from .analytics_active_state_review import inspect_committed_analytics_route
+    try:
+        if (
+            (os.getuid(), os.geteuid(), os.getgid(), os.getegid())
+                != (991, 991, 991, 991)
+            or os.environ.get(_SUCCESSOR_SCOPE) != "1"
+        ):
+            raise ValueError("no protected positive supervisor")
+        source, identities = load_analytics_executor_service_config(
+            require_successor=True,
+        )
+        if (
+            type(source) is not dict
+            or type(identities) is not dict
+            or identities.get("owner_authorized_first_successor") is not True
+            or identities.get("expected_executor_uid") != 991
+            or identities.get("expected_executor_gid") != 991
+        ):
+            raise ValueError("no root-reviewed positive generation")
+        journal = AnalyticsRouteJournal(
+            ROUTE_JOURNAL_DIRECTORY, expected_uid=991, expected_gid=991,
+        )
+        intent = journal.read()
+        if intent is None:
+            return None
+        if (
+            type(intent) is not dict
+            or intent.get("previous_slot") != "blue"
+            or intent.get("previous_image") != PINNED_IMAGE
+            or intent.get("next_slot") != "green"
+            or not isinstance(intent.get("next_image"), str)
+            or not intent["next_image"].startswith(_SUCCESSOR_REPOSITORY)
+        ):
+            raise ValueError("foreign route generation")
+        if intent.get("phase") in (
+            "prepared", "candidate_ready", "rollback_pending",
+        ):
+            _recover_reviewed_private_route(
+                journal=journal,
+                request_sha256=intent["request_sha256"],
+                previous_slot="blue", previous_image=PINNED_IMAGE,
+                previous_id=intent["previous_container_id"],
+                next_slot="green", next_image=intent["next_image"],
+                next_id=intent["next_container_id"],
+            )
+            observed = inspect_committed_analytics_route(
+                journal=journal, reviewed_image=PINNED_IMAGE,
+                reviewed_slot="blue",
+                reviewed_container_id=intent["previous_container_id"],
+                reviewed_request_sha256=intent["request_sha256"],
+            )
+            if (
+                getattr(observed, "active_slot", None) != "blue"
+                or getattr(observed, "active_image", None) != PINNED_IMAGE
+            ):
+                raise ValueError("restored writer not independently verified")
+            sys.stderr.write(
+                "TASK014_ANALYTICS_SUCCESSOR_HOLD phase=restart_blue_restored\n"
+            )
+        # An already SWITCHED transaction is ambiguous with a finished JTI.
+        # Do NOT roll it back without the exact independently verified replay
+        # status and owner-approved future new-release recovery workflow.
+        raise ValueError("previous signed successor requires review")
+    except _CONTROL:
+        raise
+    except Exception:
+        raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+
+
 # Section 8: exact first signed successor coordinator, UNINSTALLED and never
 # selected by the existing SO_PEERCRED/SCM_RIGHTS listener. This is deliberately
 # Analytics-specific, not a generic release orchestration framework.
@@ -844,6 +944,7 @@ def _execute_reviewed_first_successor_transaction(
             or identities.get("expected_workflow_sha") != workflow
             or identities.get("expected_executor_uid") != 991
             or identities.get("expected_executor_gid") != 991
+            or identities.get("owner_authorized_first_successor") is not True
         ):
             raise ValueError("no root-approved successor service source")
     except _CONTROL:

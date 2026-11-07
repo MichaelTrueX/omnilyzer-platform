@@ -42,13 +42,14 @@ _ANALYTICS_PRODUCT = "analytics"
 class AnalyticsDEVPromotionRouter:
     """Exact two-path Task014 handler for original broker HTTPS ingress."""
 
-    __slots__ = ("_canary", "_analytics", "_successor", "_reviewed_source")
+    __slots__ = ("_canary", "_analytics", "_successor", "_reviewed_source", "_allow_first_successor")
 
     def __init__(
         self, *, canary: InertDevPromotionHandler,
         analytics: AnalyticsPrivatePromotionBroker,
         reviewed_installed_source: dict[str, str],
         successor_preflight_only: bool = False,
+        owner_authorized_first_successor: bool = False,
     ) -> None:
         """Require original canary handler and the explicit signed Analytics one.
 
@@ -57,7 +58,9 @@ class AnalyticsDEVPromotionRouter:
         """
         if (type(canary) is not InertDevPromotionHandler
                 or type(analytics) is not AnalyticsPrivatePromotionBroker
-                or type(successor_preflight_only) is not bool):
+                or type(successor_preflight_only) is not bool
+                or type(owner_authorized_first_successor) is not bool
+                or (successor_preflight_only and owner_authorized_first_successor)):
             raise TypeError("Analytics Task014 router configuration is invalid")
         try:
             from .analytics_unix_boundary import _root_reviewed_source
@@ -69,17 +72,20 @@ class AnalyticsDEVPromotionRouter:
                 self, "_analytics",
                 _bound_operation(analytics, "authorize_and_forward"),
             )
-            # NEVER expose schema3 as a deployment operation. The captured
-            # broker method independently rechecks owner/OIDC/Sigstore/Cosign
-            # and sealed FD, then always fails closed. Only a root-reviewed
-            # V2 service generation may opt into this future preflight route.
+            # Ordinary root V2 only selects signed DENY-only review. A distinct
+            # owner-installed root V3 chooses the same original full signed
+            # broker replay and sealed-FD successor transport.
             selected = (
+                _bound_operation(
+                    analytics, "authorize_and_forward_first_successor",
+                ) if owner_authorized_first_successor else
                 _bound_operation(
                     analytics,
                     "forward_verified_first_successor_probe_without_deployment",
                 ) if successor_preflight_only else None
             )
             object.__setattr__(self, "_successor", selected)
+            object.__setattr__(self, "_allow_first_successor", owner_authorized_first_successor)
             object.__setattr__(self, "_reviewed_source", source)
         except _CONTROL:
             raise
@@ -155,15 +161,18 @@ class AnalyticsDEVPromotionRouter:
         # the existing ingress emits 403 versus 503 correctly; never turn a
         # signer outage into a claim that the user supplied a bad identity.
         if successor_selected:
-            # The probe MUST raise BrokerUnavailableError after its real
-            # signed/Unix checks. It cannot report an accepted release.
-            object.__getattribute__(self, "_successor")(
+            response = object.__getattribute__(self, "_successor")(
                 compact_token=compact_token, zot_token=zot_token,
                 forgejo_token=forgejo_token,
                 canonical_request=promotion_request, received_at=received_at,
             )
-            from .broker import BrokerUnavailableError, UNAVAILABLE_MESSAGE
-            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+            # Exact positive reply is verified in the existing broker
+            # before this handler. Probe-only cannot ever return success.
+            if (object.__getattribute__(self, "_allow_first_successor") is not True
+                    or type(response) is not bytes or not response):
+                from .broker import BrokerUnavailableError, UNAVAILABLE_MESSAGE
+                raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+            return response
         if analytics_selected:
             return object.__getattribute__(self, "_analytics")(
                 compact_token=compact_token, zot_token=zot_token,

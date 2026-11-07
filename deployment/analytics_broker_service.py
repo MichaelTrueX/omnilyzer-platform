@@ -122,7 +122,7 @@ def load_analytics_broker_installed_source(
             # Root-installed schema decides ONE fixed source directory;
             # public requests have no influence on generation or source root.
             source_root = (
-                _SUCCESSOR_INSTALLED_ROOT if parsed["source_generation"] == 2
+                _SUCCESSOR_INSTALLED_ROOT if parsed["source_generation"] in (2, 3)
                 else _INSTALLED_ROOT
             )
             _verify_source_bytes((
@@ -180,7 +180,7 @@ def compose_approved_analytics_broker_router(
         or type(blob_signatures) is not CosignReleaseBlobVerifier
         or type(jwks_cache) is not GitHubJWKSCache
         or type(source_generation) is not int
-        or source_generation not in (1, 2)
+        or source_generation not in (1, 2, 3)
     ):
         raise TypeError(_ERROR)
     workflow = configuration.oidc_authorization_kwargs()["expected_workflow_sha"]
@@ -191,11 +191,11 @@ def compose_approved_analytics_broker_router(
         expected_socket_group_gid=identity["expected_socket_group_gid"],
         reviewed_installed_source=reviewed_installed_source,
     )
-    # Only the separately root-reviewed source-generation-2 runtime opts
-    # into the existing DENY-only signed successor probe. No V1 behavior or
-    # actual deployment authorization changes.
+    # Root generation2 selects only signed DENY-only review. Owner-installed
+    # root generation3 selects original signed broker replay/FD transport;
+    # root source and workflow are checked before any network request.
     successor_files = {}
-    if source_generation == 2:
+    if source_generation in (2, 3):
         from .analytics_executor import (
             _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
         )
@@ -218,6 +218,7 @@ def compose_approved_analytics_broker_router(
         canary=canary_handler, analytics=analytics,
         reviewed_installed_source=reviewed_installed_source,
         successor_preflight_only=(source_generation == 2),
+        owner_authorized_first_successor=(source_generation == 3),
     )
 
 
@@ -248,7 +249,7 @@ def run_approved_analytics_broker_service(*, stop_controller: object) -> None:
         if (type(verified) is not tuple or len(verified) != 2
                 or type(verified[0]) is not dict
                 or type(verified[1]) is not int
-                or verified[1] not in (1, 2)):
+                or verified[1] not in (1, 2, 3)):
             raise ValueError("Analytics service opt-in configuration absent")
         source, generation = verified
         ids = configuration.installation_contract().broker_composition_kwargs()

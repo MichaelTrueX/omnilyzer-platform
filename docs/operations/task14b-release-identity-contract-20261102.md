@@ -2041,3 +2041,48 @@ the separately owner-approved root installation. Do not create keys,
 install files, start or restart services or dispatch Task013 based on
 this document. The schema3 Unix receiver remains intentionally
 DENY-only. One existing M04 independent review follows integrated code.
+
+## M05 first-successor root generation-3 execution selection and recovery
+
+The original signed private DEV Analytics 0.15.0 V1 and ordinary generation-2
+signed-review path remain unchanged and DENY-only. The new root-owned
+generation-3 runtime config is a distinct future Product Owner-authorized
+installation mode. It shares the exact SHA-reviewed 26-file V2 source closure
+and 38-entry Git archive, and requires the literal boolean field
+owner_authorized_first_successor=true. It rejects missing, false, integer,
+string or noncanonical variants. Ordinary V2 and historical V1 reject this
+field. The review-only builder can produce unsigned generation-3 input
+without installing it, dispatching Task013, enabling a service, starting a
+candidate or claiming user consent to privileged operation.
+
+After separately authorized root source installation and identity validation,
+the existing UID990 Analytics broker may select its independently reviewed
+signed Task013, original durable replay and three signed JWT sealed FD
+handoff. The original UID991 SO_PEERCRED/SCM_RIGHTS Unix handler may then
+invoke the Analytics-specific signed green candidate/3142/3141 journal
+transaction. Every request still independently reopens the exact root-owned
+schema-3 config, verifies source/workflow and owner-signed release evidence,
+and rejects any caller-created release receipt. The V3-only executor review
+drop-in adds the fixed private supervisor scope environment
+ANALYTICS_REVIEWED_SUPERVISOR_V2=1; original V1/V2 source/drop-ins remain
+unchanged. Real root-owned signer copies/permissions and namespace mounts
+require owner-authorized verification before any actual service activation.
+
+Crash safety is handled before socket acceptance. Protected UID991 reads the
+exact fsync'd mode0700 private journal after root-checked generation-3
+admission. Empty journal permits a first signed request. Incomplete
+prepared/candidate_ready/rollback_pending journal phases trigger existing
+exact signed 0.15.0 blue route recovery, original Canary3020 preservation
+and independent blue writer verification, followed by mandatory HOLD.
+Already switched, restored, unknown or corrupted journals also HOLD; a
+switched journal may reflect a FINISHED replay JTI and cannot be rolled back
+by guessing. Failed recovery never claims success, stops a possibly serving
+container or erases database writes. All source-only restart and real local
+Unix sealed-FD tests are distinct from actual root UID991 host acceptance.
+
+Still requires an independently accepted exact-HEAD source/real-host M04
+review, separately explicit owner authorization for root V3 installation,
+a newly approved signed Task013 Analytics release and genuine private DEV
+Task014 health, DB persistence, tenant isolation and write-preserving
+rollback. Nothing in this source permits paid GitHub usage, public ingress,
+production deployment or waiver of mandatory signature/security controls.
