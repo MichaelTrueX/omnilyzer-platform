@@ -26,7 +26,7 @@ from unittest.mock import patch
 from deployment.analytics_private_registry import (
     AnalyticsPrivateRegistryError, AnalyticsPrivateZotPullAdapter,
 )
-from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+from deployment.analytics_signed_release_consumer import PINNED_IMAGE, PINNED_DIGEST
 from deployment.analytics_execution import AnalyticsExecutorRequest
 from deployment.private_registry_fd import create_sealed_credential
 from deployment.private_registry_pull import scoped_private_zot_request
@@ -76,6 +76,19 @@ def make_fd(*, expires_at=NOW + 270, canonical_request=REQUEST):
     return create_sealed_credential(
         TOKEN, expires_at=expires_at, image=PINNED_IMAGE,
         canonical_request=canonical_request, now=NOW, product_id="analytics",
+    )
+
+
+def first_successor_empty_active_state():
+    """Synthetic accepted blue 0.15.0 and genuinely empty green slot."""
+    from deployment.analytics_active_state_review import AnalyticsActiveState
+    return AnalyticsActiveState(
+        schema_version=1, active_slot="blue", active_digest=PINNED_DIGEST,
+        active_image=PINNED_IMAGE, active_container_id="a" * 64,
+        active_child_ip="172.20.0.3", active_network_id="f" * 64,
+        private_ingress_port=3141, candidate_slot="green",
+        candidate_port=3142, candidate_probe_present=False,
+        candidate_digest=None, candidate_container_id=None,
     )
 
 
@@ -260,6 +273,147 @@ class RootlessAnalyticsZotTests(unittest.TestCase):
                 with self.assertRaises(AnalyticsPrivateRegistryError):
                     self.adapter.pull_analytics(request_data)
             self.assertEqual(len(self.runner.calls), 1)
+        finally:
+            os.close(fd)
+
+    def test_successor_exact_owner_signed_private_pull_uses_original_cleanup(self):
+        """Future UID991 candidate pull is exact-digest, source-signed only.
+
+        Real OpenSSH verifies a synthetic signed owner source; original Zot
+        runner is fake and does not access live Docker or install anything.
+        """
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        from deployment.tests.test_analytics_unix_boundary import signed_owner_fixture
+        from deployment.analytics_execution import parse_analytics_successor_request
+
+        data, context = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(data)
+        request = parse_analytics_successor_request(raw, **context)
+        image = request.exact_image_reference
+        self.runner.expected_image = image
+        fd = create_sealed_credential(
+            TOKEN, expires_at=NOW + 270, image=image,
+            canonical_request=raw, now=NOW, product_id="analytics-successor",
+        )
+        try:
+            with (
+                signed_owner_fixture(context["selected"]),
+                patch("deployment.analytics_active_state_review.inspect_analytics_active_state",
+                      return_value=first_successor_empty_active_state()) as observed,
+                patch("deployment.analytics_active_state_review.verify_empty_analytics_successor_slot",
+                      return_value=None) as empty_slot,
+                patch("deployment.analytics_private_registry.os.getuid", return_value=991),
+                patch("deployment.analytics_private_registry.os.geteuid", return_value=991),
+                patch("deployment.analytics_private_registry.os.getgid", return_value=991),
+                patch("deployment.analytics_private_registry.os.getegid", return_value=991),
+            ):
+                self.assertIsNone(self.adapter.preflight_analytics_successor(raw, fd))
+                with scoped_private_zot_request(fd, raw):
+                    self.assertIsNone(self.adapter.pull_analytics_successor(request))
+            self.assertEqual(len(self.runner.calls), 2)
+            self.assertEqual(observed.call_count, 2)
+            self.assertEqual(empty_slot.call_count, 2)
+            self.assertEqual(self.runner.calls[0][0][-3:],
+                             ("manifest", "inspect", image))
+            self.assertEqual(self.runner.calls[1][0][-3:],
+                             ("pull", "--quiet", image))
+            self.assertEqual([item[2] for item in self.runner.calls], [30.0, 500.0])
+            self.assertTrue(all(not path.exists() for path in self.runner.workspaces))
+            self.assertEqual(list(Path(self.workdir.name).iterdir()), [])
+        finally:
+            os.close(fd)
+
+    def test_successor_pull_denies_missing_owner_fd_or_uid_without_docker(self):
+        """No source signature, privilege or scoped capability means no pull."""
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        from deployment.tests.test_analytics_unix_boundary import signed_owner_fixture
+        from deployment.analytics_execution import parse_analytics_successor_request
+
+        data, context = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(data)
+        request = parse_analytics_successor_request(raw, **context)
+        image = request.exact_image_reference
+        self.runner.expected_image = image
+        fd = create_sealed_credential(
+            TOKEN, expires_at=NOW + 270, image=image,
+            canonical_request=raw, now=NOW, product_id="analytics-successor",
+        )
+        legacy_fd = make_fd()
+        try:
+            with (
+                signed_owner_fixture(context["selected"]),
+                patch("deployment.analytics_active_state_review.inspect_analytics_active_state",
+                      return_value=first_successor_empty_active_state()),
+                patch("deployment.analytics_active_state_review.verify_empty_analytics_successor_slot",
+                      return_value=None),
+            ):
+                with self.assertRaises(AnalyticsPrivateRegistryError):
+                    self.adapter.pull_analytics_successor(request)
+                with scoped_private_zot_request(fd, raw):
+                    with self.assertRaises(AnalyticsPrivateRegistryError):
+                        self.adapter.pull_analytics_successor(request)
+                with (
+                    patch("deployment.analytics_private_registry.os.getuid", return_value=991),
+                    patch("deployment.analytics_private_registry.os.geteuid", return_value=991),
+                    patch("deployment.analytics_private_registry.os.getgid", return_value=991),
+                    patch("deployment.analytics_private_registry.os.getegid", return_value=991),
+                ):
+                    with scoped_private_zot_request(fd, raw + b" "):
+                        with self.assertRaises(AnalyticsPrivateRegistryError):
+                            self.adapter.pull_analytics_successor(request)
+                    with scoped_private_zot_request(legacy_fd, raw):
+                        with self.assertRaises(AnalyticsPrivateRegistryError):
+                            self.adapter.pull_analytics_successor(request)
+                    with scoped_private_zot_request(fd, raw):
+                        with self.assertRaises(AnalyticsPrivateRegistryError):
+                            self.adapter.pull_analytics_successor(
+                                AnalyticsExecutorRequest.from_dict(fixture(), **EXPECTED)
+                            )
+            self.assertEqual(self.runner.calls, [])
+        finally:
+            os.close(fd)
+            os.close(legacy_fd)
+
+    def test_successor_pull_rejects_active_blue_drift_after_bounded_pull(self):
+        """No acceptance or running green after a changed old writer/route."""
+        from dataclasses import replace
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        from deployment.tests.test_analytics_unix_boundary import signed_owner_fixture
+        from deployment.analytics_execution import parse_analytics_successor_request
+
+        data, context = AnalyticsSuccessorRequestTests().candidate()
+        raw = canonical_bytes(data)
+        image = data["exact_image_reference"]
+        request = parse_analytics_successor_request(raw, **context)
+        self.runner.expected_image = image
+        fd = create_sealed_credential(
+            TOKEN, expires_at=NOW + 270, image=image,
+            canonical_request=raw, now=NOW, product_id="analytics-successor",
+        )
+        before = first_successor_empty_active_state()
+        after = replace(before, active_container_id="d" * 64)
+        try:
+            with (
+                signed_owner_fixture(context["selected"]),
+                patch("deployment.analytics_private_registry.os.getuid", return_value=991),
+                patch("deployment.analytics_private_registry.os.geteuid", return_value=991),
+                patch("deployment.analytics_private_registry.os.getgid", return_value=991),
+                patch("deployment.analytics_private_registry.os.getegid", return_value=991),
+                patch("deployment.analytics_active_state_review.inspect_analytics_active_state",
+                      side_effect=[before, after]) as inspected,
+                patch("deployment.analytics_active_state_review.verify_empty_analytics_successor_slot",
+                      return_value=None) as empty,
+                scoped_private_zot_request(fd, raw),
+                self.assertRaises(AnalyticsPrivateRegistryError),
+            ):
+                self.adapter.pull_analytics_successor(request)
+            self.assertEqual(inspected.call_count, 2)
+            self.assertEqual(empty.call_count, 1)
+            self.assertEqual(len(self.runner.calls), 1)
+            self.assertEqual(self.runner.calls[0][0][-3:],
+                             ("pull", "--quiet", image))
+            self.assertTrue(all(not path.exists() for path in self.runner.workspaces))
+            self.assertEqual(list(Path(self.workdir.name).iterdir()), [])
         finally:
             os.close(fd)
 

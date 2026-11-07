@@ -1324,3 +1324,37 @@ actual authorized image pull, candidate creation/health, durable RootlessKit
 route switch, restart reconciliation and rollback still need one integrated
 end-to-end acceptance under independent M04 review. No signed 0.15.0 source,
 service, Docker container, route or database is changed by this code.
+
+## 2026-11-07: exact rootless successor image pull primitive (still not activated)
+
+The existing `AnalyticsPrivateZotPullAdapter` now has an explicit
+`pull_analytics_successor()` for a **future separately authorized** Task014
+candidate stage. It reuses the original rootless Docker CLI, volatile 0700
+runtime directory, ephemeral 0600 Zot auth config, exact immutable OCI
+digest, 500-second bounded pull, token redaction and complete cleanup. Unlike
+the fixed 0.15.0 pull, the next image is derived only from the canonical
+schema-3 request. The new method requires the original UID991/GID991 product
+executor, a genuine canonical root-trusted Ed25519 owner-source signature
+matching source SHA, workflow SHA and version, and the original task-local
+sealed `analytics-successor` Zot FD bound to the exact request/image. No old
+schema-2 credential, forged request, caller-selected registry, unscoped FD,
+rootful Docker socket or wrong principal is accepted.
+
+Before attempting a pull, the module independently observes the original
+signed blue 0.15.0 at localhost3141 and requires a completely absent green
+candidate container, not merely an absent 3142 route. The original immutable
+Zot `manifest inspect` remains a distinct preflight step. After its bounded
+private pull, the adapter checks that the old writer's OCI/route snapshot
+is byte-equivalent and the candidate container is still absent. Any drift
+returns a hard, redacted error and prevents later deployment; the downloaded
+image cache alone does not grant a service start or success receipt.
+
+Synthetic local tests exercise a real temporary Ed25519 owner signature,
+Linux sealed exact-digest credentials, actual scope/UID checks, a fake rootless
+Docker command runner and ephemeral auth cleanup, including wrong credentials
+and a changed active writer during the pull. **No real image, database, port
+or service is altered.** The installed schema-2 executor and broker are still
+pinned to 0.15.0; no schema-3 socket handler calls this method. A full signed
+Task013 release attestation verified at the UID991 trust boundary, authorized
+candidate Compose startup, health, anti-replay and durable route rollback
+remain mandatory before any activation or release acceptance.
