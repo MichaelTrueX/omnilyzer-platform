@@ -1358,3 +1358,77 @@ pinned to 0.15.0; no schema-3 socket handler calls this method. A full signed
 Task013 release attestation verified at the UID991 trust boundary, authorized
 candidate Compose startup, health, anti-replay and durable route rollback
 remain mandatory before any activation or release acceptance.
+
+
+## 2026-11-07: staged candidate 3142 and crash-recoverable journal transaction
+
+The existing deployment/analytics_loopback_guard.py has a source-only,
+not-installed _stage_reviewed_private_candidate_probe operation. Its
+explicit V2 UID991 supervisor checks the signed 0.15.0 blue image on
+the first candidate, or a journal-verified previous writer on later releases,
+a distinct hardened candidate image with immutable local RepoDigests, the
+unchanged Canary3020 and Analytics3141 routes, and the
+privately owned original RootlessKit Docker/bridge network. It requires the
+fixed, fsync-protected AnalyticsRouteJournal and a nonzero canonical request
+SHA from a separately verified signed Task013/OIDC/replay authority.
+It creates only the next image's 127.0.0.1:3142 private health route.
+The old writer at 3141 and Canary3020 remain untouched. No caller-provided
+IP, public port, arbitrary image, mutable branch, key or registry is used.
+
+The journal now uses the distinct durable phases prepared,
+candidate_ready, switched, and restored. A PREPARED record is written
+before the RootlessKit POST and cannot authorize the later cutover.
+Only successful exact route inventory, both 3142 health checks, verified OCI
+identity and fsync-confirmed candidate_ready permit the existing 3141
+transaction to reuse the same request-bound journal record. A foreign
+unfinished PREPARED or mismatched request/JTI continues to deny before any
+3141 mutation. A failed 3142 POST/health/ambiguous acknowledgment triggers
+scoped 3142-only cleanup, verifies signed old 3141 + Canary, and persists
+restored. An unconfirmed rollback leaves the journal unresolved and
+raises a hard operational HOLD, never a false GO.
+
+Restart recovery is widened only to the identical journal: a process crash
+after PREPARED but before 3142 publication safely confirms old 3141 and
+persists RESTORED without mutating ports; an interrupted CANDIDATE_READY or
+3141 cutover restores the signed previous writer and removes only the
+exact journal-bound 3142 route before persisting RESTORED. Unknown Canary
+or routing changes deny without speculative port mutation. All operations
+remain under the original exclusive filesystem lock and original local
+RootlessKit APIs. Isolated fake-API tests cover correct staging + cutover,
+wrong identity/authority, bad POST acknowledgments, health failures,
+unconfirmed DELETE, and three crash/restart timings. No live Docker/route,
+secret, DB, source generation or installed 0.15.0 was changed.
+
+Not release GO: The active V1 supervisor has no dispatch path to the new
+candidate operation. Actual verified owner/GitHub OIDC/Sigstore/Grype
+receipt at UID991, durable schema-3 replay, source-generation activation,
+candidate Compose startup, controller/recovery service activation and one
+approved real DEV deployment remain HOLD. This safety primitive cannot
+self-authorize those missing release gates.
+
+
+### 2026-11-07: next-generation reuse and post-cutover probe retirement
+
+A completed journaled cutover now removes the temporary port3142 route
+AFTER proving the new stable 3141 writer is healthy but BEFORE recording
+the durable switched phase. This is mandatory: if 3142 still pointed to
+the now-active writer, the existing rootless OCI observer would reject the
+next successor as an ambiguous active/candidate combination. Success
+leaves exactly two private rules: original Canary3020 and Analytics3141.
+
+The existing rollback and crash-recovery paths accept both intermediate
+inventories: candidate3142 still present or already retired. They restore
+only the prior signed writer, remove only the exact request-bound 3142
+rule when still present, recheck old /readyz + /livez, and record restored.
+Unconfirmed API acknowledgment, wrong public forwarding or altered Canary
+still yield a hard HOLD with an unresolved journal.
+
+A first upgrade without any prior journal is pinned to signed blue 0.15.0.
+Later upgrades reuse the SAME durable journal, which requires the old image,
+slot and Docker container ID to match the last switched or restored state.
+This permits green -> blue -> green releases without new hardcoded per-version
+image IDs or route ports. Actual Task013 signed evidence and owner/replay
+authorization must still be independently verified outside these low-level
+routing primitives, and the existing V1 supervisor remains unmodified.
+Synthetic tests now exercise both release generations and a crash between
+retiring 3142 and fsyncing switched. None touch live RootlessKit or data.

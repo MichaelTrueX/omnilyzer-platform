@@ -1,7 +1,8 @@
 """File: deployment/tests/test_analytics_loopback_guard.py
 
 Purpose: Preserve original signed blue-only loopback lifecycle tests,
-         plus synthetic exact-image blue/green route replacement and rollback.
+         plus synthetic journaled 3142 candidate preparation, exact-image
+         blue/green route replacement and recovery across crash boundaries.
 Related: deployment/analytics_loopback_guard.py,
          deployment/analytics_active_state_review.py,
          deployment/systemd/rootless/omnilyzer-analytics-loopback.service,
@@ -333,17 +334,303 @@ class AnalyticsSuccessorRouteTransactionTests(unittest.TestCase):
             controlled.start()
             self.addCleanup(controlled.stop)
 
+    def _seed_reviewed_ready_journal(self):
+        """Replay a prior successful candidate-stage journal for old cutover tests.
+
+        This test-only helper does not modify RootlessKit or approve a release.
+        It writes the same fsync-checked phase the new real staging primitive
+        must emit, using OCI identities from the independent fake Docker state.
+        """
+        if self.journal.read() is not None:
+            return
+        current_ip = self.backend.route(3141)[0]["spec"]["childIP"]
+        previous = next(
+            slot for slot in ("blue", "green")
+            if self.backend.state[slot]["NetworkSettings"]["Networks"][
+                guard._NETWORK
+            ]["IPAddress"] == current_ip
+        )
+        next_slot = "green" if previous == "blue" else "blue"
+        old = self.backend.state[previous]
+        nxt = self.backend.state[next_slot]
+        previous_ip = old["NetworkSettings"]["Networks"][guard._NETWORK]["IPAddress"]
+        next_ip = nxt["NetworkSettings"]["Networks"][guard._NETWORK]["IPAddress"]
+        prepared = self.journal.begin(
+            request_sha256="c" * 64,
+            previous_slot=previous,
+            previous_image=old["Config"]["Image"],
+            previous_container_id=old["Id"], previous_ip=previous_ip,
+            next_slot=next_slot,
+            next_image=nxt["Config"]["Image"],
+            next_container_id=nxt["Id"], next_ip=next_ip,
+        )
+        self.journal.finish(prepared, phase="candidate_ready")
+
+    def _without_candidate_route(self):
+        """Simulate healthy green container before its private probe is routed."""
+        self.backend.rules = [
+            entry for entry in self.backend.rules
+            if entry["spec"].get("parentPort") != 3142
+        ]
+
+    def test_journaled_candidate_probe_then_exact_green_cutover(self):
+        """Persist pre-3142 intent, prove health and reuse only candidate_ready."""
+        self._without_candidate_route()
+        self.assertIsNone(guard._stage_reviewed_private_candidate_probe(**self.old))
+        intent = self.journal.read()
+        self.assertEqual(intent["phase"], "candidate_ready")
+        self.assertEqual(intent["request_sha256"], self.old["request_sha256"])
+        self.assertEqual(self.backend.route(3141), [self.original_stable])
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+        self.assertEqual(len(self.backend.route(3142)), 1)
+        self.assertEqual(self.backend.route(3142)[0]["spec"]["parentIP"],
+                         "127.0.0.1")
+        self.assertEqual(self.backend.changes[0][0], "POST")
+        self.assertEqual(self.backend.changes[0][1]["parentPort"], 3142)
+        # No independent authority for another request/JTI at cutover.
+        with self.assertRaises(ValueError):
+            guard._switch_reviewed_private_route(
+                **{**self.old, "request_sha256": "f" * 64}
+            )
+        self.assertEqual(len(self.backend.changes), 1)
+        self.assertEqual(self.journal.read(), intent)
+        self.assertIsNone(guard._switch_reviewed_private_route(**self.old))
+        self.assertEqual(self.journal.read()["phase"], "switched")
+        self.assertEqual(self.backend.route(3141)[0]["spec"]["childIP"],
+                         "172.20.0.4")
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+
+    def test_crash_before_first_3142_post_restores_without_mutation(self):
+        """A durable prepare may exist without any route due to process kill."""
+        self._without_candidate_route()
+        self._prepared_recovery()
+        self.assertIsNone(self._reconcile())
+        self.assertEqual(self.journal.read()["phase"], "restored")
+        self.assertEqual(self.backend.changes, [])
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+        self.assertEqual(self.backend.route(3141), [self.original_stable])
+        self.assertEqual(self.backend.route(3142), [])
+
+    def test_two_generations_reuse_same_probe_without_new_issuer_or_port(self):
+        """Blue0.15.0 -> green successor -> blue next, same durable journal."""
+        from deployment.analytics_active_state_review import _active_state
+        self._without_candidate_route()
+        self.assertIsNone(guard._stage_reviewed_private_candidate_probe(**self.old))
+        self.assertIsNone(guard._switch_reviewed_private_route(**self.old))
+        self.assertEqual(self.journal.read()["generation"], 1)
+        self.assertEqual(self.backend.route(3142), [])
+        self.assertEqual(self.backend.route(3141)[0]["spec"]["childIP"],
+                         "172.20.0.4")
+        # After the previous blue is separately stopped and preserved by a
+        # future approved service, the next reviewed source occupies blue.
+        # No actual container, database or route is touched in this fixture.
+        new_image = guard._SUCCESSOR_REPOSITORY + "e" * 64
+        self.backend.state["blue"]["Config"]["Image"] = new_image
+        self.backend.state["blue"]["Image"] = "sha256:" + "e" * 64
+        self.backend.state["blue"]["HostConfig"]["PortBindings"] = {}
+        later = {
+            **self.old,
+            "previous_slot": "green",
+            "previous_image": self.backend.state["green"]["Config"]["Image"],
+            "previous_id": self.backend.state["green"]["Id"],
+            "next_slot": "blue", "next_image": new_image,
+            "next_id": self.backend.state["blue"]["Id"],
+            "request_sha256": "d" * 64,
+        }
+        self.assertIsNone(guard._stage_reviewed_private_candidate_probe(**later))
+        self.assertEqual(self.journal.read()["phase"], "candidate_ready")
+        self.assertEqual(self.journal.read()["generation"], 2)
+        self.assertEqual(self.backend.route(3142)[0]["spec"]["childIP"],
+                         "172.20.0.3")
+        self.assertIsNone(guard._switch_reviewed_private_route(**later))
+        self.assertEqual(self.journal.read()["phase"], "switched")
+        self.assertEqual(self.journal.read()["generation"], 2)
+        self.assertEqual(self.backend.route(3142), [])
+        self.assertEqual(self.backend.route(3141)[0]["spec"]["childIP"],
+                         "172.20.0.3")
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+        state = _active_state(
+            info=self.backend.state["info"], network=self.backend.state["network"],
+            ports=self.backend.rules, blue=self.backend.state["blue"],
+            green=self.backend.state["green"],
+        )
+        self.assertEqual(state.active_slot, "blue")
+        self.assertFalse(state.candidate_probe_present)
+
+    def test_restart_after_candidate_probe_retired_restores_signed_old_writer(self):
+        """Crash after removing 3142 but before switched fsync is recoverable."""
+        self._without_candidate_route()
+        self.assertIsNone(guard._stage_reviewed_private_candidate_probe(**self.old))
+        self.backend.rules = [
+            entry for entry in self.backend.rules
+            if entry["spec"]["parentPort"] != 3142
+        ]
+        self.backend.route(3141)[0]["spec"]["childIP"] = "172.20.0.4"
+        self.assertIsNone(self._reconcile())
+        self.assertEqual(self.backend.route(3141)[0]["spec"],
+                         self.original_stable["spec"])
+        self.assertEqual(self.backend.route(3142), [])
+        self.assertEqual(self.journal.read()["phase"], "restored")
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+
+    def test_candidate_ready_restart_cleans_up_only_orphan_3142(self):
+        """Recovered candidate stage preserves old 3141 and drops private probe."""
+        self._without_candidate_route()
+        self.assertIsNone(guard._stage_reviewed_private_candidate_probe(**self.old))
+        self.assertEqual(self.journal.read()["phase"], "candidate_ready")
+        changes_before = len(self.backend.changes)
+        self.assertIsNone(self._reconcile())
+        self.assertEqual(self.journal.read()["phase"], "restored")
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+        self.assertEqual(self.backend.route(3141), [self.original_stable])
+        self.assertEqual(self.backend.route(3142), [])
+        self.assertEqual(
+            [x[0] for x in self.backend.changes[changes_before:]],
+            ["DELETE"],
+        )
+        # A previous completed recovery cannot be reused for another JTI.
+        with self.assertRaises(ValueError):
+            self._reconcile()
+
+    def test_candidate_ready_restart_after_3141_swap_restores_blue(self):
+        """Crash after routing mutation but before journal commit restores blue."""
+        self._without_candidate_route()
+        self.assertIsNone(guard._stage_reviewed_private_candidate_probe(**self.old))
+        # Model a crash after DELETE old and POST next, before finish().
+        old_rule = self.backend.route(3141)[0]
+        self.backend.rules.remove(old_rule)
+        self.backend.rules.append({
+            "id": 99,
+            "spec": {
+                **old_rule["spec"], "childIP": "172.20.0.4",
+            },
+        })
+        self.assertIsNone(self._reconcile())
+        self.assertEqual(self.journal.read()["phase"], "restored")
+        self.assertEqual(self.backend.route(3141)[0]["spec"],
+                         self.original_stable["spec"])
+        self.assertEqual(self.backend.route(3142), [])
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+
+    def test_candidate_ready_restart_rejects_unknown_canary_without_delete(self):
+        """Corrupt production-like forwarding never triggers speculative cleanup."""
+        self._without_candidate_route()
+        self.assertIsNone(guard._stage_reviewed_private_candidate_probe(**self.old))
+        self.backend.rules[0]["spec"]["childPort"] = 3000
+        before = len(self.backend.changes)
+        with self.assertRaises(ValueError):
+            self._reconcile()
+        self.assertEqual(len(self.backend.changes), before)
+        self.assertEqual(self.journal.read()["phase"], "candidate_ready")
+
+    def test_candidate_probe_bad_ack_removes_only_3142_and_marks_restored(self):
+        """POST may take effect even when its reply is invalid."""
+        self._without_candidate_route()
+        self.backend.new_ack_bad = True
+        with self.assertRaisesRegex(RuntimeError, "CANDIDATE_STAGE_REJECTED"):
+            guard._stage_reviewed_private_candidate_probe(**self.old)
+        self.assertEqual(self.journal.read()["phase"], "restored")
+        self.assertEqual(self.backend.route(3142), [])
+        self.assertEqual(self.backend.route(3141), [self.original_stable])
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+        self.assertEqual([x[0] for x in self.backend.changes],
+                         ["POST", "DELETE"])
+
+    def test_candidate_probe_failed_health_closes_3142_and_avoids_cutover(self):
+        """Candidate HTTP failures retain signed writer and Canary rules."""
+        self._without_candidate_route()
+        with (
+            patch.object(guard, "_candidate_http_ready",
+                         side_effect=OSError("synthetic candidate not ready")),
+            self.assertRaisesRegex(RuntimeError, "CANDIDATE_STAGE_REJECTED"),
+        ):
+            guard._stage_reviewed_private_candidate_probe(**self.old)
+        self.assertEqual(self.journal.read()["phase"], "restored")
+        self.assertEqual(self.backend.route(3142), [])
+        self.assertEqual(self.backend.route(3141), [self.original_stable])
+
+    def test_candidate_probe_ambiguous_cleanup_remains_prepared_hold(self):
+        """Lost DELETE acknowledgement must never be classified as rollback."""
+        self._without_candidate_route()
+        self.backend.new_ack_bad = True
+        self.backend.delete_fails_after_mutation = True
+        with self.assertRaisesRegex(RuntimeError,
+                                    "CANDIDATE_RECOVERY_UNCONFIRMED"):
+            guard._stage_reviewed_private_candidate_probe(**self.old)
+        self.assertEqual(self.journal.read()["phase"], "prepared")
+        self.assertEqual(self.backend.route(3141), [self.original_stable])
+        # After a crash, same signed request may independently reconcile it.
+        self.assertIsNone(self._reconcile())
+        self.assertEqual(self.journal.read()["phase"], "restored")
+
+    def test_no_existing_release_journal_cannot_start_from_untrusted_green(self):
+        """First candidate always originates from protected signed blue 0.15.0."""
+        other = SuccessorRoutes(active_slot="green")
+        other.rules = [
+            x for x in other.rules if x["spec"]["parentPort"] != 3142
+        ]
+        data = {
+            "previous_slot": "green",
+            "previous_image": other.state["green"]["Config"]["Image"],
+            "previous_id": other.state["green"]["Id"],
+            "next_slot": "blue",
+            "next_image": other.state["blue"]["Config"]["Image"],
+            "next_id": other.state["blue"]["Id"],
+            "request_sha256": "c" * 64,
+            "journal": self.journal,
+        }
+        with (
+            patch.object(guard, "_api", side_effect=other),
+            self.assertRaises(ValueError),
+        ):
+            guard._stage_reviewed_private_candidate_probe(**data)
+        self.assertIsNone(self.journal.read())
+        self.assertEqual(other.changes, [])
+
+    def test_candidate_probe_denies_wrong_scope_and_existing_route(self):
+        """Never add candidate route from legacy supervisor or unknown source."""
+        self._without_candidate_route()
+        for patcher in (
+            patch.object(guard.os, "geteuid", return_value=1005),
+            patch.dict(os.environ, {guard._SUCCESSOR_SCOPE: ""}),
+        ):
+            with patcher, self.assertRaises(ValueError):
+                guard._stage_reviewed_private_candidate_probe(**self.old)
+        with self.assertRaises(ValueError):
+            guard._stage_reviewed_private_candidate_probe(
+                **{**self.old, "next_image": "analytics:latest"}
+            )
+        self.assertEqual(self.backend.changes, [])
+        self.assertIsNone(self.journal.read())
+        # A 3142 port that already exists without matching durable journal
+        # is never silently adopted by another request.
+        self.backend.rules.append(self.backend.state["ports"][2])
+        with self.assertRaises(ValueError):
+            guard._stage_reviewed_private_candidate_probe(**self.old)
+        self.assertEqual(self.backend.changes, [])
+
     def test_reversible_cutover_selects_green_without_touching_canary(self):
         """After validated candidate health, only 3141 moves to exact green."""
+        self._seed_reviewed_ready_journal()
         self.assertIsNone(guard._switch_reviewed_private_route(**self.old))
         self.assertEqual(self.backend.rules[0], self.original_canary)
         self.assertEqual(self.backend.route(3141)[0]["spec"]["childIP"], "172.20.0.4")
-        self.assertEqual(self.backend.route(3142)[0]["spec"]["childIP"], "172.20.0.4")
+        self.assertEqual(self.backend.route(3142), [])
         self.assertEqual(
             [(kind, value) for kind, value in self.backend.changes if kind == "DELETE"],
-            [("DELETE", "/v1/ports/3")],
+            [("DELETE", "/v1/ports/3"), ("DELETE", "/v1/ports/4")],
         )
-        self.assertEqual(len(self.backend.changes), 2)
+        self.assertEqual(len(self.backend.changes), 3)
+        # Reused inspector must accept a quiet completed successor with
+        # only Canary3020 + current Analytics3141; no stale 3142.
+        from deployment.analytics_active_state_review import _active_state
+        self.assertEqual(
+            _active_state(
+                info=self.backend.state["info"], network=self.backend.state["network"],
+                ports=self.backend.rules, blue=self.backend.state["blue"],
+                green=self.backend.state["green"],
+            ).active_slot, "green",
+        )
 
     def test_reusable_reverse_green_to_blue_switch_preserves_canary(self):
         """After one future release, the same routine handles either slot."""
@@ -357,15 +644,17 @@ class AnalyticsSuccessorRouteTransactionTests(unittest.TestCase):
             "next_id": self.backend.state["blue"]["Id"],
             "journal": self.journal, "request_sha256": "c" * 64,
         }
+        self._seed_reviewed_ready_journal()
         with patch.object(guard, "_api", side_effect=self.backend):
             self.assertIsNone(guard._switch_reviewed_private_route(**self.old))
         self.assertEqual(self.backend.rules[0], self.original_canary)
         self.assertEqual(self.backend.route(3141)[0]["spec"]["childIP"], "172.20.0.3")
-        self.assertEqual(self.backend.route(3142)[0]["spec"]["childIP"], "172.20.0.3")
-        self.assertEqual(len(self.backend.changes), 2)
+        self.assertEqual(self.backend.route(3142), [])
+        self.assertEqual(len(self.backend.changes), 3)
 
     def test_candidate_health_failure_does_not_remove_existing_writers(self):
         """Even a healthy Docker candidate needs a real 3142 probe."""
+        self._seed_reviewed_ready_journal()
         with patch.object(
             guard, "_candidate_http_ready",
             side_effect=OSError("synthetic private candidate unavailable"),
@@ -377,34 +666,39 @@ class AnalyticsSuccessorRouteTransactionTests(unittest.TestCase):
 
     def test_failed_delete_keeps_original_route_and_rejects_without_repost(self):
         """An unchanged old forwarding rule is already a valid recovery."""
+        self._seed_reviewed_ready_journal()
         self.backend.delete_fails_before_mutation = True
         with self.assertRaisesRegex(RuntimeError, "ROUTE_CHANGE_REJECTED"):
             guard._switch_reviewed_private_route(**self.old)
         self.assertEqual(self.backend.rules[0], self.original_canary)
         self.assertEqual(self.backend.route(3141), [self.original_stable])
-        self.assertEqual(len(self.backend.changes), 1)
-        self.assertEqual(self.backend.changes[0][0], "DELETE")
+        self.assertEqual(len(self.backend.changes), 2)
+        self.assertEqual([c[0] for c in self.backend.changes], ["DELETE", "DELETE"])
+        self.assertEqual(self.backend.route(3142), [])
 
     def test_lost_delete_ack_restores_original_route_without_touching_canary(self):
         """API might mutate and then lose its response: restore old identity."""
+        self._seed_reviewed_ready_journal()
         self.backend.delete_fails_after_mutation = True
         with self.assertRaisesRegex(RuntimeError, "ROUTE_CHANGE_REJECTED"):
             guard._switch_reviewed_private_route(**self.old)
         self.assertEqual(self.backend.rules[0], self.original_canary)
         self.assertEqual(self.backend.route(3141)[0]["spec"], self.original_stable["spec"])
-        self.assertEqual(len(self.backend.route(3142)), 1)
+        self.assertEqual(self.backend.route(3142), [])
 
-    def test_failed_create_restores_old_target_and_retains_candidate(self):
+    def test_failed_create_restores_old_target_without_orphan_probe(self):
         """Old signed writer remains available if new RootlessKit POST fails."""
+        self._seed_reviewed_ready_journal()
         self.backend.new_post_fails = True
         with self.assertRaisesRegex(RuntimeError, "ROUTE_CHANGE_REJECTED"):
             guard._switch_reviewed_private_route(**self.old)
         self.assertEqual(self.backend.rules[0], self.original_canary)
         self.assertEqual(self.backend.route(3141)[0]["spec"], self.original_stable["spec"])
-        self.assertEqual(self.backend.route(3142)[0]["id"], 4)
+        self.assertEqual(self.backend.route(3142), [])
 
     def test_ambiguous_new_post_receipt_removes_new_and_recovers_old(self):
         """No unconfirmed new rule may remain when API response was malformed."""
+        self._seed_reviewed_ready_journal()
         self.backend.new_ack_bad = True
         with self.assertRaisesRegex(RuntimeError, "ROUTE_CHANGE_REJECTED"):
             guard._switch_reviewed_private_route(**self.old)
@@ -414,6 +708,7 @@ class AnalyticsSuccessorRouteTransactionTests(unittest.TestCase):
 
     def test_restoration_failure_is_hard_hold_not_false_rollback_success(self):
         """If no healthy old listener can be recovered, report unconfirmed."""
+        self._seed_reviewed_ready_journal()
         self.backend.new_post_fails = True
         self.backend.restore_fails = True
         with self.assertRaisesRegex(RuntimeError, "RECOVERY_UNCONFIRMED"):
@@ -446,6 +741,7 @@ class AnalyticsSuccessorRouteTransactionTests(unittest.TestCase):
                 PortBindings={"3000/tcp": [{"HostIp":"0.0.0.0","HostPort":"3142"}]},
             )),
         )
+        self._seed_reviewed_ready_journal()
         for reason, change in changes:
             with self.subTest(reason=reason):
                 self.backend = SuccessorRoutes()
@@ -541,7 +837,7 @@ class AnalyticsSuccessorRouteTransactionTests(unittest.TestCase):
     def test_unresolved_journal_refuses_second_cutover_before_any_api_write(self):
         """A previous uncertain route can never silently be promoted again."""
         self._prepared_recovery()
-        with self.assertRaises(AnalyticsRouteJournalUnavailable):
+        with self.assertRaises(ValueError):
             guard._switch_reviewed_private_route(**self.old)
         self.assertEqual(self.backend.changes, [])
         self.assertEqual(self.backend.route(3141), [self.original_stable])
@@ -549,12 +845,13 @@ class AnalyticsSuccessorRouteTransactionTests(unittest.TestCase):
 
     def test_unwritable_or_foreign_journal_refuses_cutover_before_api_write(self):
         """RootlessKit is never touched when durable intent cannot be stored."""
+        self._without_candidate_route()
         with patch(
             "deployment.analytics_route_journal.os.fsync",
             side_effect=OSError("synthetic storage failure"),
         ):
             with self.assertRaises(AnalyticsRouteJournalUnavailable):
-                guard._switch_reviewed_private_route(**self.old)
+                guard._stage_reviewed_private_candidate_probe(**self.old)
         self.assertEqual(self.backend.changes, [])
         self.assertEqual(self.backend.route(3141), [self.original_stable])
         self.assertFalse(

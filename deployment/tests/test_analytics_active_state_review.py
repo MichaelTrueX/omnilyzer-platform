@@ -783,8 +783,14 @@ class AnalyticsCommittedRouteRestartTests(unittest.TestCase):
             next_slot="green", next_image=PREFIX + DIGEST_GREEN,
             next_container_id="b" * 64, next_ip="172.20.0.4",
         )
-        if phase in ("switched", "restored"):
-            return self.journal.finish(record, phase=phase)
+        if phase == "switched":
+            # A committed route is impossible without a previously fsynced
+            # candidate_ready stage. Preserve the runtime's closed sequence
+            # in this independently verified restart fixture.
+            ready = self.journal.finish(record, phase="candidate_ready")
+            return self.journal.finish(ready, phase="switched")
+        if phase == "restored":
+            return self.journal.finish(record, phase="restored")
         return record
 
     def _review(self, *, phase="switched", **changes):

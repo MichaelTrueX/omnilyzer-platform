@@ -6,7 +6,8 @@ Related: deployment/analytics_route_journal.py,
          deployment/analytics_loopback_guard.py,
          deployment/tests/test_analytics_loopback_guard.py,
          deployment/replay_sqlite.py (independent JTI replay).
-Sections: exact phase transitions; corrupt/stale file protection; real fsync
+Sections: prepared/candidate_ready/switched/restored phase transitions;
+          corrupt/stale file protection; real fsync
           publication/rename; negative transition and restart simulations.
 No production path, Docker, RootlessKit, systemd, registry or PostgreSQL touched.
 """
@@ -84,7 +85,8 @@ class AnalyticsRouteJournalTests(unittest.TestCase):
             expected_gid=os.getgid(),
         )
         self.assertEqual(reopened.read(), prepared)
-        switched = reopened.finish(prepared, phase="switched")
+        ready = reopened.finish(prepared, phase="candidate_ready")
+        switched = reopened.finish(ready, phase="switched")
         self.assertEqual(reopened.read(), switched)
         later = approval(
             request_sha256="f" * 64, previous_slot="green",
@@ -96,8 +98,33 @@ class AnalyticsRouteJournalTests(unittest.TestCase):
         second = self.journal.begin(**later)
         self.assertEqual(second["generation"], 2)
         self.assertEqual(second["phase"], "prepared")
-        self.assertEqual(self.journal.finish(second, phase="switched")["phase"],
+        ready_second = self.journal.finish(second, phase="candidate_ready")
+        self.assertEqual(self.journal.finish(ready_second, phase="switched")["phase"],
                          "switched")
+
+    def test_durable_candidate_ready_phase_requires_exact_prepared_identity(self):
+        """Only verified staging can progress to cutover; no new JTI while ready."""
+        prepared = self.journal.begin(**approval())
+        ready = self.journal.finish(prepared, phase="candidate_ready")
+        self.assertEqual(ready["phase"], "candidate_ready")
+        self.assertEqual(self.journal.read(), ready)
+        with self.assertRaises(AnalyticsRouteJournalUnavailable):
+            self.journal.begin(**approval(request_sha256="f" * 64))
+        with self.assertRaises(AnalyticsRouteJournalUnavailable):
+            self.journal.finish(prepared, phase="switched")
+        with self.assertRaises(AnalyticsRouteJournalUnavailable):
+            self.journal.finish(ready, phase="candidate_ready")
+        switched = self.journal.finish(ready, phase="switched")
+        self.assertEqual(switched["phase"], "switched")
+
+    def test_candidate_ready_may_be_restored_but_not_skipped_to_prepared(self):
+        """Interrupted candidate can recover without permitting a new release."""
+        prepared = self.journal.begin(**approval())
+        ready = self.journal.finish(prepared, phase="candidate_ready")
+        restored = self.journal.finish(ready, phase="restored")
+        self.assertEqual(restored["phase"], "restored")
+        with self.assertRaises(AnalyticsRouteJournalUnavailable):
+            self.journal.finish(restored, phase="switched")
 
     def test_restored_route_may_retry_with_original_signed_identity(self):
         """Rollback is a recoverable state, not a reused prior JTI."""
@@ -245,7 +272,8 @@ class AnalyticsRouteJournalTests(unittest.TestCase):
     def test_atomic_replacement_failure_preserves_previous_switched_image(self):
         """A write that did not replace journal must not mutate its prior state."""
         first = self.journal.begin(**approval())
-        ready = self.journal.finish(first, phase="switched")
+        candidate = self.journal.finish(first, phase="candidate_ready")
+        ready = self.journal.finish(candidate, phase="switched")
         before = self.path.read_bytes()
         with patch(
             "deployment.analytics_route_journal.os.replace",

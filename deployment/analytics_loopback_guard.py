@@ -4,6 +4,7 @@
 Purpose: Preserve the exact original, signed Analytics 0.15.0 DEV
          RootlessKit blue-only supervisor; add an inert future successor
          3141/3142 route transaction using the SAME local APIs and UID991.
+         Candidate 3142 preparation is durably journaled before routing.
 Related: deployment/analytics_first_install.py,
          deployment/analytics_active_state_review.py,
          deployment/analytics_execution.py (signed next-release contract),
@@ -392,6 +393,153 @@ def _require_route_journal(journal: object) -> None:
         raise ValueError("unreviewed successor journal")
 
 
+def _stage_reviewed_private_candidate_probe(
+    *, previous_slot: str, previous_image: str, previous_id: str,
+    next_slot: str, next_image: str, next_id: str,
+    journal: object, request_sha256: str,
+) -> None:
+    """Durably stage only the private 3142 candidate route, never 3141.
+
+    The caller MUST separately authenticate signed Task013/OIDC evidence
+    and replay. This low-level primitive may execute only in an independently
+    installed future UID991 V2 supervisor with a root-provisioned journal.
+    The existing live 0.15.0 supervisor does not call this method.
+    """
+    _require_route_journal(journal)
+    with journal.exclusive():
+        if (
+            not journal.exclusive_active()
+            or os.geteuid() != _UID
+            or os.environ.get(_SUCCESSOR_SCOPE) != "1"
+            or previous_slot not in _SLOT_NAMES
+            or next_slot not in _SLOT_NAMES
+            or next_slot == previous_slot or next_image == previous_image
+            or type(request_sha256) is not str
+            or _HEX64.fullmatch(request_sha256) is None
+            or request_sha256 == "0" * 64
+        ):
+            raise ValueError("unreviewed private candidate principal")
+        prior = journal.read()
+        if prior is None:
+            # No prior journal means this is the FIRST successor only.
+            if previous_slot != "blue" or previous_image != _IMAGE:
+                raise ValueError("first successor must preserve signed 0.15.0")
+        elif (
+            prior["phase"] not in ("switched", "restored")
+        ):
+            raise ValueError("unfinished prior release requires recovery")
+        _rootless_info()
+        previous_ip = _verified_slot(
+            previous_slot, previous_image, previous_id,
+        )
+        next_ip = _verified_slot(next_slot, next_image, next_id)
+        if previous_ip == next_ip:
+            raise ValueError("candidate shares previous writer address")
+        old = {
+            "proto": "tcp4", "parentIP": "127.0.0.1",
+            "parentPort": 3141, "childIP": previous_ip, "childPort": 3000,
+        }
+        candidate = dict(old, parentPort=3142, childIP=next_ip)
+        inventory = _raw_rules()
+        if (
+            len(inventory) != 2
+            or sum(entry["spec"] == _CANARY for entry in inventory) != 1
+            or sum(entry["spec"] == old for entry in inventory) != 1
+            or any(entry["spec"] not in (_CANARY, old) for entry in inventory)
+        ):
+            raise ValueError("unreviewed prior ingress or existing candidate")
+        _http_ready("/readyz")
+        _http_ready("/livez")
+        if _raw_rules() != inventory:
+            raise ValueError("ingress changed before durable prepare")
+        # A real fsync-protected journal record MUST precede the POST. A
+        # crash after preparing but before POST is recoverable as old 3141.
+        intent = journal.begin(
+            request_sha256=request_sha256,
+            previous_slot=previous_slot, previous_image=previous_image,
+            previous_container_id=previous_id, previous_ip=previous_ip,
+            next_slot=next_slot, next_image=next_image,
+            next_container_id=next_id, next_ip=next_ip,
+        )
+        try:
+            created = _api(
+                _ROOTLESS, "POST", "/v1/ports", candidate, status=201,
+            )
+            if (
+                type(created) is not dict
+                or type(created.get("id")) is not int
+                or created.get("id") < 1
+                or created.get("spec") != candidate
+            ):
+                raise RuntimeError("unconfirmed candidate route creation")
+            observed = _raw_rules()
+            if (
+                len(observed) != 3
+                or sorted(
+                    (entry for entry in observed
+                     if entry["id"] != created["id"]),
+                    key=lambda entry: entry["id"],
+                ) != sorted(inventory, key=lambda entry: entry["id"])
+                or sum(
+                    entry["id"] == created["id"]
+                    and entry["spec"] == candidate for entry in observed
+                ) != 1
+            ):
+                raise RuntimeError("unapproved candidate route inventory")
+            _candidate_http_ready("/readyz")
+            _candidate_http_ready("/livez")
+            if (
+                _raw_rules() != observed
+                or _verified_slot(
+                    previous_slot, previous_image, previous_id
+                ) != previous_ip
+                or _verified_slot(next_slot, next_image, next_id) != next_ip
+            ):
+                raise RuntimeError("candidate or original writer changed")
+            # Commit candidate readiness separately from PREPARED. An
+            # interrupted generic PREPARED journal MUST NOT grant cutover
+            # permission merely because its input fields happen to match.
+            journal.finish(intent, phase="candidate_ready")
+            return None
+        except (KeyboardInterrupt, SystemExit, GeneratorExit):
+            # Leave PREPARED for restart recovery; never claim completion.
+            raise
+        except Exception:
+            try:
+                current = _raw_rules()
+                if (
+                    len(current) not in (2, 3)
+                    or sum(x["spec"] == _CANARY for x in current) != 1
+                    or sum(x["spec"] == old for x in current) != 1
+                    or any(x["spec"] not in (_CANARY, old, candidate)
+                           for x in current)
+                ):
+                    raise RuntimeError("ambiguous rollback inventory")
+                staged = [entry for entry in current
+                          if entry["spec"] == candidate]
+                if len(staged) > 1:
+                    raise RuntimeError("multiple candidate routes")
+                if staged:
+                    _api(
+                        _ROOTLESS, "DELETE",
+                        "/v1/ports/" + str(staged[0]["id"]),
+                    )
+                if sorted(_raw_rules(), key=lambda x: x["id"]) != sorted(
+                    inventory, key=lambda x: x["id"]
+                ):
+                    raise RuntimeError("candidate cleanup not confirmed")
+                _http_ready("/readyz")
+                _http_ready("/livez")
+                journal.finish(intent, phase="restored")
+            except Exception:
+                raise RuntimeError(
+                    "TASK014_ANALYTICS_CANDIDATE_RECOVERY_UNCONFIRMED"
+                ) from None
+            raise RuntimeError(
+                "TASK014_ANALYTICS_CANDIDATE_STAGE_REJECTED"
+            ) from None
+
+
 def _recover_reviewed_private_route(
     *, journal: object, request_sha256: str,
     previous_slot: str, previous_image: str, previous_id: str,
@@ -430,7 +578,8 @@ def _recover_reviewed_private_route_locked(
         raise ValueError("unreviewed recovery principal")
     intent = journal.read()
     if (
-        type(intent) is not dict or intent.get("phase") != "prepared"
+        type(intent) is not dict
+        or intent.get("phase") not in ("prepared", "candidate_ready")
         or intent.get("request_sha256") != request_sha256
         or intent.get("previous_slot") != previous_slot
         or intent.get("previous_image") != previous_image
@@ -459,13 +608,30 @@ def _recover_reviewed_private_route_locked(
         or len(old_rules) > 1 or len(new_rules) > 1
         or bool(old_rules) and bool(new_rules)
         or sum(r["spec"] == _CANARY for r in observed) != 1
-        or sum(r["spec"] == candidate for r in observed) != 1
+        or sum(r["spec"] == candidate for r in observed) not in (0, 1)
         or any(
             r["spec"] not in (_CANARY, old, new, candidate)
             for r in observed
         )
     ):
         raise ValueError("interrupted route has unrecognized or public rules")
+    # Candidate preparation may crash after fsyncing PREPARED but BEFORE
+    # posting the candidate probe. With unchanged old 3141 + Canary, no
+    # forwarding mutation is needed. Mark only this exact intent restored.
+    if (
+        len(observed) == 2
+        and len(old_rules) == 1 and len(new_rules) == 0
+        and sum(r["spec"] == candidate for r in observed) == 0
+        and sorted(
+            (r["spec"] for r in observed), key=lambda record: str(record)
+        ) == sorted((_CANARY, old), key=lambda record: str(record))
+    ):
+        if _raw_rules() != observed:
+            raise RuntimeError("candidate absence changed during recovery")
+        _http_ready("/readyz")
+        _http_ready("/livez")
+        journal.finish(intent, phase="restored")
+        return None
     # Recheck the exact unchanged Canary/candidate *IDs* before mutation.
     preserved = sorted(
         (r for r in observed if r["spec"] in (_CANARY, candidate)),
@@ -487,7 +653,7 @@ def _recover_reviewed_private_route_locked(
         _api(_ROOTLESS, "POST", "/v1/ports", old, status=201)
     after = _raw_rules()
     if (
-        len(after) != 3
+        len(after) != len(preserved) + 1
         or sum(r["spec"] == old for r in after) != 1
         or sorted(
             (r for r in after if r["spec"] != old),
@@ -500,6 +666,30 @@ def _recover_reviewed_private_route_locked(
         raise RuntimeError("TASK014_ANALYTICS_ROUTE_RECOVERY_UNCONFIRMED")
     _http_ready("/readyz")
     _http_ready("/livez")
+    if intent["phase"] == "candidate_ready":
+        # A previously health-proven candidate may have been left behind by
+        # a crash. Remove ONLY this exact 3142 probe, after old writer is
+        # independently healthy and the durable JTI is still matched.
+        candidate_rules = [
+            rule for rule in after if rule["spec"] == candidate
+        ]
+        if len(candidate_rules) > 1:
+            raise RuntimeError("TASK014_ANALYTICS_ROUTE_RECOVERY_UNCONFIRMED")
+        if candidate_rules:
+            _api(
+                _ROOTLESS, "DELETE",
+                "/v1/ports/" + str(candidate_rules[0]["id"]),
+            )
+        settled = _raw_rules()
+        if (
+            len(settled) != 2
+            or sum(rule["spec"] == _CANARY for rule in settled) != 1
+            or sum(rule["spec"] == old for rule in settled) != 1
+            or any(rule["spec"] not in (_CANARY, old) for rule in settled)
+        ):
+            raise RuntimeError("TASK014_ANALYTICS_ROUTE_RECOVERY_UNCONFIRMED")
+        _http_ready("/readyz")
+        _http_ready("/livez")
     journal.finish(intent, phase="restored")
 
 
@@ -583,13 +773,26 @@ def _switch_reviewed_private_route_locked(
     # A prepared, fsync-confirmed journal MUST precede RootlessKit mutation.
     # A previous unfinished intent blocks this operation on every retry.
     # This disk record is NOT signature, replay or release authorization.
-    intent = journal.begin(
-        request_sha256=request_sha256,
-        previous_slot=previous_slot, previous_image=previous_image,
-        previous_container_id=previous_id, previous_ip=previous_ip,
-        next_slot=next_slot, next_image=next_image,
-        next_container_id=next_id, next_ip=next_ip,
-    )
+    approved_fields = {
+        "request_sha256": request_sha256,
+        "previous_slot": previous_slot,
+        "previous_image": previous_image,
+        "previous_container_id": previous_id,
+        "previous_ip": previous_ip,
+        "next_slot": next_slot, "next_image": next_image,
+        "next_container_id": next_id, "next_ip": next_ip,
+    }
+    existing = journal.read()
+    # Requiring the complete journal phase is stronger than a merely
+    # healthy 3142 port. Unknown, missing, or partially PREPARED attempts
+    # can never be adopted for a cutover.
+    if (
+        type(existing) is not dict
+        or existing.get("phase") != "candidate_ready"
+        or any(existing.get(k) != v for k, v in approved_fields.items())
+    ):
+        raise ValueError("candidate was not durably verified for this request")
+    intent = existing
     began = False
     try:
         began = True
@@ -629,6 +832,32 @@ def _switch_reviewed_private_route_locked(
             ) != next_ip
         ):
             raise RuntimeError("route or image changed during cutover")
+        candidate_probes = [
+            entry for entry in after if (
+                entry["spec"].get("parentPort") == 3142
+                and entry["spec"].get("childIP") == next_ip
+            )
+        ]
+        if len(candidate_probes) != 1:
+            raise RuntimeError("new writer has no exact private probe")
+        _api(
+            _ROOTLESS, "DELETE",
+            "/v1/ports/" + str(candidate_probes[0]["id"]),
+        )
+        # A completed successor has EXACTLY Canary and stable 3141.
+        # 3142 is always temporary; keeping it would prevent the next
+        # candidate from using the opposite slot safely.
+        settled = _raw_rules()
+        if (
+            len(settled) != 2
+            or sum(item["spec"] == _CANARY for item in settled) != 1
+            or sum(item["spec"] == new for item in settled) != 1
+            or any(item["spec"] not in (_CANARY, new) for item in settled)
+            or _verified_slot(next_slot, next_image, next_id) != next_ip
+        ):
+            raise RuntimeError("temporary candidate route not retired")
+        _http_ready("/readyz")
+        _http_ready("/livez")
         journal.finish(intent, phase="switched")
         return
     except (KeyboardInterrupt, SystemExit, GeneratorExit):
@@ -660,10 +889,16 @@ def _switch_reviewed_private_route_locked(
                         "/v1/ports/" + str(newer[0]["id"]),
                     )
                     current = _raw_rules()
-                if sorted(
-                    (r for r in current if r["spec"] != old),
-                    key=lambda r: r["id"],
-                ) != preserved:
+                canary_before = [
+                    r for r in before if r["spec"] == _CANARY
+                ]
+                if (
+                    len(canary_before) != 1
+                    or sum(r["spec"] == _CANARY for r in current) != 1
+                    or not any(r == canary_before[0] for r in current)
+                    or any(r["spec"] not in (_CANARY, old, candidate)
+                           for r in current)
+                ):
                     raise RuntimeError("Canary or candidate changed during rollback")
                 if not older:
                     # Never restore traffic to a changed/stopped container.
@@ -681,14 +916,35 @@ def _switch_reviewed_private_route_locked(
                         raise RuntimeError("restoration not acknowledged")
                 current = _raw_rules()
                 if (
-                    len(current) != 3
+                    len(current) not in (2, 3)
                     or sum(r["spec"] == old for r in current) != 1
-                    or sorted(
-                        (r for r in current if r["spec"] != old),
-                        key=lambda r: r["id"],
-                    ) != preserved
+                    or sum(r["spec"] == _CANARY for r in current) != 1
+                    or not any(r == canary_before[0] for r in current)
+                    or any(r["spec"] not in (_CANARY, old, candidate)
+                           for r in current)
                 ):
                     raise RuntimeError("rollback routing not confirmed")
+                # Restore a TWO-port idle state for a normal next release.
+                # Candidate 3142 is never a durable active ingress.
+                staged = [
+                    r for r in current if r["spec"] == candidate
+                ]
+                if len(staged) > 1:
+                    raise RuntimeError("duplicate candidate route")
+                if staged:
+                    _api(
+                        _ROOTLESS, "DELETE",
+                        "/v1/ports/" + str(staged[0]["id"]),
+                    )
+                current = _raw_rules()
+                if (
+                    len(current) != 2
+                    or sum(r["spec"] == _CANARY for r in current) != 1
+                    or sum(r["spec"] == old for r in current) != 1
+                    or not any(r == canary_before[0] for r in current)
+                    or any(r["spec"] not in (_CANARY, old) for r in current)
+                ):
+                    raise RuntimeError("rollback probe cleanup not confirmed")
                 _http_ready("/readyz")
                 _http_ready("/livez")
                 journal.finish(intent, phase="restored")

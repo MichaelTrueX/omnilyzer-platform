@@ -2,7 +2,8 @@
 
 Purpose: Durable, product-only Task14B Analytics private route-switch intent.
          Persist exact signed-release *references* before any 3141 mutation,
-         and distinguish prepared, switched and restored outcomes on restart.
+         and distinguish prepared, candidate_ready, switched and restored
+         outcomes on restart without trusting a partial stage as promotion.
 Related: deployment/analytics_loopback_guard.py (same RootlessKit supervisor),
          deployment/analytics_active_state_review.py (live OCI observation),
          deployment/replay_sqlite.py (separate existing JTI replay authority),
@@ -42,7 +43,7 @@ _KEYS = frozenset({
     "previous_slot", "previous_image", "previous_container_id",
     "previous_ip", "next_slot", "next_image", "next_container_id", "next_ip",
 })
-_PHASES = frozenset({"prepared", "switched", "restored"})
+_PHASES = frozenset({"prepared", "candidate_ready", "switched", "restored"})
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _ERROR = "TASK014_ANALYTICS_ROUTE_JOURNAL_UNAVAILABLE"
 
@@ -324,13 +325,13 @@ class AnalyticsRouteJournal:
         next_slot: str, next_image: str,
         next_container_id: str, next_ip: str,
     ) -> dict[str, object]:
-        """Persist PREPARED before mutating 3141; forbid unresolved attempts."""
+        """Persist PREPARED before mutating 3142 or 3141; forbid unresolved attempts."""
         try:
             directory_fd, close_when_done = self._write_handle()
             try:
                 existing = self._read_at(directory_fd)
                 if existing is not None:
-                    if existing["phase"] == "prepared":
+                    if existing["phase"] in ("prepared", "candidate_ready"):
                         _reject()
                     if existing["phase"] == "switched":
                         if (
@@ -372,12 +373,17 @@ class AnalyticsRouteJournal:
     def finish(
         self, record: dict[str, object], *, phase: str,
     ) -> dict[str, object]:
-        """Durably record confirmed switch or confirmed restoration only."""
+        """Durably record candidate health, switch or confirmed restoration."""
         try:
-            if phase not in ("switched", "restored"):
+            if phase not in ("candidate_ready", "switched", "restored"):
                 _reject()
             previous = _route_record(record)
-            if previous["phase"] != "prepared":
+            if not (
+                (previous["phase"] == "prepared"
+                 and phase in ("candidate_ready", "restored"))
+                or (previous["phase"] == "candidate_ready"
+                    and phase in ("switched", "restored"))
+            ):
                 _reject()
             directory_fd, close_when_done = self._write_handle()
             try:
