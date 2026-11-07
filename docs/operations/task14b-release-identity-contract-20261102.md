@@ -1859,3 +1859,35 @@ original full OCI package inventory, zero-Critical/High policy and all
 upstream pinned signature/build attestations remain unchanged. Acceptance
 is conditional on the NEW same-commit unpublished Task013 container build
 and actual scanner result, not source-only tests.
+
+
+### Canary fix: zlib must be PATCHED, not removed
+
+Exact unpublished build at `7e525dee8a2aa8afe5820e96d33fe11d44b7e256`,
+[Task013 CI run 42352794289](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/42352794289),
+proved that removing `apk-tools` also removed zlib but broke the Canary.
+The real Python runtime failed `import http.server`: its `binascii`
+extension dynamically requires `libz.so.1`. This is a genuine runtime
+dependency, not a false-positive scan. The offline removal attempt must
+not be released.
+
+The corrected image retains the original immutable attested Astral
+Alpine 3.23 digest, downloads only the independently sha256-pinned
+**Alpine v3.23/main/x86_64 zlib-1.4-r0.apk** (reviewed same 56,762-byte SHA
+`22ff5ae6b704ac1786d6565dcb3f5dde489e44a5038297a565382b76f656ee08`
+on two different upstream mirrors), and uses the **existing vendor
+APK signature keys** to install that exact package in a network-disabled
+Docker RUN. BuildKit is permitted to fetch only the checksum-pinned
+official HTTPS APK before RUN; no general network package refresh, new
+registry, untrusted package, `--allow-untrusted`, or new signing bypass.
+The actual installed APK DB must contain exactly one `P:zlib` with
+`V:1.4-r0` and no vulnerable `1.3.2-r1` entry. The original `binascii`
+and HTTP Python imports must work, and `zlib.ZLIB_RUNTIME_VERSION` must
+start with `1.4`. SQLite remains absent, all existing OS package entries
+remain transparently scannable by Syft+Grype, and the identical
+zero-Critical/High policy applies without a waiver.
+
+Only the exact-HEAD Task013 OCI build, unchanged Task013 security policy
+and Task014 native CI can establish final acceptance. No installed
+0.15.0, public server, source signer key, OCI image push, Task013 dispatch
+or privileged system service is touched by this change.

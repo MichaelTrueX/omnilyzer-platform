@@ -307,31 +307,39 @@ class ImageAndPipelineTests(unittest.TestCase):
         self.assertEqual(BASE_IMAGE_DIGEST, "sha256:df6ea28f3caf5eb77ebae34d38e9b177b41a4e58ee963b1cbc5c8c1c92710238")
         self.assertEqual(dockerfile.splitlines()[0], f"FROM ghcr.io/astral-sh/uv@{BASE_IMAGE_DIGEST}")
         self.assertNotIn("FROM scratch", dockerfile)
-        self.assertIn("apk del --no-network .python-rundeps sqlite-libs zlib apk-tools", dockerfile)
-        self.assertIn("apk info -e zlib", dockerfile)
-        self.assertIn("apk info -e apk-tools", dockerfile)
-        # The apk-tools package itself holds the original zlib dependency.
-        # Negated apk info checks previously did not fail the Docker RUN.
-        # Direct database checks MUST force nonzero exit on remaining packages.
-        for package in ("zlib", "sqlite-libs", "apk-tools"):
-            self.assertIn(
-                f"if grep -qx 'P:{package}' /lib/apk/db/installed; then exit 1; fi",
-                dockerfile,
-            )
-        self.assertNotIn("! apk info -e zlib", dockerfile)
-        self.assertIn("test -s /lib/apk/db/installed", dockerfile)
-        self.assertIn("importlib.util.find_spec(\"zlib\") is None", dockerfile)
+        fixed_package = (
+            "zlib-1.4-r0.apk"
+        )
+        fixed_sha = "22ff5ae6b704ac1786d6565dcb3f5dde489e44a5038297a565382b76f656ee08"
         self.assertIn(
-            "find /usr/local/lib /usr/lib \\( -iname '*sqlite*' -o -iname '*zlib*' \\)",
+            "ADD --checksum=sha256:" + fixed_sha, dockerfile,
+        )
+        self.assertIn(
+            "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/" + fixed_package,
             dockerfile,
         )
-        self.assertNotIn("apk add", dockerfile)
+        self.assertIn("apk add --no-network /tmp/" + fixed_package, dockerfile)
+        self.assertIn("apk del --no-network .python-rundeps sqlite-libs", dockerfile)
+        self.assertIn("test -s /lib/apk/db/installed", dockerfile)
+        self.assertIn("test \"$(grep -xc 'P:zlib' /lib/apk/db/installed)\" = 1", dockerfile)
+        self.assertIn(
+            "grep -A1 -x 'P:zlib' /lib/apk/db/installed | grep -qx 'V:1.4-r0'",
+            dockerfile,
+        )
+        self.assertIn(
+            'import fcntl,binascii,hashlib,http.server,json,socket,threading,zlib',
+            dockerfile,
+        )
+        self.assertIn('zlib.ZLIB_RUNTIME_VERSION.startswith("1.4")', dockerfile)
+        self.assertIn("rm -f /tmp/" + fixed_package, dockerfile)
+        self.assertIn("find /usr/local/lib/python3.14 -iname '*sqlite*' -exec rm -rf {} +", dockerfile)
+        self.assertIn("find /usr/local/lib /usr/lib -iname '*sqlite*'", dockerfile)
+        self.assertNotIn("apk add --allow-untrusted", dockerfile)
+        self.assertNotIn("apk add --update", dockerfile)
+        self.assertNotIn("apk add --no-cache", dockerfile)
         self.assertNotIn("pip install", dockerfile)
         self.assertNotIn("sed -i /lib/apk/db/installed", dockerfile)
-        self.assertIn(
-            r"find /usr/local/lib/python3.14 \( -iname '*sqlite*' -o -iname '*zlib*' \) -exec rm -rf {} +",
-            dockerfile,
-        )
+        self.assertNotIn("apk del --no-network .python-rundeps sqlite-libs zlib", dockerfile)
         self.assertNotIn("FROM cgr.dev/chainguard/python", dockerfile)
         self.assertIn("COPY --chown=10001:10001", dockerfile)
         self.assertIn("USER 10001:10001", dockerfile)
