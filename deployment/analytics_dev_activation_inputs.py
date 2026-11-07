@@ -2,7 +2,8 @@
 
 Purpose: Construct exact UNSIGNED Task014 Analytics 0.15.0/V2 DEV review
          inputs from independently verified immutable Git source archives,
-         including the original C32ZF rootless socket source contract.
+         including the original C32ZF rootless socket source contract and inert,
+         generation-specific broker/executor service override inputs.
 Related: deployment/analytics_source_handoff.py (32 Git objects),
          deployment/analytics_source_archive.py (canonical USTAR),
          deployment/analytics_isolated_source_install.py (root approval),
@@ -69,6 +70,17 @@ _ANALYTICS_RUNTIME_DROPIN = (
     "/etc/systemd/system/"
     "omnilyzer-deployment-analytics-executor.service.d/"
     "rootless-runtime.conf"
+)
+# The *inactive* successor source must never overwrite either original unit
+# or the original installed V1 broker/executor WorkingDirectory. These two
+# fixed drop-in filenames are generated as uninstalled review inputs ONLY.
+_SUCCESSOR_BROKER_DROPIN = (
+    "/etc/systemd/system/omnilyzer-deployment-broker.service.d/"
+    "analytics-v2-source.conf"
+)
+_SUCCESSOR_EXECUTOR_DROPIN = (
+    "/etc/systemd/system/omnilyzer-deployment-analytics-executor.service.d/"
+    "analytics-v2-source.conf"
 )
 _ORIGINAL_RUNTIME_DIRECTORY = (
     "RuntimeDirectory=omnilyzer/deployment/rootless-docker"
@@ -220,6 +232,7 @@ def build_unsigned_analytics_activation_inputs(
 
 def build_unsigned_analytics_service_inputs(
     *, repository_root: str, reviewed_commit: str,
+    successor_source: bool = False,
 ) -> dict[str, bytes]:
     """Bind EXACT service review bytes to one Git generation and original C32ZF.
 
@@ -241,6 +254,29 @@ def build_unsigned_analytics_service_inputs(
     Neither unit is installed or started by this review-only builder.
     """
     try:
+        if type(successor_source) is not bool:
+            raise ValueError("invalid source generation")
+        # Always preserve the historical 4 original service files byte-for-byte.
+        # V2 add-ons may only be returned after the full immutable 35-source
+        # V2 archive, 23 exact module hashes and root-config shape pass.
+        if successor_source:
+            candidate = build_unsigned_analytics_activation_inputs(
+                repository_root=repository_root, reviewed_commit=reviewed_commit,
+                successor_source=True,
+            )
+            from .analytics_isolated_source_install import _successor_approval
+            approved_candidate = _successor_approval(candidate[SOURCE_APPROVAL])
+            parsed_candidate = parse_analytics_executor_service_config(
+                candidate[EXECUTOR_CONFIG]
+            )
+            if (
+                approved_candidate["destination"] != SUCCESSOR_DESTINATION
+                or parsed_candidate["source_generation"] != 2
+                or tuple(name for name, _ in parsed_candidate["source_sha256"])
+                    != ANALYTICS_SUCCESSOR_INSTALLED_FILES
+                or candidate[EXECUTOR_CONFIG] != candidate[BROKER_CONFIG]
+            ):
+                raise ValueError("candidate service source identity mismatch")
         sources = build_unsigned_analytics_activation_inputs(
             repository_root=repository_root, reviewed_commit=reviewed_commit,
         )
@@ -320,11 +356,25 @@ def build_unsigned_analytics_service_inputs(
         result[_ANALYTICS_RUNTIME_DROPIN] = (
             "[Service]\n" + _PRIVATE_TMPFS + "\n" + _LISTENER_BIND + "\n"
         ).encode("ascii")
+        # Appending these two separately installed override inputs does not
+        # grant a service restart, source selection or signed release GO.
+        # Neither overrides ExecStart, identity, secrets, sockets nor ports.
+        if successor_source:
+            candidate_bytes = (
+                "[Service]\nWorkingDirectory=" + SUCCESSOR_DESTINATION + "\n"
+            ).encode("ascii")
+            result[_SUCCESSOR_BROKER_DROPIN] = candidate_bytes
+            result[_SUCCESSOR_EXECUTOR_DROPIN] = candidate_bytes
+        expected_paths = {
+            _ANALYTICS_RUNTIME_DROPIN,
+            *(destination for _source, destination in _SERVICE_SOURCES),
+        }
+        if successor_source:
+            expected_paths.update((
+                _SUCCESSOR_BROKER_DROPIN, _SUCCESSOR_EXECUTOR_DROPIN,
+            ))
         if (
-            set(result) != {
-                _ANALYTICS_RUNTIME_DROPIN,
-                *(destination for _source, destination in _SERVICE_SOURCES),
-            }
+            set(result) != expected_paths
             or any(type(raw) is not bytes or not raw for raw in result.values())
         ):
             raise ValueError

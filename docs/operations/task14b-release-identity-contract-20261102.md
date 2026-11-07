@@ -1148,3 +1148,25 @@ installed 0.15.0 source remain unchanged. A root-owned config alone does not
 authorize an upgraded service or any schema-3 deployment; the separately
 protected systemd entrypoint, genuine signed release, durable replay and
 rollback cutover are still pending.
+
+## 2026-11-07: review-only V2 service source transition plan
+
+The existing `build_unsigned_analytics_service_inputs` now accepts the
+explicit `successor_source=True` flag. It first verifies the entire canonical
+35-entry V2 archive, 23 exact source hashes, approved fixed inactive candidate
+path and matching broker/executor root-owned source config. It returns the
+original four V1 systemd service inputs byte-for-byte **plus exactly two**
+V2-only fixed `analytics-v2-source.conf` drop-ins. Both contain only
+`[Service]` and `WorkingDirectory=/opt/omnilyzer/deployment/analytics-app-candidate`.
+No arbitrary path, command, UID, runtime secret, Docker socket, service restart
+or ingress mutation is accepted in either drop-in. The executable Python
+command continues to come exclusively from the original source-verified unit.
+
+**V2 drop-ins are inert review files, not a deployment procedure.** Their
+separate root-owned installation and active config switch must be authorized
+only after the exact signed successor schema-3 release, independently verified
+source/OIDC/replay, current live OCI state and rollback route are integrated.
+An approved rollback would remove only these two V2 drop-ins, restore the
+original protected V1 config and confirm the unchanged V1 source and service
+status, with durable route journal reconciliation. None of that privileged
+activation or rollback is performed or authorized by the builder.
