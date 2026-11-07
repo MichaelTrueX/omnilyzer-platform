@@ -117,7 +117,10 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         approval = json.loads(successor[activation.SOURCE_APPROVAL])
         self.assertEqual(approval["schema_version"], 2)
         self.assertEqual(approval["reviewed_commit"], self.sha)
-        self.assertEqual(approval["destination"], activation.DESTINATION)
+        self.assertEqual(approval["destination"], activation.SUCCESSOR_DESTINATION)
+        from deployment import analytics_isolated_source_install as stage
+        self.assertEqual(activation.SUCCESSOR_DESTINATION,
+                         stage._PARENT + "/" + stage._SUCCESSOR_DESTINATION)
         self.assertEqual(
             approval["archive_sha256"],
             hashlib.sha256(successor[activation.SOURCE_ARCHIVE]).hexdigest(),

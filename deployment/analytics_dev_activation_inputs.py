@@ -48,6 +48,9 @@ SOURCE_APPROVAL = "/etc/omnilyzer/deployment/dev/analytics-source-install.json"
 EXECUTOR_CONFIG = "/etc/omnilyzer/deployment/dev/analytics-executor.json"
 BROKER_CONFIG = "/etc/omnilyzer/deployment/broker/analytics.json"
 DESTINATION = "/opt/omnilyzer/deployment/analytics-app"
+# V2 reviewed candidate must be independently installed *beside* V1.
+# The original V1 active service continues to refer to DESTINATION.
+SUCCESSOR_DESTINATION = "/opt/omnilyzer/deployment/analytics-app-candidate"
 _CLOSED_PATHS = (SOURCE_ARCHIVE, SOURCE_APPROVAL, EXECUTOR_CONFIG, BROKER_CONFIG)
 # These systemd objects remain inert until separately installed by root.
 # Exactly three are already bound in the canonical 32-object reviewed archive.
@@ -191,7 +194,8 @@ def build_unsigned_analytics_activation_inputs(
             "reviewed_commit": reviewed_commit,
             "manifest_sha256": manifest_sha,
             "archive_sha256": hashlib.sha256(archive).hexdigest(),
-            "destination": DESTINATION,
+            "destination": (SUCCESSOR_DESTINATION if successor_source
+                            else DESTINATION),
         })
         # Original ROOT installer still accepts V1 ONLY: allowing V2 here
         # makes a reproducible reviewed input, not a usable root install.

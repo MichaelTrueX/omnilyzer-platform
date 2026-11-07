@@ -220,6 +220,142 @@ class IsolatedSourceGenerationTests(unittest.TestCase):
         self.assertIn("ISOLATED_BROKER_EXECUTOR_IMPORT_OK", result.stdout)
         self.assertFalse((new_root / "deployment/__pycache__").exists())
 
+    def test_exact_root_approved_v2_candidate_source_is_never_live(self):
+        """Original 70-file active source remains intact while V2 is staged."""
+        self.stage()  # Install only disposable V1 fixture, not a live system.
+        live = self.parent / install._DESTINATION
+        before = {
+            str(path.relative_to(live)): (path.read_bytes(), path.stat().st_ino)
+            for path in live.rglob("*") if path.is_file()
+        }
+        self.assertEqual(len(before), 70)
+        with patch.object(install, "_open_checked_root",
+                          side_effect=self._test_fd_open):
+            result = install._publish_isolated_generation(
+                parent_root=str(self.parent), original_root=str(self.old_root),
+                archive=self.successor_archive, manifest_sha=self.successor_sha,
+                reviewed_commit=self.sha,
+                uid=os.getuid(), gid=os.getgid(),
+                successor_source=True, candidate_only=True,
+            )
+        candidate = self.parent / install._SUCCESSOR_DESTINATION
+        self.assertEqual(result, str(candidate))
+        self.assertEqual(sum(1 for path in candidate.rglob("*") if path.is_file()), 73)
+        self.assertEqual(before, {
+            str(path.relative_to(live)): (path.read_bytes(), path.stat().st_ino)
+            for path in live.rglob("*") if path.is_file()
+        })
+        self.assertFalse((self.parent / install._STAGING).exists())
+        with patch.object(install, "_open_checked_root",
+                          side_effect=self._test_fd_open), self.assertRaises(OSError):
+            install._publish_isolated_generation(
+                parent_root=str(self.parent), original_root=str(self.old_root),
+                archive=self.successor_archive, manifest_sha=self.successor_sha,
+                reviewed_commit=self.sha, uid=os.getuid(), gid=os.getgid(),
+                successor_source=True, candidate_only=True,
+            )
+        self.assertEqual(before, {
+            str(path.relative_to(live)): (path.read_bytes(), path.stat().st_ino)
+            for path in live.rglob("*") if path.is_file()
+        })
+
+    def test_successor_candidate_denies_missing_or_symlinked_active_source(self):
+        """Candidate root staging must have existing real V1 ownership."""
+        with patch.object(install, "_open_checked_root",
+                          side_effect=self._test_fd_open):
+            with self.assertRaises(FileNotFoundError):
+                install._publish_isolated_generation(
+                    parent_root=str(self.parent), original_root=str(self.old_root),
+                    archive=self.successor_archive, manifest_sha=self.successor_sha,
+                    reviewed_commit=self.sha, uid=os.getuid(), gid=os.getgid(),
+                    successor_source=True, candidate_only=True,
+                )
+        self.assertFalse((self.parent / install._STAGING).exists())
+        live = self.parent / install._DESTINATION
+        live.symlink_to(self.old_root, target_is_directory=True)
+        with patch.object(install, "_open_checked_root",
+                          side_effect=self._test_fd_open), self.assertRaises(OSError):
+            install._publish_isolated_generation(
+                parent_root=str(self.parent), original_root=str(self.old_root),
+                archive=self.successor_archive, manifest_sha=self.successor_sha,
+                reviewed_commit=self.sha, uid=os.getuid(), gid=os.getgid(),
+                successor_source=True, candidate_only=True,
+            )
+        self.assertTrue(live.is_symlink())
+        self.assertFalse((self.parent / install._STAGING).exists())
+        self.assertFalse((self.parent / install._SUCCESSOR_DESTINATION).exists())
+
+    def test_v2_candidate_atomic_publish_error_preserves_live_and_cleans_stage(self):
+        """Rollback an interrupted candidate, not the signed active generation."""
+        self.stage()
+        active = self.parent / install._DESTINATION
+        live = {
+            str(path.relative_to(active)): (path.stat().st_ino, path.read_bytes())
+            for path in active.rglob("*") if path.is_file()
+        }
+        original_rename = install.os.rename
+
+        def fail_candidate_rename(src, dst, **kwargs):
+            if src == install._STAGING and dst == install._SUCCESSOR_DESTINATION:
+                raise OSError("synthetic interruption before candidate publication")
+            return original_rename(src, dst, **kwargs)
+
+        with (
+            patch.object(install, "_open_checked_root", side_effect=self._test_fd_open),
+            patch.object(install.os, "rename", side_effect=fail_candidate_rename),
+            self.assertRaises(OSError),
+        ):
+            install._publish_isolated_generation(
+                parent_root=str(self.parent), original_root=str(self.old_root),
+                archive=self.successor_archive, manifest_sha=self.successor_sha,
+                reviewed_commit=self.sha, uid=os.getuid(), gid=os.getgid(),
+                successor_source=True, candidate_only=True,
+            )
+        self.assertFalse((self.parent / install._STAGING).exists())
+        self.assertFalse((self.parent / install._SUCCESSOR_DESTINATION).exists())
+        self.assertEqual(live, {
+            str(path.relative_to(active)): (path.stat().st_ino, path.read_bytes())
+            for path in active.rglob("*") if path.is_file()
+        })
+        self.assertTrue(all((self.old_root / n).read_bytes() == v
+                            for n, v in self.old.items()))
+
+    def test_schema2_candidate_approval_is_closed_and_unprivileged_denied(self):
+        """An unsigned V2 TAR or owner-selected destination grants nothing."""
+        from deployment.analytics_dev_activation_inputs import (
+            build_unsigned_analytics_activation_inputs, SOURCE_APPROVAL,
+        )
+        artifact = build_unsigned_analytics_activation_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        approved = artifact[SOURCE_APPROVAL]
+        parsed = install._successor_approval(approved)
+        self.assertEqual(parsed["schema_version"], 2)
+        self.assertEqual(parsed["destination"],
+                         install._PARENT + "/" + install._SUCCESSOR_DESTINATION)
+        with self.assertRaises(ValueError):
+            install._approval(approved)
+        for change in (
+            {**parsed, "schema_version": 1},
+            {**parsed, "destination": install._PARENT + "/" + install._DESTINATION},
+            {**parsed, "product_id": "canary"},
+            {**parsed, "unexpected": True},
+            {**parsed, "reviewed_commit": "0" * 40},
+        ):
+            with self.subTest(change=change), self.assertRaises(
+                    install.AnalyticsIsolatedSourceInstallError):
+                install._successor_approval(canonical_bytes(change))
+        with self.assertRaises(install.AnalyticsIsolatedSourceInstallError):
+            install._successor_approval(
+                b'{"schema_version":2,"schema_version":2}'
+            )
+        with patch.object(install, "_read_protected_file",
+                          side_effect=AssertionError("unprivileged path read")) as read:
+            with self.assertRaises(install.AnalyticsIsolatedSourceInstallError):
+                install.stage_approved_analytics_successor_candidate_generation()
+            read.assert_not_called()
+
     def test_successor_v2_archive_never_falls_back_to_original_v1_install(self):
         """A V2 source review cannot silently enter the signed V1 root path."""
         old = {

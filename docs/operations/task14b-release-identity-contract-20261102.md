@@ -1110,3 +1110,24 @@ one-time V1-to-V2 replacement must independently preserve original source,
 active 0.15.0, signed provenance, DB writes and rollback before any schema-3
 executor promotion. The new source generator has no host, registry, replay,
 systemd, Docker or secret side effects.
+
+## 2026-11-07: review-only V2 candidate beside active V1 (no live cutover)
+
+The original root-only V1 first installer remains byte-compatible. The new
+root-only `stage_approved_analytics_successor_candidate_generation()` uses
+**separate exact root-owned 0600 approval and TAR files** and a canonical
+schema-2 owner-approval whose sole permitted destination is
+`/opt/omnilyzer/deployment/analytics-app-candidate`. All Git TAR bytes and
+SHA entries must match the 35-source V2 manifest. The existing C31B verified
+legacy preimage, descriptor-relative O_NOFOLLOW staging, exact 73-file hash
+audit, fsync and scoped rollback are reused. The active
+`/opt/omnilyzer/deployment/analytics-app` must already exist as an approved
+root-owned directory and remains untouched, even on a simulated candidate
+rename failure. A preexisting candidate or stale staging directory fails closed.
+
+**Do not call this source staging a Task014 deployment.** The fixed candidate
+source directory is inactive; it does not replace the active installed source,
+install a service or authorize schema-3 broker/UID991 executor requests. Before
+any later cutover, separate owner authorization, verified source/signature and
+actual root-owned service migration/rollback/reconciliation are mandatory.
+The currently installed signed Analytics 0.15.0 is preserved.
