@@ -112,17 +112,19 @@ class PublicKeycloakTests(unittest.TestCase):
                 MOD.repair_metrics_only()
             replace.assert_not_called()
 
-    def test_metrics_repair_preserves_other_secrets_and_disables_restart(self):
-        """The two exact-file edits retain all secrets and never start a service."""
+    def test_metrics_repair_preserves_unrelated_config_and_disables_restart(self):
+        """Keep nonsecret environment bytes untouched without opening service."""
         import tempfile
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
             env = root / "keycloak.env"
             unit = root / "omnilyzer-keycloak.service"
-            secret = b"KC_DB_PASSWORD=synthetic_only_not_real\n"
-            contents = secret + b"KC_METRICS_ENABLED=false\nKC_HTTP_PORT=18742\n"
-            env.write_bytes(contents)
-            env.chmod(0o600)
+            preserved = b"KC_LOG_LEVEL=info\n"
+            contents = preserved + b"KC_METRICS_ENABLED=false\nKC_HTTP_PORT=18742\n"
+            # Private file mode is established at creation, before any write.
+            fd = os.open(env, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            with os.fdopen(fd, "wb") as output:
+                output.write(contents)
             unit.write_bytes(MOD.service_unit().encode("utf-8"))
             unit.chmod(0o644)
             with mock.patch.object(MOD, "ENV", env), \
@@ -132,7 +134,7 @@ class PublicKeycloakTests(unittest.TestCase):
                 MOD.repair_metrics_only()
                 self.assertEqual(call.call_args_list,
                                  [mock.call(["/usr/bin/systemctl", "daemon-reload"])])
-            self.assertEqual(env.read_bytes(), secret + b"KC_HTTP_PORT=18742\n")
+            self.assertEqual(env.read_bytes(), preserved + b"KC_HTTP_PORT=18742\n")
             self.assertEqual((root / "keycloak.env.m01-pre-metrics-repair").read_bytes(),
                              contents)
             self.assertEqual((root / "omnilyzer-keycloak.service.m01-pre-metrics-repair").read_bytes(),
