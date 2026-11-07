@@ -1706,3 +1706,44 @@ positive request admission, durable SQLite JTI replay, genuine digest-pinned
 green startup/3142 health, journaled 3141 cutover and write-preserving
 rollback, followed by exact-HEAD independent M04 acceptance and separate
 authorized new reviewed Analytics Task013/014 DEV release.
+
+## M05 V2 kernel-socket to independent Task013 signed reader integration (2026-11-07)
+
+The root-owned **generation-2** Analytics executor composition now selects the
+existing Unix handler's **full-signed-read-only** branch using its immutable
+original `expected_workflow_sha`. Generation-1 keeps its exact original
+schema-2 0.15.0 first-install receiver, with no replacement credential path.
+The earlier structural and manifest-only successor test variants remain
+available for legacy contract tests but are no longer selected by V2 composition.
+
+When that separately owner-approved V2 service is actually installed, its
+original peer-checked AF_UNIX handler receives the canonical schema-3 request
+and kernel-sealed three-JWT bundle with the existing SCM_RIGHTS wire protocol.
+After original peer, seal and image binding checks, it calls the existing
+`_review_executor_successor_signed_release` with the root-reviewed workflow
+SHA and exact four reviewed source/profile hashes. That verifies independent
+GitHub JWT audiences, root-controlled owner Ed25519 exact source, original
+Sigstore/Cosign Forgejo and OCI signatures, provenance/Grype/SBOM policy and
+actual active 0.15.0 state before and after remote evidence reads. It then
+**ALWAYS returns a fixed rejection**, including after a fully verified review.
+Any verification error also rejects. It cannot call the existing replay guard,
+Docker stage/rollback or 3141/3142 route mutators, and cannot fabricate a
+success response. An explicitly missing/forged workflow SHA or mixed successor
+handler modes fail at construction. No additional socket or framework is built.
+
+Regression coverage includes: real sealed three-JWT memfd over actual Linux
+SO_PEERCRED/SCM_RIGHTS socket (synthetic signed-release checker only),
+no-replay/no-deploy on purported review success, fail-closed signer failure,
+strict V1/V2 composition selection and wrong/mixed workflow denial. Independent
+real cryptographic JWT and synthetic Sigstore/owner/host tests remain separately
+required. These tests **do not claim** actual UID991 host signer asset
+installation, runtime service GO, durable replay, candidate start, 3141
+cutover, rollback or public release.
+
+**Next required work** remains the protected positive schema-3 executor chain:
+root-approved, separate UID991 private-mount verifier source qualification;
+original durable SQLite JTI begin/finish before any OCI mutation; reviewed
+immutable candidate startup, private 3142 health, journaled 3141 route switch,
+failure/restart reconciliation and write-preserving rollback. Only one owner
+approval for actual protected installation/release as required by AGENTS.md;
+independent M04 acceptance when the combined code is real and testable.

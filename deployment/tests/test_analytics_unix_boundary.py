@@ -1630,6 +1630,157 @@ class AnalyticsSuccessorIndependentJWTTests(unittest.TestCase):
             os.close(fd)
 
 
+# Section: root-reviewed V2 full-signature receiver integration.
+# Use genuine Linux peer credentials, SOCK_STREAM and sealed original
+# three-JWT transfer. The signed-release result below is an explicit mocked
+# seam, NOT a real installed UID991 Cosign/Forgejo approval or deployment.
+class AnalyticsSuccessorFullSignedUnixReceiverTests(unittest.TestCase):
+    """Prove exact V2 delegation is read-only even when full review succeeds."""
+
+    def setUp(self):
+        """Bind the original schema3 and real kernel-sealed three-JWT FD."""
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+        from deployment.tests.test_identity import WORKFLOW_SHA
+        self.workflow = WORKFLOW_SHA
+        self.raw = canonical_bytes(AnalyticsSuccessorRequestTests().candidate()[0])
+        self.fd = AnalyticsSuccessorIndependentJWTTests.proof(self.raw)
+        self.addCleanup(os.close, self.fd)
+        self.executor, self.replay, self.events = receiver()
+
+    def handler(self, **overrides):
+        """Bind the reviewed workflow and complete signed-review-only mode."""
+        defaults = dict(
+            executor=self.executor,
+            expected_broker_uid=os.getuid(), expected_broker_gid=os.getgid(),
+            reviewed_installed_source=EXPECTED,
+            full_signed_successor_review_only=True,
+            expected_workflow_sha=self.workflow,
+        )
+        defaults.update(overrides)
+        return AnalyticsUnixExecutorConnectionHandler(**defaults)
+
+    def test_valid_signed_review_is_still_hard_denied(self):
+        """No positive response, replay or Docker callback after full review."""
+        handler = self.handler()
+        callback = object.__getattribute__(handler, "_configuration")[0]
+        with (
+            patch(
+                "deployment.analytics_executor._review_executor_successor_signed_release",
+                return_value=object(),
+            ) as reviewed,
+            self.assertRaises(ExecutorRejectedError),
+        ):
+            callback(self.raw, credential_fd=self.fd)
+        reviewed.assert_called_once_with(
+            self.raw, self.fd,
+            expected_workflow_sha=self.workflow,
+            reviewed_installed_source=EXPECTED,
+        )
+        self.assertEqual(self.replay.begin_calls, [])
+        self.assertEqual(self.replay.finish_calls, [])
+        self.assertEqual(self.events, [])
+
+    def test_signature_or_owner_failure_is_hard_denied_no_fallback(self):
+        """No legacy single-JWT path or Docker attempt on signed-review error."""
+        callback = object.__getattribute__(
+            self.handler(), "_configuration",
+        )[0]
+        with (
+            patch(
+                "deployment.analytics_executor._review_executor_successor_signed_release",
+                side_effect=ExecutorUnavailableError("signed review unavailable"),
+            ) as reviewed,
+            self.assertRaises(ExecutorUnavailableError),
+        ):
+            callback(self.raw, credential_fd=self.fd)
+        reviewed.assert_called_once()
+        self.assertEqual(self.events, [])
+        self.assertEqual(self.replay.begin_calls, [])
+
+    def test_only_one_read_only_mode_can_be_selected(self):
+        """No untrusted workflow, mixed modes or V1->V2 upgrade shortcut."""
+        with self.assertRaises(TypeError):
+            self.handler(verified_successor_preflight_only=True)
+        with self.assertRaises(TypeError):
+            self.handler(structural_successor_receive_only=True)
+        with self.assertRaises(TypeError):
+            self.handler(full_signed_successor_review_only=1)
+        with self.assertRaises(TypeError):
+            self.handler(expected_workflow_sha=None)
+        with self.assertRaises(TypeError):
+            self.handler(expected_workflow_sha="a" * 39)
+        with self.assertRaises(TypeError):
+            self.handler(
+                full_signed_successor_review_only=False,
+                expected_workflow_sha=self.workflow,
+            )
+        self.assertEqual(self.events, [])
+        self.assertEqual(self.replay.begin_calls, [])
+
+    def test_exact_real_unix_signed_receive_rejects_without_replay(self):
+        """Actual SO_PEERCRED + SCM_RIGHTS sealed three JWTs, then hard DENY."""
+        with tempfile.TemporaryDirectory(prefix="task14b-fullsigned-unix-") as tmp:
+            path = str(Path(tmp) / "socket")
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(path)
+            os.chmod(path, 0o660)
+            listener.listen(1)
+            listener.settimeout(3)
+            handler = self.handler()
+            failures = []
+
+            def serve():
+                """Accept exactly one signed but NON-deploying local request."""
+                try:
+                    accepted, _ = listener.accept()
+                    handler.handle(accepted)
+                except ExecutorConnectionUnavailableError:
+                    failures.append("signed-review-denied")
+                except BaseException as unexpected:
+                    failures.append(type(unexpected).__name__)
+
+            worker = threading.Thread(target=serve, daemon=True)
+            worker.start()
+            try:
+                with (
+                    patch.object(
+                        analytics_boundary,
+                        "ANALYTICS_EXECUTOR_SOCKET_PATH", path,
+                    ),
+                    patch(
+                        "deployment.analytics_executor._review_executor_successor_signed_release",
+                        return_value=object(),
+                    ) as signed,
+                    # The real sealed FD and original receiver use their
+                    # shared fixed synthetic JWT clock. No future token is
+                    # constructed and the actual JWT proof remains sealed.
+                    patch("deployment.private_registry_fd.time.time",
+                          return_value=NOW),
+                ):
+                    transport = AnalyticsUnixExecutorTransport(
+                        expected_executor_uid=os.getuid(),
+                        expected_executor_gid=os.getgid(),
+                        expected_socket_group_gid=os.getgid(),
+                        reviewed_installed_source=EXPECTED,
+                    )
+                    with self.assertRaises(ExecutorTransportUnavailableError):
+                        transport._send_analytics_successor_private(
+                            self.raw, credential_fd=self.fd,
+                        )
+                worker.join(5)
+                self.assertFalse(worker.is_alive())
+                signed.assert_called_once()
+            finally:
+                worker.join(5)
+                listener.close()
+            self.assertEqual(failures, ["signed-review-denied"])
+            self.assertEqual(self.replay.begin_calls, [])
+            self.assertEqual(self.replay.finish_calls, [])
+            self.assertEqual(self.events, [])
+
+
 # Section: explicit UNINSTALLED UID991 full Task013 review. All registry,
 # signer/owner and live-host responses below are synthetic. This verifies the
 # real release consumer composition and fail-closed binding, not actual release

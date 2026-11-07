@@ -67,8 +67,9 @@ class AnalyticsExecutorComposition:
             source = _root_reviewed_source(reviewed_installed_source)
             # The V1 source/config has no workflow pin and keeps the exact
             # historical schema-2 first-install listener. A root-installed
-            # V2 source adds this separately attested Task014 workflow SHA,
-            # selecting strictly deny-only *authenticated* successor review.
+            # V2 source adds a separately attested Task014 workflow SHA to
+            # select the complete, independent original Task013 signed-review
+            # receiver, which ALWAYS denies deployment and does no replay.
             workflow = None
             if expected_workflow_sha is not None:
                 workflow = validate_expected_workflow_sha(
@@ -101,7 +102,7 @@ class AnalyticsExecutorComposition:
                 executor=executor, expected_broker_uid=expected_broker_uid,
                 expected_broker_gid=expected_broker_gid,
                 reviewed_installed_source=dict(source),
-                verified_successor_preflight_only=(workflow is not None),
+                full_signed_successor_review_only=(workflow is not None),
                 expected_workflow_sha=workflow,
             )
             secured = AnalyticsUnixExecutorListener(

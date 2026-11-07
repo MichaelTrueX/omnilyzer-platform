@@ -187,21 +187,28 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
         timeout_ms: int = 3000,
         structural_successor_receive_only: bool = False,
         verified_successor_preflight_only: bool = False,
+        full_signed_successor_review_only: bool = False,
         expected_workflow_sha: str | None = None,
     ) -> None:
         """Capture exact Analytics parser/FD at construction, never per-call.
 
-        Both explicit successor modes are inert transport test boundaries.
-        Structural mode rejects immediately. Read-only preflight mode
-        invokes UID991 actual OCI/manifest/FD checks and then ALSO rejects;
-        neither calls original replay/deploy or can signal promotion success.
-        Neither mode may be installed as a schema-3 deployment receiver.
+        Every successor mode is a read-only, deny-only transport boundary.
+        Structural mode rejects immediately. Historical private-manifest
+        preflight mode remains unchanged for earlier Task14B regression tests.
+        Full signed-review mode runs original independent UID991 JWT, owner
+        Ed25519, Sigstore/Cosign/provenance/SBOM/Grype and local active-state
+        verification, then ALWAYS denies. No mode calls replay, Docker
+        deployment or rollback, or can return a success response.
         """
         if (
             type(structural_successor_receive_only) is not bool
             or type(verified_successor_preflight_only) is not bool
-            or (structural_successor_receive_only
-                and verified_successor_preflight_only)
+            or type(full_signed_successor_review_only) is not bool
+            or sum((
+                structural_successor_receive_only,
+                verified_successor_preflight_only,
+                full_signed_successor_review_only,
+            )) > 1
         ):
             raise TypeError("invalid successor receive boundary")
         # Only a root-trusted V2 configuration may enable cryptographic
@@ -211,8 +218,10 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
         if expected_workflow_sha is not None:
             if (
                 type(expected_workflow_sha) is not str
-                or not verified_successor_preflight_only
-                or structural_successor_receive_only
+                or not (
+                    verified_successor_preflight_only
+                    or full_signed_successor_review_only
+                )
             ):
                 raise TypeError("unreviewed successor workflow input")
             try:
@@ -221,6 +230,11 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
                 raise
             except Exception:
                 raise TypeError("invalid reviewed successor workflow") from None
+        # An installation must not construct an inert V2-like handler with a
+        # missing root-reviewed immutable workflow identity. Fail at startup,
+        # not after accepting a privileged Unix FD.
+        if full_signed_successor_review_only and reviewed_workflow is None:
+            raise TypeError("missing root-reviewed successor workflow")
         if type(executor) is not AnalyticsPrivilegedExecutor:
             raise TypeError("Analytics receiver must have exact executor type")
         source = _root_reviewed_source(reviewed_installed_source)
@@ -299,8 +313,35 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
             )
             raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE)
 
+        def review_full_signed_and_reject(
+            canonical_request: bytes, *, credential_fd: int,
+        ) -> bytes:
+            """Recheck signed release on UID991 and ALWAYS deny promotion.
+
+            The peer-authenticated SCM_RIGHTS FD contains all three original
+            JWTs. No prior broker-created receipt or untrusted Python object
+            is accepted in lieu of independent original Task013 verification.
+            The separate signed-review helper binds live state before/after
+            immutable signature checks and returns a read-only parsed request.
+            """
+            if reviewed_workflow is None:
+                raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE)
+            from .analytics_executor import (
+                _review_executor_successor_signed_release,
+            )
+            _review_executor_successor_signed_release(
+                canonical_request, credential_fd,
+                expected_workflow_sha=reviewed_workflow,
+                reviewed_installed_source=dict(source),
+            )
+            raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE)
+
         settings[13] = MAX_ANALYTICS_REQUEST_BYTES
-        if verified_successor_preflight_only:
+        if full_signed_successor_review_only:
+            settings[0] = review_full_signed_and_reject
+            settings[30] = read_successor
+            settings[31] = parse_successor
+        elif verified_successor_preflight_only:
             settings[0] = preflight_and_reject_successor
             settings[30] = read_successor
             settings[31] = parse_successor
