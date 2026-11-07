@@ -1520,3 +1520,36 @@ the durable SQLite replay **before** invoking this class. After staging,
 a separately authorized stage must journal the private 3142 route, re-check
 health and execute the recoverable 3141 cutover. No such end-to-end DEV
 success, approval or production rollout is claimed by this source change.
+
+
+## Task14B V2 broker schema3 signed read-only ingress (2026-11-07)
+
+The existing original HTTPS/loopback ingress remains **4 KiB**, and the
+canonical first-successor schema3 request fits within it (2,655 bytes
+in the checked test fixture). The original router rejects schema3 by
+default. A read-only successor review can be captured only when the
+root-verified Analytics broker source loader explicitly returns
+`source_generation=2` from the exact protected V2 configuration and
+fixed candidate installation. The original four-hash loader result and
+schema1/0.15.0/Canary router behavior remain unchanged.
+
+The V2-only route uses the already existing
+`AnalyticsPrivatePromotionBroker.forward_verified_first_successor_probe_without_deployment`,
+which verifies exact owner-signed source, original GitHub OIDC, signed old
+and successor Task013 evidence, Zot/Forgejo scoped credentials and real
+sealed FD. The receiver **always rejects**, even after successful
+read-only kernel/UID991 inspection. The route cannot report 202, consume
+replay, start a container, switch traffic or grant deployment. It responds
+with the existing sanitized unavailable result for a structurally valid
+schema3 request until independently reviewed and installed successor
+execution is implemented.
+
+The routing and root-generation regression uses the actual original
+V1 handlers and a synthetic V2 counterpart to prove 0.15.0 and Canary
+remain isolated; this is source-only evidence, not a live verified
+owner-signature release or installed V2 service. The still-missing full
+Task013 immutable Sigstore/Cosign/SBOM/zero-high evidence validation at
+UID991, durable replay, OCI startup/3142/3141 cutover and write-preserving
+rollback are **HOLD**. Do not silently promote this DENY-only preflight
+into an accepting handler. A separate privileged release/installation
+authorization and independent M04 review remain necessary.
