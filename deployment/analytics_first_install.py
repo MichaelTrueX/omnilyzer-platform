@@ -583,17 +583,27 @@ class AnalyticsSuccessorCandidateOperation:
         )
         return self._docker(image, *args)
 
-    def _stop_green_if_owned(self, image: str) -> bool:
-        """Stop only a newly created exact-digest green, not other services.
+    def _stop_green_if_owned(
+        self, image: str, *, expected_id: str | None = None,
+    ) -> bool:
+        """Stop only the exact-digest green, binding a completed rollout to its ID.
 
-        Never remove networks, volumes, database data, image or blue writer.
-        If identity cannot be established, retain the existing container
-        and return False to require explicit recovery.
+        During failed startup the ID may not yet be known, so only the original
+        restricted Compose service and image are available for cleanup. Once
+        startup returned an ID, a replaced or missing container must NEVER be
+        stopped or treated as a confirmed rollback. Preserve all other services,
+        networks, volumes and database writes.
         """
         try:
             candidate = self._compose(
                 image, "ps", "--all", "-q", "analytics-green",
             ).stdout.strip()
+            if expected_id is not None and (
+                type(expected_id) is not str
+                or _CONTAINER_ID.fullmatch(expected_id) is None
+                or candidate != expected_id
+            ):
+                return False
             if not candidate:
                 return True
             if _CONTAINER_ID.fullmatch(candidate) is None:
@@ -898,7 +908,9 @@ class AnalyticsSuccessorCandidateOperation:
             or hashlib.sha256(request.canonical_bytes()).hexdigest()
                 != object.__getattribute__(self, "_completed_hash")
             or identifier != object.__getattribute__(self, "_completed_id")
-            or not self._stop_green_if_owned(request.exact_image_reference)
+            or not self._stop_green_if_owned(
+                request.exact_image_reference, expected_id=identifier,
+            )
         ):
             raise AnalyticsFirstInstallError(_ERROR)
         object.__setattr__(self, "_completed_hash", None)
