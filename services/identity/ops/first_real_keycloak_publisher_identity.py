@@ -136,11 +136,19 @@ def select_account(users, email):
 
 
 def verification_status(user):
+    """Require verified email and no outstanding Keycloak account actions."""
     if user is None:
         return "ABSENT"
+    require(isinstance(user, dict), "KEYCLOAK_USER_INVALID")
     if user.get("emailVerified") is not True:
         return "PENDING_EMAIL_VERIFICATION"
-    if any(action in (user.get("requiredActions") or []) for action in ACTIONS):
+    # Keycloak UserRepresentation.requiredActions is an optional list;
+    # missing means none, but null, strings and malformed items fail closed.
+    actions = user.get("requiredActions", [])
+    require(isinstance(actions, list)
+            and all(isinstance(item, str) and item.strip() for item in actions),
+            "KEYCLOAK_REQUIRED_ACTIONS_INVALID")
+    if actions:
         return "PENDING_REQUIRED_ACTION"
     return "VERIFIED"
 
