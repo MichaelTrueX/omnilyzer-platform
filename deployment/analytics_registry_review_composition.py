@@ -1,9 +1,8 @@
 """File: deployment/analytics_registry_review_composition.py
 
-Purpose: Separate, inert Analytics-only Task014 signed release review adapter.
-         Compose the ORIGINAL broker OIDC verifier, registry JWT validator,
-         bounded TLS readers, Sigstore and constructor-scoped Cosign without
-         modifying the installed original canary registry composition.
+Purpose: Reuse the original read-only Analytics Task014 OIDC/registry/
+         Sigstore/Cosign chain for immutable 0.15.0 and an independently
+         owner-signed successor, without extending the installed broker.
 Related: deployment/registry_promotion_composition.py (UNCHANGED),
          deployment/broker.py, deployment/broker_integration.py,
          deployment/registry_oidc_credentials.py,
@@ -17,8 +16,16 @@ executor, rootless runtime, host secret access or deployment authorization.
 """
 from __future__ import annotations
 
+from pathlib import Path
+import hashlib
+
+from release.analytics_owner_source_selection import (
+    AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
+    expected_owner_approval_bytes, load_and_verify_owner_signed_source,
+)
 from .analytics_signed_release_consumer import (
     AnalyticsSignedEvidenceReview, acquire_and_review_analytics_release,
+    acquire_and_review_owner_approved_analytics_release,
 )
 from .broker import (
     BrokerRejectedError, BrokerUnavailableError, REJECTED_MESSAGE,
@@ -52,6 +59,7 @@ class InertAnalyticsSignedReleaseReviewHandler:
     __slots__ = (
         "_verify", "_context", "_signatures", "_workflow", "_cosign",
         "_zot_connection", "_forgejo_connection", "_oci_runner",
+        "_owner_files",
     )
 
     def __init__(
@@ -61,11 +69,18 @@ class InertAnalyticsSignedReleaseReviewHandler:
         zot_connection_factory: object = _connection,
         forgejo_connection_factory: object = _connection,
         oci_runner: object | None = None,
+        owner_approval_file: Path | None = None,
+        owner_signature_file: Path | None = None,
     ) -> None:
-        """Bind exactly original reviewed collaborators without doing I/O."""
+        """Bind original collaborators and optional root-review owner file paths."""
         if (type(configuration) is not DevBrokerServiceConfiguration
                 or not callable(zot_connection_factory)
-                or not callable(forgejo_connection_factory)):
+                or not callable(forgejo_connection_factory)
+                or (owner_approval_file is None) != (owner_signature_file is None)
+                or (owner_approval_file is not None and (
+                    not isinstance(owner_approval_file, Path)
+                    or not isinstance(owner_signature_file, Path)
+                ))):
             raise TypeError("Analytics signed release review authority is invalid")
         validated = DevBrokerServiceConfiguration.from_dict(configuration.to_dict())
         workflow = validate_expected_workflow_sha(
@@ -82,6 +97,11 @@ class InertAnalyticsSignedReleaseReviewHandler:
         object.__setattr__(self, "_zot_connection", zot_connection_factory)
         object.__setattr__(self, "_forgejo_connection", forgejo_connection_factory)
         object.__setattr__(self, "_oci_runner", oci_runner)
+        object.__setattr__(
+            self, "_owner_files",
+            None if owner_approval_file is None
+            else (owner_approval_file, owner_signature_file),
+        )
 
     def __setattr__(self, name: str, value: object) -> None:
         """Never allow retargeting a captured verifier or repository."""
@@ -95,12 +115,41 @@ class InertAnalyticsSignedReleaseReviewHandler:
         self, *, compact_token: str, zot_token: str,
         forgejo_token: str, received_at: int,
     ) -> AnalyticsSignedEvidenceReview:
-        """Verify three ORIGINAL workload JWTs, then original signed v1.
+        """Keep original 0.15.0 independent OIDC/registry/signature verifier."""
+        return self._review_mode(
+            compact_token=compact_token, zot_token=zot_token,
+            forgejo_token=forgejo_token, received_at=received_at,
+            successor=False,
+        )
 
-        No replay entry is consumed and no broker/executor is contacted.
-        This function is never a replacement for the privileged promotion
-        path, even when original Sigstore/Cosign verification succeeds.
+    def review_successor(
+        self, *, compact_token: str, zot_token: str,
+        forgejo_token: str, received_at: int,
+    ) -> tuple[
+        AnalyticsSignedEvidenceReview,
+        AnalyticsOwnerSourceSelection,
+        AnalyticsOwnerSignatureReceipt,
+    ]:
+        """Verify successor through independent root trust and original verifiers.
+
+        Return a read-only tuple. Broker/installed executor are not wired to
+        this method and cannot use it as authority on its own.
         """
+        return self._review_mode(
+            compact_token=compact_token, zot_token=zot_token,
+            forgejo_token=forgejo_token, received_at=received_at,
+            successor=True,
+        )
+
+    def _review_mode(
+        self, *, compact_token: str, zot_token: str,
+        forgejo_token: str, received_at: int, successor: bool,
+    ) -> AnalyticsSignedEvidenceReview | tuple[
+        AnalyticsSignedEvidenceReview,
+        AnalyticsOwnerSourceSelection,
+        AnalyticsOwnerSignatureReceipt,
+    ]:
+        """Reuse original triple-OIDC, registry JWT, Sigstore and Cosign path."""
         if (type(received_at) is not int or received_at < 0
                 or any(type(value) is not str or not value.isascii()
                        or not 1 <= len(value) <= MAX_COMPACT_TOKEN_BYTES
@@ -127,6 +176,40 @@ class InertAnalyticsSignedReleaseReviewHandler:
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        # Section: successor must be anchored in independent DEV root-owned
+        # owner-signature trust BEFORE any private Zot/Forgejo registry access.
+        # Missing trusted owner files deny rather than falling back to 0.15.0.
+        selected_owner = None
+        if successor:
+            try:
+                files = object.__getattribute__(self, "_owner_files")
+                if files is None:
+                    raise ValueError("root owner source not configured")
+                selected_owner = load_and_verify_owner_signed_source(*files)
+                if (
+                    type(selected_owner) is not tuple
+                    or len(selected_owner) != 2
+                    or type(selected_owner[0]) is not AnalyticsOwnerSourceSelection
+                    or type(selected_owner[1]) is not AnalyticsOwnerSignatureReceipt
+                    or selected_owner[1].owner_signature_verified is not True
+                ):
+                    raise ValueError("unverified owner source")
+                selected, owner = selected_owner
+                if (
+                    owner.source_commit != selected.source_commit
+                    or owner.source_tree != selected.source_tree
+                    or owner.release_version != selected.release_version
+                    or owner.approval_sha256 != hashlib.sha256(
+                        expected_owner_approval_bytes(selected)
+                    ).hexdigest()
+                    or selected.release_authorized is not False
+                    or selected.deployment_authorized is not False
+                    or owner.release_authorized is not False
+                    or owner.deployment_authorized is not False
+                ):
+                    raise ValueError("owner signature cannot bind source")
+            except Exception:
+                raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         try:
             context = object.__getattribute__(self, "_context")(
                 authorized, _RegistryOIDCTokens(zot_token, forgejo_token),
@@ -145,16 +228,42 @@ class InertAnalyticsSignedReleaseReviewHandler:
                 runner=object.__getattribute__(self, "_oci_runner"),
                 product_id="analytics",
             )
-            reviewed = acquire_and_review_analytics_release(
-                context, context,
-                object.__getattribute__(self, "_signatures"), verifier,
-                received_at=received_at,
-                zot_factory=object.__getattribute__(self, "_zot_connection"),
-                forgejo_factory=object.__getattribute__(self, "_forgejo_connection"),
-            )
+            if successor:
+                files = object.__getattribute__(self, "_owner_files")
+                reviewed = acquire_and_review_owner_approved_analytics_release(
+                    context, context,
+                    object.__getattribute__(self, "_signatures"), verifier,
+                    received_at=received_at, approval_file=files[0],
+                    signature_file=files[1],
+                    zot_factory=object.__getattribute__(self, "_zot_connection"),
+                    forgejo_factory=object.__getattribute__(self, "_forgejo_connection"),
+                )
+            else:
+                reviewed = acquire_and_review_analytics_release(
+                    context, context,
+                    object.__getattribute__(self, "_signatures"), verifier,
+                    received_at=received_at,
+                    zot_factory=object.__getattribute__(self, "_zot_connection"),
+                    forgejo_factory=object.__getattribute__(self, "_forgejo_connection"),
+                )
             if (type(reviewed) is not AnalyticsSignedEvidenceReview
                     or reviewed.deployment_authorized is not False):
                 raise TypeError("invalid review response")
+            if successor:
+                selected, owner = selected_owner
+                if (
+                    reviewed.release_version != selected.release_version
+                    or reviewed.source.source_commit != selected.source_commit
+                    or reviewed.source.source_tree != selected.source_tree
+                    or reviewed.image != "oci-dev.omnilyzer.ai/omnilyzer/analytics@" + reviewed.source.oci_manifest_digest
+                    or reviewed.source.release_authorized is not False
+                    or reviewed.source.deployment_authorized is not False
+                    or owner.release_version != selected.release_version
+                    or owner.source_commit != selected.source_commit
+                    or owner.source_tree != selected.source_tree
+                ):
+                    raise ValueError("signed release differs from approved owner source")
+                return reviewed, selected, owner
             return reviewed
         except Exception:
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None

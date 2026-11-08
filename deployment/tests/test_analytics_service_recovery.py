@@ -105,6 +105,19 @@ class StateRegressions(unittest.TestCase):
     def test_native_completion_property_is_explicitly_allowed(self):
         self.assertIn('ExecMainStatus', recovery._PROPERTIES)
 
+    def test_native_ci_uses_root_owned_ephemeral_git_mirror(self):
+        """Retain original Git environment sanitization and exact source SHA."""
+        native = Path(__file__).with_name('accept_task014_analytics_recovery.py').read_text()
+        workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/task014-c34d-review.yml').read_text()
+        self.assertIn("repository = self.base / 'root-owned-source'", native)
+        self.assertIn("'clone', '--quiet', '--local', '--no-hardlinks', '--no-checkout'", native)
+        self.assertIn("'safe.directory=' + str(runner_checkout)", native)
+        self.assertIn("self.assertEqual(repository.stat().st_uid, 0)", native)
+        self.assertIn("reviewed_commit = subprocess.check_output(", native)
+        self.assertIn('sudo -n --preserve-env=GITHUB_ACTIONS /usr/bin/python3 -I -B', workflow)
+        self.assertNotIn('GIT_CONFIG_COUNT=', workflow)
+        self.assertNotIn('git config --global', workflow)
+
 
 class RealProcessCapture(unittest.TestCase):
     """Real harmless child processes, no systemctl or privileged operation."""

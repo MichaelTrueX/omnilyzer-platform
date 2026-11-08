@@ -49,6 +49,18 @@ jobs:
             --output "$RUNNER_TEMP/task013-review-handoff" \
             --repository "$GITHUB_WORKSPACE"
 
+      # Section 3b: Verify exact Astral image provenance before OCI build.
+      # GHCR source is public and no private registry credential is used.
+      - name: Verify immutable upstream image build attestation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh attestation verify \
+            'oci://ghcr.io/astral-sh/uv@sha256:df6ea28f3caf5eb77ebae34d38e9b177b41a4e58ee963b1cbc5c8c1c92710238' \
+            --repo astral-sh/uv
+
       # Section 4: Reuse the exact pinned release builder without publishing.
       - name: Set up pinned Buildx and BuildKit
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1

@@ -1,9 +1,9 @@
 """File: deployment/tests/test_analytics_review_composition.py
 
-Purpose: Protect read-only original Task014 OIDC/registry signer composition
-         for the signed Analytics schema-v1 consumer. Reject missing identity,
-         false registry audiences, failed Sigstore/OCI review and mutable
-         collaborator substitution BEFORE any privileged deployment exists.
+Purpose: Protect read-only Task014 OIDC/registry/signature composition
+         for original Analytics 0.15.0 and root-approved successors. Reject
+         invalid identity, owner approval, signer/OCI evidence, and mutable
+         collaborators before any privileged deployment exists.
 
 Related: deployment/analytics_registry_review_composition.py,
          deployment/registry_promotion_composition.py (original unchanged),
@@ -20,6 +20,7 @@ real credentials, Docker, replay, installer, broker dispatch or production.
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -60,7 +61,8 @@ def review_receipt() -> AnalyticsSignedEvidenceReview:
 
 
 def handler(*, verifier: object | None = None,
-            blob_signatures: object | None = None) -> InertAnalyticsSignedReleaseReviewHandler:
+            blob_signatures: object | None = None,
+            owner_files: tuple[Path, Path] | None = None) -> InertAnalyticsSignedReleaseReviewHandler:
     """Compose actual original OIDC registry verifier with synthetic tokens."""
     from deployment.tests.test_release_consumer import BlobSignatures
 
@@ -71,6 +73,8 @@ def handler(*, verifier: object | None = None,
         verifier=Verifier() if verifier is None else verifier,
         blob_signatures=BlobSignatures() if blob_signatures is None else blob_signatures,
         jwks_cache=StaticCache(KEY.public_key()),
+        owner_approval_file=None if owner_files is None else owner_files[0],
+        owner_signature_file=None if owner_files is None else owner_files[1],
     )
 
 
@@ -254,6 +258,140 @@ class OriginalAnalyticsReadonlyCompositionTests(unittest.TestCase):
             jwks_cache=StaticCache(KEY.public_key()),
         )
         self.assertTrue(callable(canary.handle))
+
+
+class SuccessorAnalyticsReadonlyCompositionTests(unittest.TestCase):
+    """The original registry/OIDC composition can review an owner successor.
+
+    Root-key and Sigstore/Cosign results are synthetic here. These tests
+    confirm ordering and untrusted-data rejection, not live release trust.
+    """
+
+    def args(self):
+        return {
+            "compact_token": TOKEN, "zot_token": ZOT_TOKEN,
+            "forgejo_token": FORGEJO_TOKEN, "received_at": NOW,
+        }
+
+    def synthetic_review(self):
+        from deployment.tests.test_analytics_signed_release_consumer import (
+            synthetic_successor, SyntheticBlobSignatureVerifier,
+            SyntheticSuccessorOCISignatureVerifier, SCANNERS,
+        )
+        from deployment.analytics_signed_release_consumer import (
+            verify_owner_selected_analytics_signed_evidence,
+        )
+        selected, owner, evidence, scanners, digest = synthetic_successor()
+        small = {name: data for name, data in evidence.items()
+                 if name not in SCANNERS}
+        reviewed = verify_owner_selected_analytics_signed_evidence(
+            small, scanners, SyntheticBlobSignatureVerifier(),
+            SyntheticSuccessorOCISignatureVerifier(digest),
+            received_at=1700000000, selected=selected, owner_approval=owner,
+        )
+        return selected, owner, reviewed
+
+    def test_missing_independent_root_trust_never_reaches_registry(self):
+        obj = handler()
+        with patch(
+            "deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release",
+        ) as remote:
+            with self.assertRaises(BrokerUnavailableError):
+                obj.review_successor(**self.args())
+            remote.assert_not_called()
+
+    def test_real_oidc_and_registry_bound_to_owner_source_review(self):
+        selected, owner, reviewed = self.synthetic_review()
+        files = (Path("/root/approved-owner.json"), Path("/root/approved-owner.json.sig"))
+        obj = handler(owner_files=files)
+        with (
+            patch("deployment.analytics_registry_review_composition.load_and_verify_owner_signed_source",
+                  return_value=(selected, owner)) as owner_check,
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release",
+                  return_value=reviewed) as signatures,
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_analytics_release") as original,
+        ):
+            result = obj.review_successor(**self.args())
+            self.assertEqual(result, (reviewed, selected, owner))
+            owner_check.assert_called_once_with(*files)
+            signatures.assert_called_once()
+            original.assert_not_called()
+            call = signatures.call_args
+            self.assertIs(type(call.args[0]), VerifiedRegistryCredentials)
+            self.assertIs(call.args[0], call.args[1])
+            self.assertEqual(call.kwargs["approval_file"], files[0])
+            self.assertEqual(call.kwargs["signature_file"], files[1])
+            self.assertEqual(call.kwargs["received_at"], NOW)
+        self.assertFalse(result[0].deployment_authorized)
+
+    def test_historical_review_does_not_read_successor_owner_files(self):
+        """The original signed 0.15.0 path remains independent of new keys."""
+        obj = handler(owner_files=(
+            Path("/root/not-configured-owner.json"),
+            Path("/root/not-configured-owner.sig"),
+        ))
+        with (
+            patch("deployment.analytics_registry_review_composition.load_and_verify_owner_signed_source") as root,
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_analytics_release",
+                  return_value=review_receipt()) as original,
+        ):
+            observed = obj.review(**self.args())
+            self.assertEqual(observed, review_receipt())
+            root.assert_not_called()
+            original.assert_called_once()
+
+    def test_bad_signature_and_bad_release_cannot_get_successor_review(self):
+        from dataclasses import replace
+        selected, owner, reviewed = self.synthetic_review()
+        files = (Path("/root/owner.json"), Path("/root/owner.sig"))
+        obj = handler(owner_files=files)
+        for bad in (
+            (selected, replace(owner, owner_signature_verified=False)),
+            (selected, replace(owner, source_commit="a" * 40)),
+            ("untrusted", owner),
+        ):
+            with self.subTest(bad=bad), patch(
+                "deployment.analytics_registry_review_composition.load_and_verify_owner_signed_source",
+                return_value=bad,
+            ), patch(
+                "deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release",
+            ) as registry:
+                with self.assertRaises(BrokerUnavailableError):
+                    obj.review_successor(**self.args())
+                registry.assert_not_called()
+
+        for changed in (
+            replace(reviewed, release_version="9.9.9"),
+            replace(reviewed, image=PINNED_IMAGE),
+            replace(reviewed, deployment_authorized=True),
+            replace(reviewed, source=replace(
+                reviewed.source, source_tree="a" * 40,
+            )),
+        ):
+            with self.subTest(changed=changed), patch(
+                "deployment.analytics_registry_review_composition.load_and_verify_owner_signed_source",
+                return_value=(selected, owner),
+            ), patch(
+                "deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release",
+                return_value=changed,
+            ):
+                with self.assertRaises(BrokerUnavailableError):
+                    obj.review_successor(**self.args())
+
+    def test_oidc_failure_stops_before_owner_root_or_private_registry(self):
+        from deployment.jwks import OIDCVerificationError
+        obj = handler(
+            verifier=Verifier(error=OIDCVerificationError("synthetic bad audience")),
+            owner_files=(Path("/root/owner.json"), Path("/root/owner.sig")),
+        )
+        with (
+            patch("deployment.analytics_registry_review_composition.load_and_verify_owner_signed_source") as root,
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release") as remote,
+        ):
+            with self.assertRaises(BrokerRejectedError):
+                obj.review_successor(**self.args())
+            root.assert_not_called()
+            remote.assert_not_called()
 
 
 if __name__ == "__main__":

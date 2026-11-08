@@ -14,7 +14,10 @@ import re
 import tarfile
 from pathlib import Path
 from release.publish_zot import Client, _load_token
-from release.analytics_release_source_binding import prepare_source_claim
+from release.analytics_release_source_binding import (
+    prepare_source_claim, verify_successor_publisher_handoff,
+)
+from release.analytics_task013_build_candidate import protected_ci_owner_inputs
 from deployment.policy import canonical_bytes
 
 REPOSITORY = 'omnilyzer/analytics'
@@ -22,11 +25,41 @@ ORIGIN = 'https://oci-dev.omnilyzer.ai'
 
 
 def publish(checkout: Path, context: Path, archive_path: Path, token_file: Path,
-            output: Path, version: str, platform_root: Path) -> None:
-    """Verify source before consuming short-lived OIDC; publish by immutable digest."""
+            output: Path, version: str, platform_root: Path, *,
+            successor_claim_file: Path | None = None,
+            owner_context: dict[str, str] | None = None,
+            owner_payload: dict[str, str] | None = None,
+            owner_signature_base64: str | None = None,
+            protected_owner_signers: bytes | None = None) -> None:
+    """Reverify signed source before OIDC and publish by immutable digest.
+
+    The existing historical 0.15.0 path is retained. The separate successor
+    path requires matching signed owner Git approval and every transported
+    source/OCI byte; missing/partial approval fails before any registry access.
+    """
     if re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version) is None or output.exists() or output.is_symlink():
         raise ValueError('invalid Analytics version or publication target')
-    claim = prepare_source_claim(checkout, context, archive_path, platform_root=platform_root)
+    successor_inputs = (
+        successor_claim_file, owner_context, owner_payload,
+        owner_signature_base64, protected_owner_signers,
+    )
+    successor = any(item is not None for item in successor_inputs)
+    if successor:
+        if not all(item is not None for item in successor_inputs):
+            raise ValueError('incomplete owner source approval')
+        claim = verify_successor_publisher_handoff(
+            checkout, context, archive_path, successor_claim_file,
+            platform_root=platform_root, owner_context=owner_context,
+            owner_payload=owner_payload,
+            owner_signature_base64=owner_signature_base64,
+            protected_owner_signers=protected_owner_signers,
+        )
+        if claim["release_version"] != version:
+            raise ValueError('owner-approved release version mismatch')
+    else:
+        claim = prepare_source_claim(
+            checkout, context, archive_path, platform_root=platform_root,
+        )
     if claim['oci_repository'] != REPOSITORY:
         raise ValueError('unexpected OCI target')
     expected = claim['oci_manifest_digest']
@@ -71,9 +104,15 @@ def main() -> int:
     for name in ('analytics-checkout', 'immutable-context', 'oci-archive', 'token-file', 'output'):
         parser.add_argument('--' + name, required=True, type=Path)
     parser.add_argument('--version', required=True)
+    parser.add_argument('--successor-claim-file', type=Path,
+                        help='Encrypted-handoff successor schema 2 claim, requires protected owner approval')
     a = parser.parse_args()
+    kwargs = {}
+    if a.successor_claim_file is not None:
+        kwargs = protected_ci_owner_inputs()
+        kwargs['successor_claim_file'] = a.successor_claim_file
     publish(a.analytics_checkout, a.immutable_context, a.oci_archive,
-            a.token_file, a.output, a.version, Path.cwd())
+            a.token_file, a.output, a.version, Path.cwd(), **kwargs)
     return 0
 
 

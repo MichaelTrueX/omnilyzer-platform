@@ -46,7 +46,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             checkout = next(step for step in steps if step.get("with", {}).get("repository") == "MichaelTrueX/omnilyzer")
             self.assertEqual(checkout["with"]["ssh-key"], "${{ secrets.ANALYTICS_SOURCE_DEPLOY_KEY }}")
             self.assertNotIn("token", checkout["with"])
-            self.assertEqual(checkout["with"]["ref"], "4cdda7faeba57abb3388f9be5c450fe6afb1140d")
+            self.assertEqual(checkout["with"]["ref"], "${{ inputs.analytics_source_sha || '4cdda7faeba57abb3388f9be5c450fe6afb1140d' }}")
             self.assertIs(checkout["with"]["persist-credentials"], False)
             index = steps.index(checkout)
             self.assertGreater(index, 0)
@@ -85,6 +85,61 @@ class WorkflowPolicyTests(unittest.TestCase):
                                  "source.tar" in step.get("with", {}).get("path", "")
                                  for step in steps))
 
+    def test_successor_owner_signature_is_required_at_every_original_job(self) -> None:
+        """Approved source cannot bypass build, encrypted handoff or signer."""
+        fields = self.workflow[True]["workflow_dispatch"]["inputs"]
+        for name in ("analytics_source_sha", "analytics_owner_signature_base64"):
+            self.assertIs(fields[name]["required"], False)
+            self.assertEqual(fields[name]["type"], "string")
+        self.assertNotIn("analytics_owner_allowed_signers", fields)
+        deny = self.jobs["deny-unsupported-dispatch"]["if"]
+        self.assertIn("inputs.analytics_source_sha != ''", deny)
+        self.assertIn("inputs.analytics_owner_signature_base64 == ''", deny)
+        self.assertIn("inputs.product != 'analytics'", deny)
+
+        source = self.jobs["analytics-source-admission"]["steps"]
+        validate = next(step for step in source if step["name"].startswith(
+            "Enforce protected main"))
+        self.assertIn('[[ "$ANALYTICS_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]',
+                      validate["run"])
+        self.assertIn("ANALYTICS_OWNER_SIGNATURE_BASE64", validate["env"])
+        self.assertNotIn("id-token", self.jobs["analytics-source-admission"]["permissions"])
+        build = next(step for step in source if step["name"].startswith(
+            "Build and verify immutable"))
+        self.assertIn("successor_args=(--successor)", build["run"])
+        self.assertIn('"${successor_args[@]}"', build["run"])
+        self.assertIn("release.analytics_release_source_binding", build["run"])
+        self.assertEqual(build["env"]["ANALYTICS_OWNER_ALLOWED_SIGNERS"],
+                         "${{ secrets.ANALYTICS_OWNER_ALLOWED_SIGNERS }}")
+        self.assertNotIn("ANALYTICS_OWNER_ALLOWED_SIGNERS",
+                         self.jobs["analytics-source-admission"].get("env", {}))
+
+        zot = self.jobs["analytics-publish-zot"]["steps"]
+        verify = next(step for step in zot if step["name"].startswith(
+            "Verify source"))
+        run = verify["run"]
+        self.assertIn("successor_args=(--successor)", run)
+        self.assertIn("--successor-claim-file", run)
+        self.assertIn('"${publication_args[@]}"', run)
+        self.assertLess(run.index("analytics_release_source_binding"),
+                        run.index("release.request_oidc"))
+        self.assertLess(run.index("analytics-reverified.json"),
+                        run.index("release.request_oidc"))
+        self.assertEqual(verify["env"]["ANALYTICS_OWNER_ALLOWED_SIGNERS"],
+                         "${{ secrets.ANALYTICS_OWNER_ALLOWED_SIGNERS }}")
+
+        forgejo = self.jobs["analytics-publish-forgejo"]["steps"]
+        prepare = next(step for step in forgejo if step["name"].startswith(
+            "Enforce protected identity"))
+        self.assertIn("successor_args=(--successor)", prepare["run"])
+        self.assertIn('analytics_release_evidence "${successor_args[@]}"',
+                      prepare["run"])
+        self.assertEqual(prepare["env"]["ANALYTICS_OWNER_ALLOWED_SIGNERS"],
+                         "${{ secrets.ANALYTICS_OWNER_ALLOWED_SIGNERS }}")
+        self.assertLess(forgejo.index(prepare),
+                        next(i for i, step in enumerate(forgejo)
+                             if step["name"].startswith("Sign and cryptographically")))
+
     def test_manual_trigger_and_global_permissions_are_closed(self) -> None:
         self.assertEqual(self.workflow["permissions"], {})
         self.assertIn("workflow_dispatch", self.raw)
@@ -93,7 +148,7 @@ class WorkflowPolicyTests(unittest.TestCase):
     def test_auth_probe_is_explicit_boolean_and_defaults_off(self) -> None:
         """Preserve the original two required release inputs and default behavior."""
         dispatched = self.workflow[True]["workflow_dispatch"]["inputs"]
-        self.assertEqual(set(dispatched), {"version", "source_sha", "auth_probe", "product"})
+        self.assertEqual(set(dispatched), {"version", "source_sha", "auth_probe", "product", "analytics_source_sha", "analytics_owner_signature_base64"})
         self.assertEqual(dispatched["product"]["options"], ["canary", "analytics"])
         self.assertEqual(dispatched["product"]["default"], "canary")
         self.assertIs(dispatched["version"]["required"], True)
@@ -106,7 +161,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         """Prove diagnostic mode skips the gate, build, and both publishers."""
         self.assertEqual(self.jobs["forgejo-auth-probe"]["if"],
                          "${{ inputs.auth_probe == true && inputs.product == 'canary' }}")
-        self.assertEqual(self.jobs["gate"]["if"], "${{ inputs.auth_probe == false && inputs.product == 'canary' }}")
+        self.assertEqual(self.jobs["gate"]["if"], "${{ inputs.auth_probe == false && inputs.product == 'canary' && inputs.analytics_source_sha == '' && inputs.analytics_owner_signature_base64 == '' }}")
         self.assertEqual(self.jobs["build"]["needs"], "gate")
         self.assertEqual(self.jobs["publish-zot"]["needs"], ["gate", "build"])
         self.assertEqual(self.jobs["publish-forgejo"]["needs"],
@@ -214,7 +269,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(source_job["if"],
                          "${{ inputs.product == 'analytics' && inputs.auth_probe == false }}")
         self.assertEqual(self.jobs["gate"]["if"],
-                         "${{ inputs.auth_probe == false && inputs.product == 'canary' }}")
+                         "${{ inputs.auth_probe == false && inputs.product == 'canary' && inputs.analytics_source_sha == '' && inputs.analytics_owner_signature_base64 == '' }}")
         self.assertEqual(self.jobs["forgejo-auth-probe"]["if"],
                          "${{ inputs.auth_probe == true && inputs.product == 'canary' }}")
         steps = source_job["steps"]
@@ -222,7 +277,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(len(checkouts), 2)
         self.assertEqual(checkouts[1]["with"]["repository"], "MichaelTrueX/omnilyzer")
         self.assertEqual(checkouts[1]["with"]["ref"],
-                         "4cdda7faeba57abb3388f9be5c450fe6afb1140d")
+                         "${{ inputs.analytics_source_sha || '4cdda7faeba57abb3388f9be5c450fe6afb1140d' }}")
         self.assertEqual(checkouts[1]["with"]["fetch-depth"], 0)
         self.assertTrue(all(step["with"]["persist-credentials"] is False
                             for step in checkouts))
@@ -235,18 +290,24 @@ class WorkflowPolicyTests(unittest.TestCase):
             'test "$(git rev-parse HEAD)" = "$DISPATCH_SHA"',
             "python3 -m release.analytics_source_admission",
             "python3 -m release.analytics_task013_build_input",
-            "NO SIGNATURE, NO REGISTRY, NO EXECUTOR",
+            "ANALYTICS_SUCCESSOR_SOURCE_SHAPE_PASS",
         ):
             self.assertIn(required, run)
         for forbidden in ("id-token", "cosign", "publish_zot", "publish_forgejo",
                           "docker login", "docker push"):
             self.assertNotIn(forbidden, str(source_job))
-        self.assertEqual(str(source_job).count('secrets.'), 2)
+        self.assertEqual(str(source_job).count('secrets.'), 3)
+        self.assertEqual(
+            next(step for step in steps if step["name"].startswith("Build and verify"))[
+                "env"]["ANALYTICS_OWNER_ALLOWED_SIGNERS"],
+            "${{ secrets.ANALYTICS_OWNER_ALLOWED_SIGNERS }}",
+        )
         self.assertNotIn('secrets.', str([step for step in steps
             if not step['name'].startswith('Require read-only Analytics Git deploy key')
+            and not step['name'].startswith('Build and verify')
             and step.get('with', {}).get('repository') != 'MichaelTrueX/omnilyzer']))
         names = [step["name"] for step in steps]
-        self.assertLess(names.index("Build and verify immutable original Analytics OCI archive"),
+        self.assertLess(names.index("Build and verify immutable owner-approved Analytics OCI archive"),
                         names.index("Scan exact Analytics OCI and enforce original Critical High policy"))
         builder = next(step for step in steps if step["name"] ==
                        "Set up original pinned Analytics Buildx and BuildKit")
@@ -254,7 +315,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(builder["with"]["version"], "v0.36.1")
         self.assertIn("moby/buildkit:v0.24.0@sha256:", builder["with"]["driver-opts"])
         build = next(step for step in steps if
-                     step["name"] == "Build and verify immutable original Analytics OCI archive")
+                     step["name"] == "Build and verify immutable owner-approved Analytics OCI archive")
         self.assertIn("--retain-verified-artifacts", build["run"])
         self.assertIn("python3 -m release.analytics_release_source_binding", build["run"])
         self.assertIn("--immutable-context", build["run"])
@@ -459,9 +520,19 @@ class AnalyticsProtectedPublicationTests(unittest.TestCase):
             self.assertEqual(job['permissions'], {'contents': 'read', 'id-token': 'write'})
             self.assertIn("inputs.product == 'analytics'", job['if'])
             if job is zot:
-                self.assertEqual(str(job).count('secrets.'), 3)
+                self.assertEqual(str(job).count('secrets.'), 4)
             else:
-                self.assertEqual(str(job).count('secrets.'), 1)
+                self.assertEqual(str(job).count('secrets.'), 2)
+            approved = next(
+                step for step in job["steps"]
+                if step["name"].startswith(
+                    "Verify source" if job is zot else "Enforce protected identity"
+                )
+            )
+            self.assertEqual(
+                approved["env"]["ANALYTICS_OWNER_ALLOWED_SIGNERS"],
+                "${{ secrets.ANALYTICS_OWNER_ALLOWED_SIGNERS }}",
+            )
 
     def test_signatures_are_verified_before_forgejo_publication(self):
         """Require the real protected-main signer and digest-specific Cosign."""
@@ -492,7 +563,7 @@ class AnalyticsProtectedPublicationTests(unittest.TestCase):
     def test_no_canary_rewire_and_provenance_is_oci_only(self):
         """Keep legacy canary flow and prohibit fake Python/npm artifacts."""
         self.assertEqual(self.jobs['gate']['if'],
-                         "${{ inputs.auth_probe == false && inputs.product == 'canary' }}")
+                         "${{ inputs.auth_probe == false && inputs.product == 'canary' && inputs.analytics_source_sha == '' && inputs.analytics_owner_signature_base64 == '' }}")
         self.assertEqual(self.jobs['publish-forgejo']['needs'], ['gate', 'build', 'publish-zot'])
         script = (ROOT / 'release/analytics_release_evidence.py').read_text()
         self.assertIn("'oci_manifest_digest'", script)

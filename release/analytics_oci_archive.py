@@ -88,6 +88,91 @@ def _descriptor(value: Any, context: str, media_type: str | frozenset[str]) -> t
     return value["digest"], value["size"]
 
 
+# Section: validate the two original-source and successor *review-only*
+# receipt formats. Neither format is a signing, publication or install grant.
+_SUCCESSOR_FIELDS = frozenset({
+    "schema_version", "input_kind", "platform_source_commit",
+    "platform_tree", "analytics_repository", "analytics_source_commit",
+    "analytics_tree", "release_version", "oci_repository",
+    "full_git_tree_file_count", "build_context_sha256", "dockerfile_sha256",
+    "dockerignore_sha256", "oci_test_source_sha256",
+    "owner_approval_sha256", "product_profile_sha256",
+    "runtime_profile_sha256", "readiness_path",
+    "owner_signature_verified", "release_signatures_verified",
+    "release_authorized", "deployment_authorized",
+})
+_SHA40 = re.compile(r"[a-f0-9]{40}\Z")
+_SHA256 = re.compile(r"[a-f0-9]{64}\Z")
+_VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
+
+
+def _review_archive_input(receipt: dict[str, Any]) -> None:
+    """Reject arbitrary successor source identity while preserving 0.15.0.
+
+    The full Git-tree source and source/build-context binding are verified by
+    review_successor_build_input() and the actual Task013 BuildKit caller.
+    This local OCI parser NEVER verifies an owner's SSH key or grants release.
+    """
+    if (
+        type(receipt) is not dict
+        or receipt.get("oci_repository") != "omnilyzer/analytics"
+        or receipt.get("readiness_path") != "/readyz"
+        or receipt.get("release_authorized") is not False
+        or receipt.get("deployment_authorized") is not False
+    ):
+        raise DeploymentPolicyError("unsigned source build input is invalid")
+    if receipt.get("input_kind") == "task013-analytics-oci-review-only":
+        if (
+            receipt.get("source_files_verified") != 78
+            or any(
+                type(receipt.get(key)) is not str
+                or _SHA256.fullmatch(receipt[key]) is None
+                for key in (
+                    "dockerfile_sha256", "dockerignore_sha256",
+                    "oci_test_source_sha256", "source_manifest_sha256",
+                )
+            )
+        ):
+            raise DeploymentPolicyError("original Analytics source input is invalid")
+        return
+    if (
+        receipt.get("input_kind") != "task013-analytics-successor-review-only"
+        or set(receipt) != _SUCCESSOR_FIELDS
+        or type(receipt.get("schema_version")) is not int
+        or receipt["schema_version"] != 2
+        or receipt.get("analytics_repository") != "MichaelTrueX/omnilyzer"
+        or type(receipt.get("full_git_tree_file_count")) is not int
+        or not 8 <= receipt["full_git_tree_file_count"] <= 10000
+        or receipt.get("owner_signature_verified") is not False
+        or receipt.get("release_signatures_verified") is not False
+        or any(
+            type(receipt.get(key)) is not str
+            or _SHA40.fullmatch(receipt[key]) is None
+            for key in (
+                "platform_source_commit", "platform_tree",
+                "analytics_source_commit", "analytics_tree",
+            )
+        )
+        or any(
+            type(receipt.get(key)) is not str
+            or _SHA256.fullmatch(receipt[key]) is None
+            for key in (
+                "build_context_sha256", "dockerfile_sha256",
+                "dockerignore_sha256", "oci_test_source_sha256",
+                "owner_approval_sha256", "product_profile_sha256",
+                "runtime_profile_sha256",
+            )
+        )
+        or type(receipt.get("release_version")) is not str
+        or _VERSION.fullmatch(receipt["release_version"]) is None
+        or tuple(map(int, receipt["release_version"].split("."))) <= (0, 15, 0)
+        or receipt["analytics_source_commit"] == (
+            "4cdda7faeba57abb3388f9be5c450fe6afb1140d"
+        )
+    ):
+        raise DeploymentPolicyError("successor source review input is invalid")
+
+
 def verify_archive(archive_path: Path, receipt: dict[str, Any]) -> dict[str, Any]:
     """Verify archive layout, every blob hash and strict Next runtime identity.
 
@@ -98,21 +183,7 @@ def verify_archive(archive_path: Path, receipt: dict[str, Any]) -> dict[str, Any
     if (not isinstance(archive_path, Path) or archive_path.is_symlink()
             or not archive_path.is_file() or archive_path.stat().st_size > MAX_ARCHIVE):
         raise DeploymentPolicyError("OCI archive path is not an approved regular file")
-    if (
-        type(receipt) is not dict
-        or receipt.get("input_kind") != "task013-analytics-oci-review-only"
-        or receipt.get("oci_repository") != "omnilyzer/analytics"
-        or receipt.get("readiness_path") != "/readyz"
-        or receipt.get("source_files_verified") != 78
-        or receipt.get("release_authorized") is not False
-        or receipt.get("deployment_authorized") is not False
-    ):
-        raise DeploymentPolicyError("unsigned source build input is invalid")
-    if any(type(receipt.get(key)) is not str or
-           re.fullmatch(r"[0-9a-f]{64}", receipt[key]) is None
-           for key in ("dockerfile_sha256", "dockerignore_sha256",
-                       "oci_test_source_sha256", "source_manifest_sha256")):
-        raise DeploymentPolicyError("source build identities are missing")
+    _review_archive_input(receipt)
 
     try:
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)

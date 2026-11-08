@@ -169,6 +169,128 @@ class AnalyticsHostReadOnlyPreflightTests(unittest.TestCase):
         self.assertFalse(value["release_signatures_verified"])
         self.assertEqual(value["services"]["analytics_executor_socket"], "inactive")
 
+    def test_successor_preflight_is_aggregated_and_never_authorizes(self):
+        """Even perfect metadata and HTTP health cannot grant a release."""
+        with patch.object(probe, "collect_analytics_dev_preflight", return_value={
+            "read_only": True, "files": {}, "services": {}, "missing": [],
+            "inaccessible": [], "invalid": [], "deployment_authorized": False,
+        }), patch.object(probe, "_owner_trust_metadata_probe", return_value="present"), \
+             patch.object(probe, "_unit_probe", return_value="active"), \
+             patch.object(probe, "_private_http_status", return_value="200"):
+            result = probe.collect_analytics_successor_preflight()
+        self.assertEqual(result["schema_version"], 2)
+        self.assertEqual(result["owner_source_approval_key"], "present")
+        self.assertTrue(result["successor_runtime_observed"])
+        self.assertTrue(result["preflight_observations_complete"])
+        for key in (
+            "deployment_authorized", "task14b_supported_release_verified",
+            "task14b_owner_signature_verified", "task14b_m04_qa_accepted",
+            "task14b_rollback_verified",
+        ):
+            self.assertIs(result[key], False)
+
+    def test_successor_unknown_original_host_state_is_not_complete(self):
+        """An original socket stat error must not be hidden by new health GETs."""
+        with patch.object(probe, "collect_analytics_dev_preflight", return_value={
+            "read_only": True, "files": {"rootless_daemon_socket": "unknown"},
+            "services": {"original_executor_socket": "active"},
+            "missing": [], "inaccessible": [], "invalid": [],
+            "deployment_authorized": False,
+        }), patch.object(probe, "_owner_trust_metadata_probe", return_value="present"), \
+             patch.object(probe, "_unit_probe", return_value="active"), \
+             patch.object(probe, "_private_http_status", return_value="200"):
+            report = probe.collect_analytics_successor_preflight()
+        self.assertFalse(report["preflight_observations_complete"])
+        self.assertTrue(report["successor_runtime_observed"])
+        self.assertEqual(report["release_decision"], "HOLD")
+
+    def test_successor_collects_all_statuses_after_inaccessible_key(self):
+        """Unprivileged stat EACCES stays UNKNOWN, never a missing key claim."""
+        with patch.object(probe, "collect_analytics_dev_preflight", return_value={
+            "read_only": True, "files": {}, "services": {},
+            "missing": ["existing_missing"], "inaccessible": ["existing_unknown"],
+            "invalid": ["existing_invalid"], "deployment_authorized": False,
+        }), patch.object(probe, "_owner_trust_metadata_probe", return_value="inaccessible"), \
+             patch.object(probe, "_unit_probe", return_value="active") as units, \
+             patch.object(probe, "_private_http_status", side_effect=[
+                 "200", "503", "503",
+             ]) as probes:
+            result = probe.collect_analytics_successor_preflight()
+        self.assertEqual(units.call_count, len(probe._SUCCESSOR_SERVICES))
+        self.assertEqual(probes.call_count, len(probe._PRIVATE_HTTP))
+        self.assertEqual(result["missing"], ["existing_missing"])
+        self.assertEqual(result["inaccessible"], [
+            "existing_unknown", "owner_source_approval_key",
+        ])
+        self.assertFalse(result["successor_runtime_observed"])
+        self.assertFalse(result["preflight_observations_complete"])
+        self.assertEqual(result["release_decision"], "HOLD")
+        self.assertFalse(result["task14b_owner_signature_verified"])
+
+    def test_owner_key_metadata_denies_world_writable_or_wrong_owner(self):
+        """No read, content, key, secret or privileged operation is performed."""
+        def metadata(mode, owner=0, size=128):
+            return os.stat_result((mode, 3, 4, 1, owner, 0, size, 0, 0, 0))
+        valid_dirs = [
+            metadata(stat.S_IFDIR | 0o755),
+            metadata(stat.S_IFDIR | 0o755),
+            metadata(stat.S_IFDIR | 0o755),
+            metadata(stat.S_IFDIR | 0o750),
+        ]
+        with patch.object(probe.os, "stat", side_effect=[
+            *valid_dirs, metadata(stat.S_IFREG | 0o640),
+        ]) as inspected:
+            self.assertEqual(probe._owner_trust_metadata_probe(), "present")
+        self.assertEqual(inspected.call_count, 5)
+        with patch.object(probe.os, "stat", side_effect=[
+            *valid_dirs, metadata(stat.S_IFREG | 0o666),
+        ]):
+            self.assertEqual(probe._owner_trust_metadata_probe(), "invalid")
+        with patch.object(probe.os, "stat", side_effect=[
+            *valid_dirs, metadata(stat.S_IFREG | 0o640, owner=1005),
+        ]):
+            self.assertEqual(probe._owner_trust_metadata_probe(), "invalid")
+        with patch.object(probe.os, "stat", side_effect=PermissionError(
+            errno.EACCES, "protected",
+        )):
+            self.assertEqual(probe._owner_trust_metadata_probe(), "inaccessible")
+        with patch.object(probe.os, "stat", side_effect=FileNotFoundError(
+            errno.ENOENT, "absent",
+        )):
+            self.assertEqual(probe._owner_trust_metadata_probe(), "missing")
+
+    def test_fixed_local_http_refuses_arbitrary_destinations(self):
+        """Host/port/path are closed and redirects are not followed."""
+        with patch.object(probe.http.client, "HTTPConnection") as make:
+            self.assertEqual(probe._private_http_status(8080, "/readyz"), "not-allowed")
+            self.assertEqual(probe._private_http_status(3141, "/admin"), "not-allowed")
+            make.assert_not_called()
+            client = make.return_value
+            client.getresponse.return_value.status = 302
+            self.assertEqual(probe._private_http_status(3141, "/livez"), "302")
+            make.assert_called_once_with("127.0.0.1", 3141, timeout=3)
+            client.request.assert_called_once_with(
+                "GET", "/livez", headers={"Connection": "close"},
+            )
+            client.close.assert_called_once()
+
+    def test_successor_cli_only_emits_readonly_status_matrix(self):
+        with patch.object(probe, "_file_probe", return_value="inaccessible"), \
+             patch.object(probe, "_unit_probe", return_value="inactive"), \
+             patch.object(probe, "_owner_trust_metadata_probe", return_value="inaccessible"), \
+             patch.object(probe, "_private_http_status", return_value="unavailable"), \
+             patch("sys.argv", ["analytics_dev_host_preflight", "--successor-read-only"]), \
+             patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(probe.main(), 0)
+            report = json.loads(output.getvalue())
+        self.assertEqual(report["schema_version"], 2)
+        self.assertEqual(report["owner_source_approval_key"], "inaccessible")
+        self.assertEqual(report["private_http_status"]["analytics_ready"], "unavailable")
+        self.assertFalse(report["task14b_supported_release_verified"])
+        self.assertFalse(report["deployment_authorized"])
+        self.assertNotIn("JWT_SECRET", output.getvalue())
+        self.assertNotIn("DATABASE_URL", output.getvalue())
+
     def test_cli_is_fixed_and_never_discloses_any_secret_values(self):
         """Only fixed status labels and public canonical resource identities."""
         with patch.object(probe, "_file_probe", return_value="missing"), \

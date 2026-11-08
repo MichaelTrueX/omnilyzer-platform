@@ -8,7 +8,9 @@ Related: release/analytics_task013_build_candidate.py, M05 PR231 archive
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import subprocess
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -167,6 +169,82 @@ class OriginalTask013CandidateBuildTests(unittest.TestCase):
         verify.assert_not_called()
         self.assertTrue(paths)
         self.assertTrue(all(not path.exists() for path in paths))
+
+    def test_successor_cli_requires_protected_ci_configuration_before_builder(self):
+        """No key, source SHA or owner signature means no BuildKit invocation."""
+        from release.analytics_task013_build_candidate import main
+        cli = [
+            "analytics_task013_build_candidate.py", "--analytics-checkout",
+            "/not/a/real/checkout", "--builder", "m01-analytics-task013",
+            "--successor", "--build",
+        ]
+        with (
+            patch.object(sys, "argv", cli),
+            patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}, clear=True),
+            patch("release.analytics_task013_build_candidate.build_candidate") as builder,
+        ):
+            self.assertEqual(main(), 1)
+            builder.assert_not_called()
+
+        context = {
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_REPOSITORY": "MichaelTrueX/omnilyzer-platform",
+            "GITHUB_ACTOR": "MichaelTrueX",
+            "GITHUB_ACTOR_ID": "130741173",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_WORKFLOW_REF": (
+                "MichaelTrueX/omnilyzer-platform/.github/"
+                "workflows/platform-release.yml@refs/heads/main"
+            ),
+            "GITHUB_SHA": "a" * 40,
+            "ANALYTICS_SOURCE_COMMIT": "b" * 40,
+            "ANALYTICS_RELEASE_VERSION": "0.15.1",
+            "ANALYTICS_OWNER_SIGNATURE_BASE64": "SIGNED.TEST.ONLY",
+            "ANALYTICS_OWNER_ALLOWED_SIGNERS": "PUBLIC.TEST.ONLY",
+        }
+        with (
+            patch.object(sys, "argv", cli),
+            patch.dict(
+                os.environ,
+                {**context, "ANALYTICS_OWNER_ALLOWED_SIGNERS": "nonascii-ø"},
+                clear=True,
+            ),
+            patch("release.analytics_task013_build_candidate.build_candidate") as builder,
+        ):
+            self.assertEqual(main(), 1)
+            builder.assert_not_called()
+        with (
+            patch.object(sys, "argv", cli),
+            patch.dict(os.environ, context, clear=True),
+            patch(
+                "release.analytics_task013_build_candidate.build_candidate",
+                return_value={
+                    "schema_version": 2,
+                    "release_authorized": False,
+                    "deployment_authorized": False,
+                },
+            ) as builder,
+        ):
+            self.assertEqual(main(), 0)
+            builder.assert_called_once()
+            self.assertEqual(
+                builder.call_args.kwargs["owner_payload"]["source_commit"],
+                "b" * 40,
+            )
+            self.assertEqual(
+                builder.call_args.kwargs["owner_context"]["GITHUB_SHA"],
+                "a" * 40,
+            )
+            self.assertEqual(
+                builder.call_args.kwargs["owner_signature_base64"],
+                "SIGNED.TEST.ONLY",
+            )
+            self.assertEqual(
+                builder.call_args.kwargs["protected_owner_signers"],
+                b"PUBLIC.TEST.ONLY",
+            )
+            self.assertTrue(builder.call_args.kwargs["execute"])
 
     @patch("release.analytics_task013_build_candidate._preflight_builder")
     @patch("release.analytics_task013_build_candidate.build_input")

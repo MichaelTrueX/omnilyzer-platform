@@ -1,10 +1,11 @@
 """File: deployment/analytics_private_registry.py
 
-Purpose: Product-specific original Task014 rootless Docker Zot read adapter
-         for the one immutable signed Analytics 0.15.0 image. Uses original
-         sealed Linux credential, mandatory original rootless socket/volatile
-         Docker config, isolated original subprocess runner and bound request.
+Purpose: Preserve original Task014 rootless Docker Zot read/pull
+         adapter for immutable signed Analytics 0.15.0 and add a separate
+         preflight-only exact schema-3 successor manifest inspection.
+         The same sealed FD, volatile credential and rootless CLI rules apply.
 Related: deployment/analytics_executor.py (preflight before replay),
+         deployment/analytics_execution.py (successor request),
          deployment/analytics_unix_boundary.py (root-reviewed source inputs),
          deployment/private_registry_pull.py (original canary implementation),
          deployment/private_registry_fd.py (product-scoped sealed FD),
@@ -31,15 +32,19 @@ import tempfile
 import time
 
 from .analytics_execution import (
-    AnalyticsExecutorRequest, parse_analytics_request,
+    AnalyticsExecutorRequest, AnalyticsSuccessorRequest,
+    parse_analytics_request,
 )
-from .analytics_signed_release_consumer import PINNED_IMAGE
+from .analytics_signed_release_consumer import PINNED_IMAGE, PINNED_DIGEST
 from .analytics_unix_boundary import _root_reviewed_source
 from .docker_runtime import (
     COMMAND_TIMEOUT_SECONDS, CommandResult, WORKING_DIRECTORY,
     _candidate_command_run, _require_rootless_socket,
 )
-from .private_registry_fd import read_sealed_credential
+from .private_registry_fd import (
+    _successor_request_image, read_sealed_credential,
+    read_sealed_successor_review_credentials,
+)
 from .private_registry_pull import (
     MIN_POST_PREFLIGHT_VALIDITY_SECONDS, MIN_VALIDITY_SECONDS,
     PROBE, PULL,
@@ -100,8 +105,17 @@ class AnalyticsPrivateZotPullAdapter:
     def _run_private(
         self, raw: bytes, credential_fd: int, operation: str,
         *, pull_timeout: float = ANALYTICS_PULL_TIMEOUT_SECONDS,
+        successor_preflight: bool = False,
+        successor_pull: bool = False,
     ) -> None:
-        """Use original rootless/volatile Docker controls and sealed scoped FD."""
+        """Reuse original rootless Docker read, exact FD and bounded cleanup.
+
+        Original Analytics V1 remains pinned to its reviewed OCI. Successor
+        PROBE is read-only; the explicit successor PULL is separately gated
+        by a fixed-UID, root-trusted Ed25519 source check and by the original
+        sealed, task-local Zot request FD. Neither successor method is wired
+        into the active schema-2 executor or permitted to start a container.
+        """
         phase = "request_validation"
         try:
             if type(operation) is not str or operation not in (PROBE, PULL):
@@ -109,12 +123,42 @@ class AnalyticsPrivateZotPullAdapter:
             if (type(pull_timeout) is not float or not math.isfinite(pull_timeout)
                     or not 0 < pull_timeout <= ANALYTICS_PULL_TIMEOUT_SECONDS):
                 raise ValueError("invalid bounded Analytics pull duration")
-            self._reviewed_request(raw)
+            if (
+                type(successor_preflight) is not bool
+                or type(successor_pull) is not bool
+                or (successor_preflight and successor_pull)
+            ):
+                raise ValueError("invalid successor mode")
+            if successor_preflight or successor_pull:
+                if ((successor_preflight and operation != PROBE)
+                        or (successor_pull and operation != PULL)):
+                    raise ValueError("wrong successor Docker operation")
+                if successor_pull and (
+                    os.getuid() != 991 or os.geteuid() != 991
+                    or os.getgid() != 991 or os.getegid() != 991
+                ):
+                    raise ValueError("not the original rootless product executor")
+                image = _successor_request_image(raw)
+                product_scope = "analytics-successor"
+            else:
+                self._reviewed_request(raw)
+                image = PINNED_IMAGE
+                product_scope = "analytics"
             now = int(time.time())
-            credential = read_sealed_credential(
-                credential_fd, canonical_request=raw, image=PINNED_IMAGE,
-                product_id="analytics", now=now,
-            )
+            # Section: a mutating successor pull must carry ALL three original
+            # JWTs in a kernel-sealed schema-2 FD. The original single-token
+            # schema-1 successor envelope remains a read-only probe input;
+            # silently accepting its compatibility fallback here would erase
+            # the future UID991 independent-verification requirement.
+            if successor_pull:
+                credential = read_sealed_successor_review_credentials(
+                    credential_fd, canonical_request=raw, image=image, now=now,
+                ).zot
+            else:
+                credential = read_sealed_credential(
+                    credential_fd, canonical_request=raw, image=image,
+                    product_id=product_scope, now=now,
+                )
             threshold = (
                 MIN_POST_PREFLIGHT_VALIDITY_SECONDS
                 if operation == PROBE else MIN_VALIDITY_SECONDS
@@ -133,14 +177,14 @@ class AnalyticsPrivateZotPullAdapter:
                 os.chmod(workspace, 0o700)
                 phase = "volatile_config"
                 _write_config(workspace, credential.token)
-                argv = _command(workspace, PINNED_IMAGE, operation)
+                argv = _command(workspace, image, operation)
                 phase = "docker_command"
                 output = object.__getattribute__(self, "_runner")(
                     argv, cwd=WORKING_DIRECTORY,
                     environment={
                         "PATH": "/usr/bin:/bin",
                         "LANG": "C.UTF-8",
-                        "ANALYTICS_IMAGE": PINNED_IMAGE,
+                        "ANALYTICS_IMAGE": image,
                         "HOME": str(workspace),
                     },
                     timeout=(
@@ -170,6 +214,96 @@ class AnalyticsPrivateZotPullAdapter:
     ) -> None:
         """Authenticated manifest inspection before executor replay begins."""
         self._run_private(canonical_request, credential_fd, PROBE)
+
+    def preflight_analytics_successor(
+        self, canonical_request: bytes, credential_fd: int,
+    ) -> None:
+        """Probe immutable successor manifest with scoped FD, without deploy.
+
+        This is a low-level read-only registry check. It does NOT prove
+        Ed25519, OIDC, Sigstore/Cosign, active state or replay, and it cannot
+        install, pull or switch any image. The installed executor does not
+        invoke this method until separately reviewed successor integration.
+        """
+        self._run_private(
+            canonical_request, credential_fd, PROBE, successor_preflight=True,
+        )
+
+    def pull_analytics_successor(
+        self, request: AnalyticsSuccessorRequest,
+        *, timeout: float = ANALYTICS_PULL_TIMEOUT_SECONDS,
+    ) -> None:
+        """Download the exact source-approved successor image, without running.
+
+        This **uninstalled** future Task014 stage reuses the original volatile
+        rootless Zot config, image-by-digest Docker pull and bounded cleanup.
+        The parent executor must complete authenticated broker admission and
+        durable replay before invocation; this method independently requires
+        UID991, genuine root-trusted owner Ed25519 approval and one matching
+        task-scoped successor FD. It never starts Compose, installs a service,
+        switches a route or reports release acceptance.
+        """
+        try:
+            if type(request) is not AnalyticsSuccessorRequest:
+                raise ValueError("wrong release generation")
+            if (
+                os.getuid() != 991 or os.geteuid() != 991
+                or os.getgid() != 991 or os.getegid() != 991
+            ):
+                raise ValueError("untrusted rootless product principal")
+            raw = request.canonical_bytes()
+            _successor_request_image(raw)
+            from .analytics_executor import _verify_executor_owner_source
+            from .analytics_active_state_review import (
+                AnalyticsActiveState, inspect_analytics_active_state,
+                verify_empty_analytics_successor_slot,
+            )
+            _verify_executor_owner_source(request.to_dict())
+            # The first signed successor must be a genuine blue-0.15.0 to
+            # green upgrade. Prevent pulling into an already active/ambiguous
+            # or stale candidate. A missing 3142 route alone is insufficient.
+            observed = inspect_analytics_active_state()
+            if (
+                type(observed) is not AnalyticsActiveState
+                or observed.active_slot != "blue"
+                or observed.active_image != PINNED_IMAGE
+                or observed.active_digest != PINNED_DIGEST
+                or observed.private_ingress_port != 3141
+                or observed.candidate_slot != "green"
+                or observed.candidate_port != 3142
+                or observed.candidate_probe_present is not False
+                or observed.candidate_digest is not None
+                or observed.candidate_container_id is not None
+                or observed.deployment_authorized is not False
+                or observed.read_only is not True
+            ):
+                raise ValueError("unreviewed previous product release")
+            verify_empty_analytics_successor_slot()
+            scoped = current_private_zot_request()
+            if type(scoped) is not tuple or len(scoped) != 2:
+                raise ValueError("missing scoped successor credential")
+            credential_fd, original = scoped
+            if original != raw:
+                raise ValueError("successor request differs from scoped FD")
+        except _CONTROL:
+            raise
+        except Exception:
+            raise AnalyticsPrivateRegistryError(ERROR) from None
+        self._run_private(
+            raw, credential_fd, PULL, pull_timeout=timeout,
+            successor_pull=True,
+        )
+        # A pulled image does not authorize container start. Confirm the
+        # original active writer and candidate absence did not drift during
+        # the bounded pull, otherwise deny further staging/cutover.
+        try:
+            if inspect_analytics_active_state() != observed:
+                raise ValueError("active Analytics changed during pull")
+            verify_empty_analytics_successor_slot()
+        except _CONTROL:
+            raise
+        except Exception:
+            raise AnalyticsPrivateRegistryError(ERROR) from None
 
     def pull_analytics(
         self, request: AnalyticsExecutorRequest,

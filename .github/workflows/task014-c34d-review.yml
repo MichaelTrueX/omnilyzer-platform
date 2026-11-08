@@ -138,5 +138,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B -m unittest deployment.tests.test_analytics_service_recovery
+          # The native fixture builds its own root-owned Git source mirror;
+          # the original Git object reader deliberately scrubs environment.
           sudo -n --preserve-env=GITHUB_ACTIONS /usr/bin/python3 -I -B \
             deployment/tests/accept_task014_analytics_recovery.py

@@ -1,0 +1,26 @@
+# File: deployment/runtime/dev/analytics.compose.successor-ports.yaml
+# Purpose: Task14B review-only override for successor Analytics blue/green
+#          containers: remove the historical slot host-published ports, so
+#          the existing RootlessKit owner can reserve stable private ingress
+#          127.0.0.1:3141 independently from candidate health port3142.
+# Related: deployment/runtime/dev/analytics.compose.review.yaml,
+#          deployment/analytics_execution.py (schema-3 ingress),
+#          deployment/analytics_active_state_review.py,
+#          platform PR278 deployment/analytics_loopback_guard.py,
+#          docs/operations/task14b-release-identity-contract-20261102.md.
+# Security: inert Compose override only, not deployed and not first-install
+#           authority. Use with ORIGINAL hardened review Compose file.
+#           Changing an installed blue 0.15.0 container is NOT permitted.
+#           Must not start a candidate until root-owned Task014 has verified
+#           the signed image, live active slot, ingress and recovery policy.
+name: omnilyzer-analytics-dev
+
+# Section: clear ONLY inherited host port mappings for future successors.
+# Docker Compose v5.5 supports !reset, and must be verified during release
+# preflight. Both slots retain the shared hardened runtime, private network,
+# secret mounts, immutable image and healthcheck from the ORIGINAL file.
+services:
+  analytics-blue:
+    ports: !reset []
+  analytics-green:
+    ports: !reset []

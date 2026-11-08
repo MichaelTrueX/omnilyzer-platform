@@ -32,6 +32,7 @@ from . import broker_service_config_loader as _original
 from .analytics_broker_router import AnalyticsDEVPromotionRouter
 from .analytics_executor_service_config import (
     parse_analytics_executor_service_config, _verify_source_bytes,
+    _INSTALLED_ROOT, _SUCCESSOR_INSTALLED_ROOT,
     _PRODUCT_PATH, _RUNTIME_PATH, _COMPOSE_PATH,
     _SOURCE_CLAIM_PATH, _SOURCE_CLAIM_SHA256,
 )
@@ -58,15 +59,16 @@ class AnalyticsBrokerSourceError(Exception):
 
 
 def load_analytics_broker_installed_source(
-    config: DevBrokerServiceConfiguration,
-) -> dict[str, str] | None:
+    config: DevBrokerServiceConfiguration, *, include_generation: bool = False,
+) -> dict[str, str] | tuple[dict[str, str], int] | None:
     """Read only exact root-owned broker product source; missing means canary.
 
     Reuse original C32H broker's hardened ancestor, process, file metadata
     and bounded-reader helpers. No user-created path, symlink or partial
     config can cause an Analytics promotion.
     """
-    if type(config) is not DevBrokerServiceConfiguration:
+    if (type(config) is not DevBrokerServiceConfiguration
+            or type(include_generation) is not bool):
         raise AnalyticsBrokerSourceError(_ERROR)
     owned: list[int] = []
     missing = False
@@ -117,20 +119,30 @@ def load_analytics_broker_installed_source(
         if missing:
             result = None
         else:
+            # Root-installed schema decides ONE fixed source directory;
+            # public requests have no influence on generation or source root.
+            source_root = (
+                _SUCCESSOR_INSTALLED_ROOT if parsed["source_generation"] in (2, 3)
+                else _INSTALLED_ROOT
+            )
             _verify_source_bytes((
                 *parsed["source_sha256"],
                 (_PRODUCT_PATH, parsed["reviewed_product_profile_sha256"]),
                 (_RUNTIME_PATH, parsed["reviewed_runtime_profile_sha256"]),
                 (_COMPOSE_PATH, parsed["reviewed_compose_sha256"]),
                 (_SOURCE_CLAIM_PATH, _SOURCE_CLAIM_SHA256),
-            ))
-            result = {
+            ), root=source_root)
+            source = {
                 key: parsed[key] for key in (
                     "reviewed_installed_commit", "reviewed_compose_sha256",
                     "reviewed_product_profile_sha256",
                     "reviewed_runtime_profile_sha256",
                 )
             }
+            result = (
+                (source, parsed["source_generation"])
+                if include_generation else source
+            )
     except _CONTROL:
         _original._close_owned(owned)
         raise
@@ -153,6 +165,7 @@ def compose_approved_analytics_broker_router(
     blob_signatures: CosignReleaseBlobVerifier,
     jwks_cache: GitHubJWKSCache,
     reviewed_installed_source: dict[str, str],
+    source_generation: int = 1,
 ) -> AnalyticsDEVPromotionRouter:
     """Reuse the original service's already-verified OIDC/JWKS/replay context.
 
@@ -166,6 +179,8 @@ def compose_approved_analytics_broker_router(
         or type(replay_guard) is not SQLiteReplayGuard
         or type(blob_signatures) is not CosignReleaseBlobVerifier
         or type(jwks_cache) is not GitHubJWKSCache
+        or type(source_generation) is not int
+        or source_generation not in (1, 2, 3)
     ):
         raise TypeError(_ERROR)
     workflow = configuration.oidc_authorization_kwargs()["expected_workflow_sha"]
@@ -176,9 +191,22 @@ def compose_approved_analytics_broker_router(
         expected_socket_group_gid=identity["expected_socket_group_gid"],
         reviewed_installed_source=reviewed_installed_source,
     )
+    # Root generation2 selects only signed DENY-only review. Owner-installed
+    # root generation3 selects original signed broker replay/FD transport;
+    # root source and workflow are checked before any network request.
+    successor_files = {}
+    if source_generation in (2, 3):
+        from .analytics_executor import (
+            _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
+        )
+        successor_files = {
+            "owner_approval_file": _OWNER_APPROVAL_FILE,
+            "owner_signature_file": _OWNER_SIGNATURE_FILE,
+        }
     review = InertAnalyticsSignedReleaseReviewHandler(
         configuration=configuration, verifier=verifier,
         blob_signatures=blob_signatures, jwks_cache=jwks_cache,
+        **successor_files,
     )
     analytics = AnalyticsPrivatePromotionBroker(
         expected_workflow_sha=workflow, verifier=verifier,
@@ -189,6 +217,8 @@ def compose_approved_analytics_broker_router(
     return AnalyticsDEVPromotionRouter(
         canary=canary_handler, analytics=analytics,
         reviewed_installed_source=reviewed_installed_source,
+        successor_preflight_only=(source_generation == 2),
+        owner_authorized_first_successor=(source_generation == 3),
     )
 
 
@@ -213,9 +243,15 @@ def run_approved_analytics_broker_service(*, stop_controller: object) -> None:
         configuration = DevBrokerServiceConfiguration.from_dict(
             configuration.to_dict()
         )
-        source = load_analytics_broker_installed_source(configuration)
-        if type(source) is not dict:
+        verified = load_analytics_broker_installed_source(
+            configuration, include_generation=True,
+        )
+        if (type(verified) is not tuple or len(verified) != 2
+                or type(verified[0]) is not dict
+                or type(verified[1]) is not int
+                or verified[1] not in (1, 2, 3)):
             raise ValueError("Analytics service opt-in configuration absent")
+        source, generation = verified
         ids = configuration.installation_contract().broker_composition_kwargs()
         cache = original._GitHubJWKSCache()
         verifier = original._GitHubOIDCVerifier(
@@ -248,6 +284,7 @@ def run_approved_analytics_broker_service(*, stop_controller: object) -> None:
             verifier=verifier, replay_guard=replay,
             blob_signatures=blob, jwks_cache=cache,
             reviewed_installed_source=source,
+            source_generation=generation,
         )
         listener = original._DevBrokerLoopbackListener(router)
         if listener.serve_until_stopped(stop_controller) is not None:

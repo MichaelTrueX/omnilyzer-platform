@@ -1,7 +1,8 @@
 """File: deployment/tests/test_analytics_ci_request.py
 
-Purpose: Validate exact Analytics 0.15.0 schema-v2 request generation inside
-         the original Task014 GitHub promotion workflow, preserving canary.
+Purpose: Protect original signed 0.15.0 schema-v2 and new inert
+         owner-selected successor schema-v3 CI request serialization,
+         including private Forgejo metadata with no CI-supplied authority.
 Related: deployment/analytics_ci_request.py,
          deployment/analytics_execution.py (canonical request parser),
          .github/workflows/platform-promote.yml (original OIDC transport),
@@ -33,6 +34,8 @@ import yaml
 from deployment.analytics_ci_request import (
     AnalyticsCIDispatchError, build_analytics_ci_request,
     validate_analytics_ci_inputs, resolve_analytics_ci_release_inputs,
+    build_analytics_successor_ci_request, validate_analytics_successor_ci_inputs,
+    resolve_analytics_successor_ci_release_inputs,
 )
 from deployment.analytics_execution import parse_analytics_request
 from deployment.analytics_signed_release_consumer import (
@@ -453,6 +456,242 @@ class AnalyticsCIRequestTests(unittest.TestCase):
                         self.assertEqual(str(error.exception), "Task014 Analytics CI request rejected")
                         self.assertEqual(events, ["oidc", "oidc", "oidc", "metadata"])
                         self.assertEqual(posted, [])
+
+
+# Section: future CI-only request projection with real root parser roundtrip.
+# The test is synthetic, and neither CI nor the request is a trust anchor.
+class AnalyticsSuccessorCIRequestTests(unittest.TestCase):
+    """Future release and prior active slot are validated by the root parser."""
+
+    def candidate(self):
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+        data, context = AnalyticsSuccessorRequestTests().candidate()
+        environment = {
+            **dispatch(),
+            "RELEASE_VERSION": data["release_version"],
+            "SOURCE_SHA": data["source_sha"],
+            "ANALYTICS_PRODUCT_SOURCE_SHA": data["product_source_sha"],
+            "ANALYTICS_OWNER_APPROVAL_SHA256": data["owner_approval_sha256"],
+            "ANALYTICS_ACTIVE_DIGEST": context["observed_active_digest"],
+            "ANALYTICS_ACTIVE_SLOT": context["observed_active_slot"],
+            "MANIFEST_DIGEST": data["manifest_digest"],
+            "ORIGINATING_RELEASE_RUN_ID": str(
+                data["originating_release_run_id"]
+            ),
+            "RELEASE_MANIFEST_SHA256": data["release_manifest_sha256"],
+            "PROVENANCE_SHA256": data["provenance_sha256"],
+            "ANALYTICS_SOURCE_CLAIM_SHA256": data["source_claim_sha256"],
+        }
+        return data, context, environment
+
+    def test_unverified_ci_request_roundtrips_real_closed_successor_parser(self):
+        from deployment.analytics_execution import (
+            parse_analytics_successor_request,
+        )
+        data, context, env = self.candidate()
+        self.assertEqual(
+            validate_analytics_successor_ci_inputs(env)["RELEASE_VERSION"],
+            "0.15.1",
+        )
+        raw = build_analytics_successor_ci_request(
+            deployment_oidc_token=token(), environment=env,
+        )
+        self.assertEqual(raw, canonical_bytes(data))
+        reviewed = parse_analytics_successor_request(raw, **context)
+        self.assertEqual(reviewed.to_dict(), data)
+        with self.assertRaises(AnalyticsCIDispatchError):
+            validate_analytics_ci_inputs(env)
+        with self.assertRaises(Exception):
+            parse_analytics_request(raw, **EXPECTED)
+
+    def test_reusable_opposite_slot_from_signed_current_state(self):
+        from deployment.analytics_execution import (
+            parse_analytics_successor_request,
+        )
+        data, context, env = self.candidate()
+        active = "sha256:" + "a" * 64
+        env.update({
+            "ANALYTICS_ACTIVE_SLOT": "green",
+            "ANALYTICS_ACTIVE_DIGEST": active,
+        })
+        context.update({
+            "observed_active_slot": "green",
+            "observed_active_digest": active,
+        })
+        raw = build_analytics_successor_ci_request(
+            deployment_oidc_token=token(), environment=env,
+        )
+        parsed = parse_analytics_successor_request(raw, **context)
+        self.assertEqual(parsed.ingress_reference["slot"], "blue")
+        self.assertEqual(parsed.ingress_reference["loopback_port"], 3142)
+        self.assertEqual(parsed.rollback_reference["previous_digest"], active)
+
+    def test_failed_untrusted_dispatch_never_emits_a_successor(self):
+        data, context, env = self.candidate()
+        bad_inputs = (
+            ("TASK014_PRODUCT", "canary"),
+            ("TARGET_STAGE", "prod"),
+            ("GITHUB_REPOSITORY", "other/analytics"),
+            ("GITHUB_EVENT_NAME", "push"),
+            ("RELEASE_VERSION", "0.15.0"),
+            ("RELEASE_VERSION", "0.15.1+untested"),
+            ("RELEASE_VERSION", "00.15.1"),
+            ("SOURCE_SHA", ""),
+            ("SOURCE_SHA", "f" * 39),
+            ("ANALYTICS_PRODUCT_SOURCE_SHA", "4cdda7faeba57abb3388f9be5c450fe6afb1140d"),
+            ("ANALYTICS_PRODUCT_SOURCE_SHA", "bad"),
+            ("ANALYTICS_OWNER_APPROVAL_SHA256", "0" * 64),
+            ("ANALYTICS_OWNER_APPROVAL_SHA256", ""),
+            ("ANALYTICS_ACTIVE_SLOT", "public"),
+            ("ANALYTICS_ACTIVE_SLOT", "BLUE"),
+            ("ANALYTICS_ACTIVE_DIGEST", ""),
+            ("ANALYTICS_ACTIVE_DIGEST", env["MANIFEST_DIGEST"]),
+            ("MANIFEST_DIGEST", PINNED_DIGEST),
+            ("ORIGINATING_RELEASE_RUN_ID", str(PINNED_RUN_ID)),
+            ("RELEASE_MANIFEST_SHA256", ""),
+            ("PROVENANCE_SHA256", "bad"),
+        )
+        for field, value in bad_inputs:
+            with self.subTest(field=field, value=value), self.assertRaises(
+                AnalyticsCIDispatchError
+            ):
+                build_analytics_successor_ci_request(
+                    deployment_oidc_token=token(),
+                    environment={**env, field: value},
+                )
+        for key in (
+            "ANALYTICS_PRODUCT_SOURCE_SHA",
+            "ANALYTICS_OWNER_APPROVAL_SHA256",
+            "ANALYTICS_ACTIVE_SLOT",
+            "ANALYTICS_ACTIVE_DIGEST",
+        ):
+            with self.subTest(missing=key), self.assertRaises(
+                AnalyticsCIDispatchError
+            ):
+                build_analytics_successor_ci_request(
+                    deployment_oidc_token=token(),
+                    environment={k: v for k, v in env.items() if k != key},
+                )
+
+    def test_deferred_metadata_uses_exact_private_successor_archive(self):
+        """Resolve optional three hashes without trusting the archive as signed."""
+        from deployment.tests.test_analytics_signed_release_consumer import (
+            synthetic_successor,
+        )
+        from deployment.analytics_execution import parse_analytics_successor_request
+
+        data, context, env = self.candidate()
+        selected, owner, evidence, scans, digest = synthetic_successor()
+        self.assertEqual(selected.source_commit, env["ANALYTICS_PRODUCT_SOURCE_SHA"])
+        self.assertEqual(owner.approval_sha256, env["ANALYTICS_OWNER_APPROVAL_SHA256"])
+        self.assertEqual(digest, env["MANIFEST_DIGEST"])
+        incomplete = {
+            **env,
+            "RELEASE_MANIFEST_SHA256": "",
+            "PROVENANCE_SHA256": "",
+            "ANALYTICS_SOURCE_CLAIM_SHA256": "",
+        }
+        jwt = token(audience=AUDIENCES[2])
+        self.assertEqual(
+            validate_analytics_successor_ci_inputs(
+                incomplete, allow_metadata_resolution=True,
+            )["RELEASE_MANIFEST_SHA256"],
+            "",
+        )
+        with self.assertRaises(AnalyticsCIDispatchError):
+            build_analytics_successor_ci_request(
+                deployment_oidc_token=token(), environment=incomplete,
+            )
+        with patch(
+            "deployment.release_consumer._get",
+            return_value=(archive(evidence), {}),
+        ) as get:
+            resolved = resolve_analytics_successor_ci_release_inputs(
+                environment=incomplete, forgejo_oidc_token=jwt,
+            )
+            get.assert_called_once()
+            self.assertEqual(
+                get.call_args.args[:3], ("forgejo", selected.release_version, jwt),
+            )
+        self.assertEqual(
+            resolved["RELEASE_MANIFEST_SHA256"],
+            hashlib.sha256(evidence["release-manifest.json"]).hexdigest(),
+        )
+        self.assertEqual(
+            resolved["PROVENANCE_SHA256"],
+            hashlib.sha256(evidence["release-provenance.json"]).hexdigest(),
+        )
+        self.assertEqual(
+            resolved["ANALYTICS_SOURCE_CLAIM_SHA256"],
+            hashlib.sha256(
+                canonical_bytes(
+                    json.loads(evidence["analytics-source-claim.json"])
+                )
+            ).hexdigest(),
+        )
+        raw = build_analytics_successor_ci_request(
+            deployment_oidc_token=token(), environment=resolved,
+        )
+        self.assertEqual(
+            parse_analytics_successor_request(raw, **context).release_version,
+            selected.release_version,
+        )
+
+        for bad in (
+            {**incomplete, "ANALYTICS_OWNER_APPROVAL_SHA256": "f" * 64},
+            {**incomplete, "MANIFEST_DIGEST": "sha256:" + "c" * 64},
+            {**incomplete, "ANALYTICS_PRODUCT_SOURCE_SHA": "a" * 40},
+        ):
+            with self.subTest(bad=bad), patch(
+                "deployment.release_consumer._get",
+                return_value=(archive(evidence), {}),
+            ), self.assertRaises(AnalyticsCIDispatchError):
+                resolve_analytics_successor_ci_release_inputs(
+                    environment=bad, forgejo_oidc_token=jwt,
+                )
+        for malformed in (b"bad", b""):
+            with patch(
+                "deployment.release_consumer._get",
+                return_value=(malformed, {}),
+            ), self.assertRaises(AnalyticsCIDispatchError):
+                resolve_analytics_successor_ci_release_inputs(
+                    environment=incomplete, forgejo_oidc_token=jwt,
+                )
+        with patch("deployment.release_consumer._get") as get:
+            with self.assertRaises(AnalyticsCIDispatchError):
+                resolve_analytics_successor_ci_release_inputs(
+                    environment=incomplete,
+                    forgejo_oidc_token=token(audience=DEV_AUDIENCE),
+                )
+            get.assert_not_called()
+            with self.assertRaises(AnalyticsCIDispatchError):
+                resolve_analytics_successor_ci_release_inputs(
+                    environment={
+                        **incomplete, "PROVENANCE_SHA256": "a" * 64,
+                    },
+                    forgejo_oidc_token=jwt,
+                )
+            get.assert_not_called()
+
+    def test_unverified_oidc_remains_strict_and_cannot_claim_authorization(self):
+        _data, _context, env = self.candidate()
+        for claim, bad in (
+            ("aud", "https://oci-dev.omnilyzer.ai"),
+            ("workflow_sha", "f" * 40),
+            ("run_id", "100"),
+            ("actor_id", "999"),
+            ("jti", "../replay"),
+            ("environment", "prod"),
+            ("repository", "other/analytics"),
+        ):
+            with self.subTest(claim=claim), self.assertRaises(
+                AnalyticsCIDispatchError
+            ):
+                build_analytics_successor_ci_request(
+                    deployment_oidc_token=token({claim: bad}), environment=env,
+                )
 
 
 if __name__ == "__main__":
