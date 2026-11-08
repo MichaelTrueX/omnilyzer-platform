@@ -141,3 +141,114 @@ No Native course/release, learner account, admissions, BFF activation,
 public registration, service/current/DNS/NGINX change or production
 DB write is part of THIS Keycloak invitation operator. Keep real
 publisher verification separate from the eventual actual 18+ pilot.
+
+## Keycloak SMTP config using already approved Google Workspace relay
+
+8 Nov 2026: Google Workspace owner entered both source IPs; independently
+tested actual SMTP MAIL FROM and RCPT TO 250 over TLS1.3 from production
+using IPv4 and IPv6, with no DATA and no mail sent. Keycloak SMTP currently
+MISSING. Google accepted no-reply@sumlaude.com as sender for both IPs.
+
+Source: services/identity/ops/configure_keycloak_google_relay.py
+SHA256: f8aac1acc03430d23d4482666efd72d04d7a9ef5f9e98d35a55cff8c69daf963
+Scope: one existing Keycloak realm SMTP map only. Use smtp-relay.gmail.com
+implicit TLS port 465 (not opportunistic STARTTLS on 587, in light of
+known SMTP TLS downgrade concern), from/envelope no-reply@sumlaude.com,
+authentication disabled (Google IP allowlist). No new SMTP secret,
+account, user, publisher role, BFF, DNS, database or service activation.
+
+Code is in the existing M01 PR243 for focused independent review. It is
+NOT authorization to invoke the mutating action. No root operation has
+yet been executed. Stage this exact GitHub-reviewed source as
+/home/trusthansen/m01-first-real-publisher-20261108/configure_keycloak_google_relay.py
+owner trusthansen mode0600, private parent dir0700. Verify SHA before
+running anything privileged. Never execute owner-writeable source as root.
+
+### A. Source and actual host READ-ONLY check
+
+~~~bash
+set -Eeuo pipefail
+d=/home/trusthansen/m01-first-real-publisher-20261108
+sha=f8aac1acc03430d23d4482666efd72d04d7a9ef5f9e98d35a55cff8c69daf963
+test "$(hostname -s)" = truexmainserver
+printf '%s  %s\n' "$sha" "$d/configure_keycloak_google_relay.py" | sha256sum -c -
+test "$(stat -c '%U:%a' "$d/configure_keycloak_google_relay.py")" = trusthansen:600
+test "$(systemctl is-active omnilyzer-keycloak.service)" = active
+echo M01_SMTP_SOURCE_AND_HOST_READONLY_PASS
+~~~
+
+### B. Protected READ-ONLY Keycloak preflight, local truexmainserver terminal
+
+~~~bash
+sudo -H bash -s <<'M01_SMTP_ROOT_READONLY'
+set -Eeuo pipefail
+umask 077
+src=/home/trusthansen/m01-first-real-publisher-20261108/configure_keycloak_google_relay.py
+sha=f8aac1acc03430d23d4482666efd72d04d7a9ef5f9e98d35a55cff8c69daf963
+test "$(id -u)" -eq 0
+test "$(hostname -s)" = truexmainserver
+tmp="$(mktemp -d /run/m01-smtp-operator-XXXXXXXX)"
+trap 'rm -rf -- "$tmp"' EXIT
+chmod 0700 "$tmp"
+install -o root -g root -m 0500 -- "$src" "$tmp/smtp.py"
+printf '%s  %s\n' "$sha" "$tmp/smtp.py" | sha256sum -c -
+python3 "$tmp/smtp.py" preflight
+echo M01_SMTP_ROOT_READONLY_PREFLIGHT_FINISHED
+M01_SMTP_ROOT_READONLY
+~~~
+
+Expected current MISSING, confidential realm PASS, certificate verified
+TLS 465 PASS and NO_WRITES PASS. STOP on any error, unexpected
+configured email, realm/client drift, untrusted script or network error.
+
+### C. Separate MUTATING SMTP CONFIGURE command
+
+DO NOT EXECUTE unless B passes AND independent reviewer has accepted
+this exact NEW SMTP source and authorized operator change scope.
+
+~~~bash
+sudo -H bash -s <<'M01_SMTP_ROOT_CONFIGURE'
+set -Eeuo pipefail
+umask 077
+src=/home/trusthansen/m01-first-real-publisher-20261108/configure_keycloak_google_relay.py
+sha=f8aac1acc03430d23d4482666efd72d04d7a9ef5f9e98d35a55cff8c69daf963
+test "$(id -u)" -eq 0
+test "$(hostname -s)" = truexmainserver
+tmp="$(mktemp -d /run/m01-smtp-operator-XXXXXXXX)"
+trap 'rm -rf -- "$tmp"' EXIT
+chmod 0700 "$tmp"
+install -o root -g root -m 0500 -- "$src" "$tmp/smtp.py"
+printf '%s  %s\n' "$sha" "$tmp/smtp.py" | sha256sum -c -
+python3 "$tmp/smtp.py" configure
+echo M01_SMTP_EXACT_REALM_CONFIGURATION_COMPLETED
+M01_SMTP_ROOT_CONFIGURE
+~~~
+
+Expected exact TLS465/NOAUTH readback PASS. Does NOT test actual mail
+delivery. Real test recipient confirmation still required.
+
+### D. Separate rollback, only when current SMTP map is exact as installed
+
+~~~bash
+sudo -H bash -s <<'M01_SMTP_ROOT_ROLLBACK'
+set -Eeuo pipefail
+umask 077
+src=/home/trusthansen/m01-first-real-publisher-20261108/configure_keycloak_google_relay.py
+sha=f8aac1acc03430d23d4482666efd72d04d7a9ef5f9e98d35a55cff8c69daf963
+test "$(id -u)" -eq 0
+test "$(hostname -s)" = truexmainserver
+tmp="$(mktemp -d /run/m01-smtp-operator-XXXXXXXX)"
+trap 'rm -rf -- "$tmp"' EXIT
+chmod 0700 "$tmp"
+install -o root -g root -m 0500 -- "$src" "$tmp/smtp.py"
+printf '%s  %s\n' "$sha" "$tmp/smtp.py" | sha256sum -c -
+python3 "$tmp/smtp.py" rollback
+echo M01_SMTP_ROLLBACK_COMPLETED
+M01_SMTP_ROOT_ROLLBACK
+~~~
+
+Expected Keycloak SMTP_ROLLBACK_DISABLED_PASS after live Keycloak readback.
+Rollback refuses unexpected config and other realms/client/settings.
+Do not attempt a forced restoration in case of drift. Real publisher
+identity invitation remains separately gated on exact M04 review and
+verification of an actual delivered email.
