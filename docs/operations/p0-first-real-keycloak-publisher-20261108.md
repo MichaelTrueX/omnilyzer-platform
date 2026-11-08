@@ -19,7 +19,7 @@ opening an independent Sumlaude password system.
 The versioned first-user operator is
 services/identity/ops/first_real_keycloak_publisher_identity.py
 and its exact full SHA256 is
-0b595d00bdcf454269f3e9873a9123d695b4ffa910092dc9bb8e40a4432d052d.
+3c27829c35e2dad0a8913e567889b5679e7c5a5851a8b72814143dde20b0ef06.
 
 It authenticates only to existing master Keycloak admin on
 127.0.0.1:18742, using the current root0600 env file, and writes
@@ -33,7 +33,9 @@ raw subject, user email or credentials appear in output.
   VERIFY_EMAIL and UPDATE_PASSWORD via Keycloak email. Never
   retries an already existing account or falsely marks it verified.
 - verify: READ-ONLY, returns PASS only after emailVerified true and
-  required actions cleared. This does not yet prove a signed
+  all required actions cleared, including any OTP or profile actions. Missing
+  requiredActions is valid per Keycloak's optional UserRepresentation field;
+  malformed/null requiredActions fails closed. This does not yet prove a signed
   confidential OIDC session or a Sumlaude membership.
 
 Both operator scripts must receive the actual real publisher email
@@ -55,7 +57,7 @@ before executing it, and automatically remove the temporary copy.
 ~~~bash
 set -Eeuo pipefail
 src=/home/trusthansen/m01-first-real-publisher-20261108/first_real_keycloak_publisher_identity.py
-printf '%s  %s\n' 0b595d00bdcf454269f3e9873a9123d695b4ffa910092dc9bb8e40a4432d052d "$src" | sha256sum -c -
+printf '%s  %s\n' 3c27829c35e2dad0a8913e567889b5679e7c5a5851a8b72814143dde20b0ef06 "$src" | sha256sum -c -
 test "$(hostname -s)" = truexmainserver
 test "$(systemctl is-active omnilyzer-keycloak.service)" = active
 test "$(systemctl is-active omnilyzer-identity.service || true)" = inactive
@@ -69,7 +71,7 @@ sudo -H bash -s <<'M01_ROOT_PREFLIGHT'
 set -Eeuo pipefail
 umask 077
 src=/home/trusthansen/m01-first-real-publisher-20261108/first_real_keycloak_publisher_identity.py
-sha=0b595d00bdcf454269f3e9873a9123d695b4ffa910092dc9bb8e40a4432d052d
+sha=3c27829c35e2dad0a8913e567889b5679e7c5a5851a8b72814143dde20b0ef06
 test "$(id -u)" -eq 0
 test "$(hostname -s)" = truexmainserver
 tmp="$(mktemp -d /run/m01-real-keycloak-XXXXXXXX)"
@@ -101,7 +103,7 @@ sudo -H bash -s <<'M01_ROOT_INVITE'
 set -Eeuo pipefail
 umask 077
 src=/home/trusthansen/m01-first-real-publisher-20261108/first_real_keycloak_publisher_identity.py
-sha=0b595d00bdcf454269f3e9873a9123d695b4ffa910092dc9bb8e40a4432d052d
+sha=3c27829c35e2dad0a8913e567889b5679e7c5a5851a8b72814143dde20b0ef06
 test "$(id -u)" -eq 0
 test "$(hostname -s)" = truexmainserver
 tmp="$(mktemp -d /run/m01-real-keycloak-XXXXXXXX)"
