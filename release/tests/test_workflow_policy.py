@@ -154,7 +154,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIs(dispatched["version"]["required"], True)
         self.assertIs(dispatched["source_sha"]["required"], True)
         self.assertEqual(dispatched["auth_probe"],
-                         {"description": "Read-only Forgejo OIDC diagnostic, skips build and publication",
+                         {"description": "Read-only registry OIDC diagnostic, skips build and publication",
                           "required": False, "type": "boolean", "default": False})
 
     def test_probe_and_release_paths_are_mutually_exclusive(self) -> None:
@@ -170,6 +170,42 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(self.jobs["forgejo-auth-probe"]["environment"],
                          "task013-dev-release")
         self.assertEqual(self.jobs["forgejo-auth-probe"]["timeout-minutes"], 5)
+
+    def test_analytics_probe_authenticates_before_build_and_can_never_publish(self) -> None:
+        """Probe uses the protected signer and both OIDC audiences without a build."""
+        p = self.jobs["analytics-registry-preflight"]
+        self.assertEqual(p["if"],
+                         "${{ inputs.product == 'analytics' && inputs.auth_probe == true && inputs.analytics_source_sha != '' && inputs.analytics_owner_signature_base64 != '' }}")
+        self.assertNotIn("needs", p)
+        self.assertEqual(p["environment"], "task013-dev-release")
+        self.assertEqual(p["permissions"], {"contents": "read", "id-token": "write"})
+        self.assertEqual(p["timeout-minutes"], 12)
+        self.assertEqual([s["uses"] for s in p["steps"] if "uses" in s],
+                         ["actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"] * 2)
+        checkout = p["steps"][1]["with"]
+        self.assertEqual(checkout["repository"], "MichaelTrueX/omnilyzer")
+        self.assertEqual(checkout["ref"], "${{ inputs.analytics_source_sha }}")
+        self.assertEqual(checkout["ssh-key"], "${{ secrets.ANALYTICS_SOURCE_DEPLOY_KEY }}")
+        self.assertIs(checkout["persist-credentials"], False)
+        verify = p["steps"][2]["run"]
+        read_only = p["steps"][3]["run"]
+        self.assertIn("review_ci_owner_signed_source(", verify)
+        self.assertIn("ANALYTICS_PREFLIGHT_OWNER_SOURCE_BOUND_PASS", verify)
+        self.assertIn('test "$REQUESTED_SHA" = "$GITHUB_SHA"', verify)
+        self.assertIn("release.registry_absence_preflight --product analytics", read_only)
+        self.assertIn("--audience https://oci-dev.omnilyzer.ai", read_only)
+        self.assertIn("--audience u:2:316bec9a-53e4-4807-9557-7febdc979d0a", read_only)
+        self.assertIn("trap 'rm -f --", read_only)
+        for banned in ("docker build", "docker push", "publish_zot",
+                       "publish_forgejo", "cosign sign", "upload-artifact"):
+            self.assertNotIn(banned, str(p))
+        deny = self.jobs["deny-unsupported-dispatch"]["if"]
+        self.assertIn("inputs.product == 'analytics' && inputs.auth_probe == true", deny)
+        self.assertIn("inputs.analytics_source_sha == '' || inputs.analytics_owner_signature_base64 == ''", deny)
+        for name in ("analytics-source-admission", "analytics-publish-zot",
+                     "analytics-publish-forgejo", "gate", "build",
+                     "publish-zot", "publish-forgejo"):
+            self.assertIn("inputs.auth_probe == false", self.jobs[name]["if"])
 
     def test_probe_uses_exact_workflow_identity_and_no_writes(self) -> None:
         """Keep the OIDC JWT confined to one read-only package GET."""
@@ -212,7 +248,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         """Do not grant id-token permission to the ordinary gate or build."""
         capable = [name for name, job in self.jobs.items()
                    if job.get("permissions", {}).get("id-token") == "write"]
-        self.assertEqual(capable, ["forgejo-auth-probe", "analytics-publish-zot",
+        self.assertEqual(capable, ["forgejo-auth-probe", "analytics-registry-preflight", "analytics-publish-zot",
                                    "analytics-publish-forgejo", "publish-zot", "publish-forgejo"])
         for name in capable:
             self.assertEqual(self.jobs[name]["permissions"],
