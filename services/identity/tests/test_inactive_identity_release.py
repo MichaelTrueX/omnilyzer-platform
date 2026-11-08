@@ -7,12 +7,14 @@ No real user, systemd, PostgreSQL, Keycloak or /opt paths are modified.
 """
 import importlib.util
 import io
+import os
 from pathlib import Path
 import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -199,6 +201,130 @@ class InactiveReleaseTests(unittest.TestCase):
             self.assertTrue(gunicorn.read_bytes().startswith(
                 ("#!" + str(new / ".venv/bin/python") + "\n").encode()))
             self.assertTrue(bool(gunicorn.stat().st_mode & stat.S_IXUSR))
+
+    def test_git_source_directories_traversable_after_restrictive_umask(self):
+        """The copied release imports remain accessible to nonroot service."""
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home)
+            archive = root / "test.tar"
+            make_tar(archive, [
+                ("services/", "dir", b""),
+                ("services/identity/", "dir", b""),
+                ("services/identity/identity_bff/", "dir", b""),
+                ("services/identity/identity_bff/views.py", "file", b"test"),
+            ])
+            output = root / "release"
+            output.mkdir()
+            previous = os.umask(0o077)
+            try:
+                with tarfile.open(archive) as tf:
+                    members = tf.getmembers()
+                    tf.extractall(output, filter="data")
+            finally:
+                os.umask(previous)
+            self.assertEqual(stat.S_IMODE(
+                (output / "services").stat().st_mode), 0o700)
+            OP.normalize_source_directories(output, members)
+            for rel in ("services", "services/identity",
+                        "services/identity/identity_bff"):
+                self.assertEqual(stat.S_IMODE(
+                    (output / rel).stat().st_mode), 0o755)
+            self.assertEqual(
+                (output / "services/identity/identity_bff/views.py").read_bytes(),
+                b"test")
+
+    def test_existing_inactive_repair_preserves_exact_source_bytes(self):
+        """Repair reviewed source dirs once, with no installed file mutation."""
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home)
+            archive = root / "test.tar"
+            make_tar(archive, [
+                ("services/", "dir", b""),
+                ("services/identity/", "dir", b""),
+                ("services/identity/identity_bff/", "dir", b""),
+                ("services/identity/identity_bff/views.py", "file", b"exact"),
+            ])
+            installed = root / "installed"
+            installed.mkdir()
+            installed.chmod(0o755)
+            with tarfile.open(archive) as tf:
+                tf.extractall(installed, filter="data")
+            for rel in ("services", "services/identity",
+                        "services/identity/identity_bff"):
+                (installed / rel).chmod(0o700)
+            (installed / ".venv/bin").mkdir(parents=True)
+            for exe in ("python", "gunicorn"):
+                (installed / ".venv/bin" / exe).write_text("test only")
+            original_venv_mode = stat.S_IMODE(
+                (installed / ".venv/bin/python").stat().st_mode)
+
+            real_lstat = Path.lstat
+
+            def root_metadata(path):
+                original = real_lstat(path)
+                return SimpleNamespace(
+                    st_mode=original.st_mode, st_uid=0, st_gid=0,
+                    st_nlink=original.st_nlink)
+
+            with (mock.patch.object(OP, "trusted_privileged_operator"),
+                  mock.patch.object(Path, "lstat", root_metadata),
+                  mock.patch.object(OP, "run", return_value="") as action):
+                OP.repair_inactive_source_permissions(
+                    "a" * 40, archive, installed)
+            for rel in ("services", "services/identity",
+                        "services/identity/identity_bff"):
+                self.assertEqual(
+                    stat.S_IMODE((installed / rel).stat().st_mode), 0o755)
+            self.assertEqual(
+                (installed / "services/identity/identity_bff/views.py").read_bytes(),
+                b"exact")
+            self.assertEqual(
+                stat.S_IMODE(
+                    (installed / ".venv/bin/python").stat().st_mode),
+                original_venv_mode)
+            self.assertEqual(action.call_count, 1)
+            self.assertEqual(action.call_args.args[0][:3], [
+                "/usr/sbin/runuser", "-u", "omnilyzer-identity"])
+
+    def test_inactive_repair_denies_tampered_source_before_mode_write(self):
+        """Reject file drift before modifying any installed directory."""
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home)
+            archive = root / "test.tar"
+            make_tar(archive, [
+                ("services/", "dir", b""),
+                ("services/identity/", "dir", b""),
+                ("services/identity/identity_bff/", "dir", b""),
+                ("services/identity/identity_bff/views.py", "file", b"expected"),
+            ])
+            installed = root / "installed"
+            installed.mkdir(mode=0o755)
+            installed.chmod(0o755)
+            with tarfile.open(archive) as tf:
+                tf.extractall(installed, filter="data")
+            target = installed / "services/identity/identity_bff/views.py"
+            target.write_bytes(b"tampered")
+            (installed / "services").chmod(0o700)
+            (installed / ".venv/bin").mkdir(parents=True)
+            for exe in ("python", "gunicorn"):
+                (installed / ".venv/bin" / exe).write_text("test only")
+
+            # Emulate root:root metadata without requiring sudo in unit tests.
+            real_lstat = Path.lstat
+
+            def root_metadata(path):
+                original = real_lstat(path)
+                return SimpleNamespace(
+                    st_mode=original.st_mode, st_uid=0, st_gid=0,
+                    st_nlink=original.st_nlink)
+
+            with (mock.patch.object(OP, "trusted_privileged_operator"),
+                  mock.patch.object(Path, "lstat", root_metadata)):
+                with self.assertRaisesRegex(RuntimeError, "source file differs"):
+                    OP.repair_inactive_source_permissions(
+                        "a" * 40, archive, installed)
+            self.assertEqual(
+                stat.S_IMODE((installed / "services").stat().st_mode), 0o700)
 
     def test_simulated_inactive_release_keeps_original_current(self):
         """Copy small local fixtures, not the production venv or live DB."""

@@ -137,3 +137,26 @@ A later unit-only commit does not change this pinned runtime.
   single GTM map OFF and revert the static public shell. Preserve the
   immutable original GTM source and existing data. Never start the
   obsolete d65 BFF or d74 Native as rollback.
+
+## Actual inactive install permission recovery, 8 November 2026
+
+An owner-executed root-only inactive installation of the 3481cac runtime
+completed, but independent nonroot PROD readback detected root:root `0700`
+on source directory `services/` (also reproduced with `tarfile.extractall
+filter=data` and `umask 0077`). This is a real service-start blocker; do
+not start old or new BFF until the source hierarchy is traversable by the
+existing dedicated `omnilyzer-identity` service account.
+
+This existing installer now normalizes **only archive-reviewed source
+directories** to root-owned mode `0755` during future inactive installs.
+For the exact already-installed `3481cac` target, use the same source-pinned
+existing installer with new `repair-permissions` action. Its root-only
+path first checks the original canonical Git archive against the entire
+installed source (byte-for-byte, root owner and safe regular types/modes),
+requires the old current plus inactive/disabled BFF and no owner GO marker,
+then corrects only affected directory modes. Service-user source readability
+must pass afterward. The original source code bytes, copied virtualenv,
+active unit, current link, BFF/Native services, protected env, SQL and DNS
+must remain unchanged. No deletion/reinstall/replay of installed release.
+Owner's earlier immutable install receipt remains valid, but service
+readiness must be reassessed after repair.

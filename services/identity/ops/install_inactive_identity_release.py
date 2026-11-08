@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """File: services/identity/ops/install_inactive_identity_release.py
 Purpose: Install one exact, Git-archived Django BFF candidate INACTIVE beside
-         the existing production release. Never touch current, systemd, DB,
-         private credentials, Keycloak, Nginx, DNS or learner admission.
+         the existing production release, or repair only non-secret source
+         directory traversal modes on that exact already-installed release.
+         Never touch current, systemd, DB, private credentials, Keycloak,
+         Nginx, DNS or learner admission.
 Related: services/identity/{requirements.txt,omnilyzer-identity.service},
          services/identity/prepare-identity-only.sh,
          docs/operations/p0-shared-keycloak-sumlaude-identity-20261029.md.
@@ -125,14 +127,17 @@ def manifest_members(archive):
         return members
 
 
-def installed_runtime_guard(sha, archive):
-    """Prove existing BFF cannot be affected by an inactive install."""
+def installed_runtime_guard(sha, archive, *, require_existing=False):
+    """Prove the selected inactive-only action cannot change live BFF."""
     if socket.gethostname().split(".")[0] != HOST:
         fail("wrong host")
     if not CURRENT.is_symlink() or CURRENT.resolve() != OLD:
         fail("installed current release changed")
     new = RELEASES / sha
-    if new.exists() or new.is_symlink():
+    if require_existing:
+        if new.is_symlink() or not new.is_dir():
+            fail("repair requires one existing non-symlink immutable release")
+    elif new.exists() or new.is_symlink():
         fail("target version already installed; do not overwrite")
     service = run(["/usr/bin/systemctl", "show", UNIT,
                    "-p", "ActiveState", "-p", "UnitFileState", "--no-pager"])
@@ -208,13 +213,78 @@ def check_pinned_packages(python, requirements):
     run([str(python), "-I", "-B", "-c", code, str(requirements)])
 
 
+def normalize_source_directories(destination, members):
+    """Restore non-secret Git source traversal despite the root umask.
+
+    Python tarfile data-filter extraction of directory entries preserves the
+    process umask, so umask 0077 yields root-only 0700 parent directories.
+    The unprivileged identity service must traverse reviewed source to import
+    the WSGI application. Never touch the separate copied virtualenv.
+    """
+    for member in members:
+        if not member.isdir():
+            continue
+        path = destination / member.name
+        if path.is_symlink() or not path.is_dir():
+            fail("reviewed archive source directory changed unexpectedly")
+        path.chmod(0o755)
+
+
+def repair_inactive_source_permissions(sha, archive, installed):
+    """Repair ONLY exact readback-verified source directories, never code.
+
+    Safe repeat after an interrupted chmod; rejects source drift, symlinks,
+    untrusted owners or a live selected/runtime release before any write.
+    """
+    trusted_privileged_operator()
+    root = installed.lstat()
+    if (not stat.S_ISDIR(root.st_mode) or root.st_uid != 0
+            or root.st_gid != 0 or stat.S_IMODE(root.st_mode) != 0o755):
+        fail("installed immutable release root not owned and fixed as expected")
+    if not ((installed / ".venv/bin/python").is_file()
+            and (installed / ".venv/bin/gunicorn").is_file()):
+        fail("installed copied Python runtime missing")
+    with tarfile.open(archive, mode="r:") as tf:
+        members = tf.getmembers()
+        for member in members:
+            path = installed / member.name
+            try:
+                meta = path.lstat()
+            except OSError:
+                fail("installed source path missing")
+            if meta.st_uid != 0 or meta.st_gid != 0:
+                fail("installed source owner drift")
+            if member.isdir():
+                if (not stat.S_ISDIR(meta.st_mode)
+                        or stat.S_IMODE(meta.st_mode) not in (0o700, 0o755)):
+                    fail("installed source directory kind/mode drift")
+            else:
+                if (not stat.S_ISREG(meta.st_mode) or meta.st_nlink != 1
+                        or stat.S_IMODE(meta.st_mode) not in (0o644, 0o755)):
+                    fail("installed source file kind/mode drift")
+                expected = tf.extractfile(member)
+                if expected is None or path.read_bytes() != expected.read():
+                    fail("installed source file differs from exact signed archive")
+    # Zero changed code bytes: alter only root-owned non-secret directory modes.
+    normalize_source_directories(installed, members)
+    run(["/usr/sbin/runuser", "-u", "omnilyzer-identity", "--",
+         "/usr/bin/test", "-r",
+         str(installed / "services/identity/identity_bff/views.py")])
+    print("M01_INACTIVE_SOURCE_DIRECTORY_ACCESS_REPAIRED=" + sha)
+    print("M01_SOURCE_BYTES_UNCHANGED_CURRENT_SYSTEMD_DB_DNS_UNCHANGED")
+
+
 def install_inactive(sha, archive, new):
     """Atomically publish new root-owned source+venv, without selecting it."""
     trusted_privileged_operator()
     temporary = Path(tempfile.mkdtemp(prefix=".m01-inactive-", dir=RELEASES))
     try:
         with tarfile.open(archive, mode="r:") as tf:
+            members = tf.getmembers()
             tf.extractall(path=temporary, filter="data")
+        # A root umask 0077 creates source directories as 0700 even when
+        # Git archived them as 0775. Normalize only reviewed directories.
+        normalize_source_directories(temporary, members)
         shutil.copytree(OLD / ".venv", temporary / ".venv",
                         symlinks=True)
         rewrite_console_scripts(temporary / ".venv", OLD, new)
@@ -243,15 +313,20 @@ def install_inactive(sha, archive, new):
 
 
 def main(argv=None):
-    """Support one readonly preflight and one root-held install command only."""
+    """Support read-only preflight, install and exact inactive-mode repair."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("preflight", "install"))
+    parser.add_argument("action", choices=("preflight", "install",
+                                          "repair-permissions"))
     parser.add_argument("--sha", required=True)
     parser.add_argument("--archive-sha256", required=True)
     args = parser.parse_args(argv)
     archive = trusted_staged_archive(args.sha, args.archive_sha256)
     manifest_members(archive)
-    target = installed_runtime_guard(args.sha, archive)
+    target = installed_runtime_guard(
+        args.sha, archive, require_existing=args.action == "repair-permissions")
+    if args.action == "repair-permissions":
+        repair_inactive_source_permissions(args.sha, archive, target)
+        return 0
     if args.action == "preflight":
         print("M01_INACTIVE_RELEASE_READONLY_PREFLIGHT_PASS="
               + args.sha + " no_production_write=true"
