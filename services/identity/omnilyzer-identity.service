@@ -24,7 +24,7 @@ AssertPathExists=/etc/omnilyzer/identity/owner-approved-go
 Type=simple
 User=omnilyzer-identity
 Group=omnilyzer-identity
-WorkingDirectory=/opt/omnilyzer/identity/releases/304b5acdc642ec4b26e08867af467e63c1b04c5e/services/identity
+WorkingDirectory=/opt/omnilyzer/identity/releases/3481cacbef910a37d87a3c26341b1a8f16a6612f/services/identity
 # Section 3 - Root-readable host configuration outside Git. Credentials are
 # never passed on the command line, embedded in this unit or sent to a browser.
 EnvironmentFile=/etc/omnilyzer/identity/identity.env
@@ -36,12 +36,12 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 # is later created. The reviewed immutable source selection is release-bound;
 # a future approved BFF version requires an explicit, reviewed unit update.
 # ExecCondition mismatch skips startup without falling back to old code.
-ExecCondition=/usr/bin/test /opt/omnilyzer/identity/current -ef /opt/omnilyzer/identity/releases/304b5acdc642ec4b26e08867af467e63c1b04c5e
-ExecStartPre=/opt/omnilyzer/identity/releases/304b5acdc642ec4b26e08867af467e63c1b04c5e/.venv/bin/python manage.py check --deploy
+ExecCondition=/usr/bin/test /opt/omnilyzer/identity/current -ef /opt/omnilyzer/identity/releases/3481cacbef910a37d87a3c26341b1a8f16a6612f
+ExecStartPre=/opt/omnilyzer/identity/releases/3481cacbef910a37d87a3c26341b1a8f16a6612f/.venv/bin/python manage.py check --deploy
 # Section 4 - Original Django WSGI entrypoint; no public network listener.
 # Gunicorn access logs are intentionally disabled to avoid logging OIDC
 # callback authorization codes and state query parameters.
-ExecStart=/opt/omnilyzer/identity/releases/304b5acdc642ec4b26e08867af467e63c1b04c5e/.venv/bin/gunicorn --bind 127.0.0.1:18740 --workers 2 --timeout 30 --graceful-timeout 15 config.wsgi:application
+ExecStart=/opt/omnilyzer/identity/releases/3481cacbef910a37d87a3c26341b1a8f16a6612f/.venv/bin/gunicorn --bind 127.0.0.1:18740 --workers 2 --timeout 30 --graceful-timeout 15 config.wsgi:application
 Restart=on-failure
 RestartSec=3
 TimeoutStartSec=45

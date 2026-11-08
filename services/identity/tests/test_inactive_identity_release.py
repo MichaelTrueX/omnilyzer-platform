@@ -54,7 +54,7 @@ class InactiveReleaseTests(unittest.TestCase):
             "ExecCondition=/usr/bin/test "
             "/opt/omnilyzer/identity/current -ef "
             "/opt/omnilyzer/identity/releases/"
-            "304b5acdc642ec4b26e08867af467e63c1b04c5e"
+            "3481cacbef910a37d87a3c26341b1a8f16a6612f"
         )
         self.assertEqual(unit.count(guard), 1)
         self.assertIn(
@@ -84,7 +84,7 @@ class InactiveReleaseTests(unittest.TestCase):
             encoding="utf-8")
         reviewed_root = (
             "/opt/omnilyzer/identity/releases/"
-            "304b5acdc642ec4b26e08867af467e63c1b04c5e"
+            "3481cacbef910a37d87a3c26341b1a8f16a6612f"
         )
         lines = [
             line.split("=", 1) for line in unit.splitlines()

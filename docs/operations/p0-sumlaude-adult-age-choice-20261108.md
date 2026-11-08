@@ -99,3 +99,41 @@ declaration can be falsified, an explicitly accepted product risk.
 
 **Current status: M01/S01 SOURCE candidate, PROD BFF not modified.
 Live actual user acceptance NOT RUN.**
+
+## Exact immutable BFF deployment pin (source preparation)
+
+The first real user2 `declared_adult` admission and original GTM-001
+course enrollment already exist; NEVER reapply S03 bootstrap/admission.
+The adult-choice Django runtime is immutable Git commit
+`3481cacbef910a37d87a3c26341b1a8f16a6612f`.
+A later unit-only commit does not change this pinned runtime.
+
+- The production Git source archive must exactly match the above commit
+  with SHA256 `0411e353e41365cf316d1a71de08cb2a4f5c228853478b88411b57aaa012f1cd`.
+  The existing nonroot inactive-install preflight passed this archive.
+- Existing `services/identity/omnilyzer-identity.service` is updated for
+  the new immutable runtime. `ExecCondition`, `WorkingDirectory`,
+  `ExecStartPre` and `ExecStart` pin the identical source directory.
+  Never start via a mutable `current` executable path.
+- Before any owner-root action, obtain focused independent M04 review of
+  the six new age-choice source files and this precise unit/test/document
+  pin update; reuse prior unchanged OIDC and package integrity evidence.
+- Root inactive installer must first verify its exact source SHA after
+  root-owned 0500 copy to `/run`, run owner-root readonly preflight and
+  then separately authorized `install`. Do not execute user-owned code
+  directly as root. Inactive install must leave current, loaded systemd,
+  owner GO marker, env, DB, NGINX, DNS and learner data unchanged.
+- A separate reversible live cutover must verify source and new unit,
+  pass actual host `systemd-analyze verify`, prove loaded immutable
+  paths, then under scoped owner authorization select exact new source,
+  create protected GO marker and start 18740 on loopback with valid
+  root-protected Keycloak/DB env. Confirm anonymous HTTPS session is
+  no longer 502 only after S03 Native 18741 becomes healthy.
+- Before GTM source map enable and public app DNS, S03 authenticates the
+  exact existing admitted adult and source-bound course. S01 activates
+  the latest age-choice static frontend, not the obsolete installed
+  `s01-gtm001-d25bb559-20261107` build.
+- If any critical acceptance fails, STOP private BFF/Native, turn the
+  single GTM map OFF and revert the static public shell. Preserve the
+  immutable original GTM source and existing data. Never start the
+  obsolete d65 BFF or d74 Native as rollback.
