@@ -28,6 +28,7 @@ import json
 
 from . import application_manifest as _original_git
 from .rootless_docker_authority import AUTHORITY
+from .identity import validate_expected_workflow_sha
 from .analytics_executor_service_config import (
     ANALYTICS_INSTALLED_FILES, ANALYTICS_SUCCESSOR_INSTALLED_FILES,
     _INSTALLED_RUNTIME_FILES,
@@ -145,6 +146,7 @@ def build_unsigned_analytics_activation_inputs(
     *, repository_root: str, reviewed_commit: str,
     successor_source: bool = False,
     owner_authorized_first_successor: bool = False,
+    approved_workflow_sha: str | None = None,
 ) -> dict[str, bytes]:
     """Bind four review inputs to exactly one verified Git source generation.
 
@@ -159,8 +161,16 @@ def build_unsigned_analytics_activation_inputs(
             type(successor_source) is not bool
             or type(owner_authorized_first_successor) is not bool
             or (owner_authorized_first_successor and not successor_source)
+            or (approved_workflow_sha is not None
+                and not owner_authorized_first_successor)
         ):
             raise ValueError
+        # Section: root-reviewed workflow rebind for unsigned V3 review data.
+        workflow_sha = _REVIEWED_TASK014_DEV_WORKFLOW_SHA
+        if approved_workflow_sha is not None:
+            workflow_sha = validate_expected_workflow_sha(approved_workflow_sha)
+            if workflow_sha == "0" * 40:
+                raise ValueError
         manifest = (
             review_analytics_successor_source_handoff(
                 repository_root=repository_root, reviewed_commit=reviewed_commit,
@@ -214,7 +224,7 @@ def build_unsigned_analytics_activation_inputs(
                       else 2 if successor_source else 1)
         product_config = canonical_bytes({
             "schema_version": generation, "product_id": "analytics", "stage": "dev",
-            **({"expected_workflow_sha": _REVIEWED_TASK014_DEV_WORKFLOW_SHA}
+            **({"expected_workflow_sha": workflow_sha}
                if successor_source else {}),
             **({"owner_authorized_first_successor": True}
                if owner_authorized_first_successor else {}),
@@ -231,7 +241,7 @@ def build_unsigned_analytics_activation_inputs(
         parsed = parse_analytics_executor_service_config(product_config)
         if (
             (successor_source and parsed.get("expected_workflow_sha")
-                != _REVIEWED_TASK014_DEV_WORKFLOW_SHA)
+                != workflow_sha)
             or parsed["reviewed_installed_commit"] != reviewed_commit
             or parsed["reviewed_compose_sha256"]
                 != baseline["reviewed_compose_sha256"]
@@ -281,6 +291,7 @@ def build_unsigned_analytics_service_inputs(
     *, repository_root: str, reviewed_commit: str,
     successor_source: bool = False,
     owner_authorized_first_successor: bool = False,
+    approved_workflow_sha: str | None = None,
 ) -> dict[str, bytes]:
     """Bind EXACT service review bytes to one Git generation and original C32ZF.
 
@@ -306,6 +317,8 @@ def build_unsigned_analytics_service_inputs(
             type(successor_source) is not bool
             or type(owner_authorized_first_successor) is not bool
             or (owner_authorized_first_successor and not successor_source)
+            or (approved_workflow_sha is not None
+                and not owner_authorized_first_successor)
         ):
             raise ValueError("invalid source generation")
         # Always preserve the historical 4 original service files byte-for-byte.
@@ -316,6 +329,7 @@ def build_unsigned_analytics_service_inputs(
                 repository_root=repository_root, reviewed_commit=reviewed_commit,
                 successor_source=True,
                 owner_authorized_first_successor=owner_authorized_first_successor,
+                approved_workflow_sha=approved_workflow_sha,
             )
             from .analytics_isolated_source_install import _successor_approval
             approved_candidate = _successor_approval(candidate[SOURCE_APPROVAL])
