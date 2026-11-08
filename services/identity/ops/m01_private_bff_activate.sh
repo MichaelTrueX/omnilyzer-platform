@@ -115,7 +115,7 @@ test "$native_pid_before" -gt 1 ||
 native_bindings="$(ss -lntH | awk '$4 ~ /:18741$/ {print $4}')"
 test "$native_bindings" = 127.0.0.1:18741 ||
   fail "Native is not exclusively loopback-bound"
-native_api_status="$(curl --insecure --silent --show-error --output /dev/null \
+native_api_status="$(curl --noproxy '*' --insecure --silent --show-error --output /dev/null \
   --write-out '%{http_code}' --connect-timeout 2 --max-time 7 \
   --resolve app.sumlaude.com:443:127.0.0.1 \
   https://app.sumlaude.com/api/valoria/context)"
@@ -276,7 +276,7 @@ while test "$SECONDS" -le "$deadline"; do
     if test "$owner_uid" = 994 &&
        test "$actual_cwd" = "$NEW/services/identity" &&
        test "$bindings" = 127.0.0.1:18740; then
-      response_code="$(curl --insecure --silent --show-error \
+      response_code="$(curl --noproxy '*' --insecure --silent --show-error \
           --resolve app.sumlaude.com:443:127.0.0.1 \
           --connect-timeout 2 --max-time 4 \
           --dump-header "$scratch/headers" \
