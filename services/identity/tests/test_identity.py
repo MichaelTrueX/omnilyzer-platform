@@ -48,6 +48,7 @@ def principal():
 @override_settings(
     SESSION_ENGINE="django.contrib.sessions.backends.cache",
     CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}},
+    REQUIRE_GTM_ADULT_CHOICE=False,  # regression for previously accepted single-step BFF
 )
 class IdentityRouteTests(SimpleTestCase):
     def setUp(self):

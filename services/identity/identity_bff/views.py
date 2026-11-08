@@ -6,6 +6,7 @@ Related: services/identity/config/{settings,urls}.py,
     services/identity/tests/test_identity.py.
 """
 import hmac
+import json
 import secrets
 import time
 
@@ -50,7 +51,8 @@ def _unpaired_session_response():
     return response
 
 
-def _active(request):
+def _identity_active(request):
+    """Only a still-live server-held, signed confidential OIDC identity."""
     value = request.session.get("principal")
     now = int(time.time())
     if not isinstance(value, dict) or not value.get("sub"):
@@ -59,7 +61,17 @@ def _active(request):
         return None
     if now - request.session.get("last_seen", 0) > settings.IDENTITY_IDLE_SECONDS:
         return None
-    if not request.session.get("s03_digest") or not request.session.get("sealed_tokens"):
+    if not request.session.get("sealed_tokens"):
+        return None
+    return value
+
+
+def _active(request):
+    value = _identity_active(request)
+    if not value or not request.session.get("s03_digest"):
+        return None
+    if (settings.REQUIRE_GTM_ADULT_CHOICE and
+            request.session.get("age_choice") != "adult"):
         return None
     return value
 
@@ -132,9 +144,24 @@ def callback(request):
         # No product session is issued on unaudited identity/guardian data.
         # Existing session is revoked before another cookie is minted.
         _revoke_existing(request)
-        # Rotate the Django key BEFORE S03 issues a native cookie, so a
-        # failing Django key write cannot leave a newly issued S03 session.
+        # Rotate the Django key BEFORE product authorization. Pending
+        # 18+ users receive only a Django identity cookie, never Native.
         request.session.cycle_key()
+        if settings.REQUIRE_GTM_ADULT_CHOICE:
+            request.session.clear()
+            now = int(time.time())
+            request.session.update({
+                "principal": principal, "sealed_tokens": sealed,
+                "oauth_deadline": deadline,
+                "absolute_deadline": now + settings.IDENTITY_ABSOLUTE_SECONDS,
+                "last_seen": now, "age_choice": "pending",
+            })
+            request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
+            try:
+                request.session.save()
+            except (DatabaseError, UpdateError):
+                return _unpaired_session_response()
+            return _clear_product_cookie(HttpResponseRedirect("/professional/gtm-001"))
         product_cookie, digest = issuer.issue(principal)
     except (issuer.AdmissionError, oidc.IdentityError, KeyError, TypeError, ValueError):
         return _fail(403)
@@ -157,6 +184,16 @@ def callback(request):
 def session_state(request):
     principal = _active(request)
     if not principal:
+        if settings.REQUIRE_GTM_ADULT_CHOICE:
+            identity = _identity_active(request)
+            if identity:
+                state = request.session.get("age_choice")
+                if state == "pending":
+                    return JsonResponse({"authenticated": True,
+                        "productAuthorized": "adult-choice-required"})
+                if state == "under18":
+                    return JsonResponse({"authenticated": True,
+                        "productAuthorized": "adult-pilot-denied"})
         return JsonResponse({"authenticated": False})
     # Authentication status does not confer enrollment/guardian authorization.
     return JsonResponse({"authenticated": True, "productAuthorized": "check-S03"})
@@ -166,6 +203,68 @@ def session_state(request):
 @require_GET
 def csrf(request):
     return JsonResponse({"csrf_token": get_token(request)})
+
+
+@never_cache
+@require_POST
+def age_choice(request):
+    """CSRF-checked 18+ choice, tied only to the signed OIDC Django session.
+
+    This DOES NOT register an adult admission and does not accept a browser
+    email, issuer, subject or entitlement. The restricted S03 issuer
+    independently denies absent declared_adult / known-minor / course role.
+    """
+    if not settings.REQUIRE_GTM_ADULT_CHOICE:
+        return _fail(404)
+    principal = _identity_active(request)
+    if not principal or request.session.get("age_choice") != "pending":
+        return _fail(403)
+    try:
+        if request.content_type != "application/json" or len(request.body) > 128:
+            return _fail(400)
+        payload = json.loads(request.body)
+        if (not isinstance(payload, dict) or
+                set(payload) != {"ageBand"} or
+                payload["ageBand"] not in ("adult", "under18")):
+            return _fail(400)
+    except (ValueError, UnicodeError, TypeError):
+        return _fail(400)
+    if payload["ageBand"] == "under18":
+        request.session["age_choice"] = "under18"
+        try:
+            request.session.save()
+        except (DatabaseError, UpdateError):
+            return _unpaired_session_response()
+        return JsonResponse({"authenticated": True,
+            "productAuthorized": "adult-pilot-denied"})
+    # Even after initial signed OIDC verification, do not mint the
+    # S03 cookie based solely on stale provider session claims.
+    try:
+        old = oidc.unseal(request.session["sealed_tokens"])
+        new = oidc.refresh(old["refresh_token"])
+        if not new.get("refresh_token"):
+            new["refresh_token"] = old["refresh_token"]
+        verified = oidc.verify_id(
+            new["id_token"], new["access_token"], previous_sub=principal["sub"])
+        if verified != principal:
+            raise oidc.IdentityError("changed identity")
+        sealed = oidc.seal(new)
+        deadline = oidc.deadline(new)
+        product_cookie, digest = issuer.issue(principal)
+    except (issuer.AdmissionError, oidc.IdentityError, KeyError, TypeError, ValueError):
+        return _fail(403)
+    request.session.update({
+        "s03_digest": digest, "sealed_tokens": sealed,
+        "oauth_deadline": deadline, "age_choice": "adult",
+        "last_seen": int(time.time()),
+    })
+    request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
+    if not _persist_issued_session(request, digest):
+        return _unpaired_session_response()
+    return _product_cookie(JsonResponse({
+        "authenticated": True, "productAuthorized": "check-S03",
+        "adultDeclared": True, "csrfResetRequired": True,
+    }), product_cookie)
 
 
 @never_cache

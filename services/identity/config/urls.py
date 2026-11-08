@@ -6,6 +6,7 @@ urlpatterns = [
     path("auth/callback", views.callback),
     path("auth/session", views.session_state),
     path("auth/csrf", views.csrf),
+    path("auth/age-choice", views.age_choice),
     path("auth/refresh", views.refresh),
     path("auth/logout", views.logout),
 ]

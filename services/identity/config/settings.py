@@ -54,6 +54,11 @@ SUMLAUDE_REVOKE_FUNCTION = os.environ.get(
 IDENTITY_IDLE_SECONDS = 1800
 IDENTITY_ABSOLUTE_SECONDS = 28800
 PRODUCT_SESSION_SECONDS = 600
+# Production-first GTM pilot: no product cookie until an authenticated
+# account holder explicitly declares 18+ through the CSRF-protected BFF.
+# Ordinary adult declaration is NOT age verification. Existing S03 secure
+# issuer remains the only authorization authority after this choice.
+REQUIRE_GTM_ADULT_CHOICE = True
 
 ROOT_URLCONF = "config.urls"
 USE_TZ = True
