@@ -30,7 +30,7 @@ on:
         required: false
         type: string
       auth_probe:
-        description: Read-only registry OIDC diagnostic, skips build and publication
+        description: Read-only OIDC authentication diagnostic, skips build and publication
         required: false
         type: boolean
         default: false
