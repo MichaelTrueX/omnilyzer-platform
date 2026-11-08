@@ -154,7 +154,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIs(dispatched["version"]["required"], True)
         self.assertIs(dispatched["source_sha"]["required"], True)
         self.assertEqual(dispatched["auth_probe"],
-                         {"description": "Read-only registry OIDC diagnostic, skips build and publication",
+                         {"description": "Read-only OIDC authentication diagnostic, skips build and publication",
                           "required": False, "type": "boolean", "default": False})
 
     def test_probe_and_release_paths_are_mutually_exclusive(self) -> None:
