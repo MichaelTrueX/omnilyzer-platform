@@ -73,6 +73,31 @@ class FirstPublisherTests(unittest.TestCase):
             "PENDING_REQUIRED_ACTION")
         self.assertEqual(m.verification_status(VERIFIED), "VERIFIED")
 
+    def test_all_pending_keycloak_actions_block_verified_status(self):
+        """Any outstanding Keycloak action, not only email/password, blocks."""
+        for action in ("CONFIGURE_TOTP", "UPDATE_PROFILE", "VERIFY_PROFILE"):
+            with self.subTest(action=action):
+                account = {**VERIFIED, "requiredActions": [action]}
+                self.assertEqual(m.verification_status(account),
+                                 "PENDING_REQUIRED_ACTION")
+                with self.assertRaisesRegex(m.Stop, "ACTIONS_INCOMPLETE"):
+                    self.exercise("verify", [REALM, CLIENTS, [account]])
+
+    def test_malformed_required_actions_fail_closed(self):
+        """Do not mistake null, strings, objects or invalid items for empty."""
+        for actions in (None, "UPDATE_PASSWORD", {"action": "x"},
+                        [None], [""], [123]):
+            with self.subTest(actions=actions):
+                with self.assertRaisesRegex(m.Stop, "REQUIRED_ACTIONS_INVALID"):
+                    m.verification_status({**VERIFIED,
+                                           "requiredActions": actions})
+
+    def test_optional_omitted_actions_is_no_pending_actions(self):
+        """Keycloak UserRepresentation permits an absent requiredActions key."""
+        account = {key: value for key, value in VERIFIED.items()
+                   if key != "requiredActions"}
+        self.assertEqual(m.verification_status(account), "VERIFIED")
+
     def test_realm_exact_confidential_client_pass(self):
         self.assertEqual(m.verify_realm(REALM, CLIENTS), REALM["smtpServer"])
 
