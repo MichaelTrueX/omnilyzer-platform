@@ -486,6 +486,131 @@ class AnalyticsSuccessorCIRequestTests(unittest.TestCase):
         }
         return data, context, environment
 
+
+    def test_real_protected_workflow_gate_accepts_only_explicit_successor(self):
+        """Execute real unchanged canary-compatible Bash gate, without OIDC."""
+        import subprocess
+
+        data, _context, environment = self.candidate()
+        value = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)
+        inputs = value["on"]["workflow_dispatch"]["inputs"]
+        self.assertEqual(inputs["analytics_successor"]["default"], "false")
+        self.assertEqual(len(inputs), 16)
+        gate = value["jobs"]["gate"]["steps"][1]["run"]
+        standard = {
+            **environment, "ANALYTICS_SUCCESSOR": "true",
+            "PATH": "/usr/bin:/bin", "PYTHONPATH": str(ROOT),
+        }
+        for name, update, accepted in (
+            ("valid", {}, True),
+            ("legacy_fallback", {"ANALYTICS_SUCCESSOR": "false"}, False),
+            ("invalid_mode", {"ANALYTICS_SUCCESSOR": "TRUE"}, False),
+            ("wrong_stage", {"TARGET_STAGE": "prod"}, False),
+            ("wrong_product", {"TASK014_PRODUCT": "canary"}, False),
+            ("missing_owner", {"ANALYTICS_OWNER_APPROVAL_SHA256": ""}, False),
+            ("wrong_active_slot", {"ANALYTICS_ACTIVE_SLOT": "public"}, False),
+            ("wrong_oci", {"MANIFEST_DIGEST": PINNED_DIGEST}, False),
+        ):
+            with self.subTest(name=name):
+                run = subprocess.run(
+                    ("/bin/bash", "-c", gate), env={**standard, **update},
+                    cwd=str(ROOT), stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, text=True, timeout=15,
+                    check=False,
+                )
+                self.assertEqual(run.returncode == 0, accepted,
+                                 run.stdout + run.stderr)
+                if accepted:
+                    self.assertIn(
+                        "analytics_task014_successor_preflight_ok",
+                        run.stdout,
+                    )
+                self.assertNotIn("Bearer ", run.stdout + run.stderr)
+
+    def test_protected_workflow_inline_client_sends_schema3_only_under_opt_in(self):
+        """Exercise exact original three-OIDC HTTP client with synthetic tokens."""
+        from deployment.analytics_execution import parse_analytics_successor_request
+
+        data, context, environment = self.candidate()
+        value = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)
+        steps = value["jobs"]["deploy_dev"]["steps"]
+        submit = next(s for s in steps if s["name"] == "Submit DEV promotion once")
+        script = submit["run"].split("python3 - <<'PY'\n", 1)[1].rsplit(
+            "\nPY", 1,
+        )[0]
+        calls = []
+
+        class Response:
+            """Synthetic-only GitHub OIDC 200 or broker 202."""
+            def __init__(self, body, status=200):
+                self.body, self.status = body, status
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self, count=-1):
+                return self.body if count == -1 else self.body[:count]
+
+        class Opener:
+            """Capture request data, never open the network."""
+            def open(self, req, timeout):
+                url = parse.urlsplit(req.full_url)
+                if (
+                    url.scheme == "https"
+                    and url.hostname == "oidc.actions.githubusercontent.com"
+                    and url.path == "/token"
+                ):
+                    audience = parse.parse_qs(url.query)["audience"][0]
+                    if audience not in AUDIENCES:
+                        raise AssertionError("unrecognized JWT audience")
+                    calls.append(("oidc", audience))
+                    return Response(json.dumps({
+                        "value": token(audience=audience),
+                    }).encode())
+                if (
+                    req.full_url !=
+                    "https://omnilyzerdev.tail52e570.ts.net/task014/dev/promote"
+                    or req.get_method() != "POST"
+                ):
+                    raise AssertionError("wrong broker destination")
+                calls.append(("post", req.data))
+                return Response(b'{"status":"accepted"}\n', 202)
+
+        with tempfile.TemporaryDirectory() as temp, patch.dict(
+            os.environ, {
+                **environment,
+                "ANALYTICS_SUCCESSOR": "true",
+                "RUNNER_TEMP": temp,
+                "ACTIONS_ID_TOKEN_REQUEST_URL":
+                    "https://oidc.actions.githubusercontent.com/token",
+                "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "synthetic-not-secret",
+            },
+            clear=True,
+        ), patch.object(
+            request, "build_opener", return_value=Opener(),
+        ), patch("time.time", return_value=NOW), patch(
+            "deployment.analytics_ci_request.resolve_analytics_successor_ci_release_inputs",
+            side_effect=lambda *, environment, forgejo_oidc_token: dict(environment),
+        ):
+            exec(compile(script, "platform-promote.yml:V3", "exec"), {})
+
+        self.assertEqual([call[0] for call in calls],
+                         ["oidc", "oidc", "oidc", "post"])
+        self.assertEqual([call[1] for call in calls[:3]], list(AUDIENCES))
+        body = calls[-1][1]
+        self.assertEqual(
+            body, build_analytics_successor_ci_request(
+                deployment_oidc_token=token(), environment=environment,
+            ),
+        )
+        self.assertEqual(
+            parse_analytics_successor_request(body, **context).to_dict(),
+            data,
+        )
+
     def test_unverified_ci_request_roundtrips_real_closed_successor_parser(self):
         from deployment.analytics_execution import (
             parse_analytics_successor_request,
