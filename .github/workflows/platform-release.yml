@@ -30,7 +30,7 @@ on:
         required: false
         type: string
       auth_probe:
-        description: Read-only Forgejo OIDC diagnostic, skips build and publication
+        description: Read-only OIDC authentication diagnostic, skips build and publication
         required: false
         type: boolean
         default: false
@@ -50,10 +50,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Section 0: an API-dispatched unknown product or Analytics auth-probe mode
-  # must produce a FAILED run, not a deceptively green all-skipped workflow.
+  # Section 0: reject unknown products and incomplete owner-approved probes;
+  # invalid dispatch must FAIL, not return a deceptively green skipped run.
   deny-unsupported-dispatch:
-    if: ${{ (inputs.product != 'canary' && inputs.product != 'analytics') || (inputs.product == 'analytics' && inputs.auth_probe == true) || (inputs.analytics_source_sha != '' && inputs.analytics_owner_signature_base64 == '') || (inputs.analytics_source_sha == '' && inputs.analytics_owner_signature_base64 != '') || (inputs.product != 'analytics' && inputs.analytics_source_sha != '') }}
+    if: ${{ (inputs.product != 'canary' && inputs.product != 'analytics') || (inputs.product == 'analytics' && inputs.auth_probe == true && (inputs.analytics_source_sha == '' || inputs.analytics_owner_signature_base64 == '')) || (inputs.analytics_source_sha != '' && inputs.analytics_owner_signature_base64 == '') || (inputs.analytics_source_sha == '' && inputs.analytics_owner_signature_base64 != '') || (inputs.product != 'analytics' && inputs.analytics_source_sha != '') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -106,6 +106,82 @@ jobs:
             --audience u:2:316bec9a-53e4-4807-9557-7febdc979d0a \
             --output "$token_file"
           python3 -m release.forgejo_oidc_probe --token-file "$token_file"
+
+  # Section 1a: protected Analytics-only, owner-signed pre-build registry probe.
+  # This diagnostic cannot build, sign, publish, or start Task014 deployment.
+  analytics-registry-preflight:
+    if: ${{ inputs.product == 'analytics' && inputs.auth_probe == true && inputs.analytics_source_sha != '' && inputs.analytics_owner_signature_base64 != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    environment: task013-dev-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout protected main without credentials for preflight
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Checkout exact owner-selected private Analytics Git commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: MichaelTrueX/omnilyzer
+          ref: ${{ inputs.analytics_source_sha }}
+          ssh-key: ${{ secrets.ANALYTICS_SOURCE_DEPLOY_KEY }}
+          fetch-depth: 0
+          path: analytics-review-source
+          persist-credentials: false
+      - name: Verify protected main, exact Git tree and owner Ed25519 before OIDC
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.source_sha }}
+          ANALYTICS_SOURCE_COMMIT: ${{ inputs.analytics_source_sha }}
+          ANALYTICS_RELEASE_VERSION: ${{ inputs.version }}
+          ANALYTICS_OWNER_SIGNATURE_BASE64: ${{ inputs.analytics_owner_signature_base64 }}
+          ANALYTICS_OWNER_ALLOWED_SIGNERS: ${{ secrets.ANALYTICS_OWNER_ALLOWED_SIGNERS }}
+        run: |
+          set -euo pipefail
+          test "$REQUESTED_SHA" = "$GITHUB_SHA"
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REPOSITORY" = MichaelTrueX/omnilyzer-platform
+          test "$GITHUB_WORKFLOW_REF" = "MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          from release.analytics_task013_build_candidate import protected_ci_owner_inputs
+          from release.analytics_owner_source_selection import review_ci_owner_signed_source
+
+          owner = protected_ci_owner_inputs()
+          _, receipt = review_ci_owner_signed_source(
+              owner["owner_context"], owner["owner_payload"],
+              Path.cwd(), Path("analytics-review-source"),
+              signature_base64=owner["owner_signature_base64"],
+              protected_signers=owner["protected_owner_signers"],
+          )
+          if receipt.owner_signature_verified is not True:
+              raise SystemExit("ANALYTICS_PREFLIGHT_OWNER_SIGNATURE_DENIED")
+          print("ANALYTICS_PREFLIGHT_OWNER_SOURCE_BOUND_PASS")
+          PYCODE
+      - name: Request separate OIDC audiences and prove Analytics version absent
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          umask 077
+          forgejo_token="$RUNNER_TEMP/analytics-prebuild-forgejo.jwt"
+          zot_token="$RUNNER_TEMP/analytics-prebuild-zot.jwt"
+          trap 'rm -f -- "$forgejo_token" "$zot_token"' EXIT
+          python3 -m release.request_oidc \
+            --audience u:2:316bec9a-53e4-4807-9557-7febdc979d0a \
+            --output "$forgejo_token"
+          python3 -m release.request_oidc \
+            --audience https://oci-dev.omnilyzer.ai --output "$zot_token"
+          python3 -m release.registry_absence_preflight --product analytics \
+            --version "$RELEASE_VERSION" --forgejo-token-file "$forgejo_token" \
+            --zot-token-file "$zot_token"
+          echo "ANALYTICS_PREFLIGHT_READ_ONLY_TWO_REGISTRIES_PASS"
 
   # Section 1b: independently verify the exact Analytics source INSIDE the
   # existing protected workflow, without granting publication or promotion.

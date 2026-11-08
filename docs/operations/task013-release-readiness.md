@@ -30,9 +30,13 @@ read-only evidence, and write one **GO / HOLD** decision. Any **FAIL**,
 **UNKNOWN**, mismatched source, wrong server, unexpected ACL or competing run
 means **HOLD: DO NOT DISPATCH**. GitHub-only OIDC proof cannot be substituted
 with a local unauthenticated GET. The current Task013 publisher runs its live
-authenticated absence check **after** the costly build. That is a remaining
-operational limitation, not a verified early preflight. Never assert that an
-automatic early check exists until it is actually merged and tested.
+authenticated absence check **after** the costly build and repeats it immediately before any write.
+The separately reviewed `product=analytics, auth_probe=true` mode performs a
+read-only, owner-signed pre-build check with distinct Forgejo and Zot OIDC
+audiences, but only after its code has been merged to protected `main`
+and its runner is confirmed available without GitHub payment. This check
+does not reserve a version or authorize a release. An unmerged probe is
+not operational evidence.
 
 ## 0. Begin with the authoritative source
 
@@ -138,16 +142,18 @@ automatic early check exists until it is actually merged and tested.
   status, current registry inventory, previous attempts and immutable tags.
   If a former run may have partially published, **HOLD** until authenticated
   reconciliation proves that the candidate version is genuinely unused.
-- [ ] **Known automation gap, October 2026:** a protected read-only
-  `analytics-registry-preflight` job preceding the expensive build has NOT
-  been merged. The job was prepared on the PR branch but withdrawn when
-  the mandatory canary security review uncovered one Critical and one High in
-  its existing pinned image on 2026-10-31. Do not bypass that security gate.
-  For changed product source, new registry destinations, permissions, OIDC
-  policy, credential rotation or a previously failed 401/403, **HOLD** pending
-  an approved live pre-build check. For a repeat release of the same reviewed
-  source with unchanged proven registry authorities, disclose the remaining
-  potential wasted-build risk; do not claim it is eliminated.
+- [ ] For each changed-source Analytics build, independently run exactly
+  one `product=analytics, auth_probe=true` read-only pre-build check from
+  protected `main`, using exact platform SHA, approved product commit,
+  genuine detached owner Ed25519 signature and proposed new version.
+  Require `ANALYTICS_PREFLIGHT_OWNER_SOURCE_BOUND_PASS`,
+  `REGISTRY_PREFLIGHT_ANALYTICS_TWO_DESTINATIONS_ABSENT`, and
+  `ANALYTICS_PREFLIGHT_READ_ONLY_TWO_REGISTRIES_PASS` on that exact run.
+  The probe may only check absence and can never build, sign, publish or
+  enable Task014. Stop on any OIDC, signature, version, TLS or source
+  mismatch. Do not invoke paid GitHub services or bypass the original
+  Syft/Grype 0 Critical/High release checks. A prior successful probe
+  for another platform SHA/version is not proof for this release.
 - [ ] Current repo CI and required scanning must pass without Critical/High
   waiver. Fix the vulnerable canary base through its owning security change,
   not by hiding the existing `release/**` security check or weakening the
