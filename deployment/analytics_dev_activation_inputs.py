@@ -153,7 +153,8 @@ def build_unsigned_analytics_activation_inputs(
     The default retains the independently accepted V1 root-install request.
     Explicit V2 emits unsigned successor review data and schema-2 config;
     generation3 emits only unsigned future owner-install review inputs,
-    which the CURRENT root-only installer still rejects. This is never an
+    optionally binding a separately root-reviewed exact protected promotion
+    workflow SHA. The CURRENT root-only installer still rejects this input. This is never an
     installation, deployment authorization or signature acceptance.
     """
     try:
@@ -311,6 +312,7 @@ def build_unsigned_analytics_service_inputs(
     Signed source pinning, broker signatures and systemd activation remain
     independent and mandatory.
     Neither unit is installed or started by this review-only builder.
+    An optional current Task014 SHA is never authority from an HTTP request.
     """
     try:
         if (
