@@ -203,9 +203,12 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("inputs.product == 'analytics' && inputs.auth_probe == true", deny)
         self.assertIn("inputs.analytics_source_sha == '' || inputs.analytics_owner_signature_base64 == ''", deny)
         for name in ("analytics-source-admission", "analytics-publish-zot",
-                     "analytics-publish-forgejo", "gate", "build",
-                     "publish-zot", "publish-forgejo"):
+                     "analytics-publish-forgejo", "gate"):
             self.assertIn("inputs.auth_probe == false", self.jobs[name]["if"])
+        self.assertEqual(self.jobs["build"]["needs"], "gate")
+        self.assertEqual(self.jobs["publish-zot"]["needs"], ["gate", "build"])
+        self.assertEqual(self.jobs["publish-forgejo"]["needs"],
+                         ["gate", "build", "publish-zot"])
 
     def test_probe_uses_exact_workflow_identity_and_no_writes(self) -> None:
         """Keep the OIDC JWT confined to one read-only package GET."""
