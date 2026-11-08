@@ -150,7 +150,7 @@ using IPv4 and IPv6, with no DATA and no mail sent. Keycloak SMTP currently
 MISSING. Google accepted no-reply@sumlaude.com as sender for both IPs.
 
 Source: services/identity/ops/configure_keycloak_google_relay.py
-SHA256: f8aac1acc03430d23d4482666efd72d04d7a9ef5f9e98d35a55cff8c69daf963
+SHA256: 60ac2f0fd9b4b7f23d8e1d79424a17e23d58d1ed402acb7e09deaff40e4aa64d
 Scope: one existing Keycloak realm SMTP map only. Use smtp-relay.gmail.com
 implicit TLS port 465 (not opportunistic STARTTLS on 587, in light of
 known SMTP TLS downgrade concern), from/envelope no-reply@sumlaude.com,
@@ -169,7 +169,7 @@ running anything privileged. Never execute owner-writeable source as root.
 ~~~bash
 set -Eeuo pipefail
 d=/home/trusthansen/m01-first-real-publisher-20261108
-sha=f8aac1acc03430d23d4482666efd72d04d7a9ef5f9e98d35a55cff8c69daf963
+sha=60ac2f0fd9b4b7f23d8e1d79424a17e23d58d1ed402acb7e09deaff40e4aa64d
 test "$(hostname -s)" = truexmainserver
 printf '%s  %s\n' "$sha" "$d/configure_keycloak_google_relay.py" | sha256sum -c -
 test "$(stat -c '%U:%a' "$d/configure_keycloak_google_relay.py")" = trusthansen:600
@@ -184,7 +184,7 @@ sudo -H bash -s <<'M01_SMTP_ROOT_READONLY'
 set -Eeuo pipefail
 umask 077
 src=/home/trusthansen/m01-first-real-publisher-20261108/configure_keycloak_google_relay.py
-sha=f8aac1acc03430d23d4482666efd72d04d7a9ef5f9e98d35a55cff8c69daf963
+sha=60ac2f0fd9b4b7f23d8e1d79424a17e23d58d1ed402acb7e09deaff40e4aa64d
 test "$(id -u)" -eq 0
 test "$(hostname -s)" = truexmainserver
 tmp="$(mktemp -d /run/m01-smtp-operator-XXXXXXXX)"
@@ -211,7 +211,7 @@ sudo -H bash -s <<'M01_SMTP_ROOT_CONFIGURE'
 set -Eeuo pipefail
 umask 077
 src=/home/trusthansen/m01-first-real-publisher-20261108/configure_keycloak_google_relay.py
-sha=f8aac1acc03430d23d4482666efd72d04d7a9ef5f9e98d35a55cff8c69daf963
+sha=60ac2f0fd9b4b7f23d8e1d79424a17e23d58d1ed402acb7e09deaff40e4aa64d
 test "$(id -u)" -eq 0
 test "$(hostname -s)" = truexmainserver
 tmp="$(mktemp -d /run/m01-smtp-operator-XXXXXXXX)"
@@ -234,7 +234,7 @@ sudo -H bash -s <<'M01_SMTP_ROOT_ROLLBACK'
 set -Eeuo pipefail
 umask 077
 src=/home/trusthansen/m01-first-real-publisher-20261108/configure_keycloak_google_relay.py
-sha=f8aac1acc03430d23d4482666efd72d04d7a9ef5f9e98d35a55cff8c69daf963
+sha=60ac2f0fd9b4b7f23d8e1d79424a17e23d58d1ed402acb7e09deaff40e4aa64d
 test "$(id -u)" -eq 0
 test "$(hostname -s)" = truexmainserver
 tmp="$(mktemp -d /run/m01-smtp-operator-XXXXXXXX)"

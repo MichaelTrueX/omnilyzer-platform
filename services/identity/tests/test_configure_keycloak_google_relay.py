@@ -107,5 +107,22 @@ class KeycloakSMTPTests(unittest.TestCase):
                           [{**REALM, "smtpServer": m.SMTP}, CLIENTS,
                            {**REALM, "smtpServer": m.SMTP}])
 
+
+    def test_smtp_tls_explicitly_requires_minimum_tls12(self):
+        from unittest.mock import MagicMock
+        context=MagicMock()
+        context.minimum_version=None
+        raw=MagicMock()
+        raw.__enter__.return_value=raw
+        wrapped=MagicMock()
+        wrapped.__enter__.return_value=wrapped
+        wrapped.version.return_value="TLSv1.3"
+        wrapped.recv.return_value=b"220 smtp.example ESMTP"
+        context.wrap_socket.return_value=wrapped
+        with patch.object(m.ssl,"create_default_context",return_value=context), \
+             patch.object(m.socket,"create_connection",return_value=raw):
+            m.tls_connectivity()
+        self.assertEqual(context.minimum_version, m.ssl.TLSVersion.TLSv1_2)
+
 if __name__ == "__main__":
     unittest.main()

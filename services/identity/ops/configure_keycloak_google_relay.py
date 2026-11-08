@@ -105,6 +105,7 @@ def smtp_state(obj):
 
 def tls_connectivity():
     context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     try:
         with socket.create_connection((SMTP["host"], int(SMTP["port"])), timeout=10) as raw:
             with context.wrap_socket(raw, server_hostname=SMTP["host"]) as sock:
