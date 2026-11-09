@@ -127,6 +127,29 @@ _SUCCESSOR_VERIFIER_TMPFS = (
     "/run/omnilyzer/deployment/dev/blob-verifier:mode=0700,uid=991,gid=991 "
     "/run/omnilyzer/deployment/dev/oci-verifier:mode=0700,uid=991,gid=991"
 )
+# Section: reuse the EXISTING Analytics rootless supervisor systemd unit.
+# One root-reviewed source blob is installed BESIDE the old blue-only script.
+# Resetting ExecStopPost is critical: old cleanup deletes a 3141 blue route
+# after a green cutover and is not permitted under journalled V3 operation.
+_SUCCESSOR_SUPERVISOR_SOURCE = (
+    "deployment/analytics_loopback_successor_supervisor.py"
+)
+_SUCCESSOR_SUPERVISOR_INSTALL = (
+    "/opt/omnilyzer/deployment/analytics-loopback/"
+    "analytics_loopback_successor_supervisor.py"
+)
+_SUCCESSOR_SUPERVISOR_DROPIN = (
+    "/etc/systemd/system/omnilyzer-analytics-loopback.service.d/"
+    "analytics-v3-supervisor.conf"
+)
+_SUCCESSOR_SUPERVISOR_DROPIN_BYTES = (
+    "[Service]\n"
+    "ExecStart=\n"
+    "ExecStart=/usr/bin/python3 -I -B "
+    + _SUCCESSOR_SUPERVISOR_INSTALL + " --serve\n"
+    "ExecStopPost=\n"
+    "Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1\n"
+).encode("ascii")
 _ORIGINAL_RUNTIME_DIRECTORY = (
     "RuntimeDirectory=omnilyzer/deployment/rootless-docker"
 )
@@ -476,6 +499,32 @@ def build_unsigned_analytics_service_inputs(
                     + _SUCCESSOR_BROKER_OWNER_TMPFS + "\n"
                     + _SUCCESSOR_BROKER_OWNER_BINDS + "\n"
                 ).encode("ascii")
+                # Section: resolve the supervisor from exactly this reviewed
+                # Git commit, never from a mutable checkout or operator path.
+                source = _original_git._tree(_original_git._output(
+                    repository_root,
+                    ("ls-tree", "-r", "-z", "--full-tree",
+                     reviewed_commit, "--", _SUCCESSOR_SUPERVISOR_SOURCE),
+                    1024,
+                ), (_SUCCESSOR_SUPERVISOR_SOURCE,))
+                if (len(source) != 1
+                    or source[0][0] != _SUCCESSOR_SUPERVISOR_SOURCE):
+                    raise ValueError
+                script = _original_git._output(
+                    repository_root, ("cat-file", "blob", source[0][1]),
+                    48 * 1024,
+                )
+                if (
+                    not script.startswith(b"#!/usr/bin/env python3\n")
+                    or b"TASK014_ANALYTICS_SUCCESSOR_SUPERVISOR_HOLD" not in script
+                    or b"ANALYTICS_REVIEWED_SUPERVISOR_V2" not in script
+                    or len(script) > 40 * 1024
+                ):
+                    raise ValueError("unreviewed successor supervisor")
+                result[_SUCCESSOR_SUPERVISOR_INSTALL] = script
+                result[_SUCCESSOR_SUPERVISOR_DROPIN] = (
+                    _SUCCESSOR_SUPERVISOR_DROPIN_BYTES
+                )
         expected_paths = {
             _ANALYTICS_RUNTIME_DROPIN,
             *(destination for _source, destination in _SERVICE_SOURCES),
@@ -485,7 +534,11 @@ def build_unsigned_analytics_service_inputs(
                 _SUCCESSOR_BROKER_DROPIN, _SUCCESSOR_EXECUTOR_DROPIN,
             ))
             if owner_authorized_first_successor:
-                expected_paths.add(_SUCCESSOR_BROKER_OWNER_DROPIN)
+                expected_paths.update((
+                    _SUCCESSOR_BROKER_OWNER_DROPIN,
+                    _SUCCESSOR_SUPERVISOR_INSTALL,
+                    _SUCCESSOR_SUPERVISOR_DROPIN,
+                ))
         if (
             set(result) != expected_paths
             or any(type(raw) is not bytes or not raw for raw in result.values())
