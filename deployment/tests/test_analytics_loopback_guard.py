@@ -58,13 +58,22 @@ class SuccessorSupervisorReadOnlyTests(unittest.TestCase):
         patches = (
             patch.object(guard, "_rootless_info"),
             patch.object(guard, "_container_state"),
-            patch.object(guard, "_verified_slot", return_value=self.candidate_ip),
+            patch.object(guard, "_verified_slot", side_effect=self._verified_green),
             patch.object(guard, "_http_ready"),
             patch.object(guard, "_raw_rules", side_effect=self._rules),
         )
         for item in patches:
             item.start()
             self.addCleanup(item.stop)
+
+    def _verified_green(self, slot, image, identifier):
+        """Simulate exact immutable candidate OCI and container ID binding."""
+        if (
+            slot != "green" or image != self.candidate_image
+            or identifier != self.candidate_id
+        ):
+            raise ValueError("wrong signed candidate identity")
+        return self.candidate_ip
 
     def _rules(self):
         """Return exact local route snapshots with distinct stable record IDs."""
