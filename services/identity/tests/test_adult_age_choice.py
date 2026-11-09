@@ -73,10 +73,10 @@ class AdultChoiceGatewayTests(SimpleTestCase):
         return result.json()["csrf_token"]
 
     def post(self, choice="adult", *, csrf=True, origin="https://app.sumlaude.com",
-             body=None, content_type="application/json"):
+             body=None, content_type="application/json", csrf_token=None):
         args = {"HTTP_ORIGIN": origin}
         if csrf:
-            args["HTTP_X_CSRFTOKEN"] = self.csrf()
+            args["HTTP_X_CSRFTOKEN"] = csrf_token if csrf_token is not None else self.csrf()
         return self.client.post(
             "/auth/age-choice",
             data=json.dumps({"ageBand": choice}) if body is None else body,
@@ -186,8 +186,11 @@ class AdultChoiceGatewayTests(SimpleTestCase):
                 return original(store, must_create=True)
             raise UpdateError("synthetic session storage outage")
 
+        # Session-bound CSRF must be persisted BEFORE deliberately failing
+        # all session updates. Otherwise this test only checks token issuance.
+        csrf_token = self.csrf()
         with mock.patch.object(SessionStore, "save", fail_update):
-            result = self.post("adult")
+            result = self.post("adult", csrf_token=csrf_token)
         self.assertEqual(result.status_code, 503)
         self.mocks[6].assert_called_once_with("c" * 64)
         self.assertEqual(result.cookies["__Host-sumlaude_session"]["max-age"], 0)
