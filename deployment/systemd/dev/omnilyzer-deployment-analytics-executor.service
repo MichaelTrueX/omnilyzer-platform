@@ -34,7 +34,9 @@ ProtectSystem=strict
 ReadWritePaths=/var/lib/omnilyzer/deployment
 # Preserve the original private Docker CLI alias for V1 compatibility.
 BindReadOnlyPaths=/run/user/991/docker.sock:/run/omnilyzer/deployment/rootless-docker/docker.sock
-# Re-expose precisely the two kernel-authenticated read-only API socket views.
+# Re-expose only the two fixed UID991 IPC sockets. Read-only filesystem
+# binds DO NOT limit AF_UNIX messages; existing original UID991/OIDC/route
+# controls remain mandatory for any state-changing API request.
 BindReadOnlyPaths=/run/user/991/docker.sock:/run/user/991/docker.sock
 BindReadOnlyPaths=/run/user/991/dockerd-rootless/api.sock:/run/user/991/dockerd-rootless/api.sock
 ProtectControlGroups=yes
