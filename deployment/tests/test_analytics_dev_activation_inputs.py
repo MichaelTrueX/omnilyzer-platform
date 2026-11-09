@@ -196,7 +196,14 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
             repository_root=str(ROOT), reviewed_commit=self.sha,
             successor_source=True, owner_authorized_first_successor=True,
         )
-        self.assertEqual(set(original), set(preview))
+        self.assertEqual(
+            set(preview),
+            set(original) | {
+                activation._SUCCESSOR_BROKER_OWNER_DROPIN,
+                activation._SUCCESSOR_SUPERVISOR_INSTALL,
+                activation._SUCCESSOR_SUPERVISOR_DROPIN,
+            },
+        )
         for name in original:
             if name != activation._SUCCESSOR_EXECUTOR_DROPIN:
                 self.assertEqual(original[name], preview[name])
@@ -222,6 +229,71 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
                     **bad,
                 )
 
+
+    def test_v3_broker_only_public_owner_mirrors_preserve_uid991_separation(self):
+        """Mount exactly three root-owned public copies, not executor secrets."""
+        approved = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_first_successor=True,
+        )
+        payload = approved[activation._SUCCESSOR_BROKER_OWNER_DROPIN]
+        self.assertEqual(payload, (
+            "[Service]\n" + activation._SUCCESSOR_BROKER_OWNER_TMPFS
+            + "\n" + activation._SUCCESSOR_BROKER_OWNER_BINDS + "\n"
+        ).encode("ascii"))
+        self.assertEqual(payload.count(b"BindReadOnlyPaths="), 1)
+        self.assertEqual(payload.count(b"TemporaryFileSystem="), 1)
+        self.assertEqual(payload.count(b"/etc/omnilyzer/deployment/dev/"), 3)
+        self.assertEqual(payload.count(b"/etc/omnilyzer/deployment/broker/"), 3)
+        self.assertIn(b"mode=0750,uid=0,gid=990", payload)
+        for prohibited in (
+            b"chmod", b"SupplementaryGroups=", b"ExecStart=",
+            b"WorkingDirectory=", b"ReadWritePaths=", b"rootless-docker",
+            b"token", b"secret", b"uid=991", b"gid=991",
+        ):
+            self.assertNotIn(prohibited, payload)
+        for initial in (False, True):
+            source = activation.build_unsigned_analytics_service_inputs(
+                repository_root=str(ROOT), reviewed_commit=self.sha,
+                successor_source=initial,
+                owner_authorized_first_successor=False,
+            )
+            self.assertNotIn(activation._SUCCESSOR_BROKER_OWNER_DROPIN, source)
+
+    def test_v3_exact_git_supervisor_and_same_service_no_cleanup_override(self):
+        """Bounded owner-only source uses original unit and a pinned Git blob."""
+        from deployment import analytics_loopback_successor_supervisor as supervisor
+        import inspect
+        preview = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_first_successor=True,
+        )
+        original = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        self.assertNotIn(activation._SUCCESSOR_SUPERVISOR_INSTALL, original)
+        self.assertNotIn(activation._SUCCESSOR_SUPERVISOR_DROPIN, original)
+        script = preview[activation._SUCCESSOR_SUPERVISOR_INSTALL]
+        git_blob = subprocess.check_output((
+            "/usr/bin/git", "-C", str(ROOT), "show",
+            self.sha + ":" + activation._SUCCESSOR_SUPERVISOR_SOURCE,
+        ))
+        self.assertEqual(script, git_blob)
+        self.assertIn(b"_root_approved_sources()", script)
+        self.assertIn(b"_snapshot(", script)
+        self.assertNotIn(b"ANALYTICS_OWNER_SIGNATURE_BASE64", script)
+        self.assertEqual(preview[activation._SUCCESSOR_SUPERVISOR_DROPIN],
+                         activation._SUCCESSOR_SUPERVISOR_DROPIN_BYTES)
+        unit = preview[activation._SUCCESSOR_SUPERVISOR_DROPIN].decode("ascii")
+        self.assertIn("ExecStart=\n", unit)
+        self.assertIn("ExecStopPost=\n", unit)
+        self.assertIn("--serve\n", unit)
+        self.assertNotIn("--cleanup", unit)
+        self.assertNotIn("ReadWritePaths=", unit)
+        self.assertNotIn("User=", unit)
+        self.assertNotIn("Group=", unit)
+        self.assertEqual(inspect.signature(supervisor.main).parameters, {})
 
     def test_positive_v3_root_workflow_rebind_keeps_original_archive_inert(self):
         """Only explicit owner-selected V3 may rebind the protected Task014 SHA."""
