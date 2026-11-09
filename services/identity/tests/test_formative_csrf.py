@@ -105,6 +105,10 @@ class FormativeSessionCsrfTests(SimpleTestCase):
         """Positive OIDC session, matching session CSRF and SHA-paired S03 cookie."""
         self._login()
         csrf = self._csrf()
+        # The secret exists only in Django's server-held session, not a
+        # browser-readable independent double-submit CSRF cookie.
+        self.assertIn("_csrftoken", self.client.session)
+        self.assertNotIn("csrftoken", self.client.cookies)
         response = self._post(csrf)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"saved": True})
