@@ -198,7 +198,11 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         )
         self.assertEqual(
             set(preview),
-            set(original) | {activation._SUCCESSOR_BROKER_OWNER_DROPIN},
+            set(original) | {
+                activation._SUCCESSOR_BROKER_OWNER_DROPIN,
+                activation._SUCCESSOR_SUPERVISOR_INSTALL,
+                activation._SUCCESSOR_SUPERVISOR_DROPIN,
+            },
         )
         for name in original:
             if name != activation._SUCCESSOR_EXECUTOR_DROPIN:
@@ -255,6 +259,41 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
                 owner_authorized_first_successor=False,
             )
             self.assertNotIn(activation._SUCCESSOR_BROKER_OWNER_DROPIN, source)
+
+    def test_v3_exact_git_supervisor_and_same_service_no_cleanup_override(self):
+        """Bounded owner-only source uses original unit and a pinned Git blob."""
+        from deployment import analytics_loopback_successor_supervisor as supervisor
+        import inspect
+        preview = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_first_successor=True,
+        )
+        original = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        self.assertNotIn(activation._SUCCESSOR_SUPERVISOR_INSTALL, original)
+        self.assertNotIn(activation._SUCCESSOR_SUPERVISOR_DROPIN, original)
+        script = preview[activation._SUCCESSOR_SUPERVISOR_INSTALL]
+        git_blob = subprocess.check_output((
+            "/usr/bin/git", "-C", str(ROOT), "show",
+            self.sha + ":" + activation._SUCCESSOR_SUPERVISOR_SOURCE,
+        ))
+        self.assertEqual(script, git_blob)
+        self.assertIn(b"_root_approved_sources()", script)
+        self.assertIn(b"_snapshot(", script)
+        self.assertNotIn(b"ANALYTICS_OWNER_SIGNATURE_BASE64", script)
+        self.assertEqual(preview[activation._SUCCESSOR_SUPERVISOR_DROPIN],
+                         activation._SUCCESSOR_SUPERVISOR_DROPIN_BYTES)
+        unit = preview[activation._SUCCESSOR_SUPERVISOR_DROPIN].decode("ascii")
+        self.assertIn("ExecStart=\n", unit)
+        self.assertIn("ExecStopPost=\n", unit)
+        self.assertIn("--serve\n", unit)
+        self.assertNotIn("--cleanup", unit)
+        self.assertNotIn("ReadWritePaths=", unit)
+        self.assertNotIn("User=", unit)
+        self.assertNotIn("Group=", unit)
+        self.assertEqual(inspect.signature(supervisor.main).parameters, {})
 
     def test_positive_v3_root_workflow_rebind_keeps_original_archive_inert(self):
         """Only explicit owner-selected V3 may rebind the protected Task014 SHA."""
