@@ -104,7 +104,7 @@ def formative_progress(request, course_id, lesson_id):
     # Never trust a browser-supplied alternate X-CSRF-Token header. Django
     # already validated precisely X-CSRFToken against the server-side session.
     csrf = request.META.get("HTTP_X_CSRFTOKEN", "")
-    if not isinstance(csrf, str):
+    if not isinstance(csrf, str) or not csrf:
         return JsonResponse({"error": "CSRF required"}, status=403)
     path = ("/api/valoria/learning/courses/" + str(course_id) +
             "/formative/" + lesson_id + "/progress")
