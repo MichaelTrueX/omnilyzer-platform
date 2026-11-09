@@ -127,6 +127,19 @@ _SUCCESSOR_VERIFIER_TMPFS = (
     "/run/omnilyzer/deployment/dev/blob-verifier:mode=0700,uid=991,gid=991 "
     "/run/omnilyzer/deployment/dev/oci-verifier:mode=0700,uid=991,gid=991"
 )
+# Section: V3-only socket visibility under the existing executor namespace.
+# Preserve the original immutable V1 service and C32ZF alias exactly. The
+# real Analytics read-only state inspector uses these two pinned /run/user/991
+# paths, hidden by the original ProtectHome=yes. A V3-only private tmpfs keeps
+# the rest of /run/user and all home directories concealed. An AF_UNIX socket
+# exposed through a read-only filesystem bind can still carry IPC requests:
+# original UID991, OIDC, replay and deployment authorization remain mandatory.
+_SUCCESSOR_V3_USER_SOCKETS = (
+    "BindReadOnlyPaths="
+    "/run/user/991/docker.sock:/run/user/991/docker.sock "
+    "/run/user/991/dockerd-rootless/api.sock:"
+    "/run/user/991/dockerd-rootless/api.sock"
+)
 # Section: reuse the EXISTING Analytics rootless supervisor systemd unit.
 # One root-reviewed source blob is installed BESIDE the old blue-only script.
 # Resetting ExecStopPost is critical: old cleanup deletes a 3141 blue route
@@ -487,7 +500,9 @@ def build_unsigned_analytics_service_inputs(
                 candidate_bytes
                 + (_SUCCESSOR_VERIFIER_BINDS + "\n"
                    + _SUCCESSOR_VERIFIER_TMPFS + "\n").encode("ascii")
-                + (b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1\n"
+                + ((b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1\n"
+                    + b"ProtectHome=tmpfs\n"
+                    + (_SUCCESSOR_V3_USER_SOCKETS + "\n").encode("ascii"))
                    if owner_authorized_first_successor else b"")
             )
             # Only a root-selected V3 reviews these mount inputs. The root
