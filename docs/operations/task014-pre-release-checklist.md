@@ -315,6 +315,43 @@ source review and owner-controlled reversible host preflight. The
 legacy 0.15.0 private source/service and the original Canary baseline
 are intentionally unchanged by the PR.
 
+### 5.2 Observed first V3 install failure and recovery (9 November 2026)
+
+**Live incident, not an approved retry.** The first owner-root V3 maintenance
+attempt passed its exact source and before-image checks, but reported
+`M05_V3_ROOT_HOLD_ConnectionRefusedError` while the new supervisor logged
+`TASK014_ANALYTICS_SUCCESSOR_SUPERVISOR_HOLD`. The original blue-only
+Analytics 0.15.0 was automatically restored and later verified privately
+healthy on port 3141. The 0.16.0 green slot was not activated.
+
+The precise systemd journal and restored source-file timestamps show that the
+maintenance operator began rollback after a `Type=exec` restart but **before**
+the new supervisor emitted its startup HOLD. The operator therefore raced with
+the still-starting process and modified a pinned source/configuration while it
+could still be reading it. This is direct evidence of unsafe ordering, **not
+proof that the race was the sole supervisor root cause**. An added sleep by
+itself is not a sufficient repair.
+
+The owner subsequently verified both separate protected records read-only:
+the first failed attempt's 15-entry before-image receipt (including five
+original backups), and the later **inactive-only** 13-target/10-backup staging
+receipt. Both remain protected. Original loaded units and port 3141 remain V1;
+there is no 3142 route or active successor journal. Preserve both receipts.
+
+Before another privileged attempt, M05 must isolate the original V3 supervisor
+startup failure, revise the existing maintenance operator to wait for bounded
+positive service readiness with a stable matching `MainPID`, and, on failure,
+stop/confirm the new process has exited **before** restoring source/config.
+Any next attempt must reconcile and preserve both original receipts without
+reusing an occupied receipt path or erasing evidence. Obtain one focused
+independent M04 review of the **changed** operator/runtime boundary before an
+owner-controlled private DEV run. No Task013 re-signing, blind retry, seal,
+Task014 dispatch or public traffic switch is implied by this documentation.
+
+For the latest source, observed installed state and approvals, use
+[canonical Issue #281](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281),
+not this dated incident snapshot.
+
 ## 6. Historical repeatability limit, verified 31 October 2026
 
 At platform revision `2654c66ccc906baced9c17a5dfca260bef900ab3`,
