@@ -210,7 +210,9 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         self.assertEqual(
             preview[activation._SUCCESSOR_EXECUTOR_DROPIN],
             original[activation._SUCCESSOR_EXECUTOR_DROPIN]
-            + b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1\n",
+            + b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1\n"
+            + b"ProtectHome=tmpfs\n"
+            + (activation._SUCCESSOR_V3_USER_SOCKETS + "\n").encode("ascii"),
         )
         self.assertNotIn(
             b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1",
@@ -229,6 +231,64 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
                     **bad,
                 )
 
+
+    def test_v3_rootless_socket_visibility_keeps_immutable_v1_and_v2(self):
+        """Apply exact two UID991 read-only socket binds ONLY to signed V3.
+
+        Preserve the historical C32ZF executor service, rootless alias and
+        unsigned V1/V2 service inputs byte-for-byte. Do not disable home
+        isolation or invent alternate Docker/RootlessKit endpoint paths.
+        This is source-only and never runs systemd, Docker or credentials.
+        """
+        historical = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+        )
+        original_v2 = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True,
+        )
+        reviewed_v3 = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_first_successor=True,
+        )
+        original_service = activation._SERVICE_SOURCES[1][1]
+        self.assertEqual(historical[original_service], original_v2[original_service])
+        self.assertEqual(historical[original_service], reviewed_v3[original_service])
+        self.assertIn(b"ProtectHome=yes\n", historical[original_service])
+        self.assertNotIn(b"ProtectHome=tmpfs", historical[original_service])
+
+        path = activation._SUCCESSOR_EXECUTOR_DROPIN
+        self.assertNotIn(b"ProtectHome=", original_v2[path])
+        self.assertNotIn(b"/run/user/991/dockerd-rootless/api.sock", original_v2[path])
+        suffix = (
+            b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1\n"
+            b"ProtectHome=tmpfs\n"
+            + (activation._SUCCESSOR_V3_USER_SOCKETS + "\n").encode("ascii")
+        )
+        self.assertEqual(reviewed_v3[path], original_v2[path] + suffix)
+        self.assertEqual(
+            activation._SUCCESSOR_V3_USER_SOCKETS,
+            "BindReadOnlyPaths="
+            "/run/user/991/docker.sock:/run/user/991/docker.sock "
+            "/run/user/991/dockerd-rootless/api.sock:"
+            "/run/user/991/dockerd-rootless/api.sock",
+        )
+        self.assertEqual(reviewed_v3[path].count(b"ProtectHome=tmpfs"), 1)
+        self.assertNotIn(b"ProtectHome=no", reviewed_v3[path])
+        self.assertNotIn(b"BindPaths=", reviewed_v3[path])
+        self.assertNotIn(b"ReadWritePaths=", reviewed_v3[path])
+        for required in (
+            b"WorkingDirectory=/opt/omnilyzer/deployment/analytics-app-candidate",
+            b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1",
+            b"BindReadOnlyPaths=/etc/omnilyzer/deployment/dev/",
+        ):
+            self.assertIn(required, reviewed_v3[path])
+        for name in historical:
+            self.assertEqual(historical[name], reviewed_v3[name])
+        self.assertEqual(
+            original_v2[activation._SUCCESSOR_BROKER_DROPIN],
+            reviewed_v3[activation._SUCCESSOR_BROKER_DROPIN],
+        )
 
     def test_v3_broker_only_public_owner_mirrors_preserve_uid991_separation(self):
         """Mount exactly three root-owned public copies, not executor secrets."""
