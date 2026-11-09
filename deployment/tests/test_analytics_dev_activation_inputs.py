@@ -222,6 +222,64 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
                     **bad,
                 )
 
+
+    def test_positive_v3_root_workflow_rebind_keeps_original_archive_inert(self):
+        """Only explicit owner-selected V3 may rebind the protected Task014 SHA."""
+        legacy = activation.build_unsigned_analytics_activation_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_first_successor=True,
+        )
+        current_workflow = "e" * 40
+        reviewed = activation.build_unsigned_analytics_activation_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_first_successor=True,
+            approved_workflow_sha=current_workflow,
+        )
+        self.assertEqual(
+            legacy[activation.SOURCE_ARCHIVE], reviewed[activation.SOURCE_ARCHIVE],
+        )
+        self.assertEqual(
+            legacy[activation.SOURCE_APPROVAL], reviewed[activation.SOURCE_APPROVAL],
+        )
+        self.assertEqual(
+            reviewed[activation.EXECUTOR_CONFIG],
+            reviewed[activation.BROKER_CONFIG],
+        )
+        parsed = parse_analytics_executor_service_config(
+            reviewed[activation.EXECUTOR_CONFIG],
+        )
+        self.assertEqual(parsed["source_generation"], 3)
+        self.assertEqual(parsed["expected_workflow_sha"], current_workflow)
+        self.assertEqual(
+            parsed["reviewed_installed_commit"], self.sha,
+        )
+        service = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_first_successor=True,
+            approved_workflow_sha=current_workflow,
+        )
+        original = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_first_successor=True,
+        )
+        self.assertEqual(service, original)
+        for bad in (
+            {"approved_workflow_sha": "e" * 40},
+            {"successor_source": True, "approved_workflow_sha": "e" * 40},
+            {"successor_source": True, "owner_authorized_first_successor": True,
+             "approved_workflow_sha": "0" * 40},
+            {"successor_source": True, "owner_authorized_first_successor": True,
+             "approved_workflow_sha": "INVALID"},
+            {"successor_source": True, "owner_authorized_first_successor": True,
+             "approved_workflow_sha": False},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(
+                activation.AnalyticsActivationInputsError,
+            ):
+                activation.build_unsigned_analytics_activation_inputs(
+                    repository_root=str(ROOT), reviewed_commit=self.sha, **bad,
+                )
+
     def test_v2_bad_generation_or_changed_git_blob_is_denied(self):
         """No caller-selected generation/manifest or tampered TAR can pass."""
         with self.assertRaises(activation.AnalyticsActivationInputsError):

@@ -1,7 +1,7 @@
 """File: deployment/analytics_ci_request.py
 
 Purpose: Preserve the immutable signed Analytics 0.15.0 Task014 schema-v2
-         CI request and prepare an inert reviewed-successor schema-v3 request.
+         CI request and expose explicit successor schema-v3 CI serialization.
          Neither CI serialization path is a signer or a deployment grant.
 Related: .github/workflows/platform-promote.yml (original canary default),
          deployment/analytics_execution.py (closed request parser),
@@ -18,7 +18,8 @@ SECURITY: CI decoding a JWT or reading private Forgejo metadata NEVER
 authenticates the signer, owner key or active server. The root-owned Task014
 broker must independently verify ALL OIDC audiences, Ed25519 approval,
 Sigstore/Cosign, current active release and replay before an executor action.
-The successor path is NOT wired to the active promotion workflow. No broker
+The successor path is opt-in in the existing protected workflow, never a
+CI-verified owner signature or permission to deploy without installed V3. No broker
 request, host secret, Docker, database or public route is touched here.
 Canary and original Analytics 0.15.0 dispatch behavior are unchanged.
 """
@@ -567,12 +568,32 @@ def build_analytics_successor_ci_request(
 
 
 def main() -> int:
-    """Read-only workflow gate, no OIDC token, network, files or privileges."""
-    if sys.argv[1:] != ["--preflight"]:
-        return 2
-    validate_analytics_ci_inputs(os.environ, allow_metadata_resolution=True)
-    print("analytics_task014_preflight_ok")
-    return 0
+    """Only validate the explicit V1 or V3 dispatch before OIDC and host I/O.
+
+    This is a local, read-only CI gate. Original signed legacy Analytics
+    remains fixed; the successor is accepted only under a separate explicit
+    opt-in with its complete owner hash and observed rollback references.
+    """
+    mode = os.environ.get("ANALYTICS_SUCCESSOR", "false")
+    successor_fields = (
+        "ANALYTICS_PRODUCT_SOURCE_SHA", "ANALYTICS_OWNER_APPROVAL_SHA256",
+        "ANALYTICS_ACTIVE_DIGEST", "ANALYTICS_ACTIVE_SLOT",
+    )
+    if sys.argv[1:] == ["--preflight"] and mode == "false":
+        if any(os.environ.get(name) for name in successor_fields):
+            raise AnalyticsCIDispatchError(_ERROR)
+        validate_analytics_ci_inputs(
+            os.environ, allow_metadata_resolution=True,
+        )
+        print("analytics_task014_preflight_ok")
+        return 0
+    if sys.argv[1:] == ["--preflight-successor"] and mode == "true":
+        validate_analytics_successor_ci_inputs(
+            os.environ, allow_metadata_resolution=True,
+        )
+        print("analytics_task014_successor_preflight_ok")
+        return 0
+    return 2
 
 
 if __name__ == "__main__":

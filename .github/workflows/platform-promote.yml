@@ -22,6 +22,32 @@ on:
         type: choice
         options: [canary, analytics]
         default: canary
+      # Section: opt-in signed Analytics successor without affecting V1.
+      analytics_successor:
+        description: Explicit owner-reviewed Analytics successor (DEV only)
+        required: false
+        type: boolean
+        default: false
+      analytics_product_source_sha:
+        description: Reviewed Analytics application source Git commit
+        required: false
+        type: string
+        default: ""
+      analytics_owner_approval_sha256:
+        description: Hash of exact detached owner-approved source payload
+        required: false
+        type: string
+        default: ""
+      analytics_active_digest:
+        description: Observed signed current Analytics OCI rollback digest
+        required: false
+        type: string
+        default: ""
+      analytics_active_slot:
+        description: Observed signed Analytics private active slot
+        required: false
+        type: string
+        default: ""
       analytics_installed_commit:
         description: Root-reviewed Analytics installed source SHA
         required: false
@@ -131,6 +157,11 @@ jobs:
           TASK014_PRODUCT: ${{ inputs.product_id }}
           ANALYTICS_INSTALLED_COMMIT: ${{ inputs.analytics_installed_commit }}
           ANALYTICS_SOURCE_CLAIM_SHA256: ${{ inputs.analytics_source_claim_sha256 }}
+          ANALYTICS_SUCCESSOR: ${{ inputs.analytics_successor }}
+          ANALYTICS_PRODUCT_SOURCE_SHA: ${{ inputs.analytics_product_source_sha }}
+          ANALYTICS_OWNER_APPROVAL_SHA256: ${{ inputs.analytics_owner_approval_sha256 }}
+          ANALYTICS_ACTIVE_DIGEST: ${{ inputs.analytics_active_digest }}
+          ANALYTICS_ACTIVE_SLOT: ${{ inputs.analytics_active_slot }}
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "MichaelTrueX/omnilyzer-platform"
@@ -142,8 +173,14 @@ jobs:
           test -n "$ORIGINATING_RELEASE_RUN_ID"
           test "$GITHUB_REF" = "refs/heads/main"
           if [ "$TASK014_PRODUCT" = analytics ]; then
-            python3 -m deployment.analytics_ci_request --preflight
+            case "${ANALYTICS_SUCCESSOR:-false}" in
+              true) python3 -m deployment.analytics_ci_request --preflight-successor ;;
+              false) python3 -m deployment.analytics_ci_request --preflight ;;
+              *) exit 1 ;;
+            esac
           elif [ "$TASK014_PRODUCT" = canary ]; then
+            test "${ANALYTICS_SUCCESSOR:-false}" = false
+            test -z "${ANALYTICS_PRODUCT_SOURCE_SHA:-}${ANALYTICS_OWNER_APPROVAL_SHA256:-}${ANALYTICS_ACTIVE_DIGEST:-}${ANALYTICS_ACTIVE_SLOT:-}"
             test -n "$RELEASE_MANIFEST_SHA256"
             test -n "$PROVENANCE_SHA256"
             request="$RUNNER_TEMP/task014-promotion-request.json"
@@ -200,6 +237,11 @@ jobs:
           TASK014_PRODUCT: ${{ inputs.product_id }}
           ANALYTICS_INSTALLED_COMMIT: ${{ inputs.analytics_installed_commit }}
           ANALYTICS_SOURCE_CLAIM_SHA256: ${{ inputs.analytics_source_claim_sha256 }}
+          ANALYTICS_SUCCESSOR: ${{ inputs.analytics_successor }}
+          ANALYTICS_PRODUCT_SOURCE_SHA: ${{ inputs.analytics_product_source_sha }}
+          ANALYTICS_OWNER_APPROVAL_SHA256: ${{ inputs.analytics_owner_approval_sha256 }}
+          ANALYTICS_ACTIVE_DIGEST: ${{ inputs.analytics_active_digest }}
+          ANALYTICS_ACTIVE_SLOT: ${{ inputs.analytics_active_slot }}
         run: |
           set -euo pipefail
           umask 077
@@ -207,8 +249,14 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/main"
           test "$TARGET_STAGE" = dev
           if [ "$TASK014_PRODUCT" = analytics ]; then
-            python3 -m deployment.analytics_ci_request --preflight
+            case "${ANALYTICS_SUCCESSOR:-false}" in
+              true) python3 -m deployment.analytics_ci_request --preflight-successor ;;
+              false) python3 -m deployment.analytics_ci_request --preflight ;;
+              *) exit 1 ;;
+            esac
           elif [ "$TASK014_PRODUCT" = canary ]; then
+            test "${ANALYTICS_SUCCESSOR:-false}" = false
+            test -z "${ANALYTICS_PRODUCT_SOURCE_SHA:-}${ANALYTICS_OWNER_APPROVAL_SHA256:-}${ANALYTICS_ACTIVE_DIGEST:-}${ANALYTICS_ACTIVE_SLOT:-}"
             python3 -m deployment.promotion \
             --release-version "$RELEASE_VERSION" \
             --source-sha "$SOURCE_SHA" \
@@ -434,6 +482,11 @@ jobs:
           ORIGINATING_RELEASE_RUN_ID: ${{ inputs.originating_release_run_id }}
           ANALYTICS_INSTALLED_COMMIT: ${{ inputs.analytics_installed_commit }}
           ANALYTICS_SOURCE_CLAIM_SHA256: ${{ inputs.analytics_source_claim_sha256 }}
+          ANALYTICS_SUCCESSOR: ${{ inputs.analytics_successor }}
+          ANALYTICS_PRODUCT_SOURCE_SHA: ${{ inputs.analytics_product_source_sha }}
+          ANALYTICS_OWNER_APPROVAL_SHA256: ${{ inputs.analytics_owner_approval_sha256 }}
+          ANALYTICS_ACTIVE_DIGEST: ${{ inputs.analytics_active_digest }}
+          ANALYTICS_ACTIVE_SLOT: ${{ inputs.analytics_active_slot }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -520,13 +573,36 @@ jobs:
           if os.environ.get("TASK014_PRODUCT") == "analytics":
               from deployment.analytics_ci_request import (
                   build_analytics_ci_request, resolve_analytics_ci_release_inputs,
+                  build_analytics_successor_ci_request,
+                  resolve_analytics_successor_ci_release_inputs,
               )
-              analytics_environment = resolve_analytics_ci_release_inputs(
-                  environment=os.environ, forgejo_oidc_token=forgejo_jwt,
-              )
-              body = build_analytics_ci_request(
-                  deployment_oidc_token=deployment_jwt, environment=analytics_environment,
-              )
+              # Section: exact root-reviewed successor opt-in. No schema3
+              # fallback from legacy 0.15.0 and no signer trust in CI.
+              mode = os.environ.get("ANALYTICS_SUCCESSOR", "false")
+              if mode == "true":
+                  analytics_environment = resolve_analytics_successor_ci_release_inputs(
+                      environment=os.environ, forgejo_oidc_token=forgejo_jwt,
+                  )
+                  body = build_analytics_successor_ci_request(
+                      deployment_oidc_token=deployment_jwt,
+                      environment=analytics_environment,
+                  )
+              elif mode == "false":
+                  if any(os.environ.get(name) for name in (
+                      "ANALYTICS_PRODUCT_SOURCE_SHA",
+                      "ANALYTICS_OWNER_APPROVAL_SHA256",
+                      "ANALYTICS_ACTIVE_DIGEST", "ANALYTICS_ACTIVE_SLOT",
+                  )):
+                      raise ValueError("successor inputs without explicit mode")
+                  analytics_environment = resolve_analytics_ci_release_inputs(
+                      environment=os.environ, forgejo_oidc_token=forgejo_jwt,
+                  )
+                  body = build_analytics_ci_request(
+                      deployment_oidc_token=deployment_jwt,
+                      environment=analytics_environment,
+                  )
+              else:
+                  raise ValueError("invalid Analytics successor mode")
           elif os.environ.get("TASK014_PRODUCT") in ("canary", None):
               path = Path(os.environ["RUNNER_TEMP"]) / "task014-dev-promotion-request.json"
               if path.is_symlink() or not path.is_file() or stat.S_IMODE(path.stat().st_mode) != 0o600:

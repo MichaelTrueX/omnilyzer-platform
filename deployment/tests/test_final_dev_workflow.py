@@ -35,7 +35,9 @@ PROMOTION_INPUTS = {
 }
 INPUTS = PROMOTION_INPUTS | {
     "auth_probe", "product_id", "analytics_installed_commit",
-    "analytics_source_claim_sha256",
+    "analytics_source_claim_sha256", "analytics_successor",
+    "analytics_product_source_sha", "analytics_owner_approval_sha256",
+    "analytics_active_digest", "analytics_active_slot",
 }
 AUDIENCES = (
     "https://deploy-dev.omnilyzer.ai/task014-dev",
@@ -96,10 +98,17 @@ class FinalDevWorkflowTests(unittest.TestCase):
             "required": "true", "type": "choice",
             "options": ["canary", "analytics"], "default": "canary",
         })
-        for key in ("analytics_installed_commit", "analytics_source_claim_sha256"):
+        for key in (
+            "analytics_installed_commit", "analytics_source_claim_sha256",
+            "analytics_product_source_sha", "analytics_owner_approval_sha256",
+            "analytics_active_digest", "analytics_active_slot",
+        ):
             self.assertEqual(inputs[key]["required"], "false")
             self.assertEqual(inputs[key]["type"], "string")
             self.assertEqual(inputs[key]["default"], "")
+        self.assertEqual(inputs["analytics_successor"]["required"], "false")
+        self.assertEqual(inputs["analytics_successor"]["type"], "boolean")
+        self.assertEqual(inputs["analytics_successor"]["default"], "false")
         self.assertEqual(inputs["target_stage"]["required"], "true")
         self.assertEqual(inputs["auth_probe"]["required"], "false")
         self.assertEqual(inputs["auth_probe"]["type"], "boolean")
@@ -228,7 +237,9 @@ class FinalDevWorkflowTests(unittest.TestCase):
             "TARGET_STAGE", "RELEASE_VERSION", "SOURCE_SHA", "MANIFEST_DIGEST",
             "RELEASE_MANIFEST_SHA256", "PROVENANCE_SHA256", "ORIGINATING_RELEASE_RUN_ID",
             "REQUESTED_BY", "TASK014_PRODUCT", "ANALYTICS_INSTALLED_COMMIT",
-            "ANALYTICS_SOURCE_CLAIM_SHA256",
+            "ANALYTICS_SOURCE_CLAIM_SHA256", "ANALYTICS_SUCCESSOR",
+            "ANALYTICS_PRODUCT_SOURCE_SHA", "ANALYTICS_OWNER_APPROVAL_SHA256",
+            "ANALYTICS_ACTIVE_DIGEST", "ANALYTICS_ACTIVE_SLOT",
         })
         self.assertEqual(create["env"]["TASK014_PRODUCT"], "${{ inputs.product_id }}")
         self.assertEqual(create["env"]["ANALYTICS_INSTALLED_COMMIT"],
@@ -250,6 +261,10 @@ class FinalDevWorkflowTests(unittest.TestCase):
         self.assertNotIn("deployment.controller", create["run"])
         self.assertNotIn("deployment.promotion", self.submit["run"])
         self.assertIn("build_analytics_ci_request(", self.submit["run"])
+        self.assertIn("build_analytics_successor_ci_request(", self.submit["run"])
+        self.assertIn('mode = os.environ.get("ANALYTICS_SUCCESSOR", "false")',
+                      self.submit["run"])
+        self.assertIn("--preflight-successor", create["run"])
         self.assertIn('elif os.environ.get("TASK014_PRODUCT") in ("canary", None):',
                       self.submit["run"])
         self.assertEqual(self.submit["env"]["TASK014_PRODUCT"],

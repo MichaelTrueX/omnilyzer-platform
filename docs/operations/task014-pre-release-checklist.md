@@ -157,7 +157,75 @@ Rollback/recovery evidence and current state:
 Remaining blocker and next action:
 ```
 
-## 5. Current repeatability limit, verified 31 October 2026
+## 5. Actual signed Analytics 0.16.0 to protected Task014 V3 handoff (9 November 2026)
+
+**Distribution accepted, installation still HOLD.** The original signed
+[Task013 run #42534753909](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/42534753909)
+produced a real Syft/Grype zero-Critical/High, Zot+Forgejo+keyless-Cosign
+signed Analytics `0.16.0` (immutable
+`oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:a0ce1e63dd379c939a2e558b04307b129fa79128da1362caa90d963d8bb3f6a1`)
+from reviewed product commit `a86a9b5e6a72afac05628e85335cbdf47c6f0255`
+and protected Task013 platform `d18f8f5cab4be0be7873472c26d44d5d9c42a195`.
+M04 independently reviewed the actual signed job/log evidence in Issue #281.
+This is not proof of installation, private green3142, tenant isolation or
+write-preserving rollback. Do not dispatch Task013 for occupied `0.16.0`
+again; do not silently repin 0.15.0 as the successor.
+
+**First source-integration step:** The existing protected
+`platform-promote.yml` is being extended with *explicit*
+`analytics_successor=true` (default false), using the original
+`validate_analytics_successor_ci_inputs`,
+`resolve_analytics_successor_ci_release_inputs`, and
+`build_analytics_successor_ci_request`. It requires the reviewed product
+commit, canonical owner source approval SHA256, exact Task013 source SHA,
+originating run, OCI digest, root-reviewed installed source commit and the
+currently *observed* active signed rollback digest/slot. The three optional
+release metadata hashes must be ALL supplied or ALL empty for the original
+authenticated Forgejo resolution. CI source, token decoding and caller
+supplied slot fields are **NOT independent root release authority**.
+The original 0.15.0 schema2 path is preserved without a successor flag;
+Canary cannot use successor fields. Gate failure occurs before OIDC and POST.
+The workflow, CI input tests and V3 unsigned source review must pass
+independent M04 review and merge protection before they are operational.
+
+**Mandatory independent root installation rebind:** A new protected Task014
+main commit changes the **GitHub OIDC workflow SHA**, but the original
+DEV broker and the inactive owner-staged V3 candidate still reference the
+historically approved workflow generation. Do not send a live successor
+request until one reviewed owner-root procedure, in the original DEV
+maintenance/recovery scope, independently:
+1. Verifies actual protected main SHA, original signed Task013 evidence
+   and owner Ed25519 source approval, complete exact installed source/26
+   hashes, root metadata, original signed 0.15.0 and recovery assets;
+2. Rebinds the existing root-owned C32H broker workflow authority and the
+   independently root-owned V3 Analytics broker/executor source configs to
+   the SAME exact new protected Task014 workflow SHA. The unsigned
+   `build_unsigned_analytics_activation_inputs(...,
+   owner_authorized_first_successor=True,
+   approved_workflow_sha=exact_reviewed_main_sha)` generates bounded
+   canonical review bytes only. No CI/request/HTTP parameter grants root
+   installation or canary source/role/permission changes;
+3. Installs only the originally reviewed V3 generation3 positive
+   broker/executor source selection and paired immutable systemd drop-ins,
+   with rollback receipts and an exact loaded-unit examination. The
+   original immutable V1 0.15.0 image and blue3141 writer remain preserved;
+4. Verifies original protected Canary/Analytics service separation, UID990
+   broker/UID991 executor, socket sealed-FD+peer identity, Sigstore trust
+   and private Zot/Forgejo OIDC read access, rootless Docker, RLS+DB writer,
+   owner source signer and journal/backup recovery before a single V3
+   Task014 dispatch;
+5. Runs one real protected private signed successor request, independently
+   verifies 3142 readiness + authentic 0.16.0 signed digest, 3141 route
+   switch, tenant/consent/collector persistence and write-preserving
+   rollback/replay, then obtains M04 independent installed boundary/OAT.
+
+The existing `analytics-app-candidate` directory and UID991 verifier
+resources were staged **inactively**, not enabled. An inaccessible root
+trust file from the unprivileged account is UNKNOWN, not absent. The
+private signed 0.15.0 remains on 127.0.0.1:3141 until all gates pass.
+No public/production exposure, DB migration or new payment framework.
+
+## 6. Historical repeatability limit, verified 31 October 2026
 
 At platform revision `2654c66ccc906baced9c17a5dfca260bef900ab3`,
 `deployment/analytics_ci_request.py` consumes fixed `PINNED_VERSION`,
