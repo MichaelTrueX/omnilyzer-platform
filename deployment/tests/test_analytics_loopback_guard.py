@@ -154,6 +154,73 @@ class SuccessorSupervisorReadOnlyTests(unittest.TestCase):
                     guard, self.journal, self.original_id,
                 ), phase)
 
+    def test_terminal_restored_blue_survives_removed_green_but_never_tampering(self):
+        """M04 P1: retired green may be absent only after durable blue restore.
+
+        The actual journal reader validates the canonical record separately.
+        These route and source checks must still reject falsified recovery
+        metadata, an altered Canary, extra green routes and unhealthy blue.
+        """
+        self.journal.read.return_value = self._record("restored")
+        self.rules = [self.canary, self.old]
+        with patch.object(
+            guard, "_verified_slot",
+            side_effect=ValueError("old green already stopped"),
+        ) as green, patch.object(guard, "_http_ready") as health:
+            self.assertEqual(
+                self.service._snapshot(guard, self.journal, self.original_id),
+                "restored",
+            )
+            green.assert_not_called()
+            self.assertEqual(
+                [call.args[0] for call in health.call_args_list],
+                ["/readyz", "/livez"],
+            )
+            with patch.object(
+                guard, "_http_ready",
+                side_effect=ValueError("original blue is unhealthy"),
+            ):
+                with self.assertRaises(ValueError):
+                    self.service._snapshot(
+                        guard, self.journal, self.original_id,
+                    )
+
+            # The retired green is not required as a process, but no green
+            # forwarding is permitted to remain in the restored inventory.
+            for routes in (
+                [self.canary],
+                [self.canary, self.probe],
+                [self.canary, self.old, self.probe],
+                [self.canary, self.current],
+                [{**self.canary, "parentPort": 3021}, self.old],
+                [self.canary, {**self.old, "childIP": "172.20.0.99"}],
+                [self.canary, self.old, self.old],
+            ):
+                with self.subTest(routes=routes):
+                    self.rules = routes
+                    with self.assertRaises(ValueError):
+                        self.service._snapshot(
+                            guard, self.journal, self.original_id,
+                        )
+
+            self.rules = [self.canary, self.old]
+            for tamper in (
+                {"previous_image": self.candidate_image},
+                {"previous_container_id": "c" * 64},
+                {"previous_ip": self.candidate_ip},
+                {"previous_slot": "green"},
+                {"next_slot": "blue"},
+                {"phase": "invalid"},
+            ):
+                with self.subTest(tamper=tamper):
+                    forged = self._record("restored")
+                    forged.update(tamper)
+                    self.journal.read.return_value = forged
+                    with self.assertRaises((ValueError, KeyError)):
+                        self.service._snapshot(
+                            guard, self.journal, self.original_id,
+                        )
+
     def test_unknown_route_modified_signer_and_invented_phase_all_fail(self):
         """No false adoption of arbitrary route, phase or signed source."""
         self.journal.read.return_value = self._record("candidate_ready")
