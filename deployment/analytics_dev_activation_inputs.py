@@ -83,6 +83,28 @@ _SUCCESSOR_EXECUTOR_DROPIN = (
     "/etc/systemd/system/omnilyzer-deployment-analytics-executor.service.d/"
     "analytics-v2-source.conf"
 )
+# Section: V3 broker-only mount namespace for PUBLIC signed-source evidence.
+# UID990 never gains traversal over the executor's root:991 0750 directory.
+# A separate ROOT-reviewed 0640 root:990 mirror is mounted read-only into a
+# broker-private tmpfs with 0750 root:990, at the ORIGINAL fixed verifier paths.
+# The real /etc/omnilyzer/deployment/dev remains unchanged for UID991.
+_SUCCESSOR_BROKER_OWNER_DROPIN = (
+    "/etc/systemd/system/omnilyzer-deployment-broker.service.d/"
+    "analytics-v3-owner-public.conf"
+)
+_SUCCESSOR_BROKER_OWNER_TMPFS = (
+    "TemporaryFileSystem="
+    "/etc/omnilyzer/deployment/dev:mode=0750,uid=0,gid=990"
+)
+_SUCCESSOR_BROKER_OWNER_BINDS = (
+    "BindReadOnlyPaths="
+    "/etc/omnilyzer/deployment/broker/analytics-owner-source-signers:"
+    "/etc/omnilyzer/deployment/dev/analytics-owner-source-signers "
+    "/etc/omnilyzer/deployment/broker/analytics-owner-source-approval.json:"
+    "/etc/omnilyzer/deployment/dev/analytics-owner-source-approval.json "
+    "/etc/omnilyzer/deployment/broker/analytics-owner-source-approval.json.sig:"
+    "/etc/omnilyzer/deployment/dev/analytics-owner-source-approval.json.sig"
+)
 # The original Cosign and TrustedRoot reader requires two protected directories
 # to have the *current verifier principal's* group, not broker UID990's group.
 # Systemd binds separately root-provisioned 0:991 copies into the old paths
@@ -445,6 +467,15 @@ def build_unsigned_analytics_service_inputs(
                 + (b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1\n"
                    if owner_authorized_first_successor else b"")
             )
+            # Only a root-selected V3 reviews these mount inputs. The root
+            # installer must independently verify the three protected broker
+            # mirrors against the UID991 signer/approval bytes and signature.
+            if owner_authorized_first_successor:
+                result[_SUCCESSOR_BROKER_OWNER_DROPIN] = (
+                    "[Service]\n"
+                    + _SUCCESSOR_BROKER_OWNER_TMPFS + "\n"
+                    + _SUCCESSOR_BROKER_OWNER_BINDS + "\n"
+                ).encode("ascii")
         expected_paths = {
             _ANALYTICS_RUNTIME_DROPIN,
             *(destination for _source, destination in _SERVICE_SOURCES),
@@ -453,6 +484,8 @@ def build_unsigned_analytics_service_inputs(
             expected_paths.update((
                 _SUCCESSOR_BROKER_DROPIN, _SUCCESSOR_EXECUTOR_DROPIN,
             ))
+            if owner_authorized_first_successor:
+                expected_paths.add(_SUCCESSOR_BROKER_OWNER_DROPIN)
         if (
             set(result) != expected_paths
             or any(type(raw) is not bytes or not raw for raw in result.values())
