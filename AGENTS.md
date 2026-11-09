@@ -199,6 +199,48 @@ approval bureaucracy for ordinary product changes.
    Declare DONE only when the accepted user journey works on the intended
    live environment, not when CI or isolated tests alone are green.
 
+## Real-service readiness and safe recovery (operational learning, 9 November 2026)
+
+Apply these principles when a change affects a privileged install, supervised
+process, private traffic route, or rollback. Ordinary source-only changes do
+not need a new deployment test process.
+
+1. **Process start is not product readiness.** A successful systemd start
+   (including `Type=exec` or an active state) proves neither that the service
+   finished initialization nor that the expected signed application is ready.
+   Require bounded positive health, stable process identity, exact loaded
+   source/configuration and expected private route before declaring installation
+   PASS or unblocking a deployment.
+2. **Do not race rollback against startup.** If activation fails, first stop
+   the new process and establish that it has exited before replacing any
+   source/configuration file that it may still be reading. Then restore exact
+   guarded before-images and prove the original service is healthy. A timeout
+   alone is not proof that a failed startup has completed cleanup.
+3. **Preserve recovery evidence across attempts.** A failed install and a
+   later inactive staging can have distinct root-only receipts. Reconcile them
+   against actual on-disk source, permissions, loaded units and route state;
+   never delete or overwrite receipts to make a repeat attempt pass. Inactive
+   staging, signed distribution and working deployment are different outcomes.
+4. **Review the changed operational failure path.** The delivery owner must
+   exercise delayed startup, early process exit, partial file installation,
+   refusal of unexpected state and rollback ordering with the existing
+   focused tests or an isolated equivalent. Request one independent, delta-
+   scoped QA review where the changed trust or recovery boundary requires it.
+   Synthetic tests are not live service acceptance; do not rerun unaffected
+   signed-release or browser test suites simply because a chat restarted.
+5. **Minimize owner relay and evidence churn.** The delivery chat performs
+   available unprivileged investigations and tests itself, reads current
+   GitHub and real-host evidence, records a concise result in the canonical
+   issue, and asks the owner only for necessary privileged operations and
+   decisions. One documented failure should result in a root-cause repair,
+   not multiple blind installation attempts.
+
+For the concrete Analytics Task014 incident and current HOLD, follow
+[the Task014 pre-release checklist](docs/operations/task014-pre-release-checklist.md)
+and current [Issue #281](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281).
+Do not copy version-specific hashes or dated installed-state claims into this
+permanent instruction file.
+
 ## Cross-chat continuity and source of truth
 
 ChatGPT conversation memory is useful context but is not a complete or reliable
