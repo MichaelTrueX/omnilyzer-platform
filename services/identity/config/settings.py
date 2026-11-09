@@ -83,6 +83,10 @@ CSRF_COOKIE_SECURE = True
 CSRF_COOKIE_HTTPONLY = False
 CSRF_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_PATH = "/"
+# Store the CSRF secret in the same server-side Django session as the
+# confidential Keycloak principal. Existing /auth/csrf returns a masked token
+# to S01; no browser-readable standalone CSRF secret or bearer token is used.
+CSRF_USE_SESSIONS = True
 SECURE_SSL_REDIRECT = True
 SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = False
