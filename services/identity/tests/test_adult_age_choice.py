@@ -128,6 +128,36 @@ class AdultChoiceGatewayTests(SimpleTestCase):
         self.assertEqual(self.mocks[5].call_count, 0)
         self.assertEqual(self.post("under18").status_code, 403)
 
+    def test_adult_choice_rotates_csrf_before_product_authorized_writes(self):
+        """The pending identity token cannot authorize a post-admission logout."""
+        self.login_identity_only()
+        pending_token = self.csrf()
+        before_secret = self.client.session["_csrftoken"]
+        result = self.post("adult", csrf_token=pending_token)
+        self.assertEqual(result.status_code, 200)
+        self.assertNotEqual(self.client.session["_csrftoken"], before_secret)
+        self.assertEqual(self.client.post(
+            "/auth/logout", secure=True,
+            HTTP_ORIGIN="https://app.sumlaude.com",
+            HTTP_X_CSRFTOKEN=pending_token,
+        ).status_code, 403)
+        self.assertEqual(self.client.post(
+            "/auth/logout", secure=True,
+            HTTP_ORIGIN="https://app.sumlaude.com",
+            HTTP_X_CSRFTOKEN=self.csrf(),
+        ).status_code, 200)
+
+    def test_under18_choice_rotates_identity_csrf_secret(self):
+        """The adult-pilot denial also invalidates previous pending CSRF."""
+        self.login_identity_only()
+        pending_token = self.csrf()
+        before_secret = self.client.session["_csrftoken"]
+        self.assertEqual(
+            self.post("under18", csrf_token=pending_token).status_code, 200)
+        self.assertNotEqual(self.client.session["_csrftoken"], before_secret)
+        self.assertEqual(self.post("adult", csrf_token=pending_token).status_code, 403)
+        self.assertEqual(self.mocks[5].call_count, 0)
+
     def test_normal_adult_only_issues_product_cookie_after_s03_guard(self):
         self.login_identity_only()
         result = self.post("adult")
