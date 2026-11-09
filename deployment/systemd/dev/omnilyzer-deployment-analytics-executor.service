@@ -25,10 +25,18 @@ UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ProtectHome=yes
+# Keep home and user-runtime trees hidden in private read-only tmpfs mounts.
+# Only two fixed UID991 sockets are re-exposed under /run/user so the original
+# read-only Analytics active-state inspector can use its pinned absolute paths.
+# Do not replace with ProtectHome=no or expose all of /run/user/991.
+ProtectHome=tmpfs
 ProtectSystem=strict
 ReadWritePaths=/var/lib/omnilyzer/deployment
+# Preserve the original private Docker CLI alias for V1 compatibility.
 BindReadOnlyPaths=/run/user/991/docker.sock:/run/omnilyzer/deployment/rootless-docker/docker.sock
+# Re-expose precisely the two kernel-authenticated read-only API socket views.
+BindReadOnlyPaths=/run/user/991/docker.sock:/run/user/991/docker.sock
+BindReadOnlyPaths=/run/user/991/dockerd-rootless/api.sock:/run/user/991/dockerd-rootless/api.sock
 ProtectControlGroups=yes
 ProtectKernelModules=yes
 ProtectKernelTunables=yes
