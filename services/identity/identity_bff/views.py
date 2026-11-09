@@ -14,7 +14,7 @@ from django.conf import settings
 from django.contrib.sessions.backends.base import UpdateError
 from django.db import DatabaseError
 from django.http import JsonResponse, HttpResponseRedirect
-from django.middleware.csrf import get_token
+from django.middleware.csrf import get_token, rotate_token
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
@@ -161,6 +161,9 @@ def callback(request):
                 request.session.save()
             except (DatabaseError, UpdateError):
                 return _unpaired_session_response()
+            # Rotate the secret after OIDC identity changes, not just the
+            # Django session key. A pre-login CSRF token must no longer work.
+            rotate_token(request)
             return _clear_product_cookie(HttpResponseRedirect("/professional/gtm-001"))
         product_cookie, digest = issuer.issue(principal)
     except (issuer.AdmissionError, oidc.IdentityError, KeyError, TypeError, ValueError):
@@ -176,6 +179,8 @@ def callback(request):
     request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
     if not _persist_issued_session(request, digest):
         return _unpaired_session_response()
+    # Invalidate tokens issued before the signed OIDC principal was admitted.
+    rotate_token(request)
     return _product_cookie(HttpResponseRedirect("/start"), product_cookie)
 
 
@@ -235,6 +240,8 @@ def age_choice(request):
             request.session.save()
         except (DatabaseError, UpdateError):
             return _unpaired_session_response()
+        # Under-18 choice irrevocably changes the identity authorization state.
+        rotate_token(request)
         return JsonResponse({"authenticated": True,
             "productAuthorized": "adult-pilot-denied"})
     # Even after initial signed OIDC verification, do not mint the
@@ -261,6 +268,8 @@ def age_choice(request):
     request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
     if not _persist_issued_session(request, digest):
         return _unpaired_session_response()
+    # An identity-only choice token must not be usable after adult admission.
+    rotate_token(request)
     return _product_cookie(JsonResponse({
         "authenticated": True, "productAuthorized": "check-S03",
         "adultDeclared": True, "csrfResetRequired": True,
@@ -309,6 +318,8 @@ def refresh(request):
     request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
     if not _persist_issued_session(request, digest):
         return _unpaired_session_response()
+    # Refresh rotates the Native cookie and CSRF secret together.
+    rotate_token(request)
     return _product_cookie(JsonResponse({"authenticated": True, "refreshed": True,
         "csrfResetRequired": True}), product_cookie)
 
