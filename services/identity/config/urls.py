@@ -1,3 +1,8 @@
+"""File: services/identity/config/urls.py
+Purpose: Existing confidential OIDC routes and exact CSRF-checked formative POST.
+Related: services/identity/identity_bff/{views,formative}.py,
+    services/identity/config/settings.py, Sumlaude S01 NGINX vhost.
+"""
 from django.urls import path
 from identity_bff import views, formative
 
