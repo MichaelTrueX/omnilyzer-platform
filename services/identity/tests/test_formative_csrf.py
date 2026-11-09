@@ -68,6 +68,7 @@ class FormativeSessionCsrfTests(SimpleTestCase):
             mock.patch.object(issuer, "issue", return_value=(COOKIE, DIGEST)),
             mock.patch.object(issuer, "revoke", return_value=True),
             mock.patch.object(oidc, "revoke_provider", return_value=True),
+            mock.patch.object(oidc, "refresh", return_value=_tokens()),
         ]
         self.mocks = [p.start() for p in self.patches]
         self.addCleanup(lambda: [p.stop() for p in reversed(self.patches)])
@@ -120,6 +121,29 @@ class FormativeSessionCsrfTests(SimpleTestCase):
         self.assertEqual(cookie, COOKIE)
         self.assertEqual(token, csrf)
         self.assertNotIn("access_token", response.content.decode())
+
+    def test_oidc_login_rotates_prelogin_csrf_token(self):
+        """The anonymous token cannot survive a signed identity transition."""
+        prelogin_token = self._csrf()
+        self._login()
+        self.assertEqual(self._post(prelogin_token).status_code, 403)
+        self.assertEqual(self._post(self._csrf()).status_code, 200)
+        self.forward.assert_called_once()
+
+    def test_refresh_rotates_csrf_with_native_session(self):
+        """Refresh invalidates stale token while retaining valid signed access."""
+        self._login()
+        old = self._csrf()
+        response = self.client.post(
+            "/auth/refresh", secure=True,
+            HTTP_ORIGIN="https://app.sumlaude.com",
+            HTTP_X_CSRFTOKEN=old,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["csrfResetRequired"])
+        self.assertEqual(self._post(old).status_code, 403)
+        self.assertEqual(self._post(self._csrf()).status_code, 200)
+        self.forward.assert_called_once()
 
     def test_missing_wrong_and_arbitrary_native_header_denied(self):
         """A mere X-CSRF-Token or a random X-CSRFToken cannot pass Django."""
