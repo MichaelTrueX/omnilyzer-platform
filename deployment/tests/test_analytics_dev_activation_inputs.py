@@ -196,7 +196,10 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
             repository_root=str(ROOT), reviewed_commit=self.sha,
             successor_source=True, owner_authorized_first_successor=True,
         )
-        self.assertEqual(set(original), set(preview))
+        self.assertEqual(
+            set(preview),
+            set(original) | {activation._SUCCESSOR_BROKER_OWNER_DROPIN},
+        )
         for name in original:
             if name != activation._SUCCESSOR_EXECUTOR_DROPIN:
                 self.assertEqual(original[name], preview[name])
@@ -222,6 +225,36 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
                     **bad,
                 )
 
+
+    def test_v3_broker_only_public_owner_mirrors_preserve_uid991_separation(self):
+        """Mount exactly three root-owned public copies, not executor secrets."""
+        approved = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_first_successor=True,
+        )
+        payload = approved[activation._SUCCESSOR_BROKER_OWNER_DROPIN]
+        self.assertEqual(payload, (
+            "[Service]\\n" + activation._SUCCESSOR_BROKER_OWNER_TMPFS
+            + "\\n" + activation._SUCCESSOR_BROKER_OWNER_BINDS + "\\n"
+        ).encode("ascii"))
+        self.assertEqual(payload.count(b"BindReadOnlyPaths="), 1)
+        self.assertEqual(payload.count(b"TemporaryFileSystem="), 1)
+        self.assertEqual(payload.count(b"/etc/omnilyzer/deployment/dev/"), 3)
+        self.assertEqual(payload.count(b"/etc/omnilyzer/deployment/broker/"), 3)
+        self.assertIn(b"mode=0750,uid=0,gid=990", payload)
+        for prohibited in (
+            b"chmod", b"SupplementaryGroups=", b"ExecStart=",
+            b"WorkingDirectory=", b"ReadWritePaths=", b"rootless-docker",
+            b"token", b"secret", b"uid=991", b"gid=991",
+        ):
+            self.assertNotIn(prohibited, payload)
+        for initial in (False, True):
+            source = activation.build_unsigned_analytics_service_inputs(
+                repository_root=str(ROOT), reviewed_commit=self.sha,
+                successor_source=initial,
+                owner_authorized_first_successor=False,
+            )
+            self.assertNotIn(activation._SUCCESSOR_BROKER_OWNER_DROPIN, source)
 
     def test_positive_v3_root_workflow_rebind_keeps_original_archive_inert(self):
         """Only explicit owner-selected V3 may rebind the protected Task014 SHA."""
