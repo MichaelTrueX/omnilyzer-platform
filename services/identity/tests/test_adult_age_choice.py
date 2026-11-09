@@ -1,7 +1,9 @@
-"""Genuine server-side age-band choice transaction; isolated mocks ONLY.
-
-No fake age document, no production admission record or automatic learner
-enrolment; restricted S03 issuer is mocked and tested to deny if ineligible.
+"""File: services/identity/tests/test_adult_age_choice.py
+Purpose: Genuine server-side age-band choice transaction and persistence
+    failure scenarios using isolated mocks only, including session-bound CSRF.
+Related: services/identity/identity_bff/views.py,
+    services/identity/config/settings.py, test_formative_csrf.py.
+No fake age document, real admission, or automatic learner enrolment.
 """
 import json
 import os
