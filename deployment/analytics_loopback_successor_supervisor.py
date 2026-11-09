@@ -165,6 +165,20 @@ def _snapshot(guard, journal, original_id: str, *, startup: bool = False) -> str
         or record.get("next_image") == guard._IMAGE
     ):
         raise ValueError("journal not anchored to original signed writer")
+    # Section: terminal, durable rollback is monitored independently of the
+    # RETIRED green container. The existing journal reader already verifies
+    # the canonical signed transition record; the original blue image, exact
+    # container ID, private IP and Canary were checked above. A completed
+    # restoration must remain healthy after the obsolete candidate is stopped.
+    phase = record["phase"]
+    if phase == "restored":
+        if not equals(guard._CANARY, guard._TARGET):
+            raise ValueError("restored original route mismatch")
+        guard._http_ready("/readyz")
+        guard._http_ready("/livez")
+        return phase
+    # All live/recovery phases still verify the expected green immutable OCI,
+    # exact container identity and private IP before accepting a green route.
     next_ip = guard._verified_slot(
         "green", record["next_image"], record["next_container_id"],
     )
@@ -172,7 +186,6 @@ def _snapshot(guard, journal, original_id: str, *, startup: bool = False) -> str
         raise ValueError("journal candidate image/endpoint drifted")
     candidate = _route_spec(guard, 3142, next_ip)
     current = _route_spec(guard, 3141, next_ip)
-    phase = record["phase"]
     # These are the exact possible intermediate RootlessKit inventories in
     # the existing candidate+switch+durable rollback code. No other service
     # can introduce a new public route, arbitrary port or unknown container.
