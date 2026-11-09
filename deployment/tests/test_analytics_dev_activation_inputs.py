@@ -234,8 +234,8 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
         )
         payload = approved[activation._SUCCESSOR_BROKER_OWNER_DROPIN]
         self.assertEqual(payload, (
-            "[Service]\\n" + activation._SUCCESSOR_BROKER_OWNER_TMPFS
-            + "\\n" + activation._SUCCESSOR_BROKER_OWNER_BINDS + "\\n"
+            "[Service]\n" + activation._SUCCESSOR_BROKER_OWNER_TMPFS
+            + "\n" + activation._SUCCESSOR_BROKER_OWNER_BINDS + "\n"
         ).encode("ascii"))
         self.assertEqual(payload.count(b"BindReadOnlyPaths="), 1)
         self.assertEqual(payload.count(b"TemporaryFileSystem="), 1)
