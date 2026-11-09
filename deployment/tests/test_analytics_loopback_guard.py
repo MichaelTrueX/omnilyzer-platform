@@ -28,6 +28,159 @@ from deployment.analytics_route_journal import (
 )
 
 
+
+# Section 0: actual future UID991 supervisor decisions with no real API calls.
+class SuccessorSupervisorReadOnlyTests(unittest.TestCase):
+    """Prove the successor supervisor never mutates an unrecognized route."""
+
+    def setUp(self):
+        """Use real fixed guard constants, fake local state and an inert journal."""
+        from deployment import analytics_loopback_successor_supervisor as service
+        from unittest.mock import Mock
+        from types import SimpleNamespace
+        self.service = service
+        self.original_id = "a" * 64
+        self.candidate_id = "b" * 64
+        self.candidate_ip = "172.20.0.4"
+        self.candidate_image = (
+            "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "e" * 64
+        )
+        self.current = {
+            **guard._TARGET, "childIP": self.candidate_ip,
+        }
+        self.probe = {
+            **self.current, "parentPort": 3142,
+        }
+        self.old = dict(guard._TARGET)
+        self.canary = dict(guard._CANARY)
+        self.journal = SimpleNamespace(read=Mock(return_value=None))
+        self.rules = []
+        patches = (
+            patch.object(guard, "_rootless_info"),
+            patch.object(guard, "_container_state"),
+            patch.object(guard, "_verified_slot", return_value=self.candidate_ip),
+            patch.object(guard, "_http_ready"),
+            patch.object(guard, "_raw_rules", side_effect=self._rules),
+        )
+        for item in patches:
+            item.start()
+            self.addCleanup(item.stop)
+
+    def _rules(self):
+        """Return exact local route snapshots with distinct stable record IDs."""
+        return [{"id": i + 1, "spec": dict(v)}
+                for i, v in enumerate(self.rules)]
+
+    def _record(self, phase):
+        """Construct the fixed signed original-blue and next-green reference."""
+        return {
+            "phase": phase,
+            "previous_slot": "blue",
+            "previous_image": guard._IMAGE,
+            "previous_container_id": self.original_id,
+            "previous_ip": guard._TARGET["childIP"],
+            "next_slot": "green",
+            "next_image": self.candidate_image,
+            "next_container_id": self.candidate_id,
+            "next_ip": self.candidate_ip,
+        }
+
+    def test_original_blue_and_one_time_maintenance_restore(self):
+        """Only original blue from a known signed image can be restored."""
+        self.rules = [self.canary, self.old]
+        self.assertEqual(self.service._snapshot(
+            guard, self.journal, self.original_id,
+        ), "blue")
+        self.rules = [self.canary]
+        with self.assertRaises(ValueError):
+            self.service._snapshot(guard, self.journal, self.original_id)
+        self.assertEqual(self.service._snapshot(
+            guard, self.journal, self.original_id, startup=True,
+        ), "restore_original_blue")
+        self.rules.append(dict(self.probe))
+        with self.assertRaises(ValueError):
+            self.service._snapshot(
+                guard, self.journal, self.original_id, startup=True,
+            )
+
+    def test_single_rootless_restore_only_adds_old_blue_after_checked_canary(self):
+        """New supervisor cannot remove Canary or create a green port."""
+        with patch.object(guard, "_identity", return_value=self.original_id):
+            self.rules = [self.canary]
+
+            def post(path, method, resource, body=None, status=200):
+                self.assertEqual((path, method, resource, status),
+                                 (guard._ROOTLESS, "POST", "/v1/ports", 201))
+                self.assertEqual(body, guard._TARGET)
+                self.rules.append(dict(body))
+                return {"id": 2, "spec": dict(body)}
+
+            with patch.object(guard, "_api", side_effect=post), patch.object(
+                self.service.time, "sleep", side_effect=self.service._Stop,
+            ):
+                with self.assertRaises(self.service._Stop):
+                    self.service._serve(guard, self.journal)
+            self.assertEqual(self.rules, [self.canary, self.old])
+
+    def test_journal_transitions_allow_only_exact_signed_green_and_canary(self):
+        """Transaction's transient states are permitted, unrelated routes not."""
+        stages = (
+            ("prepared", [self.canary, self.old]),
+            ("prepared", [self.canary, self.old, self.probe]),
+            ("candidate_ready", [self.canary, self.old, self.probe]),
+            ("candidate_ready", [self.canary, self.probe]),
+            ("candidate_ready", [self.canary, self.current, self.probe]),
+            ("candidate_ready", [self.canary, self.current]),
+            ("switched", [self.canary, self.current]),
+            ("rollback_pending", [self.canary, self.current]),
+            ("rollback_pending", [self.canary]),
+            ("rollback_pending", [self.canary, self.old]),
+            ("restored", [self.canary, self.old]),
+        )
+        for phase, routes in stages:
+            with self.subTest(phase=phase, routes=len(routes)):
+                self.journal.read.return_value = self._record(phase)
+                self.rules = routes
+                self.assertEqual(self.service._snapshot(
+                    guard, self.journal, self.original_id,
+                ), phase)
+
+    def test_unknown_route_modified_signer_and_invented_phase_all_fail(self):
+        """No false adoption of arbitrary route, phase or signed source."""
+        self.journal.read.return_value = self._record("candidate_ready")
+        self.rules = [
+            self.canary, self.old, {
+                **self.probe, "parentPort": 3143,
+            },
+        ]
+        with self.assertRaises(ValueError):
+            self.service._snapshot(guard, self.journal, self.original_id)
+        self.rules = [self.canary, self.current]
+        for tamper in (
+            {"previous_image": self.candidate_image},
+            {"next_slot": "blue"},
+            {"phase": "invented"},
+            {"next_container_id": "c" * 64},
+        ):
+            with self.subTest(tamper=tamper):
+                record = self._record("switched")
+                record.update(tamper)
+                self.journal.read.return_value = record
+                with self.assertRaises(ValueError):
+                    self.service._snapshot(guard, self.journal, self.original_id)
+
+    def test_entrypoint_cannot_start_without_root_v3_source(self):
+        """An arbitrary CLI invocation never gets root-level authority."""
+        with patch.object(self.service.sys, "argv", ["supervisor.py", "bad"]):
+            self.assertEqual(self.service.main(), 2)
+        with patch.object(self.service.sys, "argv", [
+            "supervisor.py", "--serve",
+        ]), patch.object(
+            self.service, "_root_approved_sources",
+            side_effect=ValueError("denied"),
+        ), patch.object(self.service.sys, "stderr"):
+            self.assertEqual(self.service.main(), 1)
+
 # Section 1: Complete synthetic Docker and RootlessKit authority fixtures.
 CID = "a" * 64
 CANARY = {"id": 1, "spec": dict(guard._CANARY)}
