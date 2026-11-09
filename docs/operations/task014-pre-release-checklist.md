@@ -225,6 +225,96 @@ trust file from the unprivileged account is UNKNOWN, not absent. The
 private signed 0.15.0 remains on 127.0.0.1:3141 until all gates pass.
 No public/production exposure, DB migration or new payment framework.
 
+### 5.1 Owner-root V3 maintenance boundary, after live 9 November inspection
+
+The actual root-only matrix found `/etc/omnilyzer/deployment/broker/dev.json`
+schema2 still signed to protected promotion workflow `4978b32c...`; both
+Analytics product configs under `/etc/omnilyzer/deployment/broker/analytics.json`
+and `/etc/omnilyzer/deployment/dev/analytics-executor.json` are schema1
+at reviewed commit `8ebf7422...`. The protected later promotion main was
+`e1ecf4ac183df82741013e64a7cd9ab7e38f7064`. The staged source
+install receipt is only schema2; actual 3141 blue/0.15.0 remains healthy,
+3142 is absent. The approved actual 0.16.0 owner Ed25519 approval/signature
+are staged privately under
+`/home/trust/m05-task014-owner-signature-0160-d18f8f5c/` (owner-only
+0700 folder, both files 0600) with hashes:
+approval `1f7185c7d6d7caa33baf5a6dfc3ce9c4494c6b499501ded4fce4974918b0adbb`;
+signature `b3aec8dffcd5cfca939be3658482db38d10a0b1970fdde8011252fef25df1dd0`.
+This is NOT installed root trust. Original owner public signer in DEV is
+present. The owner signing key is still on the owner's laptop only.
+
+The original rootless 3141 loopback process was confirmed still executing
+`analytics_loopback_guard.py --serve` from the original 13345-byte
+blue-only pinned file. Its 2-second monitor rejects ANY green3142 or
+substituted 3141 route; its termination path deletes blue3141.
+The UID991 route journal directory under
+`/var/lib/omnilyzer/deployment/analytics-route` is absent. Activating
+V3 broker/UID991 receiver or dispatching schema3 while this original
+monitor remains active is a **hard NO-GO**.
+
+**Minimum corrective source and owner action, not a new deployment framework:**
+
+1. Reuse original `analytics_dev_activation_inputs.py` to generate the
+   V3 unsigned source and service review bytes for the **final protected
+   main SHA after source review and merge**. Recheck actual root config,
+   installed candidate's 26 SHA256 source files and existing original
+   0.15.0 rollback image; do not restage those unchanged 26 files.
+2. The root-only installer must verify the actual Ed25519 signature against
+   the original `analytics-owner-source-signers` file and independently
+   verify its 0.16.0 canonical source claim. Install only the bounded
+   **public** approval, signature and allowed-signers copies into the
+   executor's existing protected DEV hierarchy (root:991 0640) and three
+   exact duplicate, still root-owned public files in the separately
+   protected BROKER hierarchy (root:990 0640). Do not copy the private key,
+   alter directory permissions, change any service groups or expose
+   executor credentials to UID990.
+3. The V3-only
+   `analytics-v3-owner-public.conf` broker drop-in mounts a private
+   `/etc/omnilyzer/deployment/dev` tmpfs root:990 0750 into that broker's
+   mount namespace, then binds ONLY these three root:990 public files
+   read-only onto the original verifier paths. Outside the UID990 mount
+   namespace the real DEV hierarchy remains root:991 0750, unchanged for
+   UID991; original protected trust and signature verification remains
+   unmodified. Requires actual loaded-unit namespace test before dispatch.
+4. Install the new **fixed original-unit** successor supervisor at
+   `/opt/omnilyzer/deployment/analytics-loopback/analytics_loopback_successor_supervisor.py`
+   from its exact reviewed Git blob as root:root 0644. Its
+   `analytics-v3-supervisor.conf` drop-in selects that fixed script
+   and explicitly clears the old `ExecStopPost` blue-only cleanup, while
+   preserving UID991, original loopback-only RootlessKit unit and the
+   pinned original 0.15.0 container ID. The new process requires
+   root-owned generation3 config and an existing UID991:991 mode0700
+   `analytics-route` journal before it runs. On the controlled first
+   service restart, the old monitor removes its own blue3141 route and
+   the V3 monitor may recreate ONLY that signed, original blue route.
+   Subsequent 3142 and 3141 changes remain exclusively in the existing
+   signed UID991 executor and fsync-protected journal. Unknown routes,
+   corrupted journals, changed images or unapproved restarts fail HOLD;
+   the supervisor does not select an OCI image from a request.
+5. In a single separately owner-approved root maintenance transaction,
+   preserve byte-exact before-images and a durable rollback receipt,
+   stage the new C32H broker workflow authority, paired V3 broker/executor
+   configs and the original-loopback service override, verify all static
+   systemd syntax and root-owned file/dir modes, then activate while
+   temporarily blocking Task014 dispatch. Before unblocking, prove
+   `3141 /readyz` and `/livez` 200 on the ORIGINAL signed 0.15.0,
+   canary 3020 unmodified, no green 3142, exact loaded systemd and
+   UID990/UID991 mount separation, owner source verification from both
+   principals, original socket/FD and journal identities, and a tested
+   restoration of exact pre-install bytes if any check fails. Never
+   restart the old blue-only supervisor while 3141 is switched to green.
+6. Only after installed positive V3 source/authority and one independent
+   M04 review may one protected Task014 `analytics_successor=true`
+   dispatch consume the actual owner-signed 0.16.0 OCI digest. Perform
+   actual 3142, consent/tenant/collector, durable replay and
+   write-preserving rollback OAT before accepting the DEV release.
+   A source, synthetic or static systemd PASS is **not** live acceptance.
+
+This corrective source must not be installed before its independent
+source review and owner-controlled reversible host preflight. The
+legacy 0.15.0 private source/service and the original Canary baseline
+are intentionally unchanged by the PR.
+
 ## 6. Historical repeatability limit, verified 31 October 2026
 
 At platform revision `2654c66ccc906baced9c17a5dfca260bef900ab3`,
