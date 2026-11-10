@@ -22,6 +22,7 @@ external network, credentials or production path are used.
 from __future__ import annotations
 
 import hashlib
+from io import StringIO
 import os
 from contextlib import contextmanager
 import subprocess
@@ -1938,14 +1939,105 @@ class AnalyticsSuccessorIndependentSignedReleaseReviewTests(unittest.TestCase):
                     self.context["selected"], self.context["owner_approval"],
                 ),
             ))
-            def review(raw=self.raw, fd=self.fd):
+            def review(raw=self.raw, fd=self.fd, *, trace_generation3=False):
                 """Use the same exact reviewed source and original RSA JWKS."""
                 return _review_executor_successor_signed_release(
                     raw, fd, expected_workflow_sha=WORKFLOW_SHA,
                     reviewed_installed_source=EXPECTED, received_at=NOW,
                     jwks_cache=StaticCache(KEY.public_key()),
+                    trace_generation3=trace_generation3,
                 )
             yield review, owner_signature, active, forgejo, signature
+
+    # Section: all four real signed-review helper stage codes stay local.
+    def test_generation3_redacted_signed_review_phase_owner_blue(self):
+        """Wrong owner fails before JWT/registry and exposes no details."""
+        with self.synthetic_host(owner=False) as (review, owner, state, forgejo, _):
+            with patch(
+                "deployment.analytics_executor.sys.stderr", new=StringIO(),
+            ) as stderr:
+                with self.assertRaises(ExecutorUnavailableError):
+                    review(trace_generation3=True)
+            self.assertEqual(
+                stderr.getvalue(),
+                "TASK014_ANALYTICS_UID991_HOLD phase=owner_blue\n",
+            )
+            owner.assert_called_once()
+            state.assert_not_called()
+            forgejo.assert_not_called()
+
+    def test_generation3_redacted_signed_review_phase_signed_identity(self):
+        """An independently denied signed JWT leaks no claimed identity."""
+        with self.synthetic_host() as (review, _, state, forgejo, _):
+            with (
+                patch(
+                    "deployment.analytics_executor."
+                    "_verified_executor_successor_identity_and_credentials",
+                    side_effect=ValueError("synthetic-secret-value"),
+                ),
+                patch("deployment.analytics_executor.sys.stderr", new=StringIO())
+                    as stderr,
+            ):
+                with self.assertRaises(ExecutorUnavailableError):
+                    review(trace_generation3=True)
+            self.assertEqual(
+                stderr.getvalue(),
+                "TASK014_ANALYTICS_UID991_HOLD phase=signed_identity\n",
+            )
+            self.assertNotIn("synthetic-secret-value", stderr.getvalue())
+            self.assertEqual(state.call_count, 1)
+            forgejo.assert_not_called()
+
+    def test_generation3_redacted_signed_review_phase_sigstore_evidence(self):
+        """A failed signed evidence verification does not start deployment."""
+        with self.synthetic_host() as (review, _, state, forgejo, _):
+            forgejo.side_effect = ValueError("synthetic-credential-hidden")
+            with patch(
+                "deployment.analytics_executor.sys.stderr", new=StringIO(),
+            ) as stderr:
+                with self.assertRaises(ExecutorUnavailableError):
+                    review(trace_generation3=True)
+            self.assertEqual(
+                stderr.getvalue(),
+                "TASK014_ANALYTICS_UID991_HOLD phase=sigstore_evidence\n",
+            )
+            self.assertNotIn("synthetic-credential-hidden", stderr.getvalue())
+            self.assertEqual(state.call_count, 1)
+            forgejo.assert_called_once()
+
+    def test_generation3_redacted_signed_review_phase_binding(self):
+        """An unacceptable signed subject never becomes request authority."""
+        from dataclasses import replace
+        bad = replace(self.context["signed_release"], manifest_sha256="f" * 64)
+        with self.synthetic_host(signed=bad) as (review, _, state, forgejo, _):
+            with patch(
+                "deployment.analytics_executor.sys.stderr", new=StringIO(),
+            ) as stderr:
+                with self.assertRaises(ExecutorUnavailableError):
+                    review(trace_generation3=True)
+            self.assertEqual(
+                stderr.getvalue(),
+                "TASK014_ANALYTICS_UID991_HOLD phase=signed_release_binding\n",
+            )
+            self.assertEqual(state.call_count, 1)
+            forgejo.assert_called_once()
+
+    def test_generation2_review_denial_stays_silent_and_success_has_no_phase(self):
+        """Original read-only denial and completed review have zero trace."""
+        with self.synthetic_host(owner=False) as (review, _, _, _, _):
+            with patch(
+                "deployment.analytics_executor.sys.stderr", new=StringIO(),
+            ) as stderr:
+                with self.assertRaises(ExecutorUnavailableError):
+                    review()
+            self.assertEqual(stderr.getvalue(), "")
+        with self.synthetic_host() as (review, _, _, _, _):
+            with patch(
+                "deployment.analytics_executor.sys.stderr", new=StringIO(),
+            ) as stderr:
+                valid = review(trace_generation3=True)
+            self.assertEqual(valid.canonical_bytes(), self.raw)
+            self.assertEqual(stderr.getvalue(), "")
 
     def test_existing_real_uid_cannot_enter_signed_review(self):
         """A restricted test user cannot impersonate the future UID991."""

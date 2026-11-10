@@ -60,6 +60,38 @@ _SOURCE_FIELDS = frozenset({
     "reviewed_product_profile_sha256", "reviewed_runtime_profile_sha256",
 })
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
+
+# Section: closed, local-only generation3 failure observation. Only static
+# identifiers may leave the UID991 executor; never an exception or request.
+_UID991_FAILURE_PHASES = frozenset({
+    "installed_authority", "owner_blue", "signed_identity",
+    "sigstore_evidence", "signed_release_binding", "private_preflight",
+    "replay_begin",
+})
+
+
+def _emit_uid991_successor_failure_phase(phase: str) -> None:
+    """Best-effort one-line failure stage; never change a rejected decision.
+
+    Only trusted UID991 generation3 call sites select an identifier. Log no
+    exception, secret, JTI, signed claim, path, registry status or request ID.
+    Failed local stderr must not supersede the original rejected request.
+    """
+    try:
+        if (
+            type(phase) is not str or phase not in _UID991_FAILURE_PHASES
+            or (os.getuid(), os.geteuid(), os.getgid(), os.getegid())
+                != (991, 991, 991, 991)
+        ):
+            return
+        sys.stderr.write("TASK014_ANALYTICS_UID991_HOLD phase=" + phase + "\n")
+    except _CONTROL:
+        raise
+    except Exception:
+        # Logging and identity checks may not obscure the original denial.
+        pass
+
+
 # These are the SAME fixed root-controlled DEV approval files used by the
 # signed source reviewer, not release/OCI bytes supplied over the Unix socket.
 # A missing file or missing trusted signer is a mandatory rejection.
@@ -263,6 +295,7 @@ def _review_executor_successor_signed_release(
     reviewed_installed_source: dict[str, str],
     received_at: int | None = None,
     jwks_cache: object | None = None,
+    trace_generation3: bool = False,
 ):
     """Independently read and verify full original Task013 evidence at UID991.
 
@@ -284,8 +317,10 @@ def _review_executor_successor_signed_release(
     replay, Docker pull, 3142 route, 3141 switch, journal write, service
     start or success response occurs. The actual Unix receiver remains
     DENY-only until this and the independent rollback/operation chain are
-    securely installed and accepted.
+    securely installed and accepted. Only the real generation3 transaction
+    requests a static local-only failure phase; generation2 stays silent.
     """
+    phase = "owner_blue"
     try:
         import json
         from .analytics_active_state_review import (
@@ -360,6 +395,7 @@ def _review_executor_successor_signed_release(
         ):
             raise ValueError("active Analytics source has changed")
 
+        phase = "signed_identity"
         now = int(time.time()) if received_at is None else received_at
         identity, registry = _verified_executor_successor_identity_and_credentials(
             canonical_request, credential_fd,
@@ -367,6 +403,7 @@ def _review_executor_successor_signed_release(
             jwks_cache=jwks_cache, received_at=now,
         )
 
+        phase = "sigstore_evidence"
         # Zero-input immutable C32I provenance pins the SAME actual Cosign
         # executable and TrustedRoot SHA as UID990. UID991 must see separately
         # approved root-owned READ-ONLY copies via an authorized private
@@ -409,6 +446,7 @@ def _review_executor_successor_signed_release(
             or owner.owner_signature_verified is not True
         ):
             raise ValueError("unsigned Analytics release")
+        phase = "signed_release_binding"
         parsed = parse_analytics_successor_request(
             canonical_request, **source,
             signed_release=signed, selected=selected, owner_approval=owner,
@@ -426,6 +464,10 @@ def _review_executor_successor_signed_release(
     except _CONTROL:
         raise
     except Exception:
+        # The generation2 signed-review-only helper preserves its historic
+        # silent behavior; generation3 emits one fixed local-only stage.
+        if trace_generation3 is True:
+            _emit_uid991_successor_failure_phase(phase)
         # No original JWT, GitHub claim, registry data, verifier argv, owner
         # signature, host/container state or exception detail crosses UID991.
         raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
@@ -950,6 +992,7 @@ def _execute_reviewed_first_successor_transaction(
     except _CONTROL:
         raise
     except Exception:
+        _emit_uid991_successor_failure_phase("installed_authority")
         raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
 
     # Section: independently verify signed Task013 evidence and all three
@@ -959,12 +1002,14 @@ def _execute_reviewed_first_successor_transaction(
         canonical_request, credential_fd,
         expected_workflow_sha=workflow,
         reviewed_installed_source=source,
+        trace_generation3=True,
     )
     if (
         type(request) is not AnalyticsSuccessorRequest
         or request.canonical_bytes() != canonical_request
         or request.exact_image_reference == PINNED_IMAGE
     ):
+        _emit_uid991_successor_failure_phase("signed_release_binding")
         raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
 
     request_hash = hashlib.sha256(canonical_request).hexdigest()
@@ -1011,12 +1056,14 @@ def _execute_reviewed_first_successor_transaction(
     except _CONTROL:
         raise
     except Exception:
+        _emit_uid991_successor_failure_phase("private_preflight")
         raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
 
     # Section: one original process-local execution gate and SQLite JTI
     # transition. No candidate or route can start until the broker's
     # original durable consume and this executor's begin both succeed.
     if not _ENTER_EXECUTION(executor):
+        _emit_uid991_successor_failure_phase("replay_begin")
         raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
     try:
         try:
@@ -1029,10 +1076,12 @@ def _execute_reviewed_first_successor_transaction(
                 raise ValueError("invalid replay transition")
             began = True
         except ReplayError:
+            _emit_uid991_successor_failure_phase("replay_begin")
             raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE) from None
         except _CONTROL:
             raise
         except Exception:
+            _emit_uid991_successor_failure_phase("replay_begin")
             raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
 
         # Section: candidate->3142->3141->replay finish. The original
