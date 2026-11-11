@@ -4,7 +4,7 @@ version = "0.0.0"
 description = "Disposable validation of shared-schema workspace tenancy with PostgreSQL RLS."
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "Django==6.1",
+    "Django==6.1.1",
     "psycopg[binary]==3.3.4",
 ]
 
