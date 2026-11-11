@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 from dataclasses import replace
+from io import StringIO
 import hashlib
 import os
 from pathlib import Path
@@ -346,6 +347,110 @@ class FirstSuccessorTransactionTests(unittest.TestCase):
             candidate_operation=self.candidate, journal=self.journal,
             **changes,
         )
+
+    # Section: generation3-only local redacted hold markers, no network.
+    def test_issued_phase_installed_authority_is_static_and_pre_replay(self):
+        """A protected workflow mismatch emits one constant and denies."""
+        with patch(
+            "deployment.analytics_executor_service_config."
+            "load_analytics_executor_service_config",
+            return_value=(EXPECTED, {
+                "expected_workflow_sha": "a" * 40,
+                "expected_executor_uid": 991,
+                "expected_executor_gid": 991,
+            }),
+        ):
+            with patch(
+                "deployment.analytics_executor.sys.stderr", new=StringIO(),
+            ) as stderr:
+                with self.assertRaises(ExecutorUnavailableError):
+                    self.execute()
+        self.assertEqual(
+            stderr.getvalue(),
+            "TASK014_ANALYTICS_UID991_HOLD phase=installed_authority\n",
+        )
+        self.assertEqual(self.events, [])
+        self.assertEqual(self.replay.events, [])
+        self.assertIsNone(self.phase)
+
+    def test_issued_phase_private_preflight_keeps_existing_denial(self):
+        """A rejected private manifest does not change JTI or route."""
+        self.failure = "preflight_original"
+        with patch(
+            "deployment.analytics_executor.sys.stderr", new=StringIO(),
+        ) as stderr:
+            with self.assertRaises(ExecutorUnavailableError):
+                self.execute()
+        self.assertEqual(
+            stderr.getvalue(),
+            "TASK014_ANALYTICS_UID991_HOLD phase=private_preflight\n",
+        )
+        self.assertEqual(self.events, ["signed_review", "preflight_original"])
+        self.assertEqual(self.replay.events, [])
+        self.assertIsNone(self.phase)
+
+    def test_issued_phase_replay_begin_preserves_rejection_no_candidate(self):
+        """One rejected SQLite begin has no candidate or 3142/3141 switch."""
+        self.replay.failure = "begin"
+        with patch(
+            "deployment.analytics_executor.sys.stderr", new=StringIO(),
+        ) as stderr:
+            with self.assertRaises(ExecutorRejectedError):
+                self.execute()
+        self.assertEqual(
+            stderr.getvalue(),
+            "TASK014_ANALYTICS_UID991_HOLD phase=replay_begin\n",
+        )
+        self.assertEqual(self.replay.events, ["begin"])
+        self.assertEqual(self.events, ["signed_review", "preflight_original"])
+        self.assertIsNone(self.phase)
+
+    def test_no_phase_on_success_or_untrusted_uid(self):
+        """No success breadcrumbs; a non-UID991 failure stays silent."""
+        with patch(
+            "deployment.analytics_executor.sys.stderr", new=StringIO(),
+        ) as stderr:
+            self.execute()
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(self.replay.events, ["begin", "finish"])
+        self.replay.events.clear()
+        self.events.clear()
+        with (
+            patch("deployment.analytics_executor.os.getuid", return_value=1005),
+            patch("deployment.analytics_executor.sys.stderr", new=StringIO()) as stderr,
+        ):
+            with self.assertRaises(ExecutorUnavailableError):
+                self.execute()
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(self.replay.events, [])
+        self.assertEqual(self.events, [])
+
+    def test_failed_local_journal_write_does_not_change_denial(self):
+        """A broken systemd stderr must not transform HOLD into acceptance."""
+        self.failure = "preflight_original"
+        with patch("deployment.analytics_executor.sys.stderr") as stderr:
+            stderr.write.side_effect = OSError("synthetic output failure")
+            with self.assertRaises(ExecutorUnavailableError):
+                self.execute()
+        self.assertEqual(self.replay.events, [])
+        self.assertIsNone(self.phase)
+
+    def test_static_phase_filter_and_identity_read_failure_stay_silent(self):
+        """Invalid IDs and failed UID probes cannot create leaked diagnostics."""
+        from deployment.analytics_executor import (
+            _emit_uid991_successor_failure_phase,
+        )
+        with patch(
+            "deployment.analytics_executor.sys.stderr", new=StringIO(),
+        ) as stderr:
+            _emit_uid991_successor_failure_phase("secret-dynamic-request")
+            with patch(
+                "deployment.analytics_executor.os.getuid",
+                side_effect=OSError("synthetic-uid-lookup-secret"),
+            ):
+                _emit_uid991_successor_failure_phase("replay_begin")
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(self.replay.events, [])
 
     def test_complete_signed_release_preflight_replay_private_cutover_finish(self):
         """Only verified 3141 committed state permits a success response."""
