@@ -727,7 +727,7 @@ jobs:
 
       - name: Authenticate short-lived Cloudsmith publisher
         # cloudsmith-io/cloudsmith-cli-action v3.1.0
-        uses: cloudsmith-io/cloudsmith-cli-action@ad73fafb92e3e29a5166c529464c2df7658a608e
+        uses: cloudsmith-io/cloudsmith-cli-action@69e169e2ad9bc9a1599c2dff464061a00fe9f8ba
         with:
           oidc-namespace: omnilyzer
           oidc-service-slug: gha-publisher-u76y
@@ -1097,7 +1097,7 @@ jobs:
     steps:
       - name: Authenticate short-lived Cloudsmith publisher for permission probe
         # cloudsmith-io/cloudsmith-cli-action v3.1.0
-        uses: cloudsmith-io/cloudsmith-cli-action@ad73fafb92e3e29a5166c529464c2df7658a608e
+        uses: cloudsmith-io/cloudsmith-cli-action@69e169e2ad9bc9a1599c2dff464061a00fe9f8ba
         with:
           oidc-namespace: omnilyzer
           oidc-service-slug: gha-publisher-u76y
