@@ -233,8 +233,10 @@ class FirstSuccessorTransactionTests(unittest.TestCase):
         self.assertEqual(kwargs["reviewed_installed_source"], EXPECTED)
         return self.request
 
-    def preflight_check(self, canonical_request, *, credential_fd, candidate_ready):
-        """Prove the original read-only registry preflight on both sides."""
+    def preflight_check(self, canonical_request, *, credential_fd,
+                        candidate_ready, trace_generation3=False):
+        """Check original preflight and explicit generation3 trace opt-in."""
+        self.assertIs(trace_generation3, True)
         self.events.append("preflight_candidate" if candidate_ready else "preflight_original")
         if self.failure == ("preflight_candidate" if candidate_ready else "preflight_original"):
             raise ExecutorUnavailableError("synthetic manifest denial")
