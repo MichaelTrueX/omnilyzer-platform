@@ -1034,6 +1034,9 @@ def _execute_reviewed_first_successor_transaction(
     # Section: no replay or mutation before original live-state and sealed
     # credential / registry preflight. The source and original JWTs have
     # already been independently authenticated by the same UID991.
+    # A traced inner rejection already emits its own single fixed phase.
+    # The outer phase is reserved for failures outside that inner call.
+    inner_preflight_pending = False
     try:
         original = inspect_analytics_active_state()
         if (
@@ -1051,10 +1054,12 @@ def _execute_reviewed_first_successor_transaction(
         ):
             raise ValueError("original private writer not verified")
         verify_empty_analytics_successor_slot()
+        inner_preflight_pending = True
         executor.preflight_first_successor_without_deployment(
             canonical_request, credential_fd=credential_fd,
             candidate_ready=False, trace_generation3=True,
         )
+        inner_preflight_pending = False
         now = int(time.time())
         credential = read_sealed_credential(
             credential_fd, canonical_request=canonical_request,
@@ -1069,7 +1074,8 @@ def _execute_reviewed_first_successor_transaction(
     except _CONTROL:
         raise
     except Exception:
-        _emit_uid991_successor_failure_phase("private_preflight")
+        if not inner_preflight_pending:
+            _emit_uid991_successor_failure_phase("private_preflight")
         raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
 
     # Section: one original process-local execution gate and SQLite JTI
