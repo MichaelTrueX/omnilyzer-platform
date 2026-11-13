@@ -24,7 +24,7 @@ from __future__ import annotations
 import hashlib
 from io import StringIO
 import os
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import subprocess
 from pathlib import Path
 import socket
@@ -384,6 +384,148 @@ class AnalyticsActualUnixSocketTests(unittest.TestCase):
             self.assertEqual(replay.finish_calls, [])
         finally:
             os.close(fd)
+
+    # Section: generation3-only closed, redacted local preflight diagnostics.
+    def test_private_preflight_trace_distinguishes_six_fail_closed_gates(self):
+        """One static UID991 phase per subgate, no JTI, JWT or inner exception."""
+        from dataclasses import replace
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+        from deployment.tests.test_analytics_private_registry import (
+            first_successor_empty_active_state,
+        )
+
+        candidate, context = AnalyticsSuccessorRequestTests().candidate()
+        self.enterContext(signed_owner_fixture(context["selected"]))
+        raw = canonical_bytes(candidate)
+        state = first_successor_empty_active_state()
+        fd = credential(
+            request=raw, image=candidate["exact_image_reference"],
+            product_id="analytics-successor",
+        )
+        self.addCleanup(os.close, fd)
+
+        # All test-only recipients and JWTs are synthetic local fixtures.
+        cases = (
+            "private_owner", "private_active", "private_slot",
+            "private_credential", "private_manifest", "private_stability",
+        )
+        for failure in cases:
+            with self.subTest(failure=failure), ExitStack() as stack:
+                stack.enter_context(patch(
+                    "deployment.analytics_executor.os.getuid", return_value=991,
+                ))
+                stack.enter_context(patch(
+                    "deployment.analytics_executor.os.geteuid", return_value=991,
+                ))
+                stack.enter_context(patch(
+                    "deployment.analytics_executor.os.getgid", return_value=991,
+                ))
+                stack.enter_context(patch(
+                    "deployment.analytics_executor.os.getegid", return_value=991,
+                ))
+                inspector = stack.enter_context(patch(
+                    "deployment.analytics_active_state_review."
+                    "inspect_analytics_active_state",
+                    return_value=state,
+                ))
+                slot = stack.enter_context(patch(
+                    "deployment.analytics_active_state_review."
+                    "verify_empty_analytics_successor_slot",
+                    return_value=None,
+                ))
+                executor, replay, events = receiver(
+                    fail_preflight=failure == "private_manifest",
+                )
+                if failure == "private_owner":
+                    stack.enter_context(patch(
+                        "deployment.analytics_executor._verify_executor_owner_source",
+                        side_effect=ValueError("synthetic-secret-do-not-log"),
+                    ))
+                elif failure == "private_active":
+                    inspector.return_value = replace(state, active_slot="green")
+                elif failure == "private_slot":
+                    slot.side_effect = ValueError(
+                        "synthetic-secret-do-not-log",
+                    )
+                elif failure == "private_credential":
+                    stack.enter_context(patch(
+                        "deployment.analytics_executor.read_sealed_credential",
+                        side_effect=ValueError("synthetic-secret-do-not-log"),
+                    ))
+                elif failure == "private_stability":
+                    inspector.side_effect = (
+                        state, replace(state, active_container_id="f" * 64),
+                    )
+                with patch(
+                    "deployment.analytics_executor.sys.stderr",
+                    new=StringIO(),
+                ) as stderr:
+                    with self.assertRaises(ExecutorUnavailableError):
+                        executor.preflight_first_successor_without_deployment(
+                            raw, credential_fd=fd, candidate_ready=False,
+                            trace_generation3=True,
+                        )
+                self.assertEqual(
+                    stderr.getvalue(),
+                    "TASK014_ANALYTICS_UID991_HOLD phase=" + failure + "\n",
+                )
+                self.assertEqual(replay.begin_calls, [])
+                self.assertEqual(replay.finish_calls, [])
+                self.assertNotIn("synthetic-secret", stderr.getvalue())
+
+    def test_private_preflight_default_silent_and_trace_type_fail_closed(self):
+        """Legacy/default calls do not disclose a UID991 stage or bypass DENY."""
+        from deployment.tests.test_analytics_execution import (
+            AnalyticsSuccessorRequestTests,
+        )
+        from deployment.tests.test_analytics_private_registry import (
+            first_successor_empty_active_state,
+        )
+
+        data, context = AnalyticsSuccessorRequestTests().candidate()
+        self.enterContext(signed_owner_fixture(context["selected"]))
+        raw = canonical_bytes(data)
+        fd = credential(
+            request=raw, image=data["exact_image_reference"],
+            product_id="analytics-successor",
+        )
+        self.addCleanup(os.close, fd)
+        executor, replay, events = receiver(fail_preflight=True)
+        with (
+            patch("deployment.analytics_executor.os.getuid", return_value=991),
+            patch("deployment.analytics_executor.os.geteuid", return_value=991),
+            patch("deployment.analytics_executor.os.getgid", return_value=991),
+            patch("deployment.analytics_executor.os.getegid", return_value=991),
+            patch(
+                "deployment.analytics_active_state_review."
+                "inspect_analytics_active_state",
+                return_value=first_successor_empty_active_state(),
+            ),
+            patch(
+                "deployment.analytics_active_state_review."
+                "verify_empty_analytics_successor_slot", return_value=None,
+            ),
+            patch(
+                "deployment.analytics_executor.sys.stderr", new=StringIO(),
+            ) as stderr,
+        ):
+            with self.assertRaises(ExecutorUnavailableError):
+                executor.preflight_first_successor_without_deployment(
+                    raw, credential_fd=fd, candidate_ready=False,
+                )
+            self.assertEqual(stderr.getvalue(), "")
+            for invalid in (None, 1, "true", [], {}):
+                with self.subTest(invalid=invalid):
+                    with self.assertRaises(ExecutorRejectedError):
+                        executor.preflight_first_successor_without_deployment(
+                            raw, credential_fd=fd, candidate_ready=False,
+                            trace_generation3=invalid,
+                        )
+            self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(replay.begin_calls, [])
+        self.assertEqual(replay.finish_calls, [])
 
     def test_first_successor_pre_pull_and_post_pull_gates_are_disjoint(self):
         """Avoid a first-release startup deadlock without relaxing final GO.

@@ -66,7 +66,9 @@ _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 _UID991_FAILURE_PHASES = frozenset({
     "installed_authority", "owner_blue", "signed_identity",
     "sigstore_evidence", "signed_release_binding", "private_preflight",
-    "replay_begin",
+    "private_principal", "private_owner", "private_active",
+    "private_slot", "private_credential", "private_manifest",
+    "private_stability", "replay_begin",
 })
 
 
@@ -564,7 +566,7 @@ class AnalyticsPrivilegedExecutor:
 
     def preflight_first_successor_without_deployment(
         self, canonical_request: bytes, *, credential_fd: int,
-        candidate_ready: bool = True,
+        candidate_ready: bool = True, trace_generation3: bool = False,
     ) -> None:
         """Read-only two-stage successor proof against the *actual* UID991 host.
 
@@ -586,8 +588,11 @@ class AnalyticsPrivilegedExecutor:
         """
         if type(credential_fd) is not int or credential_fd < 0:
             raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE) from None
-        if type(candidate_ready) is not bool:
+        if type(candidate_ready) is not bool or type(trace_generation3) is not bool:
             raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE) from None
+        # Only approved generation3 opts into one constant local-only phase;
+        # original read-only/legacy callers remain silent by default.
+        phase = "private_principal"
         try:
             from .analytics_active_state_review import (
                 AnalyticsActiveState, inspect_analytics_active_state,
@@ -617,7 +622,9 @@ class AnalyticsPrivilegedExecutor:
             # Mandatory *independent* owner Ed25519 verification at UID991.
             # Do this before any Docker/RootlessKit/registry access. The two
             # root-controlled files cannot be selected by the broker/request.
+            phase = "private_owner"
             _verify_executor_owner_source(parsed)
+            phase = "private_active"
             observed = inspect_analytics_active_state()
             if (
                 type(observed) is not AnalyticsActiveState
@@ -657,8 +664,10 @@ class AnalyticsPrivilegedExecutor:
                 raise ValueError("independently observed OCI state does not match")
             # No 3142 route is not enough: stale/stopped green containers
             # must be rejected, not silently adopted or overwritten.
+            phase = "private_slot"
             if not candidate_ready:
                 verify_empty_analytics_successor_slot()
+            phase = "private_credential"
             now = int(time.time())
             credential = read_sealed_credential(
                 credential_fd, canonical_request=canonical_request,
@@ -666,11 +675,13 @@ class AnalyticsPrivilegedExecutor:
             )
             if credential.expires_at - now < MIN_POST_PREFLIGHT_VALIDITY_SECONDS:
                 raise ValueError("private registry credential TTL insufficient")
+            phase = "private_manifest"
             preflight = object.__getattribute__(self, "_preflight_successor")
             if preflight is None or preflight(canonical_request, credential_fd) is not None:
                 raise ValueError("no verified immutable successor manifest")
             # Reinspect the still-active signed 0.15.0 and the candidate
             # after the bounded remote registry read; reject any TOCTOU drift.
+            phase = "private_stability"
             if inspect_analytics_active_state() != observed:
                 raise ValueError("host state changed during review")
             if not candidate_ready:
@@ -679,6 +690,8 @@ class AnalyticsPrivilegedExecutor:
         except _CONTROL:
             raise
         except Exception:
+            if trace_generation3 is True:
+                _emit_uid991_successor_failure_phase(phase)
             raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
 
     def execute_private(
@@ -1021,6 +1034,9 @@ def _execute_reviewed_first_successor_transaction(
     # Section: no replay or mutation before original live-state and sealed
     # credential / registry preflight. The source and original JWTs have
     # already been independently authenticated by the same UID991.
+    # A traced inner rejection already emits its own single fixed phase.
+    # The outer phase is reserved for failures outside that inner call.
+    inner_preflight_pending = False
     try:
         original = inspect_analytics_active_state()
         if (
@@ -1038,10 +1054,12 @@ def _execute_reviewed_first_successor_transaction(
         ):
             raise ValueError("original private writer not verified")
         verify_empty_analytics_successor_slot()
+        inner_preflight_pending = True
         executor.preflight_first_successor_without_deployment(
             canonical_request, credential_fd=credential_fd,
-            candidate_ready=False,
+            candidate_ready=False, trace_generation3=True,
         )
+        inner_preflight_pending = False
         now = int(time.time())
         credential = read_sealed_credential(
             credential_fd, canonical_request=canonical_request,
@@ -1056,7 +1074,8 @@ def _execute_reviewed_first_successor_transaction(
     except _CONTROL:
         raise
     except Exception:
-        _emit_uid991_successor_failure_phase("private_preflight")
+        if not inner_preflight_pending:
+            _emit_uid991_successor_failure_phase("private_preflight")
         raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
 
     # Section: one original process-local execution gate and SQLite JTI
@@ -1113,7 +1132,7 @@ def _execute_reviewed_first_successor_transaction(
             # private 3142 health, actual container digest and signed Zot.
             executor.preflight_first_successor_without_deployment(
                 canonical_request, credential_fd=credential_fd,
-                candidate_ready=True,
+                candidate_ready=True, trace_generation3=True,
             )
             if _switch_reviewed_private_route(**route) is not None:
                 raise ValueError("3141 cutover not durably switched")

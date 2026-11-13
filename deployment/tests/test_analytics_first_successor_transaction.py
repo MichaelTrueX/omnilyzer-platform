@@ -179,6 +179,11 @@ class FirstSuccessorTransactionTests(unittest.TestCase):
             "deployment.analytics_executor.read_sealed_credential",
             return_value=SimpleNamespace(expires_at=NOW + 270),
         ))
+        # Save the actual helper before substituting the synthetic callback.
+        # One negative test exercises genuine nested helper propagation.
+        self.real_preflight = (
+            AnalyticsPrivilegedExecutor.preflight_first_successor_without_deployment
+        )
         self.preflight = self.stack.enter_context(patch.object(
             AnalyticsPrivilegedExecutor,
             "preflight_first_successor_without_deployment",
@@ -233,8 +238,10 @@ class FirstSuccessorTransactionTests(unittest.TestCase):
         self.assertEqual(kwargs["reviewed_installed_source"], EXPECTED)
         return self.request
 
-    def preflight_check(self, canonical_request, *, credential_fd, candidate_ready):
-        """Prove the original read-only registry preflight on both sides."""
+    def preflight_check(self, canonical_request, *, credential_fd,
+                        candidate_ready, trace_generation3=False):
+        """Check original preflight and explicit generation3 trace opt-in."""
+        self.assertIs(trace_generation3, True)
         self.events.append("preflight_candidate" if candidate_ready else "preflight_original")
         if self.failure == ("preflight_candidate" if candidate_ready else "preflight_original"):
             raise ExecutorUnavailableError("synthetic manifest denial")
@@ -374,20 +381,61 @@ class FirstSuccessorTransactionTests(unittest.TestCase):
         self.assertIsNone(self.phase)
 
     def test_issued_phase_private_preflight_keeps_existing_denial(self):
-        """A rejected private manifest does not change JTI or route."""
-        self.failure = "preflight_original"
-        with patch(
-            "deployment.analytics_executor.sys.stderr", new=StringIO(),
-        ) as stderr:
+        """Outer-only state rejection logs exactly once, without touching JTI."""
+        with (
+            patch(
+                "deployment.analytics_active_state_review."
+                "verify_empty_analytics_successor_slot",
+                side_effect=ValueError("synthetic-secret-outside-helper"),
+            ),
+            patch(
+                "deployment.analytics_executor.sys.stderr", new=StringIO(),
+            ) as stderr,
+        ):
             with self.assertRaises(ExecutorUnavailableError):
                 self.execute()
         self.assertEqual(
             stderr.getvalue(),
             "TASK014_ANALYTICS_UID991_HOLD phase=private_preflight\n",
         )
-        self.assertEqual(self.events, ["signed_review", "preflight_original"])
+        self.assertEqual(self.events, ["signed_review"])
+        self.assertEqual(self.preflight.call_count, 0)
         self.assertEqual(self.replay.events, [])
         self.assertIsNone(self.phase)
+
+    def test_actual_nested_helper_denial_emits_one_static_marker(self):
+        """Real traced helper plus outer transaction logs only inner refusal."""
+        self.preflight.side_effect = (
+            lambda raw, **kwargs: self.real_preflight(
+                self.executor, raw, **kwargs,
+            )
+        )
+        with (
+            patch(
+                "deployment.analytics_executor._verify_executor_owner_source",
+                return_value=None,
+            ),
+            patch(
+                "deployment.analytics_executor.read_sealed_credential",
+                side_effect=ValueError("synthetic-jwt-must-not-log"),
+            ),
+            patch(
+                "deployment.analytics_executor.sys.stderr", new=StringIO(),
+            ) as stderr,
+        ):
+            with self.assertRaises(ExecutorUnavailableError):
+                self.execute()
+        self.assertEqual(
+            stderr.getvalue(),
+            "TASK014_ANALYTICS_UID991_HOLD phase=private_credential\n",
+        )
+        self.assertEqual(self.events, ["signed_review"])
+        self.assertEqual(self.preflight.call_count, 1)
+        self.assertEqual(self.replay.events, [])
+        self.assertIsNone(self.phase)
+        self.assertEqual(self.stage.call_count, 0)
+        self.assertEqual(self.stop.call_count, 0)
+        self.assertNotIn("synthetic-jwt", stderr.getvalue())
 
     def test_issued_phase_replay_begin_preserves_rejection_no_candidate(self):
         """One rejected SQLite begin has no candidate or 3142/3141 switch."""
