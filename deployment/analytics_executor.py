@@ -65,7 +65,8 @@ _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
 # identifiers may leave the UID991 executor; never an exception or request.
 _UID991_FAILURE_PHASES = frozenset({
     "installed_authority", "owner_blue", "signed_identity",
-    "sigstore_evidence", "signed_release_binding", "private_preflight",
+    "sigstore_evidence", "signed_release_binding", "signed_live_recheck",
+    "private_preflight",
     "private_principal", "private_owner", "private_active",
     "private_slot", "private_credential", "private_manifest",
     "private_stability", "replay_begin",
@@ -456,11 +457,17 @@ def _review_executor_successor_signed_release(
             observed_active_digest=previous.active_digest,
             observed_active_slot=previous.active_slot,
         )
+        # The signed request must pass the unchanged strict parser before
+        # a second independent live-state read. Separate fixed local-only
+        # failure phases without changing either deny condition or exposing
+        # request/JWT/signature/host details.
         if (
             type(parsed) is not AnalyticsSuccessorRequest
             or parsed.exact_image_reference != signed.image
-            or inspect_analytics_active_state() != previous
         ):
+            raise ValueError("release/host drift during verified source review")
+        phase = "signed_live_recheck"
+        if inspect_analytics_active_state() != previous:
             raise ValueError("release/host drift during verified source review")
         return parsed
     except _CONTROL:
