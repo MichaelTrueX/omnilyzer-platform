@@ -143,17 +143,29 @@ class SignedBindingDiagnosticTests(unittest.TestCase):
 
     def test_invalid_parsed_image_stays_in_binding_stage(self):
         """Type and signed-image equality remain enforced before recheck."""
-        self.parser.return_value = object()
-        with patch(
-            "deployment.analytics_executor.sys.stderr", new=StringIO(),
-        ) as stderr:
-            with self.assertRaises(ExecutorUnavailableError):
-                self.review()
-        self.assertEqual(
-            stderr.getvalue(),
-            "TASK014_ANALYTICS_UID991_HOLD phase=signed_release_binding\n",
-        )
-        self.assertEqual(self.inspector.call_count, 1)
+        for bad in (
+            object(),
+            replace(
+                self.parsed,
+                exact_image_reference=(
+                    "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:"
+                    + "0" * 64
+                ),
+            ),
+        ):
+            with self.subTest(parsed_type=type(bad).__name__):
+                self.parser.return_value = bad
+                with patch(
+                    "deployment.analytics_executor.sys.stderr", new=StringIO(),
+                ) as stderr:
+                    with self.assertRaises(ExecutorUnavailableError):
+                        self.review()
+                self.assertEqual(
+                    stderr.getvalue(),
+                    "TASK014_ANALYTICS_UID991_HOLD phase=signed_release_binding\n",
+                )
+                self.inspector.assert_called_once()
+                self.inspector.reset_mock()
 
     # Section 3: only a passed parse may enter live-active recheck.
     def test_second_snapshot_changed_emits_new_static_stage(self):
