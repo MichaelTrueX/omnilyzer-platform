@@ -1,6 +1,6 @@
 """File: services/identity/tests/test_formative_reveals.py
-Purpose: Focused security and transport tests for the BFF's source-gated
-    formative media index/asset routes and server-recorded Read-first POST.
+Purpose: Focused security and transport tests for the BFF's signed-stage,
+    stage-help, source-gated media index/asset and Read-first POST routes.
 Related: services/identity/identity_bff/formative.py,
     services/identity/config/{urls,settings}.py, Sumlaude Native PR #366.
 These tests use only synthetic identities and mock Native transport.
@@ -40,6 +40,7 @@ BASE = "/api/valoria/learning/courses/" + COURSE + "/formative/" + LESSON
 INDEX = BASE + "/reveals"
 ASSET = INDEX + "/axes_png"
 PROGRESS = BASE + "/progress"
+HELP = BASE + "/help/first_step"
 COOKIE = "c" * 64
 DIGEST = hashlib.sha256(COOKIE.encode("ascii")).hexdigest()
 PNG = b"\x89PNG\r\n\x1a\n" + b"verified test image bytes"
@@ -176,6 +177,88 @@ class FormativeMediaTests(SimpleTestCase):
         response = self.client.head(ASSET, secure=True)
         self.assertEqual(response.status_code, 405)
         self.get_native.assert_not_called()
+
+    def test_learner_stage_get_requires_signed_paired_session(self):
+        """Current stage is private, authorized and read-only, never public."""
+        self.assertEqual(self._get(BASE).status_code, 401)
+        self.get_native.assert_not_called()
+        self._authenticate()
+        expected = {"lessonId": LESSON, "progress": {"attemptStatus": "in_progress"}}
+        self.get_native.return_value = (200, expected, "application/json")
+        response = self._get(BASE)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), expected)
+        self.get_native.assert_called_once_with(BASE, COOKIE)
+        self.assertIn("private", response["Cache-Control"])
+        self.assertIn("no-store", response["Cache-Control"])
+        self.assertEqual(response["Vary"], "Cookie")
+        self.assertEqual(response["Cross-Origin-Resource-Policy"], "same-origin")
+        self.assertNotIn("set-cookie", {k.lower() for k in response.headers})
+
+    def test_stage_help_denial_and_authorized_readback(self):
+        """Native persists Read-first/first answer; BFF preserves Native gate."""
+        self._authenticate()
+        self.get_native.return_value = (
+            403, {"message": "Help locked until your first response"},
+            "application/json",
+        )
+        before = self._get(HELP)
+        self.assertEqual(before.status_code, 403)
+        self.assertIn("private", before["Cache-Control"])
+        self.assertIn("no-store", before["Cache-Control"])
+        self.get_native.assert_called_once_with(HELP, COOKIE)
+        self.get_native.reset_mock()
+        self.get_native.return_value = (
+            200, {"stageId": "first_step", "help": "Authorized learning cue"},
+            "application/json",
+        )
+        after = self._get(HELP)
+        self.assertEqual(after.status_code, 200)
+        self.assertEqual(after.json()["stageId"], "first_step")
+        self.get_native.assert_called_once_with(HELP, COOKIE)
+        self.assertEqual(after["X-Content-Type-Options"], "nosniff")
+
+    def test_stage_and_help_reject_foreign_cookie_logout_and_stale_session(self):
+        """Product cookie alone cannot read without matching Django session."""
+        self._authenticate()
+        self.client.cookies["__Host-sumlaude_session"] = "f" * 64
+        self.assertEqual(self._get(BASE).status_code, 401)
+        self.assertEqual(self._get(HELP).status_code, 401)
+        self.client.cookies["__Host-sumlaude_session"] = COOKIE
+        other = Client(enforce_csrf_checks=True, HTTP_HOST="app.sumlaude.com")
+        other.cookies["__Host-sumlaude_session"] = COOKIE
+        self.assertEqual(other.get(BASE, secure=True).status_code, 401)
+        self.assertEqual(other.get(HELP, secure=True).status_code, 401)
+        session = self.client.session
+        session["s03_digest"] = "a" * 64
+        session.save()
+        self.assertEqual(self._get(BASE).status_code, 401)
+        session.flush()
+        self.assertEqual(self._get(HELP).status_code, 401)
+        self.get_native.assert_not_called()
+
+    def test_stage_help_id_query_method_and_lesson_bounds(self):
+        """No arbitrary stage, query, unsupported source or unreviewed HEAD."""
+        self._authenticate()
+        for path in (
+            HELP.replace("first_step", "9invalid"),
+            HELP.replace("first_step", "unknown.stage"),
+            HELP.replace(LESSON, "not-approved-lesson"),
+            HELP + "?stageId=next",
+            BASE + "?download=1",
+            BASE.replace(COURSE, "not-a-uuid"),
+        ):
+            self.assertIn(self._get(path).status_code, (400, 404))
+        self.assertEqual(self.client.head(BASE, secure=True).status_code, 405)
+        self.assertEqual(self.client.head(HELP, secure=True).status_code, 405)
+        # The actual CSRF middleware correctly rejects this POST even before
+        # the GET-only view decorator. Either bounded denial is acceptable;
+        # neither is permitted to call Native or mutate saved progression.
+        self.assertIn(self.client.post(
+            HELP, data="{}", content_type="application/json", secure=True,
+        ).status_code, (403, 405))
+        self.get_native.assert_not_called()
+
 
 
 class MediaTransportTests(SimpleTestCase):

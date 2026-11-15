@@ -1,6 +1,7 @@
 """File: services/identity/identity_bff/formative.py
-Purpose: Validate Django session-bound CSRF on approved formative POSTs, and
-    signed identity/session-paired S03 cookies on source-protected media GETs.
+Purpose: Validate Django session-bound CSRF on approved formative POSTs,
+    and signed identity/session-paired S03 cookies on all approved formative
+    learner-stage, stage-help and source-protected media GETs.
 Related: services/identity/config/{settings,urls}.py,
     services/identity/identity_bff/{views,issuer}.py,
     services/identity/tests/{test_formative_csrf,test_formative_reveals}.py,
@@ -244,3 +245,41 @@ def formative_reveal_asset(request, course_id, lesson_id, asset_id):
     path = ("/api/valoria/learning/courses/" + str(course_id)
             + "/formative/" + lesson_id + "/reveals/" + asset_id)
     return _private_get_response(_forward_native_get(path, cookie, asset=True))
+
+# Section: Exact source-bound lesson/stage-help read routes also require the
+# existing confidential identity AND digest-paired Native session cookie.
+# These GETs never mutate Read-first; the only Read-first mutation continues
+# through the unchanged Django-CSRF POST /progress above.
+@never_cache
+@require_GET
+def formative_lesson(request, course_id, lesson_id):
+    """Return only the Native-authorized learner stage and saved progression.
+
+    This is a JSON-only, fixed-origin GET for the same two reviewed sources.
+    S03 independently verifies learner, course, current release and stage.
+    """
+    cookie = _reveals_access(request, lesson_id)
+    if not isinstance(cookie, str):
+        return _private_get_response(
+            (cookie.status_code, json.loads(cookie.content), "application/json"))
+    path = ("/api/valoria/learning/courses/" + str(course_id)
+            + "/formative/" + lesson_id)
+    return _private_get_response(_forward_native_get(path, cookie))
+
+
+@never_cache
+@require_GET
+def formative_help(request, course_id, lesson_id, stage_id):
+    """Return only help unlocked for this exact learner's current stage.
+
+    The stable source stage identifier is bounded before forwarding. Native
+    alone decides whether the own first response / voluntary persisted
+    Read-first authorizes this particular help stage.
+    """
+    cookie = _reveals_access(request, lesson_id, stage_id)
+    if not isinstance(cookie, str):
+        return _private_get_response(
+            (cookie.status_code, json.loads(cookie.content), "application/json"))
+    path = ("/api/valoria/learning/courses/" + str(course_id)
+            + "/formative/" + lesson_id + "/help/" + stage_id)
+    return _private_get_response(_forward_native_get(path, cookie))
