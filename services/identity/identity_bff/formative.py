@@ -1,11 +1,12 @@
 """File: services/identity/identity_bff/formative.py
-Purpose: Validate Django session-bound CSRF and the paired S03 learner cookie
-    before forwarding only approved Math/Science formative progress writes.
+Purpose: Validate Django session-bound CSRF on approved formative POSTs, and
+    signed identity/session-paired S03 cookies on source-protected media GETs.
 Related: services/identity/config/{settings,urls}.py,
     services/identity/identity_bff/{views,issuer}.py,
-    services/identity/tests/test_formative_csrf.py,
-    Sumlaude apps/sumlaude-learner/ops/nginx-app-sumlaude-production.review.conf.
-No new login, bearer token, learner admission, or broad API forwarding.
+    services/identity/tests/{test_formative_csrf,test_formative_reveals}.py,
+    Sumlaude PR #366 Native source-bound Read-first and media API,
+    Sumlaude S01 exact same-origin NGINX ingress (requires separate QA/GO).
+No new login, bearer token, learner admission, public media or general proxy.
 """
 import hashlib
 import hmac
@@ -14,9 +15,9 @@ import json
 import re
 
 from django.conf import settings
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.views.decorators.cache import never_cache
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 
 from .views import _active
 
@@ -28,6 +29,11 @@ _ALLOWED_LESSONS = frozenset(("square-root-function", "why-earth-supports-life")
 _COOKIE_RE = re.compile(r"[0-9a-f]{64}\Z")
 _REQUEST_LIMIT = 65536
 _RESPONSE_LIMIT = 262144
+# Section: Only short source-bound IDs and approved passive student MIME types.
+# A GET cannot address arbitrary Native paths, URLs, teacher assets or query.
+_ASSET_RE = re.compile(r"[a-z][a-z0-9_-]{0,79}\Z")
+_MEDIA_LIMIT = 2 * 1024 * 1024
+_MEDIA_TYPES = frozenset(("image/png", "image/webp", "text/plain"))
 _NATIVE_STATUSES = frozenset((200, 400, 401, 403, 404, 409, 422))
 
 
@@ -113,3 +119,128 @@ def formative_progress(request, course_id, lesson_id):
         return JsonResponse({"error": "learning unavailable"}, status=503)
     status, result = forwarded
     return JsonResponse(result, status=status)
+
+
+# Section: Read-only source-gated disclosure through the existing private
+# Django/OIDC and S03 session pair. Native makes the final per-student,
+# per-course, immutable-release and first-answer/Read-first decision.
+def _forward_native_get(path, cookie, *, asset=False):
+    """Read only one bounded fixed-loopback Native index or student asset.
+
+    No inbound Host/Origin/Authorization/CSRF/request cookies are forwarded.
+    Redirects, unexpected MIME, oversized bodies and unsupported response
+    statuses fail closed; the origin is not supplied by the browser.
+    """
+    headers = {
+        "Host": "app.sumlaude.com",
+        "Cookie": "__Host-sumlaude_session=" + cookie,
+        "Accept": ("image/png, image/webp, text/plain, application/json"
+                   if asset else "application/json"),
+    }
+    connection = http.client.HTTPConnection(_NATIVE_HOST, _NATIVE_PORT, timeout=6)
+    try:
+        connection.request("GET", path, headers=headers)
+        native = connection.getresponse()
+        limit = _MEDIA_LIMIT if asset and native.status == 200 else _RESPONSE_LIMIT
+        body = native.read(limit + 1)
+        if native.status not in _NATIVE_STATUSES or len(body) > limit:
+            return None
+        media_type = native.getheader("Content-Type", "").split(";", 1)[0].lower().strip()
+        if not asset or native.status != 200:
+            if media_type != "application/json":
+                return None
+            parsed = json.loads(body)
+            return (native.status, parsed, "application/json") if isinstance(parsed, dict) else None
+        if media_type not in _MEDIA_TYPES or not body:
+            return None
+        if media_type == "image/png" and not body.startswith(b"\x89PNG\r\n\x1a\n"):
+            return None
+        if media_type == "image/webp" and not (body.startswith(b"RIFF")
+                and len(body) >= 12 and body[8:12] == b"WEBP"):
+            return None
+        if media_type == "text/plain":
+            try:
+                if body.decode("utf-8").encode("utf-8") != body:
+                    return None
+            except UnicodeDecodeError:
+                return None
+        return (native.status, body, media_type)
+    except (OSError, TimeoutError, http.client.HTTPException, ValueError,
+            UnicodeError, json.JSONDecodeError):
+        return None
+    finally:
+        connection.close()
+
+
+def _private_get_response(forwarded):
+    """Prevent CDN/browser caching or cross-origin embedding of any result."""
+    if forwarded is None:
+        response = JsonResponse({"error": "learning unavailable"}, status=503)
+    else:
+        status, content, media_type = forwarded
+        if media_type == "application/json":
+            response = JsonResponse(content, status=status)
+        else:
+            response = HttpResponse(
+                content, status=status,
+                content_type=("text/plain; charset=utf-8" if media_type == "text/plain"
+                              else media_type),
+            )
+            response["Content-Security-Policy"] = "default-src 'none'; sandbox"
+    response["Cache-Control"] = "private, no-store"
+    response["Vary"] = "Cookie"
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Cross-Origin-Resource-Policy"] = "same-origin"
+    return response
+
+
+def _reveals_access(request, lesson_id, asset_id=None):
+    """Restrict GET to an OIDC-backed, same-browser, active S03 cookie pair."""
+    if lesson_id not in _ALLOWED_LESSONS:
+        return JsonResponse({"error": "lesson unavailable"}, status=404)
+    if asset_id is not None and not _ASSET_RE.fullmatch(asset_id):
+        return JsonResponse({"error": "asset unavailable"}, status=404)
+    # Native's z.object({}).strict() likewise rejects any query parameters.
+    if request.META.get("QUERY_STRING", ""):
+        return JsonResponse({"error": "query unavailable"}, status=400)
+    cookie = _paired_product_cookie(request)
+    if cookie is None:
+        return JsonResponse({"error": "learner session unavailable"}, status=401)
+    return cookie
+
+
+@never_cache
+@require_GET
+def formative_reveals(request, course_id, lesson_id):
+    """Return only Native-approved metadata, ALT and own released media URLs.
+
+    No first-answer/Read-first decision is inferred client-side. When not
+    unlocked, Native responds with a denial or with approved neutral-only
+    media; we never create fallback public URLs.
+    """
+    cookie = _reveals_access(request, lesson_id)
+    if not isinstance(cookie, str):
+        return _private_get_response((cookie.status_code,
+            json.loads(cookie.content), "application/json"))
+    path = ("/api/valoria/learning/courses/" + str(course_id)
+            + "/formative/" + lesson_id + "/reveals")
+    return _private_get_response(_forward_native_get(path, cookie))
+
+
+@never_cache
+@require_GET
+def formative_reveal_asset(request, course_id, lesson_id, asset_id):
+    """Deliver only S03-authorized passive image/text bytes to this learner.
+
+    The Native service separately checks exact approved source SHA, S02
+    classification, own first submission or server-persisted Read-first and
+    current course/lesson release on EVERY direct asset GET. Browser-visible
+    HTML/SVG/executable content and unknown upstream redirects are blocked.
+    """
+    cookie = _reveals_access(request, lesson_id, asset_id)
+    if not isinstance(cookie, str):
+        return _private_get_response((cookie.status_code,
+            json.loads(cookie.content), "application/json"))
+    path = ("/api/valoria/learning/courses/" + str(course_id)
+            + "/formative/" + lesson_id + "/reveals/" + asset_id)
+    return _private_get_response(_forward_native_get(path, cookie, asset=True))
