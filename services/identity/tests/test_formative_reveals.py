@@ -306,6 +306,27 @@ class MediaTransportTests(SimpleTestCase):
                 self.assertEqual(formative._forward_native_get(INDEX, COOKIE),
                                  (status, content, "application/json"))
 
+    def test_s03_approved_private_binary_exact_sql_boundary(self):
+        """Allow exact S03 migration108 BYTEA 2,500,000 and deny 2,500,001.
+
+        The response is synthetic; the source-pinned Native image SHA,
+        enrollment and Read-first decision remain authoritative in S03.
+        """
+        self.assertEqual(formative._MEDIA_LIMIT, 2_500_000)
+        for size, permitted in ((2_500_000, True), (2_500_001, False)):
+            body = b"\x89PNG\r\n\x1a\n" + b"x" * (size - 8)
+            connection, native = self._native(
+                status=200, body=body, content_type="image/png")
+            with mock.patch.object(
+                formative.http.client, "HTTPConnection",
+                return_value=connection,
+            ):
+                result = formative._forward_native_get(
+                    ASSET, COOKIE, asset=True)
+            self.assertEqual(result == (200, body, "image/png"), permitted)
+            native.read.assert_called_once_with(2_500_001)
+            connection.close.assert_called_once()
+
     def test_html_svg_redirect_and_oversized_response_never_pass(self):
         """Reject execution-capable MIME, redirects, and oversized image buffers."""
         for status, mime, body in (

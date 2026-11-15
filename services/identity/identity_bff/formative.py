@@ -33,7 +33,9 @@ _RESPONSE_LIMIT = 262144
 # Section: Only short source-bound IDs and approved passive student MIME types.
 # A GET cannot address arbitrary Native paths, URLs, teacher assets or query.
 _ASSET_RE = re.compile(r"[a-z][a-z0-9_-]{0,79}\Z")
-_MEDIA_LIMIT = 2 * 1024 * 1024
+# Section: Match exact S03 migration108 private BYTEA constraint:
+# octet_length(content) BETWEEN 1 AND 2500000; no larger asset crosses BFF.
+_MEDIA_LIMIT = 2_500_000
 _MEDIA_TYPES = frozenset(("image/png", "image/webp", "text/plain"))
 _NATIVE_STATUSES = frozenset((200, 400, 401, 403, 404, 409, 422))
 
