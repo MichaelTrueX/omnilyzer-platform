@@ -119,3 +119,17 @@ No paid GitHub Actions:
 
 The last two tests run **isolated disposable containers** with `--network none`
 on authorized development infrastructure; they never access production.
+## Host-specific bootstrap provenance (2026-11-15 correction)
+
+Actual on-host read-only inspection found different source owners. The first installer assumed trusthansen existed on both hosts and was rejected BEFORE root installation. The corrected installer selects a fixed owner/path by exact hostname:
+
+| Host | Non-root source owner | Private source stage |
+| --- | --- | --- |
+| truexmainserver | trusthansen | /home/trusthansen/shared-ai-ops-source-20261115/ |
+| omnilyzerdev | omnigpt | /home/omnigpt/shared-ai-ops-source-20261115/ |
+
+The root installer verifies the host, passwd entry, ownership and mode0700 of the private source directory and all exact source SHA256 before creating a privileged resource. The source path cannot be supplied by an agent argument.
+
+The corrected installer was tested on BOTH emulated hostnames in separate disposable, network-disabled Python 3.12 containers. Both reported SHARED_AGENT_PERMANENT_NONADMIN_ROOT_DISPATCH_INSTALLED_PASS, the correct product remote service installed, the opposite product remote service absent, non-sudo agent, valid root dispatcher, denied replay, and fixture cleanup exit0. Nothing was installed on either actual server.
+
+Production remains only staged nonprivileged source. Root installation requires the exact commit/SHA review and one local protected bootstrap, followed by OAuth pairing and actual host polkit/systemd acceptance.

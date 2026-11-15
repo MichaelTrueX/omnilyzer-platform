@@ -14,7 +14,6 @@ import subprocess
 import sys
 import tempfile
 
-SRC = Path("/home/trusthansen/shared-ai-ops-source-20261115")
 JOB_ROOT = Path("/usr/local/libexec/shared-ai-ops")
 POLICY_DIR = Path("/etc/shared-ai-ops")
 POLKIT_DEST = Path("/etc/polkit-1/rules.d/50-shared-ai-ops.rules")
@@ -31,6 +30,7 @@ FILES = {
     "omnilyzer-agent-remote.service": "9354bd758a494f31102388e41ccacc22337339a9844a39c7d406f0d9b4e78f7d",
 }
 HOST_USER = {"truexmainserver": "sumlaude-agent", "omnilyzerdev": "omnilyzer-agent"}
+SOURCE_OWNER = {"truexmainserver": "trusthansen", "omnilyzerdev": "omnigpt"}
 
 
 def insist(ok, label):
@@ -59,8 +59,9 @@ def main():
     host = os.uname().nodename
     insist(host in HOST_USER, "WRONG_HOST")
     agent = HOST_USER[host]
-    srcstat = SRC.lstat()
-    trust = pwd.getpwnam("trusthansen")
+    trust = pwd.getpwnam(SOURCE_OWNER[host])
+    source = Path(trust.pw_dir) / "shared-ai-ops-source-20261115"
+    srcstat = source.lstat()
     insist(stat.S_ISDIR(srcstat.st_mode)
            and srcstat.st_uid == trust.pw_uid
            and stat.S_IMODE(srcstat.st_mode) == 0o700, "SRC_OWNER_MODE")
@@ -79,7 +80,7 @@ def main():
     # Verify all source bytes BEFORE any new root-owned file or OS account.
     captured = {}
     for name, digest in FILES.items():
-        p = SRC / name
+        p = source / name
         insist(not p.is_symlink(), "SYMLINK_SOURCE")
         captured[name] = check_bytes(p, digest)
     print("SHARED_AGENT_ALL_SOURCE_SHA_PASS", flush=True)
