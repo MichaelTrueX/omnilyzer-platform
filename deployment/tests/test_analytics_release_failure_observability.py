@@ -34,7 +34,6 @@ from deployment.analytics_unix_boundary import _emit_analytics_unix_phase
 from deployment.broker_https_ingress import (
     PROMOTION_PATH,
     dispatch_inert_dev_promotion_ingress,
-    _emit_broker_unavailable_boundary,
 )
 from deployment.tests.test_broker_https_ingress import BODY, headers
 from deployment.tests.test_analytics_promotion_broker import (
@@ -87,7 +86,6 @@ class FixedPrivateReleaseLogTests(unittest.TestCase):
             self.assertIsNone(_emit_analytics_release_boundary("owner_signature", "unavailable"))
             self.assertIsNone(_emit_signed_successor_failure("sigstore_blobs"))
             self.assertIsNone(_emit_analytics_unix_phase("socket_transport"))
-            self.assertIsNone(_emit_broker_unavailable_boundary())
 
     def test_http_503_is_unchanged_and_secret_free(self):
         """An actual handler failure is still the same fixed 503 on the wire."""
@@ -97,17 +95,14 @@ class FixedPrivateReleaseLogTests(unittest.TestCase):
             def handle(self, **kwargs):
                 raise RuntimeError("private failure: " + secret)
 
-        with patch("deployment.broker_https_ingress.os.write") as write:
-            result = dispatch_inert_dev_promotion_ingress(
-                BrokenHandler(), method="POST", path=PROMOTION_PATH,
-                headers=headers(), body=BODY, received_at=123,
-            )
+        # The shared historical Canary ingress MUST remain byte-identical.
+        # Analytics-only layers log a safe phase BEFORE this fixed HTTP reply.
+        result = dispatch_inert_dev_promotion_ingress(
+            BrokenHandler(), method="POST", path=PROMOTION_PATH,
+            headers=headers(), body=BODY, received_at=123,
+        )
         self.assertEqual(result.status, 503)
         self.assertEqual(result.body, b'{"status":"unavailable"}\n')
-        write.assert_called_once_with(
-            2, b"TASK014_PRIVATE_BROKER_INGRESS_HOLD phase=handler_unavailable\n",
-        )
-        self.assertNotIn(secret.encode(), write.call_args.args[1])
         self.assertNotIn(secret.encode(), result.body)
 
     def test_no_sender_is_classified_before_signed_review_or_replay(self):
