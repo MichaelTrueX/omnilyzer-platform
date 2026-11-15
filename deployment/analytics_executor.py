@@ -70,6 +70,9 @@ _UID991_FAILURE_PHASES = frozenset({
     "private_principal", "private_owner", "private_active",
     "private_slot", "private_credential", "private_manifest",
     "private_stability", "replay_begin",
+    "candidate_stage", "candidate_identity", "candidate_probe",
+    "candidate_ready_preflight", "private_route_switch",
+    "private_route_verify", "replay_finish", "signed_success_reply",
 })
 
 
@@ -1112,11 +1115,15 @@ def _execute_reviewed_first_successor_transaction(
 
         # Section: candidate->3142->3141->replay finish. The original
         # scoped FD never enters subprocess argv or service environment.
+        # The phase is fixed code-owned data, never derived from request or
+        # registry. Recovery failure is logged separately below.
+        phase = "candidate_stage"
         try:
             with scoped_private_zot_request(credential_fd, canonical_request):
                 candidate_id = candidate_operation.stage_first_successor_green(
                     request,
                 )
+            phase = "candidate_identity"
             if (
                 type(candidate_id) is not str
                 or len(candidate_id) != 64
@@ -1133,16 +1140,20 @@ def _execute_reviewed_first_successor_transaction(
                 journal=journal,
                 request_sha256=request_hash,
             )
+            phase = "candidate_probe"
             if _stage_reviewed_private_candidate_probe(**route) is not None:
                 raise ValueError("candidate probe not durably staged")
             # The existing preflight rechecks original Ed25519 source,
             # private 3142 health, actual container digest and signed Zot.
+            phase = "candidate_ready_preflight"
             executor.preflight_first_successor_without_deployment(
                 canonical_request, credential_fd=credential_fd,
                 candidate_ready=True, trace_generation3=True,
             )
+            phase = "private_route_switch"
             if _switch_reviewed_private_route(**route) is not None:
                 raise ValueError("3141 cutover not durably switched")
+            phase = "private_route_verify"
             final = inspect_committed_analytics_route(
                 journal=journal, reviewed_image=request.exact_image_reference,
                 reviewed_slot="green", reviewed_container_id=candidate_id,
@@ -1154,18 +1165,23 @@ def _execute_reviewed_first_successor_transaction(
                 or final.active_container_id != candidate_id
             ):
                 raise ValueError("green writer does not match durable journal")
+            phase = "replay_finish"
             if replay_finish(
                 request.oidc_jti, request_hash=request_hash,
                 run_id=request.github_run_id,
                 run_attempt=request.github_run_attempt,
             ) is not None:
                 raise ValueError("invalid replay completion")
+            phase = "signed_success_reply"
             return _build_success_response(request_hash)
         except _CONTROL:
             # Leave the exact fsync journal for a separately reviewed restart
             # recovery after a crash. Never report success during interruption.
             raise
         except Exception:
+            # Report the originating failure BEFORE any recovery actions. The
+            # existing strict stop/rollback/journal rules remain unchanged.
+            _emit_uid991_successor_failure_phase(phase)
             # Section: recovery on post-replay failure, avoiding a false
             # rollback claim. A candidate is NEVER stopped while a route
             # could still be serving it. Preserve database writes and Canary.

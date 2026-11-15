@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import hashlib
+import os
 
 from release.analytics_owner_source_selection import (
     AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
@@ -46,6 +47,53 @@ from .registry_oidc_credentials import (
 )
 from .registry_promotion_composition import _RegistryContextVerifier
 from .release_consumer import ReleaseBlobSignatureVerifier, _connection
+
+
+# Section: fixed, private, best-effort production release error classification.
+# Neither exception messages nor JWTs/claims, hashes, URLs, paths, JTI, actor
+# IDs, user content or dynamic formatting are permitted in these records.
+# All categories are compile-time audited and do not alter existing denials.
+_ANALYTICS_RELEASE_OBSERVABILITY_PHASES = frozenset({
+    "verify_oidc", "authorize_oidc", "owner_signature",
+    "registry_audiences", "signature_verifier", "signed_successor_evidence",
+    "signed_evidence_shape", "signed_owner_binding",
+    "broker_request_shape", "broker_verify_oidc", "broker_original_evidence",
+    "broker_successor_evidence", "broker_signed_shape",
+    "broker_registry_audiences", "broker_rollback_hint",
+    "broker_signed_request_binding", "broker_sender",
+    "broker_signed_review", "broker_selected_request",
+    "broker_reverify_oidc", "broker_verify_registry",
+    "broker_zot_lifetime", "broker_sealed_fd",
+    "broker_replay_consume", "broker_unix_send",
+    "broker_executor_receipt", "router_signed_response",
+})
+_ANALYTICS_RELEASE_OBSERVABILITY_OUTCOMES = frozenset({
+    "unavailable", "rejected", "passed",
+})
+
+
+def _emit_analytics_release_boundary(phase: str, outcome: str) -> None:
+    """Emit one fixed, secret-free status for the original UID990 service.
+
+    This function must never change admission outcome if journald/stdout is
+    unavailable. Unknown dynamic phase/category values are silently ignored.
+    It is private to the existing original Analytics release modules.
+    """
+    try:
+        if (type(phase) is not str or type(outcome) is not str
+                or phase not in _ANALYTICS_RELEASE_OBSERVABILITY_PHASES
+                or outcome not in _ANALYTICS_RELEASE_OBSERVABILITY_OUTCOMES):
+            return
+        os.write(
+            2,
+            ("TASK014_ANALYTICS_BROKER_BOUNDARY phase=" + phase
+             + " outcome=" + outcome + "\n").encode("ascii"),
+        )
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except Exception:
+        # Diagnostics must never overwrite an original security rejection.
+        pass
 
 
 class InertAnalyticsSignedReleaseReviewHandler:
@@ -160,10 +208,16 @@ class InertAnalyticsSignedReleaseReviewHandler:
                 compact_token, received_at=received_at,
             )
         except OIDCVerificationUnavailable:
+            if successor:
+                _emit_analytics_release_boundary("verify_oidc", "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         except OIDCVerificationError:
+            if successor:
+                _emit_analytics_release_boundary("verify_oidc", "rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
+            if successor:
+                _emit_analytics_release_boundary("verify_oidc", "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         try:
             authorized = _normalize_identity(
@@ -173,8 +227,12 @@ class InertAnalyticsSignedReleaseReviewHandler:
                 expected_fields=IDENTITY_FIELDS,
             )
         except OIDCAuthorizationError:
+            if successor:
+                _emit_analytics_release_boundary("authorize_oidc", "rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
+            if successor:
+                _emit_analytics_release_boundary("authorize_oidc", "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         # Section: successor must be anchored in independent DEV root-owned
         # owner-signature trust BEFORE any private Zot/Forgejo registry access.
@@ -209,6 +267,7 @@ class InertAnalyticsSignedReleaseReviewHandler:
                 ):
                     raise ValueError("owner signature cannot bind source")
             except Exception:
+                _emit_analytics_release_boundary("owner_signature", "unavailable")
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         try:
             context = object.__getattribute__(self, "_context")(
@@ -218,9 +277,14 @@ class InertAnalyticsSignedReleaseReviewHandler:
             if type(context) is not VerifiedRegistryCredentials:
                 raise TypeError("unverified registry credentials")
         except BrokerRejectedError:
+            if successor:
+                _emit_analytics_release_boundary("registry_audiences", "rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except Exception:
+            if successor:
+                _emit_analytics_release_boundary("registry_audiences", "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        phase = "signature_verifier"
         try:
             verifier = CosignOCISignatureVerifier(
                 **dict(object.__getattribute__(self, "_cosign")),
@@ -229,6 +293,7 @@ class InertAnalyticsSignedReleaseReviewHandler:
                 product_id="analytics",
             )
             if successor:
+                phase = "signed_successor_evidence"
                 files = object.__getattribute__(self, "_owner_files")
                 reviewed = acquire_and_review_owner_approved_analytics_release(
                     context, context,
@@ -246,10 +311,13 @@ class InertAnalyticsSignedReleaseReviewHandler:
                     zot_factory=object.__getattribute__(self, "_zot_connection"),
                     forgejo_factory=object.__getattribute__(self, "_forgejo_connection"),
                 )
+            if successor:
+                phase = "signed_evidence_shape"
             if (type(reviewed) is not AnalyticsSignedEvidenceReview
                     or reviewed.deployment_authorized is not False):
                 raise TypeError("invalid review response")
             if successor:
+                phase = "signed_owner_binding"
                 selected, owner = selected_owner
                 if (
                     reviewed.release_version != selected.release_version
@@ -263,9 +331,12 @@ class InertAnalyticsSignedReleaseReviewHandler:
                     or owner.source_tree != selected.source_tree
                 ):
                     raise ValueError("signed release differs from approved owner source")
+                _emit_analytics_release_boundary("signed_owner_binding", "passed")
                 return reviewed, selected, owner
             return reviewed
         except Exception:
+            if successor:
+                _emit_analytics_release_boundary(phase, "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
 

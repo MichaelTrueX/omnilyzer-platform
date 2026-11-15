@@ -40,7 +40,10 @@ from .analytics_execution import (
     parse_analytics_request,
     parse_analytics_successor_request,
 )
-from .analytics_registry_review_composition import InertAnalyticsSignedReleaseReviewHandler
+from .analytics_registry_review_composition import (
+    InertAnalyticsSignedReleaseReviewHandler,
+    _emit_analytics_release_boundary,
+)
 from .analytics_signed_release_consumer import (
     PINNED_DIGEST, PINNED_IMAGE, PINNED_VERSION, PINNED_RUN_ID,
 )
@@ -175,6 +178,7 @@ class AnalyticsPrivatePromotionBroker:
                 for value in (compact_token, zot_token, forgejo_token)
             )
         ):
+            _emit_analytics_release_boundary("broker_request_shape", "rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         try:
             # Reject noncanonical JSON, duplicates, NaN and wrong scope
@@ -204,6 +208,7 @@ class AnalyticsPrivatePromotionBroker:
         except _CONTROL:
             raise
         except Exception:
+            _emit_analytics_release_boundary("broker_request_shape", "rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
 
         try:
@@ -219,19 +224,24 @@ class AnalyticsPrivatePromotionBroker:
                 expected_fields=IDENTITY_FIELDS,
             )
         except OIDCVerificationUnavailable:
+            _emit_analytics_release_boundary("broker_verify_oidc", "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         except (OIDCVerificationError, OIDCAuthorizationError):
+            _emit_analytics_release_boundary("broker_verify_oidc", "rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except _CONTROL:
             raise
         except Exception:
+            _emit_analytics_release_boundary("broker_verify_oidc", "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
+        phase = "broker_original_evidence"
         try:
             previous = object.__getattribute__(self, "_review")(
                 compact_token=compact_token, zot_token=zot_token,
                 forgejo_token=forgejo_token, received_at=received_at,
             )
+            phase = "broker_successor_evidence"
             next_release = object.__getattribute__(
                 self, "_review_successor"
             )(
@@ -244,6 +254,7 @@ class AnalyticsPrivatePromotionBroker:
             from release.analytics_owner_source_selection import (
                 AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
             )
+            phase = "broker_signed_shape"
             if (
                 type(previous) is not AnalyticsSignedEvidenceReview
                 or previous.image != PINNED_IMAGE
@@ -257,6 +268,7 @@ class AnalyticsPrivatePromotionBroker:
                 or type(next_release[2]) is not AnalyticsOwnerSignatureReceipt
             ):
                 raise ValueError("invalid signed original or successor")
+            phase = "broker_registry_audiences"
             registry = object.__getattribute__(self, "_registry")(
                 identity, zot_token=zot_token, forgejo_token=forgejo_token,
                 received_at=received_at,
@@ -268,6 +280,7 @@ class AnalyticsPrivatePromotionBroker:
             # 0.15.0; the rollback fields are STILL ONLY REQUEST HINTS.
             # UID991 executor must re-read actual routing and image before
             # any future replay/activation. No transport is available here.
+            phase = "broker_rollback_hint"
             if (
                 type(raw.get("rollback_reference")) is not dict
                 or raw["rollback_reference"].get("previous_digest")
@@ -275,6 +288,7 @@ class AnalyticsPrivatePromotionBroker:
                 or raw["rollback_reference"].get("previous_slot") != "blue"
             ):
                 raise ValueError("unreviewed previous release hint")
+            phase = "broker_signed_request_binding"
             accepted = parse_analytics_successor_request(
                 canonical_request,
                 **dict(object.__getattribute__(self, "_reviewed_source")),
@@ -285,12 +299,15 @@ class AnalyticsPrivatePromotionBroker:
             )
             if type(accepted) is not AnalyticsSuccessorRequest:
                 raise ValueError("unverified successor shape")
+            _emit_analytics_release_boundary("broker_signed_request_binding", "passed")
             return accepted
         except BrokerRejectedError:
+            _emit_analytics_release_boundary(phase, "rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except _CONTROL:
             raise
         except Exception:
+            _emit_analytics_release_boundary(phase, "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
 
@@ -430,6 +447,7 @@ class AnalyticsPrivatePromotionBroker:
         from .executor import parse_canonical_response
         sender = object.__getattribute__(self, "_successor_transport")
         if sender is None:
+            _emit_analytics_release_boundary("broker_sender", "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
         # Section: mandatory complete original broker signing admission.
@@ -445,7 +463,9 @@ class AnalyticsPrivatePromotionBroker:
             or selected.canonical_bytes() != canonical_request
             or selected.exact_image_reference == PINNED_IMAGE
         ):
+            _emit_analytics_release_boundary("broker_selected_request", "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        _emit_analytics_release_boundary("broker_signed_review", "passed")
         # Re-verify original signed OIDC for the second replay transition,
         # never accept request fields or a caller-created receipt as identity.
         try:
@@ -480,17 +500,21 @@ class AnalyticsPrivatePromotionBroker:
             ):
                 raise AnalyticsRequestError("changed signed identity")
         except OIDCVerificationUnavailable:
+            _emit_analytics_release_boundary("broker_reverify_oidc", "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         except (OIDCVerificationError, OIDCAuthorizationError, AnalyticsRequestError):
+            _emit_analytics_release_boundary("broker_reverify_oidc", "rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except _CONTROL:
             raise
         except Exception:
+            _emit_analytics_release_boundary("broker_reverify_oidc", "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
         # Section: three original signed JWTs bound to exact immutable OCI
         # digest and canonical schema3 request. Reuse the original narrow
         # registry-audience verifier and sealed kernel memfd schema2.
+        phase = "broker_verify_registry"
         try:
             registry = object.__getattribute__(self, "_registry")(
                 identity, zot_token=zot_token, forgejo_token=forgejo_token,
@@ -498,6 +522,7 @@ class AnalyticsPrivatePromotionBroker:
             )
             if type(registry) is not VerifiedRegistryCredentials:
                 raise ValueError("unverified registry audiences")
+            phase = "broker_zot_lifetime"
             scoped = registry.zot_read_credential()
             now = int(time.time())
             if (
@@ -505,6 +530,7 @@ class AnalyticsPrivatePromotionBroker:
                 or scoped.expires_at - now < MIN_POST_PREFLIGHT_VALIDITY_SECONDS
             ):
                 raise ValueError("expired future pull window")
+            phase = "broker_sealed_fd"
             descriptor = create_sealed_successor_review_credentials(
                 scoped.token, forgejo_token=forgejo_token,
                 github_oidc_token=compact_token, expires_at=scoped.expires_at,
@@ -512,10 +538,12 @@ class AnalyticsPrivatePromotionBroker:
                 canonical_request=canonical_request, now=now,
             )
         except RegistryCredentialRejectedError:
+            _emit_analytics_release_boundary(phase, "rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except _CONTROL:
             raise
         except Exception:
+            _emit_analytics_release_boundary(phase, "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
         # Section: the exact original cross-process broker replay store must
@@ -533,15 +561,21 @@ class AnalyticsPrivatePromotionBroker:
                 if consumed is not None:
                     raise ValueError("invalid replay consume")
             except ReplayError:
+                _emit_analytics_release_boundary("broker_replay_consume", "rejected")
                 raise BrokerRejectedError(REJECTED_MESSAGE) from None
             except _CONTROL:
                 raise
             except Exception:
+                _emit_analytics_release_boundary("broker_replay_consume", "unavailable")
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+            # Replay is irrevocably consumed even when the next step fails.
+            _emit_analytics_release_boundary("broker_replay_consume", "passed")
+            phase = "broker_unix_send"
             try:
                 result = sender(
                     canonical_request, credential_fd=descriptor,
                 )
+                phase = "broker_executor_receipt"
                 if (
                     type(result) is not bytes
                     or not 0 < len(result) <= MAX_EXECUTOR_RESPONSE_BYTES
@@ -549,10 +583,12 @@ class AnalyticsPrivatePromotionBroker:
                         != request_hash
                 ):
                     raise ValueError("wrong signed executor receipt")
+                _emit_analytics_release_boundary("broker_executor_receipt", "passed")
                 return result
             except _CONTROL:
                 raise
             except Exception:
+                _emit_analytics_release_boundary(phase, "unavailable")
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         finally:
             os.close(descriptor)

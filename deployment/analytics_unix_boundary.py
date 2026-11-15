@@ -21,6 +21,7 @@ No general-purpose pluggable route or generic framework is introduced.
 from __future__ import annotations
 
 from types import SimpleNamespace
+import os
 
 from .analytics_execution import (
     MAX_ANALYTICS_REQUEST_BYTES, parse_analytics_request,
@@ -71,6 +72,28 @@ def _root_reviewed_source(source: dict[str, str]) -> tuple[tuple[str, str], ...]
         raise
     except Exception:
         raise TypeError("Analytics Unix authority is invalid") from None
+
+
+# Section: narrow, exact-static protected successor Unix boundary logging.
+# No socket path, peer metadata, request/JWT or exception text may be logged.
+_UNIX_FAILURE_PHASES = frozenset({
+    "request_image", "sealed_credential", "socket_transport",
+})
+
+
+def _emit_analytics_unix_phase(phase: str) -> None:
+    """Best-effort secret-free Unix sender failure phase, never new authority."""
+    try:
+        if type(phase) is not str or phase not in _UNIX_FAILURE_PHASES:
+            return
+        os.write(
+            2,
+            ("TASK014_ANALYTICS_UNIX_HOLD phase=" + phase + "\n").encode("ascii"),
+        )
+    except _CONTROL:
+        raise
+    except Exception:
+        pass
 
 
 class AnalyticsUnixExecutorTransport(UnixExecutorTransport):
@@ -133,8 +156,10 @@ class AnalyticsUnixExecutorTransport(UnixExecutorTransport):
         before replay. Only an independently reviewed successor receiver
         may subsequently be enabled with the owner/OIDC/source trust chain.
         """
+        phase = "request_image"
         try:
             image = _successor_request_image(canonical_request)
+            phase = "sealed_credential"
             read_sealed_credential(
                 credential_fd, canonical_request=canonical_request,
                 image=image, product_id="analytics-successor",
@@ -142,12 +167,19 @@ class AnalyticsUnixExecutorTransport(UnixExecutorTransport):
         except _CONTROL:
             raise
         except Exception:
+            _emit_analytics_unix_phase(phase)
             raise ExecutorTransportUnavailableError(
                 TRANSPORT_UNAVAILABLE_MESSAGE
             ) from None
-        return UnixExecutorTransport._send(
-            self, canonical_request, credential_fd=credential_fd,
-        )
+        try:
+            return UnixExecutorTransport._send(
+                self, canonical_request, credential_fd=credential_fd,
+            )
+        except _CONTROL:
+            raise
+        except Exception:
+            _emit_analytics_unix_phase("socket_transport")
+            raise
 
     def _send_analytics_private(
         self, canonical_request: bytes, *, credential_fd: int,

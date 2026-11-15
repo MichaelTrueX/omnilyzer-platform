@@ -29,6 +29,7 @@ from dataclasses import dataclass
 import gzip
 import hashlib
 import io
+import os
 import tarfile
 from pathlib import Path
 from typing import Any
@@ -108,6 +109,33 @@ class AnalyticsSignedEvidenceReview:
 
 class AnalyticsSignedEvidenceError(DeploymentPolicyError):
     """The reviewed original Task013 Analytics release was not fully verified."""
+
+
+# Section: enumerated private signed successor failure phases. No signed
+# bytes, paths, exception strings, tokens, registry payloads or claims logged.
+_SIGNED_SUCCESSOR_PHASES = frozenset({
+    "owner_source", "forgejo_credential", "forgejo_archive",
+    "archive_grammar", "signature_policy", "signed_source_binding",
+    "zot_credential", "zot_manifest_read", "oci_digest",
+    "oci_manifest_shape", "signed_field_grammar", "sigstore_blobs",
+    "cosign_oci", "signer_identity", "external_source_claim",
+    "owner_source_review", "signed_review_receipt",
+})
+
+
+def _emit_signed_successor_failure(phase: str) -> None:
+    """Emit an allowlisted best-effort phase, never alter release denial."""
+    try:
+        if type(phase) is not str or phase not in _SIGNED_SUCCESSOR_PHASES:
+            return
+        os.write(
+            2,
+            ("TASK014_ANALYTICS_SIGNED_HOLD phase=" + phase + "\n").encode("ascii"),
+        )
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except Exception:
+        pass
 
 
 def _sha(raw: bytes) -> str:
@@ -321,6 +349,7 @@ def _verify_analytics_signed_evidence_with_expectation(
     collaborator and receipt objects can be created by callers in tests.
     Original installed 0.15.0 requires its unchanged hard-pin wrapper.
     """
+    phase = "signed_field_grammar"
     try:
         if (
             type(received_at) is not int or received_at < 1
@@ -338,6 +367,7 @@ def _verify_analytics_signed_evidence_with_expectation(
             expected_digest=expected_digest, expected_run_id=expected_run_id,
         )
         # Preserve original Task014 signature-verifier invocation semantics.
+        phase = "sigstore_blobs"
         signer = blob_signatures.verify(
             evidence["release-manifest.json"], evidence["release-provenance.json"],
             evidence["release-manifest.sigstore.json"],
@@ -346,7 +376,9 @@ def _verify_analytics_signed_evidence_with_expectation(
         expected_image = (
             f"oci-dev.omnilyzer.ai/{ANALYTICS_REPOSITORY}@{expected_digest}"
         )
+        phase = "cosign_oci"
         oci = oci_signatures.verify(expected_image, received_at)
+        phase = "signer_identity"
         closed_object(
             signer,
             {"release_manifest_verified", "provenance_verified",
@@ -379,6 +411,7 @@ def _verify_analytics_signed_evidence_with_expectation(
             _sha(evidence["release-provenance.json"]), expected_run_id,
             "dev", "analytics-signed-evidence-read-only",
         )
+        phase = "external_source_claim"
         claim = _verified_external_source_claim(manifest, provenance, request)
         if claim is None:
             raise ValueError("Analytics source attestation missing")
@@ -387,6 +420,7 @@ def _verify_analytics_signed_evidence_with_expectation(
             expected_digest, expected_image, EXPECTED_RELEASE_WORKFLOW,
             EXPECTED_CERTIFICATE_IDENTITY, EXPECTED_CERTIFICATE_ISSUER, claim,
         )
+        phase = "owner_source_review"
         if selected is None and owner_approval is None:
             reviewed = review_signed_analytics_source(signed_source)
         elif (
@@ -398,6 +432,7 @@ def _verify_analytics_signed_evidence_with_expectation(
             )
         else:
             raise ValueError("missing successor-source review")
+        phase = "signed_review_receipt"
         if reviewed.release_authorized or reviewed.deployment_authorized:
             raise ValueError("review must not authorize deployment")
         return AnalyticsSignedEvidenceReview(
@@ -406,6 +441,8 @@ def _verify_analytics_signed_evidence_with_expectation(
             _sha(evidence["release-provenance.json"]), reviewed,
         )
     except Exception:
+        if selected is not None:
+            _emit_signed_successor_failure(phase)
         raise AnalyticsSignedEvidenceError(ERROR) from None
 
 
@@ -523,23 +560,29 @@ def acquire_and_review_owner_approved_analytics_release(
     read back from Zot by immutable SHA256, using existing TLS/credential rules.
     This is a read-only review, not broker/executor/rollout authorization.
     """
+    phase = "owner_source"
     try:
         selected, owner = load_and_verify_owner_signed_source(
             approval_file, signature_file,
         )
+        phase = "forgejo_credential"
         forgejo_token = _credential(
             forgejo_provider.forgejo_read_credential(),
             ForgejoReadCredential, received_at,
         )
+        phase = "forgejo_archive"
         archive, _ = _get(
             "forgejo", selected.release_version, forgejo_token,
             forgejo_factory, product="analytics",
         )
+        phase = "archive_grammar"
         evidence, scanner_hashes = _analytics_archive(archive)
+        phase = "signature_policy"
         checked = verify_owner_selected_analytics_signed_evidence(
             evidence, scanner_hashes, blob_signatures, oci_signatures,
             received_at=received_at, selected=selected, owner_approval=owner,
         )
+        phase = "signed_source_binding"
         if (
             checked.release_version != selected.release_version
             or checked.source.source_commit != selected.source_commit
@@ -547,17 +590,21 @@ def acquire_and_review_owner_approved_analytics_release(
         ):
             raise ValueError("source review mismatch")
         digest = checked.source.oci_manifest_digest
+        phase = "zot_credential"
         zot_token = _credential(
             zot_provider.zot_read_credential(), ZotReadCredential, received_at,
         )
+        phase = "zot_manifest_read"
         body, headers = _get(
             "zot", digest, zot_token, zot_factory, product="analytics",
         )
+        phase = "oci_digest"
         if (
             headers.get("docker-content-digest") != digest
             or "sha256:" + _sha(body) != digest
         ):
             raise ValueError("published OCI bytes differ from signed subject")
+        phase = "oci_manifest_shape"
         manifest = _json(
             body, frozenset({"schemaVersion", "mediaType", "config", "layers"}),
             schema=None,
@@ -569,6 +616,7 @@ def acquire_and_review_owner_approved_analytics_release(
             raise ValueError("invalid OCI media type")
         return checked
     except Exception:
+        _emit_signed_successor_failure(phase)
         raise AnalyticsSignedEvidenceError(ERROR) from None
 
 
