@@ -28,6 +28,7 @@ from .analytics_execution import (
 )
 from .private_registry_fd import _successor_request_image
 from .analytics_promotion_broker import AnalyticsPrivatePromotionBroker
+from .analytics_registry_review_composition import _emit_analytics_release_boundary
 from .broker import BrokerRejectedError, REJECTED_MESSAGE, _bound_operation
 from .broker_integration import InertDevPromotionHandler, MAX_PROMOTION_REQUEST_BYTES
 from .jwks import OIDCVerificationError, parse_bounded_json
@@ -161,16 +162,26 @@ class AnalyticsDEVPromotionRouter:
         # the existing ingress emits 403 versus 503 correctly; never turn a
         # signer outage into a claim that the user supplied a bad identity.
         if successor_selected:
-            response = object.__getattribute__(self, "_successor")(
-                compact_token=compact_token, zot_token=zot_token,
-                forgejo_token=forgejo_token,
-                canonical_request=promotion_request, received_at=received_at,
-            )
+            try:
+                response = object.__getattribute__(self, "_successor")(
+                    compact_token=compact_token, zot_token=zot_token,
+                    forgejo_token=forgejo_token,
+                    canonical_request=promotion_request, received_at=received_at,
+                )
+            except BrokerRejectedError:
+                _emit_analytics_release_boundary("router_signed_response", "rejected")
+                raise
+            except _CONTROL:
+                raise
+            except Exception:
+                _emit_analytics_release_boundary("router_signed_response", "unavailable")
+                raise
             # Exact positive reply is verified in the existing broker
             # before this handler. Probe-only cannot ever return success.
             if (object.__getattribute__(self, "_allow_first_successor") is not True
                     or type(response) is not bytes or not response):
                 from .broker import BrokerUnavailableError, UNAVAILABLE_MESSAGE
+                _emit_analytics_release_boundary("router_signed_response", "unavailable")
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
             return response
         if analytics_selected:

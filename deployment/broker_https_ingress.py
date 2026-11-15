@@ -7,6 +7,7 @@ listener must supply the original ordered header pairs, without losing duplicate
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 
 from .broker import (
     BrokerRejectedError, BrokerUnavailableError, MAX_EXECUTOR_RESPONSE_BYTES,
@@ -145,6 +146,20 @@ def parse_dev_promotion_ingress(
     )
 
 
+def _emit_broker_unavailable_boundary() -> None:
+    """Record only one fixed private 503 handler stage, never request contents.
+
+    The existing shared Canary/Analytics ingress remains fail-closed even if
+    stderr is inaccessible, and the wire HTTP response is unchanged.
+    """
+    try:
+        os.write(2, b"TASK014_PRIVATE_BROKER_INGRESS_HOLD phase=handler_unavailable\n")
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except Exception:
+        pass
+
+
 def dispatch_inert_dev_promotion_ingress(
     handler: object, *, method: str, path: str, headers: object,
     body: bytes, received_at: int,
@@ -172,6 +187,7 @@ def dispatch_inert_dev_promotion_ingress(
     except BrokerRejectedError:
         return IngressResponse(403, _REJECTED_BODY)
     except Exception:
+        _emit_broker_unavailable_boundary()
         return IngressResponse(503, _UNAVAILABLE_BODY)
     return IngressResponse(202, _ACCEPTED_BODY)
 
