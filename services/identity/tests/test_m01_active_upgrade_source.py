@@ -53,10 +53,14 @@ class SourceOnlyActiveUpgradeTests(unittest.TestCase):
             p = folder / "identity-source-98d74f4.tar"
             p.write_bytes(b"not reviewed git source")
             p.chmod(0o400)
-            with mock.patch.object(UP, "ARCHIVE", p):
-                with self.assertRaisesRegex(UP.UpgradeHold,
-                                            "REVIEWED_SOURCE_ARCHIVE_SHA_MISMATCH"):
-                    UP.validate_archive()
+            # GitHub runners lack the PROD account. Stub only that UID
+            # lookup; retain actual temp-file ownership and hash checks.
+            with mock.patch.object(UP.pwd, "getpwnam",
+                                   return_value=mock.Mock(pw_uid=os.getuid())):
+                with mock.patch.object(UP, "ARCHIVE", p):
+                    with self.assertRaisesRegex(UP.UpgradeHold,
+                                                "REVIEWED_SOURCE_ARCHIVE_SHA_MISMATCH"):
+                        UP.validate_archive()
 
     def test_derive_unit_changes_only_four_exact_version_pins(self):
         """Full candidate unit retains every existing restriction except SHA."""
