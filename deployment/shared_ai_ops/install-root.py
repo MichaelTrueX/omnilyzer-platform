@@ -85,12 +85,12 @@ def main():
         captured[name] = check_bytes(p, digest)
     print("SHARED_AGENT_ALL_SOURCE_SHA_PASS", flush=True)
 
-    subprocess.run(["/usr/sbin/useradd", "--create-home", "--shell", "/bin/bash",
+    subprocess.run(["/usr/sbin/useradd", "--create-home", "--shell", "/usr/sbin/nologin",
                     "--user-group", agent], check=True)
     user = pwd.getpwnam(agent)
     os.chmod(user.pw_dir, 0o700)
-    insist("sudo" not in (g.gr_name for g in grp.getgrall()
-           if agent in g.gr_mem), "AGENT_IN_ADMIN_GROUP")
+    insist(set(os.getgrouplist(agent, user.pw_gid)) == {user.pw_gid},
+           "AGENT_EXTRA_PRIVILEGED_GROUP_MEMBERSHIP")
 
     for d in (JOB_ROOT, JOB_ROOT / "jobs", JOB_ROOT / "jobs" / "sumlaude",
               JOB_ROOT / "jobs" / "omnilyzer", POLICY_DIR):
@@ -102,8 +102,10 @@ def main():
         install_bytes(captured[name], JOB_ROOT / name, 0o500)
     install_bytes(captured["policy.json"], POLICY_DIR / "policy.json", 0o600)
     install_bytes(captured["50-shared-ai-ops.rules"], POLKIT_DEST, 0o644)
-    for name in ("sumlaude-ai-ops@.service", "omnilyzer-ai-ops@.service"):
-        install_bytes(captured[name], Path("/etc/systemd/system") / name, 0o644)
+    local_template = ("sumlaude-ai-ops@.service" if host == "truexmainserver"
+                      else "omnilyzer-ai-ops@.service")
+    install_bytes(captured[local_template],
+                  Path("/etc/systemd/system") / local_template, 0o644)
     remote_service = HOST_USER[host] + "-remote.service"
     install_bytes(captured[remote_service],
                   Path("/etc/systemd/system") / remote_service, 0o644)

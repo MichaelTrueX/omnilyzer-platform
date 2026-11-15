@@ -38,6 +38,12 @@ docker exec -u root "$name" sh -c 'printf "#!/bin/sh\nexit 0\n" > /usr/bin/syste
 docker exec -u root "$name" /usr/local/bin/python3 -I /tmp/install-root.py
 docker exec -u root "$name" test -f "/etc/systemd/system/$agent-remote.service"
 docker exec -u root "$name" test ! -e "/etc/systemd/system/$other-remote.service"
+docker exec -u root "$name" test -f "/etc/systemd/system/$product-ai-ops@.service"
+other_product=omnilyzer
+if [[ "$product" == omnilyzer ]];then other_product=sumlaude;fi
+docker exec -u root "$name" test ! -e "/etc/systemd/system/$other_product-ai-ops@.service"
+docker exec "$name" getent passwd "$agent" | grep -Fq ":/usr/sbin/nologin"
+test "$(docker exec "$name" id -nG "$agent")" = "$agent"
 docker exec -u root "$name" stat -c 'INSTALL=%U:%G:%a %n' /usr/local/libexec/shared-ai-ops/dispatcher.py /etc/shared-ai-ops/policy.json /etc/polkit-1/rules.d/50-shared-ai-ops.rules
 docker exec -u root "$name" /usr/local/bin/python3 -I /usr/local/libexec/shared-ai-ops/dispatcher.py "$product" status
 if docker exec -u root "$name" /usr/local/bin/python3 -I /tmp/install-root.py >/dev/null 2>&1;then echo INSTALL_REPLAY_FALSE_PASS; exit 70;fi
