@@ -61,29 +61,42 @@ committed and copied to the correct server. Do not use an unpinned latest file.
 
 **One-time OAuth pairing after installer PASS** on the intended host:
 
-1. As the newly created product-specific OS user, install a fixed version
-   of `@wonderwhy-er/desktop-commander` (currently pinned proposal `0.3.1`)
-   inside its private home; no `sudo` within the agent account.
-2. Start `/usr/bin/node` on the installed `dist/index.js remote` once.
-   Product Owner confirms the displayed OAuth verification code **in the
-   Desktop Commander UI**, not in the chat. Never share credentials/codes.
-3. Before pairing, a root administrator must install a **dedicated root-owned**
-Node.js runtime 22.12+ at /usr/local/libexec/shared-ai-ops/node and verify
-its approved exact binary SHA256. The source is intentionally outside the
-shared OS /usr/bin/node and cannot be written by the agent account.
-The remote service refuses to start if this separate runtime is missing.
-On truexmainserver the available NVM Node 24.22.0 has independently verified
-SHA256 67ca5783febb8bf85736c79fcdd92c8d6d465a0eb2a082672bcdfa76a506751c.
-The owner-local bootstrap must COPY and SHA-verify it under root ownership.
-On omnilyzerdev no acceptable root-owned Node 22+ source has been verified;
-its root filesystem is currently mounted read-only and NO installation is
-authorized until storage state and runtime provenance are resolved.
+1. Install a fixed Desktop Commander package (pinned proposal 0.3.1) under
+   the new dedicated agent user's own private home. The account has
+   /usr/sbin/nologin, not an interactive or password-login shell. A local
+   administrator invokes the executable explicitly AS that user.
+2. An administrator independently verifies an approved Node.js binary
+   22.12+ and installs a COPY as a root-owned runtime at
+   /usr/local/libexec/shared-ai-ops/node. The service never updates or uses
+   the system's existing Node18 binary.
+   - truexmainserver: available Node 24.22.0 at the existing owner's
+     private NVM source, independently verified SHA256
+     67ca5783febb8bf85736c79fcdd92c8d6d465a0eb2a082672bcdfa76a506751c.
+   - omnilyzerdev: already running Node 22.23.3 from
+     /opt/nodejs/node-v22.23.3-linux-x64/bin/node, exact SHA256
+     fde6a4bf8d0562f7751d1a2d6cb9b417c4cfe107bbcb0aa3e9a24e125e348f48,
+     root:root 0755 with root-controlled /opt ancestors. An owner-local
+     pinned COPY is still required; the agent cannot mutate system paths.
+3. Invoke the pinned Node copy once as the dedicated nonadmin account to
+   start the installed remote Desktop Commander script. The Product Owner
+   checks the OAuth device verification code in the Desktop Commander UI.
+   Never post the code or credentials in GitHub or chat.
+4. Once paired, stop the foreground process and the administrator enables
+   the product-specific remote systemd service. Confirm the visible new
+   device process is genuinely running as sumlaude-agent/omnilyzer-agent.
+   Do not disable sudo restrictions of the existing user account.
 
-Once paired, stop that foreground instance and the administrator enables
-   the preinstalled `<product>-agent-remote.service` for boot. It runs as
-   the dedicated user with its home as the only writable filesystem path.
-4. Confirm that Desktop Commander shows the new device separately and that
-   its remote process genuinely runs as `sumlaude-agent` or `omnilyzer-agent`.
+**Actual omnilyzerdev host access correction:** An earlier remote-agent
+findmnt command showed ext4 root as read-only, but that was only
+the existing Desktop Commander service's isolated mount namespace.
+Actual PID1 root mountinfo reports rw, while the connected agent reports
+ro. The service has ProtectSystem=strict and ProtectHome=read-only, with
+ReadWritePaths limited to its approved repositories and device state.
+This is deliberate systemd isolation, not evidence that the underlying
+host root filesystem is damaged. Do not remount/reboot/fsck on that basis.
+The remote agent cannot place the private source stage directly under
+/home/omnigpt; arrange one authorized owner-local staging after source
+security review, without weakening that existing agent's protections.
 
 Example authorized connected-agent operation AFTER pairing:
 
