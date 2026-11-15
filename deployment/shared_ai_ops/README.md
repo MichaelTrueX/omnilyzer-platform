@@ -67,7 +67,19 @@ committed and copied to the correct server. Do not use an unpinned latest file.
 2. Start `/usr/bin/node` on the installed `dist/index.js remote` once.
    Product Owner confirms the displayed OAuth verification code **in the
    Desktop Commander UI**, not in the chat. Never share credentials/codes.
-3. Once paired, stop that foreground instance and the administrator enables
+3. Before pairing, a root administrator must install a **dedicated root-owned**
+Node.js runtime 22.12+ at /usr/local/libexec/shared-ai-ops/node and verify
+its approved exact binary SHA256. The source is intentionally outside the
+shared OS /usr/bin/node and cannot be written by the agent account.
+The remote service refuses to start if this separate runtime is missing.
+On truexmainserver the available NVM Node 24.22.0 has independently verified
+SHA256 67ca5783febb8bf85736c79fcdd92c8d6d465a0eb2a082672bcdfa76a506751c.
+The owner-local bootstrap must COPY and SHA-verify it under root ownership.
+On omnilyzerdev no acceptable root-owned Node 22+ source has been verified;
+its root filesystem is currently mounted read-only and NO installation is
+authorized until storage state and runtime provenance are resolved.
+
+Once paired, stop that foreground instance and the administrator enables
    the preinstalled `<product>-agent-remote.service` for boot. It runs as
    the dedicated user with its home as the only writable filesystem path.
 4. Confirm that Desktop Commander shows the new device separately and that

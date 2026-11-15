@@ -26,8 +26,8 @@ FILES = {
     "50-shared-ai-ops.rules": "3e6a558a8ee877b70832a12d7748f01e259eff36584b523118f1318c8c5caf64",
     "sumlaude-ai-ops@.service": "623521880de6a805fdea71486ac675e18ae7dd3afb7e2d069c0d1c22aed0b48b",
     "omnilyzer-ai-ops@.service": "694c186dc396fb9af6b218c50aa3580734e5502968e307f7d173cda6d865d436",
-    "sumlaude-agent-remote.service": "2ee75601ec76f6afa144e4ed438647b92b0e85c63bd0fe48d17047705dd38a5c",
-    "omnilyzer-agent-remote.service": "9354bd758a494f31102388e41ccacc22337339a9844a39c7d406f0d9b4e78f7d",
+    "sumlaude-agent-remote.service": "98c6460647ae9c9e9e48095d70cade64ccceff8c8636834cb029103224fe9711",
+    "omnilyzer-agent-remote.service": "7b3772a9cca4a4df0fd3d1a1a8e74f8f70e0fa0826a6d9afed6ee2f07830d2bc",
 }
 HOST_USER = {"truexmainserver": "sumlaude-agent", "omnilyzerdev": "omnilyzer-agent"}
 SOURCE_OWNER = {"truexmainserver": "trusthansen", "omnilyzerdev": "omnigpt"}

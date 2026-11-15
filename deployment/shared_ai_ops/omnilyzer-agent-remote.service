@@ -8,9 +8,9 @@ Type=simple
 User=omnilyzer-agent
 Group=omnilyzer-agent
 WorkingDirectory=/home/omnilyzer-agent
-ExecStart=/usr/bin/node /home/omnilyzer-agent/.local/share/omnilyzer-agent/node_modules/@wonderwhy-er/desktop-commander/dist/index.js remote
+ExecStart=/usr/local/libexec/shared-ai-ops/node /home/omnilyzer-agent/.local/share/omnilyzer-agent/node_modules/@wonderwhy-er/desktop-commander/dist/index.js remote
 Environment=HOME=/home/omnilyzer-agent
-Environment=PATH=/usr/bin:/bin
+Environment=PATH=/usr/local/libexec/shared-ai-ops:/usr/bin:/bin
 NoNewPrivileges=yes
 UMask=0077
 ProtectSystem=strict
