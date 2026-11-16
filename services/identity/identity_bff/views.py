@@ -14,6 +14,7 @@ from django.conf import settings
 from django.contrib.sessions.backends.base import UpdateError
 from django.db import DatabaseError
 from django.http import JsonResponse, HttpResponseRedirect
+from django.core.exceptions import DisallowedHost
 from django.middleware.csrf import get_token, rotate_token
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
@@ -23,6 +24,63 @@ from . import issuer, oidc
 
 def _fail(status=401):
     return JsonResponse({"error": "authentication unavailable"}, status=status)
+
+
+# Section: Resolve only the two fixed product hostnames. The second public
+# hostname is absent unless an explicit isolated release flag enables it.
+# A proxy must replace inbound Host and X-Forwarded-Proto, never trust browser
+# forwarded values. These host-only cookie namespaces remain separate.
+_PUBLIC_RETURN_PATHS = frozenset((
+    "/learn/math/square-root-function/",
+    "/learn/science/why-earth-supports-life/",
+))
+
+
+def _exact_origin(request):
+    """Resolve the approved HTTPS host, rejecting ports and untrusted hosts."""
+    if not request.is_secure():
+        return None
+    host = request.get_host()
+    if host == "app.sumlaude.com":
+        return settings.PRODUCT_ORIGIN
+    if settings.CANONICAL_AUTH_ENABLED and host == "sumlaude.com":
+        return settings.CANONICAL_ORIGIN
+    return None
+
+
+class ExactOriginMiddleware:
+    """Require exact request Host and unsafe-method Origin before CSRF checks.
+
+    Django still checks the real CSRF secret stored in its PostgreSQL session.
+    This narrower Origin comparison prevents either approved sibling hostname
+    from being treated as a cross-host trusted Origin for browser mutations.
+    """
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        try:
+            origin = _exact_origin(request)
+        except DisallowedHost:
+            origin = None
+        if origin is None:
+            response = JsonResponse({"error": "unapproved origin"}, status=400)
+        elif request.method not in ("GET", "HEAD", "OPTIONS", "TRACE") and (
+                request.META.get("HTTP_ORIGIN", "") != origin):
+            response = JsonResponse({"error": "origin mismatch"}, status=403)
+        else:
+            request.sumlaude_origin = origin
+            return self.get_response(request)
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+
+def _signed_return_path(request):
+    """Restrict public post-login navigation to two real SEO lesson paths."""
+    if request.sumlaude_origin != settings.CANONICAL_ORIGIN:
+        return "/professional/gtm-001"
+    candidate = request.GET.get("next", "")
+    return candidate if candidate in _PUBLIC_RETURN_PATHS else "/learn/"
 
 
 def _product_cookie(response, cookie):
@@ -56,6 +114,10 @@ def _identity_active(request):
     value = request.session.get("principal")
     now = int(time.time())
     if not isinstance(value, dict) or not value.get("sub"):
+        return None
+    # Old app sessions predate this field and remain valid only on app host.
+    if request.session.get("session_origin", settings.PRODUCT_ORIGIN) != (
+            getattr(request, "sumlaude_origin", None)):
         return None
     if now >= request.session.get("absolute_deadline", 0):
         return None
@@ -110,12 +172,21 @@ def login(request):
     # One pending transaction per browser, 5-minute state lifetime.
     state, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     verifier, challenge = oidc.pkce()
+    origin = request.sumlaude_origin
     request.session["transaction"] = {
         "state": state, "nonce": nonce, "verifier": verifier,
         "deadline": int(time.time()) + 300,
+        "origin": origin, "return_path": _signed_return_path(request),
     }
     try:
-        return HttpResponseRedirect(oidc.authorize(state, nonce, challenge))
+        # Keep the existing app callback byte-for-byte identical. Public login
+        # selects the second exact callback of the SAME Keycloak client.
+        if origin == settings.PRODUCT_ORIGIN:
+            target = oidc.authorize(state, nonce, challenge)
+        else:
+            target = oidc.authorize(state, nonce, challenge,
+                                    redirect_uri=origin + "/auth/callback")
+        return HttpResponseRedirect(target)
     except oidc.IdentityError:
         return _fail(503)
 
@@ -127,13 +198,20 @@ def callback(request):
     request.session.modified = True
     if not isinstance(transaction, dict):
         return _fail(400)
-    if (int(time.time()) > transaction.get("deadline", 0)
+    bound_origin = transaction.get("origin", settings.PRODUCT_ORIGIN)
+    if (bound_origin != request.sumlaude_origin
+            or int(time.time()) > transaction.get("deadline", 0)
             or not hmac.compare_digest(request.GET.get("state", ""), transaction.get("state", ""))
             or request.GET.get("error") or not request.GET.get("code")
             or request.GET.get("iss", settings.OIDC_ISSUER) != settings.OIDC_ISSUER):
         return _fail(400)
     try:
-        tokens = oidc.exchange(request.GET["code"], transaction["verifier"])
+        if bound_origin == settings.PRODUCT_ORIGIN:
+            tokens = oidc.exchange(request.GET["code"], transaction["verifier"])
+        else:
+            tokens = oidc.exchange(
+                request.GET["code"], transaction["verifier"],
+                redirect_uri=bound_origin + "/auth/callback")
         principal = oidc.verify_id(tokens["id_token"], tokens["access_token"],
                                    nonce=transaction["nonce"])
         # Validate and encrypt *all* OAuth data before creating an S03
@@ -155,6 +233,7 @@ def callback(request):
                 "oauth_deadline": deadline,
                 "absolute_deadline": now + settings.IDENTITY_ABSOLUTE_SECONDS,
                 "last_seen": now, "age_choice": "pending",
+                "session_origin": bound_origin,
             })
             request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
             try:
@@ -164,7 +243,8 @@ def callback(request):
             # Rotate the secret after OIDC identity changes, not just the
             # Django session key. A pre-login CSRF token must no longer work.
             rotate_token(request)
-            return _clear_product_cookie(HttpResponseRedirect("/professional/gtm-001"))
+            return _clear_product_cookie(HttpResponseRedirect(
+                transaction.get("return_path", "/professional/gtm-001")))
         product_cookie, digest = issuer.issue(principal)
     except (issuer.AdmissionError, oidc.IdentityError, KeyError, TypeError, ValueError):
         return _fail(403)
@@ -174,14 +254,16 @@ def callback(request):
     request.session.update({
         "principal": principal, "s03_digest": digest, "sealed_tokens": sealed,
         "oauth_deadline": deadline, "absolute_deadline": now + settings.IDENTITY_ABSOLUTE_SECONDS,
-        "last_seen": now,
+        "last_seen": now, "session_origin": bound_origin,
     })
     request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
     if not _persist_issued_session(request, digest):
         return _unpaired_session_response()
     # Invalidate tokens issued before the signed OIDC principal was admitted.
     rotate_token(request)
-    return _product_cookie(HttpResponseRedirect("/start"), product_cookie)
+    target = (transaction.get("return_path", "/learn/")
+              if bound_origin == settings.CANONICAL_ORIGIN else "/start")
+    return _product_cookie(HttpResponseRedirect(target), product_cookie)
 
 
 @never_cache

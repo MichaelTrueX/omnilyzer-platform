@@ -285,3 +285,27 @@ def formative_help(request, course_id, lesson_id, stage_id):
     path = ("/api/valoria/learning/courses/" + str(course_id)
             + "/formative/" + lesson_id + "/help/" + stage_id)
     return _private_get_response(_forward_native_get(path, cookie))
+
+
+# Section: A canonical public reading page may request only its own signed
+# learner context, via the existing native API and the paired server session.
+# The private app origin keeps its original direct Native context route.
+@never_cache
+def canonical_context(request):
+    """Pass one authorized private context GET, never an anonymous fallback."""
+    if request.method != "GET":
+        return _private_get_response((405, {"error": "method unavailable"},
+                                      "application/json"))
+    if (not settings.CANONICAL_AUTH_ENABLED
+            or getattr(request, "sumlaude_origin", "") != settings.CANONICAL_ORIGIN):
+        return _private_get_response((404, {"error": "route unavailable"},
+                                      "application/json"))
+    if request.META.get("QUERY_STRING", ""):
+        return _private_get_response((400, {"error": "query unavailable"},
+                                      "application/json"))
+    cookie = _paired_product_cookie(request)
+    if cookie is None:
+        return _private_get_response((401, {"error": "learner session unavailable"},
+                                      "application/json"))
+    return _private_get_response(
+        _forward_native_get("/api/valoria/context", cookie))

@@ -29,16 +29,25 @@ except (ValueError, TypeError) as exc:
     raise RuntimeError("invalid token encryption key") from exc
 
 DEBUG = False
-# Section: This first product BFF may mint cookies and an OIDC redirect ONLY
-# for its owner-approved exact public HTTPS origin. Never permit a second host,
-# a nonstandard port, credentials in the URL or a lookalike hostname.
+# Section: Preserve the active app host and require an explicit OFF-by-default
+# release flag before the SAME existing BFF may serve canonical public lessons.
+# Neither host may set Domain cookies or accept wildcard callback URLs.
 PRODUCT_ORIGIN = required("PRODUCT_ORIGIN").rstrip("/")
 if PRODUCT_ORIGIN != "https://app.sumlaude.com":
     raise RuntimeError("product origin must equal approved Sumlaude HTTPS origin")
 parsed = urlparse(PRODUCT_ORIGIN)
 if parsed.scheme != "https" or not parsed.hostname or parsed.path or parsed.query or parsed.fragment:
     raise RuntimeError("product origin must be exact HTTPS host")
+CANONICAL_ORIGIN = "https://sumlaude.com"
+_canonical_flag = os.environ.get("SUMLAUDE_CANONICAL_AUTH_ENABLED", "0")
+if _canonical_flag not in ("0", "1"):
+    raise RuntimeError("invalid canonical identity release flag")
+CANONICAL_AUTH_ENABLED = _canonical_flag == "1"
 ALLOWED_HOSTS = [parsed.hostname]
+if CANONICAL_AUTH_ENABLED:
+    ALLOWED_HOSTS.append("sumlaude.com")
+# No cross-host trusted-origin exception. Django's ordinary same-origin CSRF
+# check remains, plus an exact Origin check before any unsafe BFF request.
 CSRF_TRUSTED_ORIGINS = [PRODUCT_ORIGIN]
 OIDC_ISSUER = required("OIDC_ISSUER").rstrip("/")
 if urlparse(OIDC_ISSUER).scheme != "https":
@@ -68,6 +77,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "identity_bff.views.ExactOriginMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]

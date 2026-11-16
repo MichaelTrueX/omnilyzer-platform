@@ -16,6 +16,9 @@ urlpatterns = [
     path("auth/age-choice", views.age_choice),
     path("auth/refresh", views.refresh),
     path("auth/logout", views.logout),
+    # Canonical same-page public lesson gate requires a signed, paired Native
+    # context. The old app-host /api/valoria/context path remains unchanged.
+    path("api/valoria/context", formative.canonical_context),
     # Math/Science progress is routed here by the exact NGINX override, never directly to Native.
     path("api/valoria/learning/courses/<uuid:course_id>/formative/<slug:lesson_id>/progress",
          formative.formative_progress),

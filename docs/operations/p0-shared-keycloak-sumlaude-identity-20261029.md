@@ -8,6 +8,89 @@ Related: services/identity/omnilyzer-identity.service,
 
 # P0 shared platform identity BFF for Sumlaude (29 Oct 2026)
 
+
+## Canonical same-URL public lessons - OFF-by-default source candidate (16 Nov 2026)
+
+**Existing private pilot remains the active production contract.** This
+section is a future, separate host-specific release source candidate for
+`https://sumlaude.com/learn/math/square-root-function/` and
+`https://sumlaude.com/learn/science/why-earth-supports-life/`.
+It is not a production rollout, Keycloak client mutation, DNS change,
+approval or assertion that interactive Math/Science is live.
+
+**Release inputs, preserve old behavior:**
+- Existing `PRODUCT_ORIGIN=https://app.sumlaude.com` remains required and
+  exact. The new `SUMLAUDE_CANONICAL_AUTH_ENABLED` accepts only `0` or `1`,
+  defaulting to `0`. Never enable the second host as part of the earlier
+  pinned private `98d74f4` BFF upgrade operator: that operator ships a frozen
+  older runtime, not this subsequent canonical-host source.
+- When the new source is independently reviewed and installed with explicit
+  approved release configuration, `1` permits only the additional exact
+  `sumlaude.com` HTTPS host. The **same** existing Keycloak confidential
+  client must first register the *additional exact* redirect URI
+  `https://sumlaude.com/auth/callback`, retaining the existing exact
+  `https://app.sumlaude.com/auth/callback`. No wildcard redirect URI, client
+  secret sharing with JavaScript or second identity provider.
+- The BFF stores the chosen exact origin in the 5-minute server-side login
+  transaction and binds that origin to the provider Authorization Code
+  redirect and token exchange. Cross-host callbacks fail before exchange.
+  Django session records the origin after signed callback; historical
+  pre-upgrade sessions without an origin remain **app-only**.
+- `__Host-omnilyzer_identity` and `__Host-sumlaude_session` continue as
+  Secure/HttpOnly/SameSite=Lax/Path=/ cookies without a Domain attribute.
+  They are issued separately on each host by that host's response and are
+  never broadened to `.sumlaude.com`. Access tokens stay encrypted in the
+  server-side Django/PostgreSQL session. No browser `localStorage` bearer.
+- Every unsafe request must have an exact `Origin` equal to that request's
+  approved HTTPS host, followed by Django's **real server-session CSRF**
+  verification and existing S03 digest-pairing. Existing Native backend
+  remains on fixed private loopback and receives only its S03 cookie.
+- The public BFF `GET /api/valoria/context` exists only in the explicitly
+  enabled canonical host. It requires signed active identity and the exact
+  paired S03 browser cookie, forwards only that approved fixed Native GET,
+  rejects query/HEAD/missing or forged cookies, and sends private no-store,
+  Vary Cookie, nosniff headers. The four protected lesson GETs and one
+  CSRF-protected progress POST retain their earlier source-specific
+  authorization and upstream limits.
+- Only two static lesson paths may be used as `/auth/login?next=` targets.
+  Unknown/external next values return to `/learn/` without open redirect.
+  The existing private app callback/redirect and GTM001 stay unchanged.
+  A pending self-declared adult choice is still not a learner entitlement:
+  S01 must visibly handle `adult-choice-required` before loading its
+  interactive island, and S03 remains the final learner/course authority.
+
+**Separate public source/operations owner gates (S05 NGINX/Cloudflare,
+S01 browser, S03 authorization):**
+1. Keep the public SEO static `/learn/` HTTP200 anonymous. In the public
+   vhost, minimally permit `connect-src 'self'` without weakening other
+   CSP directives. Exact `/auth/` goes to Django BFF loopback18740 with
+   fixed `Host sumlaude.com` and overwritten SSL scheme headers.
+2. Route **only** `GET /api/valoria/context`, four fixed lesson-scoped
+   formative GET families, and the one signed CSRF formative POST through
+   Django BFF18740. All other public `/api/` paths remain denied. NGINX
+   prefix/regex precedence and HEAD/other-method denial require independent
+   full candidate-vhost syntax and actual route evaluation. Do not allow
+   generic direct Native18741 browser APIs on the public host.
+3. Never cache `/auth/` or approved private `/api/` in Cloudflare,
+   NGINX or browser. Preserve no-store, host-only cookies, HSTS, CSRF,
+   Fetch Metadata and CSP; do not allow broad CORS.
+4. One real joined browser/OIDC/S03/Persistent-Postgres acceptance must show
+   public anonymous reading, signed age choice, current course, first
+   submission/Read-first, protected media/ALT, F5 persistence, CSRF rotation,
+   logout and stale-cookie denial at the **same** canonical URL. Preserve
+   the previously accepted private GTM001 experience throughout.
+5. Any failed new-host release must disable only the new public interactive
+   ingress/flag and revert to functioning public static reading. Reuse the
+   protected private app rollback boundary, never roll back unrelated S03
+   migrations or static lessons.
+
+**Source validation scope:** existing private OIDC, adult-choice and formative
+CSRF tests must remain passing; add focused public-host callback binding,
+same-host CSRF, cookie-pair, context, public-host-disabled and wrong-host
+negative tests. Independent M04 security review applies only to the new
+exact cross-host trust-boundary delta before owner authorization. A passing
+source test or PR is not proof of real Keycloak or public browser readiness.
+
 **Source-only integration candidate. NOT merged, deployed, or authorized for learner access.**
 
 ## Why it exists
