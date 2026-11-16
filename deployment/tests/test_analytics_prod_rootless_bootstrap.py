@@ -6,8 +6,12 @@ No host package, user, service, database or network changes occur.
 """
 from __future__ import annotations
 
+from contextlib import redirect_stdout
+from io import StringIO
+import json
 import os
 from pathlib import Path
+import subprocess
 import stat
 import tempfile
 from types import SimpleNamespace
@@ -109,15 +113,90 @@ class AnalyticsProdRootlessBootstrapTests(unittest.TestCase):
     def test_bootstrap_does_not_install_application_or_grant_sudo(self):
         """A runtime prerequisite is not an Analytics release authorization."""
         import inspect
-        source = inspect.getsource(boot.install)
+        source = inspect.getsource(boot.install) + inspect.getsource(boot.finish_service_install)
         self.assertNotIn("sudoers", source)
         self.assertNotIn("docker run", source)
         self.assertNotIn("nginx", source)
         self.assertNotIn("prisma", source)
         self.assertIn("prod_application_installed", source)
         self.assertIn('"--no-create-home"', source)
-        self.assertIn("HOME.chown(0, 0)", source)
-        self.assertIn("data.chown(account.pw_uid, account.pw_gid)", source)
+        self.assertIn("os.chown(HOME, 0, 0)", source)
+        self.assertIn("os.chown(data, account.pw_uid, account.pw_gid)", source)
+
+
+    def test_partial_recovery_never_runs_unprivileged(self):
+        """Recovery inspection requires the owner-controlled root context."""
+        with patch.object(boot.os, "geteuid", return_value=1000):
+            with self.assertRaisesRegex(RuntimeError, "requires root"):
+                boot.check_consumed_partial_install()
+
+    def test_post_user_completion_exercises_all_real_path_operations(self):
+        """Simulate the entire failed remainder, including mkdir, chown and units."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "analytics"
+            home.mkdir()
+            unit = root / "etc" / "systemd" / "user" / "analytics.service"
+            unit.parent.mkdir(parents=True)
+            config = root / "etc" / "analytics" / "daemon.json"
+            wants = unit.parent / "default.target.wants" / unit.name
+            marker = root / "bootstrap-done.json"
+            account = SimpleNamespace(pw_uid=990, pw_gid=982)
+            original_lexists = os.path.lexists
+
+            def fake_run(*args, **kwargs):
+                """Return only the expected inactive rootful-unit checks."""
+                return subprocess.CompletedProcess(
+                    args, 0, "inactive" if "is-active" in args else "", ""
+                )
+
+            def fake_user_command(*args, **kwargs):
+                """Return a rootless-only Docker proof without contacting Docker."""
+                output = json.dumps(["name=rootless"]) if "info" in args else ""
+                return subprocess.CompletedProcess(args, 0, output, "")
+
+            with patch.multiple(
+                boot, HOME=home, UNIT=unit, WANTS=wants, CONFIG=config,
+                MARKER=marker
+            ):
+                with patch.object(boot.os, "chown") as chown:
+                    with patch.object(boot, "run", side_effect=fake_run) as runner:
+                        with patch.object(
+                            boot, "user_command", side_effect=fake_user_command
+                        ) as user_runner:
+                            with patch.object(
+                                boot.os.path, "lexists",
+                                side_effect=lambda path: False if str(path) == "/var/run/docker.sock"
+                                else original_lexists(path),
+                            ):
+                                with redirect_stdout(StringIO()):
+                                    boot.finish_service_install(account)
+                    chown.assert_any_call(home, 0, 0)
+                    chown.assert_any_call(home / "docker-data", 990, 982)
+                    self.assertEqual(chown.call_count, 2)
+                    self.assertTrue(user_runner.called)
+                    self.assertFalse(
+                        any(
+                            any("apt-get" in str(item) or "useradd" in str(item)
+                                for item in call.args)
+                            for call in runner.call_args_list
+                        )
+                    )
+            self.assertTrue(unit.exists())
+            self.assertTrue(config.exists())
+            self.assertTrue(wants.is_symlink())
+            self.assertEqual(json.loads(marker.read_text())["rootless"], True)
+            self.assertFalse(json.loads(marker.read_text())["prod_application_installed"])
+            self.assertEqual(stat.S_IMODE(marker.stat().st_mode), 0o600)
+
+    def test_no_path_chown_calls_remain_in_source(self):
+        """Regression guard for the actual PROD Python failure at line 299."""
+        import inspect
+        code = inspect.getsource(boot)
+        self.assertNotIn("HOME.chown(", code)
+        self.assertNotIn("data.chown(", code)
+        self.assertIn("os.chown(HOME, 0, 0)", code)
+        self.assertIn("os.chown(data, account.pw_uid, account.pw_gid)", code)
 
 
 if __name__ == "__main__":
