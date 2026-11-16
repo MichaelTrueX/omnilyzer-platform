@@ -59,6 +59,33 @@ requires a separately reviewed, root-owned fixed adapter that verifies
 original signatures, exact DEV identity, tenant/database readiness,
 one-time owner authorization and rollback before using rootless Docker.
 
+## Specific partial-install recovery, 16 November 2026
+
+The exact reviewed first installer stopped on an unsupported Python
+`Path.chown()` call after packages, service account and subordinate IDs
+were created, but before the rootless daemon was configured or started.
+The first `--apply` is **consumed and must never be retried**.
+
+The version-bound correction in the same bootstrap source replaces both
+unsupported calls with `os.chown()` and includes two *new*, narrowly
+scoped modes. `--check-partial` validates the exact original root-owned
+installer SHA, package versions, apt key/source, AppArmor profile,
+UID/GID 990:982, subordinate ranges, rootful masks, empty service home,
+missing post-user artifacts and unused ports. `--resume-after-user` runs
+only the previously unfinished post-user stage after repeating that
+preflight, without installing packages, creating users or changing
+Nginx/PM2/Keycloak/PostgreSQL.
+
+After the independent source review, owner copies the updated **exact**
+GitHub script to a **different** root-owned mode0500 filename,
+`/usr/local/sbin/omnilyzer-analytics-prod-recover-20261116`, after
+SHA256 verification. The original root-owned installer is preserved
+unchanged as evidence. Run the new file with isolated Python and
+`--check-partial`, then once with `--resume-after-user` if PASS.
+If the recovery itself fails part-way, preserve state and do not retry.
+The success marker proves only the rootless runtime prerequisite,
+not the Analytics application or public release.
+
 ## Next release boundary
 
 After the daemon passes, qualify the signed Task014 release-admission
