@@ -146,6 +146,32 @@ class ProbeTests(unittest.TestCase):
                 self.assertEqual(state["IDENTITY"], "HOLD" if stage != "EMPTY" else "PASS")
                 self.assertFalse(any("synthetic" in value for value in state.values()))
 
+    def test_fd_level_output_suppression_drops_private_stream_writes(self):
+        """Do not let imported code emit API data through either OS FD."""
+        payload = f"""import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location('fixed_probe', {str(_SOURCE)!r})
+probe = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(probe)
+probe._authorized_process = lambda: True
+probe._diagnose = lambda: (
+    os.write(1, b'PRIVATE_DOCKER_RESPONSE\\n'),
+    os.write(2, b'PRIVATE_TOKEN_RESPONSE\\n'),
+    {{name: 'PASS' for name in probe._MARKERS}},
+)[2]
+raise SystemExit(probe.main())
+"""
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", "-c", payload],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            check=False, timeout=4,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stderr, b"")
+        expected = "".join(
+            f"M05_UID991_{key}=PASS\n" for key in _probe._MARKERS
+        )
+        self.assertEqual(result.stdout, expected.encode("ascii"))
+
     def test_stopped_green_is_identified_without_contents(self):
         """A stopped or unattached green remains a present candidate slot."""
         with patch.object(_probe, "_trusted_source_root", return_value=True):
