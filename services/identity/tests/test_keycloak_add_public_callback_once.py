@@ -145,6 +145,65 @@ class CallbackGuardTests(unittest.TestCase):
         self.assertEqual(op.SERVER, "http://127.0.0.1:18742")
         self.assertNotIn("http://", "".join(op.NEW_REDIRECTS))
 
+    def test_admin_update_rejects_non_redirect_server_side_readback_mutation(self):
+        """Block success after a real mocked update changes an unrelated field.
+
+        Simulate an otherwise valid kcadm PUT followed by an actual GET that
+        changes consentRequired. The attempt receipt must remain protected;
+        no success receipt or post-update public acceptance may be emitted.
+        """
+        with tempfile.TemporaryDirectory(prefix="m01-qa-client-drift-") as d:
+            receipt_dir = Path(d) / "receipts"
+            before = client()
+            after = op.new_document(before)
+            after["consentRequired"] = True
+            statuses = iter([(200, 400)])
+            readbacks = iter([before, after])
+            commands = []
+            real_tmp = tempfile.TemporaryDirectory
+
+            def mocked_command(args, **kwargs):
+                """Confirm the one actual UPDATE is attempted before rejection."""
+                commands.append(args)
+                return ""
+
+            with (
+                mock.patch.dict(os.environ, {
+                    "M01_CANONICAL_KEYCLOAK_OWNER_GO": op.GO_SCOPE,
+                }),
+                mock.patch.object(op, "RECEIPTS", receipt_dir),
+                mock.patch.object(op, "ATTEMPT", receipt_dir / "attempt.json"),
+                mock.patch.object(op, "SUCCESS", receipt_dir / "success.json"),
+                mock.patch.object(op, "root_admin_env", return_value={
+                    "KC_BOOTSTRAP_ADMIN_USERNAME": "synthetic-admin",
+                    "KC_BOOTSTRAP_ADMIN_PASSWORD": "synthetic-only",
+                }),
+                mock.patch.object(op, "public_preflight",
+                                  side_effect=lambda: next(statuses)) as probe,
+                mock.patch.object(op, "admin_client",
+                                  side_effect=lambda *_: next(readbacks)) as query,
+                mock.patch.object(op, "command", side_effect=mocked_command),
+                mock.patch.object(op.tempfile, "TemporaryDirectory",
+                                  side_effect=lambda **_: real_tmp(
+                                      dir=d, prefix="private-run-")),
+                mock.patch.object(op, "create_attempt_receipt",
+                                  side_effect=lambda: (
+                                      receipt_dir.mkdir(),
+                                      (receipt_dir / "attempt.json").write_text(
+                                          "synthetic-attempt\n"))),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "M01_CALLBACK_HOLD_NON_REDIRECT_CLIENT_READBACK_CHANGED",
+                ):
+                    op.apply_once()
+            self.assertEqual([args[1] for args in commands],
+                             ["config", "update"])
+            self.assertEqual(query.call_count, 2)
+            self.assertEqual(probe.call_count, 1)
+            self.assertTrue((receipt_dir / "attempt.json").is_file())
+            self.assertFalse((receipt_dir / "success.json").exists())
+
     def test_synthetic_success_updates_one_client_and_writes_receipts(self):
         """Exercise exact kcadm command flow without network or root actions."""
         with tempfile.TemporaryDirectory(prefix="m01-qa-callback-") as d:

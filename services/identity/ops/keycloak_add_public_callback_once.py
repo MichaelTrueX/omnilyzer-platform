@@ -198,6 +198,26 @@ def new_document(client: dict) -> dict:
     return clone
 
 
+def verify_exact_persisted_client_delta(before: dict, after: dict) -> None:
+    """Compare every persisted client field, not just known security keys.
+
+    The sole permitted difference is the exact approved redirectUris list.
+    Canonical JSON comparison catches additions, removals, nested changes,
+    and JSON type drift such as a boolean replaced by an integer. No field
+    is exempted, and the client document is never printed to logs/receipts.
+    Keycloak adding unrelated metadata must HOLD, not silently pass review.
+    """
+    expected = new_document(before)
+    verify_security_contract(after, after=True)
+    try:
+        canonical = lambda obj: json.dumps(
+            obj, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        if canonical(after) != canonical(expected):
+            refuse("NON_REDIRECT_CLIENT_READBACK_CHANGED")
+    except (TypeError, ValueError):
+        refuse("UNEXPECTED_CLIENT_READBACK_JSON")
+
+
 def create_attempt_receipt() -> None:
     """Protect against replay before any potential Keycloak mutation."""
     if RECEIPTS.exists() or RECEIPTS.is_symlink():
@@ -259,13 +279,10 @@ def apply_once() -> None:
             "-r", REALM, "-f", str(payload), "--config", str(config),
         ], env=env)
         after = admin_client(config, env)
-        verify_security_contract(after, after=True)
-        for name in ("id", "clientId", "protocol", "publicClient",
-                     "standardFlowEnabled", "implicitFlowEnabled",
-                     "directAccessGrantsEnabled", "serviceAccountsEnabled",
-                     "webOrigins", "attributes", "secret"):
-            if before.get(name) != after.get(name):
-                refuse("SIBLING_CLIENT_FIELDS_CHANGED")
+        # M04 acceptance: compare the ENTIRE actual persisted Keycloak client
+        # readback, including previously unknown and nested security fields.
+        # Only the exact requested callback-list addition may differ.
+        verify_exact_persisted_client_delta(before, after)
         _, public_status = public_preflight()
         if public_status not in (200, 302):
             refuse("PUBLIC_CALLBACK_LIVE_READBACK_FAILED")
