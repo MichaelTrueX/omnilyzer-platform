@@ -292,14 +292,20 @@ def install() -> None:
         mappings = [line for line in lines if line.startswith(f"{USER}:")]
         if mappings != [f"{USER}:{SUBID_START}:{SUBID_COUNT}"]:
             raise RuntimeError(f"service user subordinate IDs differ: {path}")
+    finish_service_install(account)
+
+
+
+def finish_service_install(account: pwd.struct_passwd) -> None:
+    """Finish only the post-user creation stage, without packages or useradd."""
     # Prevent persistent user-unit overrides under ~/.config or ~/.local.
     # The vendor rootless launcher only requires HOME to exist; all daemon
     # writes use the explicit data-root and XDG_RUNTIME_DIR paths.
-    HOME.mkdir(mode=0o755)
-    HOME.chown(0, 0)
+    HOME.mkdir(mode=0o755, exist_ok=True)
+    os.chown(HOME, 0, 0)
     data = HOME / "docker-data"
     data.mkdir(mode=0o700)
-    data.chown(account.pw_uid, account.pw_gid)
+    os.chown(data, account.pw_uid, account.pw_gid)
     CONFIG.parent.mkdir(parents=True, mode=0o755)
     write_new(CONFIG, b'{"features":{"containerd-snapshotter":false}}\n', 0o644)
     # The user manager reads this unit from the root-owned global user-unit
@@ -335,15 +341,163 @@ def install() -> None:
     print(f"PROD_ROOTLESS_BOOTSTRAP_PASS uid={account.pw_uid} public_routes=unchanged app=not-installed")
 
 
+
+# This recovery is valid only for the specific consumed 16 Nov first-install run.
+ORIGINAL_INSTALLER = Path("/usr/local/sbin/omnilyzer-analytics-prod-bootstrap")
+ORIGINAL_INSTALLER_SHA256 = "e0d596ba51222d3aa293bfec508dfc58ebdf55714607959e8d38aedd20d0bdd8"
+PARTIAL_APT_KEY_SHA256 = "1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570"
+PARTIAL_APT_SOURCE_SHA256 = "9899af3a25fe17e73f325b0f8a2802511517be377c0ca9476e50bd61ddeb8903"
+PARTIAL_UID, PARTIAL_GID = 990, 982
+
+
+def check_consumed_partial_install() -> pwd.struct_passwd:
+    """Fail closed unless the already consumed installer stopped at user creation."""
+    if os.geteuid() != 0:
+        raise RuntimeError("partial-state inspection requires root")
+    errors: list[str] = []
+    if socket.gethostname().split(".")[0] != HOST:
+        errors.append("wrong host")
+    if platform.machine() != "x86_64":
+        errors.append("wrong architecture")
+    try:
+        account = pwd.getpwnam(USER)
+        group = grp.getgrnam(USER)
+        if (account.pw_uid, account.pw_gid, account.pw_dir, account.pw_shell) != (
+                PARTIAL_UID, PARTIAL_GID, str(HOME), "/usr/sbin/nologin"):
+            errors.append("service account identity mismatch")
+        if group.gr_gid != PARTIAL_GID or group.gr_mem:
+            errors.append("service group mismatch")
+    except KeyError:
+        account = None
+        errors.append("expected service identity is absent")
+
+    # Verify immutable root custody, unchanged package/repository trust and
+    # original consumed first-install source before touching any new state.
+    for path, digest, mode in (
+        (ORIGINAL_INSTALLER, ORIGINAL_INSTALLER_SHA256, 0o500),
+        (KEY, PARTIAL_APT_KEY_SHA256, 0o644),
+        (SOURCE, PARTIAL_APT_SOURCE_SHA256, 0o644),
+        (APPARMOR, APPARMOR_SHA256, 0o644),
+    ):
+        try:
+            info = os.lstat(path)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                    or info.st_gid != 0 or info.st_nlink != 1
+                    or stat.S_IMODE(info.st_mode) != mode
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != digest):
+                errors.append(f"root-owned source differs: {path}")
+        except OSError:
+            errors.append(f"root-owned source missing: {path}")
+    for spec in PACKAGES:
+        name, version = spec.split("=", 1)
+        found = run("/usr/bin/dpkg-query", "-W", "-f=" + chr(36) + "{Version}", name, check=False)
+        if found.returncode or found.stdout.strip() != version:
+            errors.append(f"package differs: {name}")
+    audit = run("/usr/bin/dpkg", "--audit", check=False)
+    if audit.returncode or audit.stdout.strip():
+        errors.append("dpkg has incomplete package state")
+    try:
+        if hashlib.sha256(Path("/usr/bin/dockerd-rootless.sh").read_bytes()).hexdigest() != VENDOR_SHA256:
+            errors.append("Docker rootless launcher differs")
+    except OSError:
+        errors.append("Docker rootless launcher missing")
+    for unit in ROOTFUL_UNITS:
+        enabled = run("/usr/bin/systemctl", "is-enabled", unit, check=False)
+        active = run("/usr/bin/systemctl", "is-active", unit, check=False)
+        if enabled.stdout.strip() != "masked" or active.stdout.strip() != "inactive":
+            errors.append(f"rootful service unexpected state: {unit}")
+    if os.path.lexists("/var/run/docker.sock"):
+        errors.append("rootful Docker socket unexpectedly present")
+
+    # Absolutely no post-user stage may have started. A subsequent partial
+    # failure is a new HOLD, not permission to replay this continuation.
+    for path in (HOME / "docker-data", CONFIG, UNIT, WANTS, MARKER):
+        if os.path.lexists(path):
+            errors.append(f"post-user setup already started: {path}")
+    try:
+        info = os.lstat(HOME)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o755
+                or any(HOME.iterdir())):
+            errors.append("service HOME is not the original empty root-owned directory")
+    except OSError:
+        errors.append("partial service HOME missing")
+    for parent in (Path("/var/lib/omnilyzer"), UNIT.parent):
+        try:
+            info = os.lstat(parent)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                    or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o755):
+                errors.append(f"unsafe parent: {parent}")
+        except OSError:
+            errors.append(f"missing parent: {parent}")
+    for subid in (Path("/etc/subuid"), Path("/etc/subgid")):
+        try:
+            lines = subid.read_text(encoding="ascii").splitlines()
+            ours = [line for line in lines if line.startswith(f"{USER}:")]
+            if ours != [f"{USER}:{SUBID_START}:{SUBID_COUNT}"]:
+                errors.append(f"subordinate ID mismatch: {subid}")
+            for line in lines:
+                if line.startswith(f"{USER}:"):
+                    continue
+                entries = line.split(":")
+                if len(entries) != 3:
+                    errors.append(f"invalid subordinate ID entry: {subid}")
+                    continue
+                try:
+                    low, count = int(entries[1]), int(entries[2])
+                    if count <= 0 or (low <= SUBID_END and low + count - 1 >= SUBID_START):
+                        errors.append(f"external subordinate ID collision: {subid}")
+                except ValueError:
+                    errors.append(f"malformed subordinate ID: {subid}")
+        except OSError:
+            errors.append(f"cannot read subordinate IDs: {subid}")
+    errors.extend(host_id_conflicts())
+    manager = run("/usr/bin/systemctl", "is-active", f"user@{PARTIAL_UID}.service", check=False)
+    if manager.stdout.strip() not in ("inactive", "unknown"):
+        errors.append("service user manager already active")
+    if os.path.lexists(Path("/var/lib/systemd/linger") / USER):
+        errors.append("service user lingering already enabled")
+    for port in (3141, 3142):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            if probe.connect_ex(("127.0.0.1", port)) == 0:
+                errors.append(f"private port occupied: {port}")
+
+    if errors:
+        for error in errors:
+            print(f"PROD_ROOTLESS_PARTIAL_RECOVERY_HOLD {error}", file=sys.stderr)
+        raise RuntimeError(f"partial-state preflight rejected {len(errors)} mismatch(es)")
+    if account is None:
+        raise RuntimeError("missing account despite passed preflight")
+    print(f"PROD_ROOTLESS_PARTIAL_RECOVERY_PREFLIGHT_PASS uid={PARTIAL_UID}")
+    return account
+
+
+def resume_after_user_created() -> None:
+    """Continue only the exact unfinished post-user stage, not the root installer."""
+    account = check_consumed_partial_install()
+    os.umask(0o022)
+    finish_service_install(account)
+
+
+
 def main() -> int:
     """Offer read-only qualification or one explicit root-only installation."""
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true")
     mode.add_argument("--apply", action="store_true")
+    mode.add_argument("--check-partial", action="store_true")
+    mode.add_argument("--resume-after-user", action="store_true")
     args = parser.parse_args()
     try:
-        preflight() if args.check else install()
+        if args.check:
+            preflight()
+        elif args.apply:
+            install()
+        elif args.check_partial:
+            check_consumed_partial_install()
+        else:
+            resume_after_user_created()
     except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError) as exc:
         print(f"PROD_ROOTLESS_HOLD_NO_AUTOMATIC_RETRY: {exc}", file=sys.stderr)
         return 1
