@@ -22,6 +22,63 @@ Workspace/tenant-isolation, token/session, CSP/CORS, supply-chain, deployment,
 and validation requirements. Do not silently resolve conflicting requirements:
 preserve and report them unless precedence is explicit and unambiguous.
 
+## Permanent two-host DEV -> PROD delivery model (owner decision, 16 November 2026)
+
+The owner operates Omnilyzer as a one-person business with **two actual
+environments only**:
+
+- **DEV** is the existing `omnilyzerdev` development and backup machine.
+  Development happens in the existing approved DEV Git workspace. Implement
+  incremental working user experiences there and make a browser-visible,
+  privately accessible preview available to the owner during development.
+  A source change, a passing unit test, and a real running DEV preview are
+  three different states. Report the actual preview URL and demonstrated
+  behavior only after the route is reachable. Never overwrite a known-good
+  signed DEV release merely to show an incomplete edit.
+- **PROD** is the existing `truexmainserver`. Promotion requires the
+  **identical signed/verified, immutable artifact** that passed real DEV
+  acceptance, explicit Product Owner release approval, production
+  authentication/tenant/data gates, readiness and safe rollback. Never
+  build or patch application source directly on PROD.
+- **GitHub** is the only source-of-truth repository and release history.
+  One accountable feature chat owns source, DEV preview, focused validation
+  and release handoff. Avoid permanent STAGING infrastructure, additional
+  generic sandboxes, coordination chats and repeated approval loops.
+  Disposable local test isolation remains permissible when essential for
+  security, without becoming another deployed environment.
+
+**There is no mandatory STAGING promotion.** The normal dependency is
+`DEV successful exact digest -> PROD owner-approved same digest`.
+Legacy `deployment/environments/staging.json`, old Task007 experiments and
+historical audit schemas may remain inert for compatibility; they do NOT
+require or authorize a running staging server. The existing DEV Task014
+`controller.py` and `policy.py` are immutable installed source and must
+NOT be patched in place: `deployment/direct_dev_prod_preflight.py` owns
+the new SOURCE-ONLY DEV-evidence prerequisite until an authorized PROD
+release adapter is deployed. Historical `prod.json` remains disabled. Do not enable an old staging
+release path while implementing the two-host model.
+
+**Product-first DEV cadence:** Work in small meaningful changes directly on
+DEV, exercise the actual local browser/API/data path, and provide the owner
+the working preview and a short account of what changed. Do not require a
+fully finished feature or a signed PROD candidate merely to show interim
+DEV progress. Preserve safe execution isolation and required security checks.
+If current DEV routing supports only loopback, use an approved private
+Tailscale/SSH access path; do not expose unfinished features publicly.
+
+**Release cadence:** Owner says the visible DEV feature is satisfactory.
+Reuse Task013/014 build, scan, SBOM, signing, pinned source/OCI, audit,
+authorization, rollback and existing release controls. Run relevant release
+checks once at the actual boundary, reuse unchanged evidence and promote
+the same digest to PROD. A PROD config remaining `deployment_enabled=false`
+is still a hard HOLD, not permission to improvise a release.
+
+This rule supersedes older platform descriptions of mandatory three-stage
+promotion but does **not** waive any security, authorization, backup or
+required independent approval. See
+`docs/adr/0012-direct-dev-prod-delivery.md` and
+`docs/operations/dev-prod-direct-delivery.md`.
+
 ## Mandatory unambiguous chat status and next action (owner decision, 7 November 2026)
 
 **Applies to every project ChatGPT workstream:** strategy, development, QA/review, teaching/content, publishing, operations and release. When the user asks whether a chat can continue, what it is waiting for, or requests a progress/closeout handover, **lead with exactly ONE status for the current chat**:

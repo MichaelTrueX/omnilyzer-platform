@@ -3,6 +3,12 @@
 - Status: Accepted
 - Date: 2026-08-29
 
+**Environment-count update (16 November 2026):** Historical
+DEV -> STAGING -> PROD references are superseded for current operations
+by [ADR 0012](0012-direct-dev-prod-delivery.md). The current path is direct
+DEV -> PROD promotion by the same verified immutable digest. Signing, product
+version pinning, compatibility and rollback obligations remain unchanged.
+
 ## Context
 
 Omnilyzer products must remain independent repositories while consuming reusable capabilities owned by the independent `omnilyzer-platform` repository. Products need explicit, testable upgrades and compatible rollback without copying or synchronizing platform implementation source.
