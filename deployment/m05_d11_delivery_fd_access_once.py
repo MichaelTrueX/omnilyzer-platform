@@ -45,7 +45,7 @@ def execution_image():
     require(str(Path(__file__)) == argument)
     if argument == str(SELF):
         return
-    require(re.fullmatch(r'/proc/self/fd/[0-9]+', argument) is not None)
+    require(re.fullmatch(r'/(?:proc/self/fd|dev/fd)/[0-9]+', argument) is not None)
     descriptor = int(argument.rsplit('/', 1)[1])
     opened = os.fstat(descriptor)
     named = SELF.lstat()

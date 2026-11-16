@@ -16,7 +16,7 @@ umask 077
 [[ "$(id -u)" == 0 && "$(id -g)" == 0 && "$(hostname -s)" == omnilyzerdev ]]
 D=/home/trust/m05-d11-delivery-fd-access-review
 W="$D/access_fd_once.py"
-WS=348343812c56acee7102e7a12fd5df5a7679f57fbe40a8dea8990aafe0f5f4c8
+WS=fe1c6c615f38a4f450ff6da0984437003de023066017bcf7ca29ef33405aba48
 SS=e4ea1e0d6d1657672a4aeeafba4d444b72f89223742a7b7ddf339f67e3b6694a
 OS=039efb6590591bb5061b346cc457d9ba12fa769e38df8e72bf3af747eb94c09d
 R=/usr/local/lib/m05-analytics016-d11-delivery

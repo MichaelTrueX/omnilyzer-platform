@@ -5,6 +5,7 @@ import importlib.util
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -39,10 +40,17 @@ class DeliveryAccessTests(unittest.TestCase):
             try:
                 result = subprocess.run(['/proc/self/fd/' + str(fd)],
                                         pass_fds=(fd,), capture_output=True)
+                actual_fexecve = subprocess.run([
+                    sys.executable, '-I', '-B', '-c',
+                    'import os;os.execve(' + str(fd) + ',' + repr([str(file)]) +
+                    ',os.environ.copy())',
+                ], pass_fds=(fd,), capture_output=True)
             finally:
                 os.close(fd)
             self.assertEqual((result.returncode, result.stdout, result.stderr),
                              (0, b'FD_IMAGE_PASS\n', b''))
+            self.assertEqual((actual_fexecve.returncode, actual_fexecve.stdout,
+                              actual_fexecve.stderr), (0, b'FD_IMAGE_PASS\n', b''))
 
     def test_foreign_descriptor_and_changed_sudo_command_are_denied(self):
         m = load('m05_d11_delivery_fd_access_once')
