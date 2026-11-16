@@ -48,8 +48,10 @@ Check its SHA256 before execution and invoke once with --install.
 
 The installer runs local visudo validation BEFORE activating the sudo
 rule, creates root-owned read-only operation code via exclusive new-file
-creation, and writes the exact sudoers rule LAST. If a partial error
-occurs, do not retry blindly; first inspect the actual state.
+creation, then writes and fsyncs the full sudoers policy in an ignored
+root-owned staging file. An atomic no-overwrite hard link publishes the
+complete rule LAST. A failed final syntax validation removes the rule.
+If a partial error occurs, do not retry blindly; first inspect state.
 
 Privileged destinations:
 

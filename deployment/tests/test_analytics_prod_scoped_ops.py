@@ -143,6 +143,48 @@ class AnalyticsProdScopedOpsTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 install.install_new(alias, b"bad", 0o500)
 
+    def test_sudoers_publication_is_atomic_and_rolls_back_on_failed_validation(self) -> None:
+        """A partially written allow rule must never become an active sudo rule."""
+        with TemporaryDirectory() as directory:
+            target = Path(directory) / "94-omnilyzer-analytics-prod-ops"
+            with patch.object(install, "SUDOERS", target):
+                def inspect_complete_policy(*argv, **_):
+                    """Require fully written, mode0440 policy at every validation."""
+                    self.assertEqual(argv[:2], ("/usr/sbin/visudo", "-cf"))
+                    if argv[-1] != "/etc/sudoers":
+                        staged = Path(argv[-1])
+                        self.assertEqual(staged.read_text(), install.SUDOERS_TEXT)
+                        self.assertEqual(stat.S_IMODE(staged.stat().st_mode), 0o440)
+                        self.assertFalse(target.exists())
+                    else:
+                        self.assertEqual(target.read_text(), install.SUDOERS_TEXT)
+                        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o440)
+                    return ""
+                with patch.object(install, "run", side_effect=inspect_complete_policy):
+                    install.publish_sudoers_atomically()
+                self.assertEqual(target.read_text(), install.SUDOERS_TEXT)
+                self.assertEqual(sorted(p.name for p in Path(directory).iterdir()), [target.name])
+
+                # O_EXCL equivalent via atomic hardlink: never overwrite
+                # already installed policy, even if another process raced.
+                with patch.object(install, "run", return_value=""):
+                    with self.assertRaises(FileExistsError):
+                        install.publish_sudoers_atomically()
+                self.assertEqual(target.read_text(), install.SUDOERS_TEXT)
+
+                target.unlink()
+                def fail_after_publish(*argv, **_):
+                    """Simulate an unexpected final validation failure."""
+                    if argv[-1] == "/etc/sudoers":
+                        self.assertTrue(target.exists())
+                        raise install.InstallHold("invalid global policy")
+                    return ""
+                with patch.object(install, "run", side_effect=fail_after_publish):
+                    with self.assertRaises(install.InstallHold):
+                        install.publish_sudoers_atomically()
+                self.assertFalse(target.exists())
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
     def test_existing_pg_script_digest_is_pinned_and_no_dynamic_imports(self) -> None:
         """Only the merged PostgreSQL read-only file may run as root."""
         from deployment import analytics_prod_pg_readonly

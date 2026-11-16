@@ -124,6 +124,33 @@ def install_new(path: Path, data: bytes, mode: int) -> None:
         os.fsync(target.fileno())
 
 
+def publish_sudoers_atomically() -> None:
+    """Make the fully fsynced reviewed policy visible in ONE atomic link."""
+    # Dot-containing basename is ignored by sudo's @includedir parser.
+    # The active rule must never be a partly written command prefix.
+    fd, temporary = tempfile.mkstemp(
+        prefix=".omnilyzer-analytics-ops-", dir=SUDOERS.parent,
+    )
+    try:
+        with os.fdopen(fd, "wb") as candidate:
+            os.fchmod(candidate.fileno(), 0o440)
+            candidate.write(SUDOERS_TEXT.encode("utf-8"))
+            candidate.flush()
+            os.fsync(candidate.fileno())
+        run("/usr/sbin/visudo", "-cf", temporary)
+        # Unlike os.replace(), link() fails if a rule was installed in
+        # the meantime. The active file is published fully written.
+        os.link(temporary, SUDOERS)
+        try:
+            run("/usr/sbin/visudo", "-cf", "/etc/sudoers")
+        except InstallHold:
+            os.unlink(SUDOERS)
+            raise
+    finally:
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
+
+
 def install() -> None:
     """Verify all code and syntax before installing the fixed sudo command."""
     check_context()
@@ -141,10 +168,11 @@ def install() -> None:
         candidate.chmod(0o440)
         run("/usr/sbin/visudo", "-cf", str(candidate))
 
+    # Verify the original global configuration before any publication.
+    run("/usr/sbin/visudo", "-cf", "/etc/sudoers")
     install_new(INSTALLED_PG, pg, 0o500)
     install_new(INSTALLED_OPS, ops, 0o500)
-    install_new(SUDOERS, SUDOERS_TEXT.encode("utf-8"), 0o440)
-    run("/usr/sbin/visudo", "-cf", "/etc/sudoers")
+    publish_sudoers_atomically()
     print("ANALYTICS_PROD_SCOPED_OPS_INSTALLED_PASS")
     print("PERMITTED=pg-audit,runtime-status")
     print("FUTURE_ARBITRARY_ROOT_SCRIPTS=DENIED")
