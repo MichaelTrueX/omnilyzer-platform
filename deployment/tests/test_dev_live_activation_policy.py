@@ -105,8 +105,13 @@ class DevLiveActivationPolicyTests(unittest.TestCase):
             with self.subTest(index=index), self.assertRaises(DeploymentPolicyError):
                 validate_live_dev_environment(value)
 
-    def test_historical_environment_and_host_source_set_remain_closed(self) -> None:
-        """Keep historical Phase-1 files and installed host source bytes unchanged."""
+    def test_historical_dev_environment_and_reviewed_controller_are_closed(self) -> None:
+        """Keep DEV's installed inputs closed and pin the reviewed controller.
+
+        PROD's accepted stage-count change intentionally updates the controller
+        source. This test verifies that exact change rather than silently
+        expecting the predecessor's obsolete source bytes.
+        """
 
         historical = json.loads(
             (ROOT / "deployment/environments/dev.json").read_text(encoding="utf-8")
@@ -129,7 +134,7 @@ class DevLiveActivationPolicyTests(unittest.TestCase):
         controller = ROOT / "deployment/controller.py"
         self.assertEqual(
             hashlib.sha256(controller.read_bytes()).hexdigest(),
-            "f2c06d37b6b9fbe264c16677f699663594f62e503e0fe0072ec3eca3ce7b207f",
+            "2973e3433725d55e3c8dc0e78246f4fa5a25f392942fae4beb40e5f77c91f865",
         )
 
     def test_workflow_routes_dev_only_through_c33w_authority(self) -> None:
