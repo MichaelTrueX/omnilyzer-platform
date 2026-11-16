@@ -386,10 +386,60 @@ def load_and_verify_owner_signed_source(
     A missing trusted signer, unknown field, noncanonical document or invalid
     Ed25519 signature rejects the release. The result is review evidence only.
     """
+    return _verify_owner_signed_source_bytes(
+        _bounded_file(approval_file, _MAX_APPROVAL),
+        _bounded_file(signature_file, _MAX_SIGNATURE),
+    )
+
+
+def verify_owner_signed_source_proof(
+    proof: str,
+) -> tuple[AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt]:
+    """Verify bounded public evidence against the SAME installed root key.
+
+    This transports approval/signature bytes, never a key or signer path.
+    Invalid evidence cannot fall back to the historical per-release files.
+    The original signed Task013/OIDC/replay checks remain separately required.
+    """
     try:
+        if type(proof) is not str or not proof.isascii() or not 0 < len(proof) <= 2048:
+            raise ValueError
+        def unique(pairs):
+            result = {}
+            for name, value in pairs:
+                if name in result:
+                    raise ValueError
+                result[name] = value
+            return result
+        document = json.loads(proof, object_pairs_hook=unique)
+        if (type(document) is not dict
+                or set(document) != {'approval', 'signature_base64'}
+                or type(document['approval']) is not str
+                or type(document['signature_base64']) is not str
+                or json.dumps(document, sort_keys=True, separators=(',', ':'),
+                    ensure_ascii=True) + '\n' != proof):
+            raise ValueError
+        signature = base64.b64decode(document['signature_base64'], validate=True)
+        if base64.b64encode(signature).decode('ascii') != document['signature_base64']:
+            raise ValueError
+        return _verify_owner_signed_source_bytes(
+            document['approval'].encode('ascii'), signature,
+        )
+    except AnalyticsOwnerSourceSelectionDenied:
+        raise
+    except (TypeError, ValueError, UnicodeError):
+        raise AnalyticsOwnerSourceSelectionDenied('owner source proof denied') from None
+
+
+def _verify_owner_signed_source_bytes(
+    approval: bytes, signature: bytes,
+) -> tuple[AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt]:
+    """One canonical parser and root-trusted OpenSSH verifier for both paths."""
+    try:
+        if (type(approval) is not bytes or not 0 < len(approval) <= _MAX_APPROVAL
+                or type(signature) is not bytes or not 0 < len(signature) <= _MAX_SIGNATURE):
+            raise AnalyticsOwnerSourceSelectionDenied('invalid owner source proof')
         trusted_signers = _root_controlled_signers()
-        approval = _bounded_file(approval_file, _MAX_APPROVAL)
-        signature = _bounded_file(signature_file, _MAX_SIGNATURE)
 
         def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
             """Reject ambiguous owner approval JSON keys."""

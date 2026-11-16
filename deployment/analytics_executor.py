@@ -125,9 +125,13 @@ def _verify_executor_owner_source(request: dict[str, object]) -> None:
     )
     if type(request) is not dict:
         raise ValueError("invalid executor request")
-    selected, proof = load_and_verify_owner_signed_source(
-        _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
-    )
+    if 'owner_source_proof' in request:
+        from release.analytics_owner_source_selection import verify_owner_signed_source_proof
+        selected, proof = verify_owner_signed_source_proof(request['owner_source_proof'])
+    else:
+        selected, proof = load_and_verify_owner_signed_source(
+            _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
+        )
     if (
         type(selected) is not AnalyticsOwnerSourceSelection
         or type(proof) is not AnalyticsOwnerSignatureReceipt
@@ -437,14 +441,21 @@ def _review_executor_successor_signed_release(
             **verifier_config, zot_credential_provider=registry,
             product_id="analytics",
         )
+        public_proof = ({'owner_source_proof': request['owner_source_proof']}
+                        if 'owner_source_proof' in request else {})
         signed = acquire_and_review_owner_approved_analytics_release(
             registry, registry, blob, oci, received_at=now,
             approval_file=_OWNER_APPROVAL_FILE,
             signature_file=_OWNER_SIGNATURE_FILE,
+            **public_proof,
         )
-        selected, owner = load_and_verify_owner_signed_source(
-            _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
-        )
+        if public_proof:
+            from release.analytics_owner_source_selection import verify_owner_signed_source_proof
+            selected, owner = verify_owner_signed_source_proof(request['owner_source_proof'])
+        else:
+            selected, owner = load_and_verify_owner_signed_source(
+                _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
+            )
         if (
             type(signed) is not AnalyticsSignedEvidenceReview
             or type(selected) is not AnalyticsOwnerSourceSelection
@@ -631,7 +642,8 @@ class AnalyticsPrivilegedExecutor:
             )
             # Mandatory *independent* owner Ed25519 verification at UID991.
             # Do this before any Docker/RootlessKit/registry access. The two
-            # root-controlled files cannot be selected by the broker/request.
+            # public proof is checked against the same fixed root-controlled
+            # signer; legacy file paths cannot be selected by the request.
             phase = "private_owner"
             _verify_executor_owner_source(parsed)
             phase = "private_active"

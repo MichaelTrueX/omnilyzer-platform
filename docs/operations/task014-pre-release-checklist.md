@@ -39,6 +39,14 @@ reviewed executor path; do not reuse the consumed dispatch, OAT or installers.
 Sections 5-6 below retain dated integration history, not current instructions
 to repeat installation. Re-read current GitHub and live receipts before action.
 
+The [owner's subsequent PROD instruction](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281#issuecomment-6915187222)
+targets this same signed0.16 artifact after the current work is complete.
+No staging server is required: the intended route is accepted DEV -> PROD.
+The disabled Canary-only `deployment/environments/prod.json` and DEV executor
+are not an enabled Analytics PROD path. Qualify the actual production runtime,
+configuration, secrets, ingress, recovery and applicable Issue280 security gates
+before activation; a former staging-server requirement is not a blocker.
+
 ## 1. Decide which kind of work this is
 
 | Kind | Expected work |

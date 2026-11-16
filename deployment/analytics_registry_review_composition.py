@@ -23,6 +23,7 @@ import os
 from release.analytics_owner_source_selection import (
     AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
     expected_owner_approval_bytes, load_and_verify_owner_signed_source,
+    verify_owner_signed_source_proof,
 )
 from .analytics_signed_release_consumer import (
     AnalyticsSignedEvidenceReview, acquire_and_review_analytics_release,
@@ -173,6 +174,7 @@ class InertAnalyticsSignedReleaseReviewHandler:
     def review_successor(
         self, *, compact_token: str, zot_token: str,
         forgejo_token: str, received_at: int,
+        owner_source_proof: str | None = None,
     ) -> tuple[
         AnalyticsSignedEvidenceReview,
         AnalyticsOwnerSourceSelection,
@@ -186,12 +188,13 @@ class InertAnalyticsSignedReleaseReviewHandler:
         return self._review_mode(
             compact_token=compact_token, zot_token=zot_token,
             forgejo_token=forgejo_token, received_at=received_at,
-            successor=True,
+            successor=True, owner_source_proof=owner_source_proof,
         )
 
     def _review_mode(
         self, *, compact_token: str, zot_token: str,
         forgejo_token: str, received_at: int, successor: bool,
+        owner_source_proof: str | None = None,
     ) -> AnalyticsSignedEvidenceReview | tuple[
         AnalyticsSignedEvidenceReview,
         AnalyticsOwnerSourceSelection,
@@ -241,9 +244,12 @@ class InertAnalyticsSignedReleaseReviewHandler:
         if successor:
             try:
                 files = object.__getattribute__(self, "_owner_files")
-                if files is None:
-                    raise ValueError("root owner source not configured")
-                selected_owner = load_and_verify_owner_signed_source(*files)
+                if owner_source_proof is not None:
+                    selected_owner = verify_owner_signed_source_proof(owner_source_proof)
+                else:
+                    if files is None:
+                        raise ValueError("root owner source not configured")
+                    selected_owner = load_and_verify_owner_signed_source(*files)
                 if (
                     type(selected_owner) is not tuple
                     or len(selected_owner) != 2
@@ -298,8 +304,11 @@ class InertAnalyticsSignedReleaseReviewHandler:
                 reviewed = acquire_and_review_owner_approved_analytics_release(
                     context, context,
                     object.__getattribute__(self, "_signatures"), verifier,
-                    received_at=received_at, approval_file=files[0],
-                    signature_file=files[1],
+                    received_at=received_at,
+                    approval_file=None if files is None else files[0],
+                    signature_file=None if files is None else files[1],
+                    **({} if owner_source_proof is None else
+                       {'owner_source_proof': owner_source_proof}),
                     zot_factory=object.__getattribute__(self, "_zot_connection"),
                     forgejo_factory=object.__getattribute__(self, "_forgejo_connection"),
                 )

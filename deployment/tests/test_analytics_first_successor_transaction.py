@@ -12,9 +12,10 @@ Related: deployment/analytics_executor.py (exact future coordinator),
 Sections: isolated Analytics collaborators, sequence assertions, fail-closed
           deny scenarios and recovery after all substantive failure phases.
 
-All Docker, sockets, JWTs, signing, permissions, SQLite mutations and routes
-are simulated only in this file. Existing independent real-source security
-and replay/socket tests continue to cover those components. Nothing installs,
+Docker, sockets, JWTs, signing and live routes are simulated. Storage tests
+use real isolated journal files, fsync and SQLite replay transitions with the
+test process's own custody. Production UID/configuration is simulated only
+at the startup entry boundary. Nothing installs,
 starts, publishes, signs, deploys, or opens a public Analytics service.
 """
 from __future__ import annotations
@@ -920,6 +921,107 @@ class ProtectedSuccessorRestartTests(unittest.TestCase):
 
 
 
+
+
+class DurableCompletedRestartTests(ReplayTestCase):
+    """Exercise journal + proof + actual replay together across startup.
+
+    The real host UID/config and Docker observation are substituted; neither
+    journal reads, proof reads nor SQLite operations are mocked. This catches
+    cross-component failures that separate state-machine mocks cannot prove.
+    """
+
+    def setUp(self):
+        super().setUp()
+        data, context = AnalyticsSuccessorRequestTests().candidate()
+        request = parse_analytics_successor_request(canonical_bytes(data), **context)
+        self.raw = request.canonical_bytes()
+        self.request_hash = hashlib.sha256(self.raw).hexdigest()
+        self.initialize()
+        self.binding = dict(request_hash=self.request_hash, run_id=7, run_attempt=1)
+        self.consume(**self.binding)
+        self.guard.begin_execution('jti-1', **self.binding)
+        temp = tempfile.TemporaryDirectory(prefix='m05-completed-route-')
+        self.addCleanup(temp.cleanup)
+        Path(temp.name).chmod(0o700)
+        self.journal = AnalyticsRouteJournal(temp.name,
+            expected_uid=os.getuid(), expected_gid=os.getgid())
+        from deployment.tests.test_analytics_route_journal import approval
+        intent = self.journal.begin(**approval(request_sha256=self.request_hash,
+            next_image=request.exact_image_reference))
+        ready = self.journal.finish(intent, phase='candidate_ready')
+        self.switched = self.journal.finish(ready, phase='switched')
+
+    def complete(self):
+        self.journal.record_execution(self.raw, 'e' * 64)
+        self.guard.finish_execution('jti-1', **self.binding)
+
+    def attempt(self):
+        from deployment.analytics_executor import (
+            _reconcile_interrupted_first_successor_before_receive,
+        )
+        identities = {
+            'expected_executor_uid': 991, 'expected_executor_gid': 991,
+            'expected_replay_directory_uid': os.getuid(),
+            'expected_replay_directory_gid': os.getgid(),
+            'expected_broker_uid': 990,
+            'owner_authorized_first_successor': True,
+        }
+        def observe(**kwargs):
+            # Hardware response is synthetic; the underlying journal is real.
+            self.assertIs(kwargs['journal'], self.journal)
+            self.assertEqual(self.journal.read(), self.switched)
+            return SimpleNamespace(active_slot='green',
+                active_image=self.switched['next_image'], active_container_id='e' * 64)
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ,
+                {'ANALYTICS_REVIEWED_SUPERVISOR_V2': '1'}))
+            for name in ('getuid', 'geteuid', 'getgid', 'getegid'):
+                stack.enter_context(patch('deployment.analytics_executor.os.' + name,
+                    return_value=991))
+            stack.enter_context(patch(
+                'deployment.analytics_executor_service_config.load_analytics_executor_service_config',
+                return_value=(EXPECTED, identities)))
+            stack.enter_context(patch('deployment.analytics_route_journal.AnalyticsRouteJournal',
+                return_value=self.journal))
+            stack.enter_context(patch('deployment.replay_sqlite.PRODUCTION_REPLAY_DATABASE', self.path))
+            recovery = stack.enter_context(patch(
+                'deployment.analytics_loopback_guard._recover_reviewed_private_route'))
+            stack.enter_context(patch(
+                'deployment.analytics_active_state_review.inspect_committed_analytics_route',
+                side_effect=observe))
+            try:
+                return _reconcile_interrupted_first_successor_before_receive()
+            finally:
+                recovery.assert_not_called()
+
+    def test_finished_restart_and_second_restart_preserve_all_storage_bytes(self):
+        self.complete()
+        def storage():
+            return {str(path): path.read_bytes() for root in (
+                self.directory, Path(self.journal._directory))
+                for path in root.rglob('*') if path.is_file()}
+        before = storage()
+        self.assertIsNone(self.attempt())
+        self.assertIsNone(self.attempt())
+        self.assertEqual(storage(), before)
+
+    def test_proof_without_finished_replay_is_hold_with_original_evidence(self):
+        self.journal.record_execution(self.raw, 'e' * 64)
+        before = self.path.read_bytes()
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(self.journal.read(), self.switched)
+
+    def test_finished_replay_without_proof_is_hold_without_synthesis(self):
+        self.guard.finish_execution('jti-1', **self.binding)
+        before = self.path.read_bytes()
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(set(Path(self.journal._directory).iterdir()),
+            {Path(self.journal._directory) / 'transaction.json'})
 
 
 class AnalyticsExecutionStatusReadOnlyTests(ReplayTestCase):

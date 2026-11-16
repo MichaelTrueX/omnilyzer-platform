@@ -557,6 +557,11 @@ def build_analytics_successor_ci_request(
             "previous_digest": future["ANALYTICS_ACTIVE_DIGEST"],
         })
         request["promotion_request_sha256"] = hashlib.sha256(intent).hexdigest()
+        proof = environment.get('ANALYTICS_OWNER_SOURCE_PROOF')
+        if proof not in (None, ''):
+            if type(proof) is not str or not proof.isascii() or not 0 < len(proof) <= 2048:
+                raise ValueError
+            request['owner_source_proof'] = proof
         raw = canonical_bytes(request)
         if not 0 < len(raw) <= _MAX_BODY:
             raise ValueError

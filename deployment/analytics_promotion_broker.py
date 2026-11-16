@@ -202,6 +202,10 @@ class AnalyticsPrivatePromotionBroker:
                 or raw["schema_version"] != 3
                 or raw.get("product_id") != "analytics"
                 or raw.get("stage") != "dev"
+                or ('owner_source_proof' in raw and (
+                    type(raw['owner_source_proof']) is not str
+                    or not raw['owner_source_proof'].isascii()
+                    or not 0 < len(raw['owner_source_proof']) <= 2048))
                 or canonical_bytes(raw) != canonical_request
             ):
                 raise ValueError("wrong request")
@@ -247,6 +251,8 @@ class AnalyticsPrivatePromotionBroker:
             )(
                 compact_token=compact_token, zot_token=zot_token,
                 forgejo_token=forgejo_token, received_at=received_at,
+                **({'owner_source_proof': raw['owner_source_proof']}
+                   if 'owner_source_proof' in raw else {}),
             )
             from .analytics_signed_release_consumer import (
                 AnalyticsSignedEvidenceReview,

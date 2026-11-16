@@ -91,9 +91,12 @@ class AnalyticsRouteJournalTests(unittest.TestCase):
         proof = self.journal.read_execution(request_hash)
         self.assertEqual(proof, {'canonical_request': raw,
             'container_id': 'e' * 64, 'image': NEXT})
-        file = self.directory / ('execution-' + request_hash + '.json')
+        file = self.directory / 'executions' / ('execution-' + request_hash + '.json')
         self.assertEqual(stat.S_IMODE(file.stat().st_mode), 0o600)
         self.assertEqual(self.path.read_bytes(), before)
+        # Read through the real directory inventory after publishing proof.
+        # A mocked journal reader misses proof/journal namespace coupling.
+        self.assertEqual(canonical_bytes(self.journal.read()), before)
         self.denied(lambda: self.journal.record_execution(raw, 'e' * 64))
         # A forged journal cannot change the independently recorded expectation.
         changed = json.loads(self.path.read_bytes())
@@ -105,7 +108,7 @@ class AnalyticsRouteJournalTests(unittest.TestCase):
         raw, request_hash = self.execution_request()
         self.denied(lambda: self.journal.record_execution(raw, 'f' * 64))
         self.journal.record_execution(raw, 'e' * 64)
-        file = self.directory / ('execution-' + request_hash + '.json')
+        file = self.directory / 'executions' / ('execution-' + request_hash + '.json')
         saved = file.read_bytes()
         altered = json.loads(saved)
         altered['request_base64'] = base64.b64encode(raw.replace(b'"dev"', b'"prod"')).decode()
@@ -122,7 +125,8 @@ class AnalyticsRouteJournalTests(unittest.TestCase):
     def test_missing_partial_or_noncanonical_execution_proof_is_hold(self):
         _, request_hash = self.execution_request()
         self.denied(lambda: self.journal.read_execution(request_hash))
-        file = self.directory / ('execution-' + request_hash + '.json')
+        file = self.directory / 'executions' / ('execution-' + request_hash + '.json')
+        file.parent.mkdir(mode=0o700)
         file.write_bytes(b'{')
         file.chmod(0o600)
         self.denied(lambda: self.journal.read_execution(request_hash))
@@ -133,8 +137,46 @@ class AnalyticsRouteJournalTests(unittest.TestCase):
         before = self.path.read_bytes()
         with patch('deployment.analytics_route_journal.os.fsync', side_effect=OSError):
             self.denied(lambda: self.journal.record_execution(raw, 'e' * 64))
-        self.assertTrue((self.directory / ('execution-' + request_hash + '.json')).exists())
+        self.assertTrue((self.directory / 'executions' / ('execution-' + request_hash + '.json')).exists())
         self.assertEqual(self.path.read_bytes(), before)
+        switched = self.journal.read()
+        pending = self.journal.finish(switched, phase='rollback_pending')
+        self.assertEqual(self.journal.finish(pending, phase='restored')['phase'], 'restored')
+
+    def test_proof_survives_next_opposite_slot_journal_and_keeps_prior_evidence(self):
+        raw, request_hash = self.execution_request()
+        self.journal.record_execution(raw, 'e' * 64)
+        proof = self.journal.read_execution(request_hash)
+        next_intent = self.journal.begin(**approval(
+            request_sha256='f' * 64, previous_slot='green',
+            previous_image=NEXT, previous_container_id='e' * 64,
+            previous_ip='172.20.0.4', next_slot='blue', next_image=LATER,
+            next_container_id='d' * 64, next_ip='172.20.0.3'))
+        self.assertEqual(next_intent['generation'], 2)
+        self.assertEqual(self.journal.read_execution(request_hash), proof)
+        self.assertEqual(self.journal.read(), next_intent)
+
+    def test_proof_directory_custody_and_unknown_journal_residue_fail_closed(self):
+        raw, request_hash = self.execution_request()
+        self.journal.record_execution(raw, 'e' * 64)
+        proofs = self.directory / 'executions'
+        self.assertEqual(stat.S_IMODE(proofs.stat().st_mode), 0o700)
+        proofs.chmod(0o750)
+        self.denied(self.journal.read)
+        self.denied(lambda: self.journal.read_execution(request_hash))
+        proofs.chmod(0o700)
+        proofs.rename(self.directory / 'saved-executions')
+        proofs.symlink_to(self.directory / 'saved-executions', target_is_directory=True)
+        self.denied(self.journal.read)
+        self.denied(lambda: self.journal.read_execution(request_hash))
+        proofs.unlink()
+        (self.directory / 'saved-executions').rename(proofs)
+        (self.directory / 'unknown').write_bytes(b'')
+        self.denied(self.journal.read)
+
+    def test_proof_directory_alone_never_looks_like_an_empty_first_install(self):
+        (self.directory / 'executions').mkdir(mode=0o700)
+        self.denied(self.journal.read)
 
     def test_begin_switched_reopen_reuse_previous_signed_image(self):
         """Both durable phases survive a fresh process object's first read."""

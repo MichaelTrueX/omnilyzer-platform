@@ -38,6 +38,11 @@ on:
         required: false
         type: string
         default: ""
+      analytics_owner_source_proof:
+        description: Public canonical owner approval and detached signature; no key or signer path
+        required: false
+        type: string
+        default: ""
       analytics_active_digest:
         description: Observed signed current Analytics OCI rollback digest
         required: false
@@ -160,6 +165,7 @@ jobs:
           ANALYTICS_SUCCESSOR: ${{ inputs.analytics_successor }}
           ANALYTICS_PRODUCT_SOURCE_SHA: ${{ inputs.analytics_product_source_sha }}
           ANALYTICS_OWNER_APPROVAL_SHA256: ${{ inputs.analytics_owner_approval_sha256 }}
+          ANALYTICS_OWNER_SOURCE_PROOF: ${{ inputs.analytics_owner_source_proof }}
           ANALYTICS_ACTIVE_DIGEST: ${{ inputs.analytics_active_digest }}
           ANALYTICS_ACTIVE_SLOT: ${{ inputs.analytics_active_slot }}
         run: |
@@ -180,7 +186,7 @@ jobs:
             esac
           elif [ "$TASK014_PRODUCT" = canary ]; then
             test "${ANALYTICS_SUCCESSOR:-false}" = false
-            test -z "${ANALYTICS_PRODUCT_SOURCE_SHA:-}${ANALYTICS_OWNER_APPROVAL_SHA256:-}${ANALYTICS_ACTIVE_DIGEST:-}${ANALYTICS_ACTIVE_SLOT:-}"
+            test -z "${ANALYTICS_PRODUCT_SOURCE_SHA:-}${ANALYTICS_OWNER_APPROVAL_SHA256:-}${ANALYTICS_ACTIVE_DIGEST:-}${ANALYTICS_ACTIVE_SLOT:-}${ANALYTICS_OWNER_SOURCE_PROOF:-}"
             test -n "$RELEASE_MANIFEST_SHA256"
             test -n "$PROVENANCE_SHA256"
             request="$RUNNER_TEMP/task014-promotion-request.json"
@@ -240,6 +246,7 @@ jobs:
           ANALYTICS_SUCCESSOR: ${{ inputs.analytics_successor }}
           ANALYTICS_PRODUCT_SOURCE_SHA: ${{ inputs.analytics_product_source_sha }}
           ANALYTICS_OWNER_APPROVAL_SHA256: ${{ inputs.analytics_owner_approval_sha256 }}
+          ANALYTICS_OWNER_SOURCE_PROOF: ${{ inputs.analytics_owner_source_proof }}
           ANALYTICS_ACTIVE_DIGEST: ${{ inputs.analytics_active_digest }}
           ANALYTICS_ACTIVE_SLOT: ${{ inputs.analytics_active_slot }}
         run: |
@@ -256,7 +263,7 @@ jobs:
             esac
           elif [ "$TASK014_PRODUCT" = canary ]; then
             test "${ANALYTICS_SUCCESSOR:-false}" = false
-            test -z "${ANALYTICS_PRODUCT_SOURCE_SHA:-}${ANALYTICS_OWNER_APPROVAL_SHA256:-}${ANALYTICS_ACTIVE_DIGEST:-}${ANALYTICS_ACTIVE_SLOT:-}"
+            test -z "${ANALYTICS_PRODUCT_SOURCE_SHA:-}${ANALYTICS_OWNER_APPROVAL_SHA256:-}${ANALYTICS_ACTIVE_DIGEST:-}${ANALYTICS_ACTIVE_SLOT:-}${ANALYTICS_OWNER_SOURCE_PROOF:-}"
             python3 -m deployment.promotion \
             --release-version "$RELEASE_VERSION" \
             --source-sha "$SOURCE_SHA" \
@@ -485,6 +492,7 @@ jobs:
           ANALYTICS_SUCCESSOR: ${{ inputs.analytics_successor }}
           ANALYTICS_PRODUCT_SOURCE_SHA: ${{ inputs.analytics_product_source_sha }}
           ANALYTICS_OWNER_APPROVAL_SHA256: ${{ inputs.analytics_owner_approval_sha256 }}
+          ANALYTICS_OWNER_SOURCE_PROOF: ${{ inputs.analytics_owner_source_proof }}
           ANALYTICS_ACTIVE_DIGEST: ${{ inputs.analytics_active_digest }}
           ANALYTICS_ACTIVE_SLOT: ${{ inputs.analytics_active_slot }}
         run: |
@@ -591,6 +599,7 @@ jobs:
                   if any(os.environ.get(name) for name in (
                       "ANALYTICS_PRODUCT_SOURCE_SHA",
                       "ANALYTICS_OWNER_APPROVAL_SHA256",
+                      "ANALYTICS_OWNER_SOURCE_PROOF",
                       "ANALYTICS_ACTIVE_DIGEST", "ANALYTICS_ACTIVE_SLOT",
                   )):
                       raise ValueError("successor inputs without explicit mode")

@@ -489,6 +489,14 @@ class AnalyticsSuccessorRequest(AnalyticsExecutorRequest):
     """Review-only closed schema-3 upgrade request, never deploy authority."""
 
     owner_approval_sha256: str
+    owner_source_proof: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Keep historical schema-3 bytes exact when no public proof is sent."""
+        result = asdict(self)
+        if self.owner_source_proof is None:
+            del result['owner_source_proof']
+        return result
 
 
 def parse_analytics_successor_request(
@@ -522,10 +530,14 @@ def parse_analytics_successor_request(
                 result[key] = value
             return result
 
-        parsed = _closed(
-            json.loads(raw.decode("ascii"), object_pairs_hook=unique),
-            _SUCCESSOR_REQUEST_FIELDS,
-        )
+        document = json.loads(raw.decode("ascii"), object_pairs_hook=unique)
+        has_proof = type(document) is dict and 'owner_source_proof' in document
+        parsed = _closed(document, _SUCCESSOR_REQUEST_FIELDS |
+            ({'owner_source_proof'} if has_proof else set()))
+        if has_proof and (type(parsed['owner_source_proof']) is not str
+                or not parsed['owner_source_proof'].isascii()
+                or not 0 < len(parsed['owner_source_proof']) <= 2048):
+            raise ValueError
         runtime = _closed(parsed["runtime_configuration_reference"], _RUNTIME_FIELDS)
         ingress = _closed(parsed["ingress_reference"], _INGRESS_FIELDS)
         rollback = _closed(parsed["rollback_reference"], _ROLLBACK_FIELDS)
@@ -612,6 +624,7 @@ def parse_analytics_successor_request(
         # reviewed runtime/profile/secret/identity field, without widening it.
         legacy = dict(parsed)
         del legacy["owner_approval_sha256"]
+        legacy.pop("owner_source_proof", None)
         legacy.update({
             "schema_version": ANALYTICS_REQUEST_SCHEMA,
             "release_version": PINNED_VERSION,

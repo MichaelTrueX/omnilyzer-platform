@@ -495,7 +495,8 @@ class AnalyticsSuccessorCIRequestTests(unittest.TestCase):
         value = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)
         inputs = value["on"]["workflow_dispatch"]["inputs"]
         self.assertEqual(inputs["analytics_successor"]["default"], "false")
-        self.assertEqual(len(inputs), 16)
+        self.assertEqual(len(inputs), 17)
+        self.assertEqual(inputs['analytics_owner_source_proof']['default'], '')
         gate = value["jobs"]["gate"]["steps"][1]["run"]
         standard = {
             **environment, "ANALYTICS_SUCCESSOR": "true",

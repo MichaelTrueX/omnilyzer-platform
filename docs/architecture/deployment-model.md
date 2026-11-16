@@ -22,12 +22,19 @@ CI
     ->
 DEV
     ->
-STAGING
-    ->
 PROD
 ```
 
-DEV, STAGING, and PROD are separate deployment stages. CI builds an immutable application image once; promotion uses that identical image digest across stages. Only environment-specific configuration, externally managed secrets, and stage-specific scale differ. Rebuilding for a later stage is not promotion.
+DEV and PROD are separate deployment environments. The owner's
+[16 November decision](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281#issuecomment-6915187222)
+removes a mandatory staging server: accepted DEV may promote directly to PROD.
+Historical staging fixtures do not require another server or confer production
+authority. Existing disabled Canary stage configuration is not an implemented
+Analytics PROD runtime; reconcile the owning product contract before activation.
+CI builds an immutable application image once; promotion uses that identical
+image digest across environments. Only environment-specific configuration,
+externally managed secrets, and stage-specific scale differ. Rebuilding for a
+later environment is not promotion.
 
 Production source editing and direct production development are prohibited. Codex must not code on PROD. PROD must contain no uncommitted application source; deployments are traceable released artifacts produced through review and CI.
 

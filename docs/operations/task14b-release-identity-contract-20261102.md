@@ -34,11 +34,18 @@ from the optimization work.
 | --- | --- | --- |
 | Task013 product selection | Exact successor Git SHA and owner signature supported; signed `0.16.0` accepted | Correct obsolete fixed-source-only instructions; keep legacy `0.15.0` fallback and all scan/signature gates. |
 | Completed executor restart | A nonempty terminal journal always causes HOLD before receive | Candidate code stores an immutable execution proof from the independently verified request and actual candidate ID before replay finish. A read-only restart requires that proof, the exact protected FINISHED replay and the unchanged committed live route. Legacy/missing proof, ambiguity, unfinished or changed evidence still HOLDs. No proof is synthesized from the journal and no code is installed by this document. |
-| Ordinary next-source authorization | Broker and executor read installed per-release owner approval files | Still requires implementation of per-release public proof verified against the unchanged independent root signer, bound to both signed evidence and request, without rewriting root authority for each product version. A request-provided signer must never be trusted. |
+| Ordinary next-source authorization | Broker and executor read installed per-release owner approval files | Candidate transports an optional public `owner_source_proof` through the existing canonical schema-3 request and sealed request-hash binding. UID990 and UID991 independently verify it with the unchanged root-controlled signer, then bind it to original Task013 evidence and the request. Historical requests retain their exact file-based path; malformed supplied proof never falls back. No installation or next-slot release support follows from this source change. |
 | Repeated blue/green changes | Parser can describe either slot; positive runtime still anchors original `0.15.0` blue and an empty green | Still requires the existing broker, executor, candidate operation and supervisor to agree on independently verified current/previous signed releases and opposite-slot lifecycle. Caller-supplied active fields are hints, not authority. Preserve historical signed recovery assets. |
 | Normal post-success rollback/return | A separate one-time owner maintenance exception was needed for the `0.16.0` OAT | Still requires an authenticated executor operation with a fresh identity and explicit rollback/return scope, no reuse of the original completed request as a new deployment and no weakening of replay or database preservation. |
 
-The completed-restart correction is a bounded first implementation increment,
+Execution proofs live in the journal's fixed private `executions/` subdirectory
+(UID991, mode0700; each immutable file0600). The transaction reader validates
+that directory without treating evidence as unexpected transaction residue.
+Real isolated journal/SQLite integration must prove two consecutive read-only
+restarts, missing/unfinished evidence denial and preserved bytes; mocked
+per-component readers alone do not establish that these storage contracts fit.
+
+The completed-restart and public-proof corrections are bounded increments,
 not an ordinary-upgrade grant. Existing legacy releases without execution proof
 remain HOLD until a separately reviewed migration; no old dispatch is repeated.
 The original first-successor request admission and shared Canary replay API
@@ -48,6 +55,40 @@ consume, finish, reset, prune or enumerate requests. Tests must distinguish miss
 protected-state corruption, route/journal drift and successful nonmutating
 restart. Installed source and workflow SHA remain root-reviewed; unrelated
 main commits do not silently rotate that authority.
+
+### Public owner-proof transport
+
+`owner_source_proof` is an optional ASCII string, at most2048 characters,
+containing canonical compact sorted JSON plus one trailing newline, with
+exactly `approval` (the original canonical owner-approval text) and
+`signature_base64` (canonical base64 of the existing detached OpenSSH Ed25519
+signature). It contains no key or signer path. Its source/version/platform
+identity is authenticated only by the existing independently installed signer
+and the unchanged source-signature namespace. The existing owner approval hash
+must match both request and signed Task013 source claim. Signature verification
+is repeated at the broker, registry consumer and executor; Sigstore/Cosign,
+three-audience OIDC, replay, source and active-state admission still apply.
+
+The existing Task014 input `analytics_owner_source_proof` maps to
+`ANALYTICS_OWNER_SOURCE_PROOF` and the request field. Omitting it keeps legacy
+schema-3 bytes unchanged. CI serialization authenticates nothing. Supplying
+an invalid proof, another key, duplicate fields or a changed source fails
+closed, without trying the installed per-release approval files instead.
+This removes one per-version root-file dependency; the remaining opposite-slot
+and authenticated rollback/return work above is still unfinished.
+
+### Production scope after the owner's 16 November instruction
+
+The owner requested existing signed0.16 promotion to PROD after the current
+work is complete, and explicitly removed the staging-server requirement:
+[canonical instruction](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281#issuecomment-6915187222).
+The intended Analytics route is accepted DEV directly to PROD, using the same
+signed digest. No separate staging server is a prerequisite. Existing Canary
+stage fixtures and disabled placeholder policies are historical capabilities,
+not Analytics production authorization. Analytics PROD runtime/configuration,
+secrets, ingress, recovery and applicable Issue280 public/security acceptance
+must still be implemented and qualified before activation. No PROD operation
+is enabled by this draft.
 
 The remaining runtime changes are one cohesive continuation of this same
 Task14B work, with independent review of the material boundary before any

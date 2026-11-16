@@ -37,6 +37,7 @@ from .policy import canonical_bytes
 ROUTE_JOURNAL_DIRECTORY = "/var/lib/omnilyzer/deployment/analytics-route"
 _FILENAME = "transaction.json"
 _TEMP = ".transaction.json.next"
+_EXECUTIONS = "executions"
 _IMAGE_PREFIX = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:"
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_BYTES = 2048
@@ -295,8 +296,13 @@ class AnalyticsRouteJournal:
         entries = set(os.listdir(directory_fd))
         if not entries:
             return None
-        if entries != {_FILENAME}:
+        if entries not in ({_FILENAME}, {_FILENAME, _EXECUTIONS}):
             _reject()
+        if _EXECUTIONS in entries:
+            # Execution evidence has its own fixed, private namespace. It
+            # must not turn a completed transaction into unexpected residue.
+            proofs = self._open_executions(directory_fd)
+            os.close(proofs)
         handle = os.open(
             _FILENAME, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
             dir_fd=directory_fd,
@@ -367,22 +373,31 @@ class AnalyticsRouteJournal:
                         or intent.get('next_container_id') != container_id):
                     _reject()
                 directory = object.__getattribute__(self, '_locked_fd')
-                fd = os.open('execution-' + request_hash + '.json',
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-                    0o600, dir_fd=directory)
                 try:
-                    st = os.fstat(fd)
-                    if (st.st_uid != object.__getattribute__(self, '_uid')
-                            or st.st_gid != object.__getattribute__(self, '_gid')
-                            or st.st_nlink != 1 or stat.S_IMODE(st.st_mode) != 0o600):
-                        _reject()
-                    with os.fdopen(os.dup(fd), 'wb') as handle:
-                        handle.write(payload)
-                        handle.flush()
-                    os.fsync(fd)
-                    os.fsync(directory)
+                    os.mkdir(_EXECUTIONS, 0o700, dir_fd=directory)
+                except FileExistsError:
+                    pass
+                proofs = self._open_executions(directory)
+                try:
+                    fd = os.open('execution-' + request_hash + '.json',
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        0o600, dir_fd=proofs)
+                    try:
+                        st = os.fstat(fd)
+                        if (st.st_uid != object.__getattribute__(self, '_uid')
+                                or st.st_gid != object.__getattribute__(self, '_gid')
+                                or st.st_nlink != 1 or stat.S_IMODE(st.st_mode) != 0o600):
+                            _reject()
+                        with os.fdopen(os.dup(fd), 'wb') as handle:
+                            handle.write(payload)
+                            handle.flush()
+                        os.fsync(fd)
+                        os.fsync(proofs)
+                        os.fsync(directory)
+                    finally:
+                        os.close(fd)
                 finally:
-                    os.close(fd)
+                    os.close(proofs)
                 if self.read_execution(request_hash) != proof:
                     _reject()
         except _CONTROL:
@@ -390,16 +405,36 @@ class AnalyticsRouteJournal:
         except Exception:
             _reject()
 
+    def _open_executions(self, directory: int) -> int:
+        """Open the fixed private proof directory without following links."""
+        descriptor = os.open(_EXECUTIONS,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=directory)
+        try:
+            info = os.fstat(descriptor)
+            named = os.stat(_EXECUTIONS, dir_fd=directory, follow_symlinks=False)
+            if (not stat.S_ISDIR(info.st_mode)
+                    or info.st_uid != object.__getattribute__(self, '_uid')
+                    or info.st_gid != object.__getattribute__(self, '_gid')
+                    or stat.S_IMODE(info.st_mode) != 0o700
+                    or (info.st_dev, info.st_ino) != (named.st_dev, named.st_ino)):
+                _reject()
+            return descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
+
     def read_execution(self, request_hash: str) -> dict[str, object]:
         """Read one exact protected proof; legacy/missing proof is HOLD."""
-        directory = descriptor = None
+        directory = proofs = descriptor = None
         try:
             if type(request_hash) is not str or _SHA.fullmatch(request_hash) is None:
                 _reject()
             name = 'execution-' + request_hash + '.json'
             directory = self._open_dir()
+            proofs = self._open_executions(directory)
             descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-                | os.O_CLOEXEC, dir_fd=directory)
+                | os.O_CLOEXEC, dir_fd=proofs)
             opened = os.fstat(descriptor)
             if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
                     or opened.st_uid != object.__getattribute__(self, '_uid')
@@ -414,8 +449,13 @@ class AnalyticsRouteJournal:
                         st.st_nlink, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
             if (len(payload) != opened.st_size
                     or identity(os.fstat(descriptor)) != identity(opened)
-                    or identity(os.stat(name, dir_fd=directory, follow_symlinks=False))
+                    or identity(os.stat(name, dir_fd=proofs, follow_symlinks=False))
                         != identity(opened)):
+                _reject()
+            current = os.stat(_EXECUTIONS, dir_fd=directory, follow_symlinks=False)
+            opened_directory = os.fstat(proofs)
+            if ((current.st_dev, current.st_ino)
+                    != (opened_directory.st_dev, opened_directory.st_ino)):
                 _reject()
             return _execution_proof(payload, request_hash)
         except _CONTROL:
@@ -425,6 +465,8 @@ class AnalyticsRouteJournal:
         finally:
             if descriptor is not None:
                 os.close(descriptor)
+            if proofs is not None:
+                os.close(proofs)
             if directory is not None:
                 os.close(directory)
 
