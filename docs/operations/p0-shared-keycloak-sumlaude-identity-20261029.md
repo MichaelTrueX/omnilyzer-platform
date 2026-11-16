@@ -8,6 +8,32 @@ Related: services/identity/omnilyzer-identity.service,
 
 # P0 shared platform identity BFF for Sumlaude (29 Oct 2026)
 
+## Current login recovery — 16 November 2026
+
+Codex now owns the joined login delivery in existing Issue238 / Sumlaude
+Issue254. The following dated installation instructions are historical;
+read the actual protected receipts before any operation. The original
+Keycloak callback `apply` was consumed and MUST NOT be rerun. Its attempt
+receipt exists and its success receipt does not; active BFF remains3481cac,
+with def92cdb staged only at the takeover readback.
+
+The M04-approved root-only read diagnostic and a bounded admin GET found
+all11 other known security predicates PASS and exactly the two approved
+redirects in reverse order. Keycloak26.7.2
+[ClientModel](https://github.com/keycloak/keycloak/blob/26.7.2/server-spi/src/main/java/org/keycloak/models/ClientModel.java)
+stores redirect URIs as a set. The corrected read-only classifier therefore
+requires a list of exactly two strings matching the two exact distinct URIs,
+without imposing iteration order. Duplicates, missing/extra URIs, wildcards,
+foreign addresses and malformed values still fail. No other client field or
+the consumed mutation operator is changed by this correction.
+
+This diagnoses the observed known-field HOLD; it does not reconstruct the
+unrecorded historical full preimage, declare that the original apply completed
+atomically, mint a success receipt or authorize a new client update. Preserve
+the historical uncertainty and obtain the applicable production release
+decision for subsequent activation. BFF/Native, canonical flag, public ingress
+and actual signed browser acceptance remain distinct outstanding steps.
+
 
 ### Existing Keycloak exact public callback - one-client operator candidate (16 Nov 2026)
 

@@ -123,6 +123,7 @@ def classify(client: dict) -> dict[str, str]:
     if not isinstance(attributes, dict):
         attributes = {}
     client_id = client.get("id")
+    redirects = client.get("redirectUris")
     cases = {
         "CLIENT_ID": client.get("clientId") == EXPECTED_CLIENT,
         "CLIENT_UUID_FORMAT": (isinstance(client_id, str) and
@@ -136,8 +137,13 @@ def classify(client: dict) -> dict[str, str]:
         "SERVICE_ACCOUNTS_DISABLED": client.get("serviceAccountsEnabled") is False,
         "PKCE_S256": attributes.get("pkce.code.challenge.method") == "S256",
         "PRIVATE_WEB_ORIGIN_ONLY": client.get("webOrigins") == [EXPECTED_ORIGIN],
-        "TWO_EXACT_REDIRECTS": client.get("redirectUris") ==
-            [EXPECTED_APP, EXPECTED_PUBLIC],
+        # Keycloak ClientModel stores redirect URIs as a Set<String>.
+        # Membership and cardinality are security boundaries, not iteration
+        # order. Reject malformed/duplicate entries before set comparison.
+        "TWO_EXACT_REDIRECTS": (
+            type(redirects) is list and len(redirects) == 2
+            and all(type(uri) is str for uri in redirects)
+            and set(redirects) == {EXPECTED_APP, EXPECTED_PUBLIC}),
     }
     return {name: ("PASS" if matches else "FAIL")
             for name, matches in cases.items()}

@@ -57,6 +57,30 @@ class ReadOnlyDiagnosticTests(unittest.TestCase):
         self.assertEqual(len(results), 12)
         self.assertEqual(set(results.values()), {"PASS"})
 
+    def test_provider_reordered_exact_callbacks_still_match_current_contract(self):
+        """Keycloak persists callback membership, not caller list ordering."""
+        item = fixture()
+        item['redirectUris'].reverse()
+        self.assertEqual(set(AUDIT.classify(item).values()), {'PASS'})
+
+    def test_callback_membership_type_and_cardinality_remain_exact(self):
+        """Never hide duplicates, wildcards, foreign or missing callbacks."""
+        for value in (
+            [AUDIT.EXPECTED_APP, AUDIT.EXPECTED_APP],
+            [AUDIT.EXPECTED_PUBLIC, AUDIT.EXPECTED_PUBLIC],
+            [AUDIT.EXPECTED_APP], [], None, True,
+            [AUDIT.EXPECTED_APP, AUDIT.EXPECTED_PUBLIC, AUDIT.EXPECTED_APP],
+            [AUDIT.EXPECTED_APP, 'https://*.sumlaude.com/auth/callback'],
+            [AUDIT.EXPECTED_APP, 'https://foreign.invalid/auth/callback'],
+            [AUDIT.EXPECTED_APP, {'uri': AUDIT.EXPECTED_PUBLIC}],
+            [AUDIT.EXPECTED_APP, 1],
+            {'first': AUDIT.EXPECTED_APP, 'second': AUDIT.EXPECTED_PUBLIC},
+        ):
+            with self.subTest(value=value):
+                results = AUDIT.classify({**fixture(), 'redirectUris': value})
+                self.assertEqual(results['TWO_EXACT_REDIRECTS'], 'FAIL')
+                self.assertEqual(len(results), 12)
+
     def test_each_confidential_flow_field_rejected_individually(self):
         """Detect all forbidden flow and PKCE changes without disclosing data."""
         flips = {
