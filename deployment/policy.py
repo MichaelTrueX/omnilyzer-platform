@@ -9,9 +9,6 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 STAGES = ("dev", "staging", "prod")
-# The production delivery path is DEV -> PROD. Historical staging is inert.
-# This is not permission to skip an exact signed DEV success or PROD approval.
-PROMOTION_PREDECESSORS = {"dev": None, "staging": "dev", "prod": "dev"}
 SLOTS = ("blue", "green")
 APPROVED_OCI_ORIGIN = "https://oci-dev.omnilyzer.ai"
 APPROVED_OCI_HOST = "oci-dev.omnilyzer.ai"

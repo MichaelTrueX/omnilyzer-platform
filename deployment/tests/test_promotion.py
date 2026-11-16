@@ -165,31 +165,18 @@ class StageOrderTests(unittest.TestCase):
         with self.assertRaises(DeploymentPolicyError):
             require_stage_order(request("staging"), [])
 
-    def test_prod_without_matching_dev_success_is_rejected(self) -> None:
-        """A historical STAGING success cannot replace the exact DEV release."""
+    def test_prod_without_matching_staging_success_is_rejected(self) -> None:
         with self.assertRaises(DeploymentPolicyError):
-            require_stage_order(request("prod"), [event("staging")])
+            require_stage_order(request("prod"), [event("dev")])
 
-    def test_same_exact_digest_dev_to_prod_is_accepted(self) -> None:
-        """Production can follow DEV without a STAGING event or server."""
+    def test_same_exact_digest_dev_staging_prod_is_accepted(self) -> None:
         require_stage_order(request("dev"), [])
-        require_stage_order(request("prod"), [event("dev")])
-
-    def test_historical_staging_is_not_required_or_counted(self) -> None:
-        """Historical non-live staging fixtures do not change PROD order."""
         require_stage_order(request("staging"), [event("dev")])
-        require_stage_order(request("prod"), [event("dev"), event("staging")])
+        require_stage_order(request("prod"), [event("staging")])
 
-    def test_changed_digest_between_dev_and_prod_is_rejected(self) -> None:
+    def test_changed_digest_between_stages_is_rejected(self) -> None:
         with self.assertRaises(DeploymentPolicyError):
-            require_stage_order(request("prod"), [event("dev", OTHER_DIGEST)])
-
-    def test_no_or_multiple_matching_dev_events_is_rejected(self) -> None:
-        """Preserve the existing exactly-one-match fail-closed requirement."""
-        with self.assertRaises(DeploymentPolicyError):
-            require_stage_order(request("prod"), [])
-        with self.assertRaises(DeploymentPolicyError):
-            require_stage_order(request("prod"), [event("dev"), event("dev")])
+            require_stage_order(request("staging"), [event("dev", OTHER_DIGEST)])
 
 
 if __name__ == "__main__":

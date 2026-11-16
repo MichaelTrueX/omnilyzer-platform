@@ -3,8 +3,11 @@
 **Current operating rule (16 November 2026):** Develop and preview on
 `omnilyzerdev`; promote the same signed artifact directly to PROD on
 `truexmainserver` with owner GO and retained release safety gates. A
-STAGING server and STAGING success event are no longer required. The old
-C31/C33 notes below are historical. See
+STAGING server and STAGING success event are no longer required for NEW
+production releases. The frozen legacy Task014 DEV controller and its
+disabled `prod.json` are NOT retroactively modified; use the SOURCE-ONLY
+`deployment/direct_dev_prod_preflight.py` until a separately accepted
+actual PROD adapter exists. Old C31/C33 notes below are historical. See
 [ADR 0012](../docs/adr/0012-direct-dev-prod-delivery.md).
 
 

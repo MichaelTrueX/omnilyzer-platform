@@ -27,10 +27,10 @@ INGRESS_HASHES = {
     "nginx/nginx.conf": "38175eb6439964037a691c562e9652cebe1a446965d7c59d70eda5db1b6b489a",
 }
 PROTECTED = {
-    ".github/workflows/platform-release.yml": "b037e0c413f3780a2fbde63d89c23991ef483139dd2e5b7e6b502bd4a10d758a",
+    ".github/workflows/platform-release.yml": "9b90156c4ff4347651b4b3bf6c7e329c48de14c5510a25852c13d80b9a806b53",
     "deployment/environments/dev.json": "4b1cf03bdcd1fa7d8fd848862137a4dca7dc834b1cc45fa1d7cffd2756722ae8",
     "deployment/environments/staging.json": "7fde448d38022e4e435218c1fe6049c629ee091031845fce93156dcc787a7358",
-    "deployment/environments/prod.json": "8a887448d6f59c005fdb25d1bf899f1730a72078206fbb1bbbf95c5197cb4f04",
+    "deployment/environments/prod.json": "a08cd3d718ffa0531071ed7ad0aeafc19b4edeb0a82e74bd87a6044bbabebcce",
     "release/vulnerability-policy.json": "475ad38ef4ae8d89dcf7d4e03eeb76701085fdcd4ebdb8ae9aa41a7bce2cde8f",
 }
 

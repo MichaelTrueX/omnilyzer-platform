@@ -51,7 +51,11 @@ environments only**:
 `DEV successful exact digest -> PROD owner-approved same digest`.
 Legacy `deployment/environments/staging.json`, old Task007 experiments and
 historical audit schemas may remain inert for compatibility; they do NOT
-require or authorize a running staging server. Do not enable an old staging
+require or authorize a running staging server. The existing DEV Task014
+`controller.py` and `policy.py` are immutable installed source and must
+NOT be patched in place: `deployment/direct_dev_prod_preflight.py` owns
+the new SOURCE-ONLY DEV-evidence prerequisite until an authorized PROD
+release adapter is deployed. Historical `prod.json` remains disabled. Do not enable an old staging
 release path while implementing the two-host model.
 
 **Product-first DEV cadence:** Work in small meaningful changes directly on

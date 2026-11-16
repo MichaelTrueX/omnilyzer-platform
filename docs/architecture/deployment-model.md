@@ -1,8 +1,8 @@
 <!--
 File: docs/architecture/deployment-model.md
 Purpose: Define the current two-server developer-preview and immutable release model.
-Related: AGENTS.md, deployment/controller.py,
-deployment/environments/{dev,prod}.json,
+Related: AGENTS.md, deployment/direct_dev_prod_preflight.py,
+deployment/controller.py (historical DEV source),
 docs/adr/0006-immutable-oci-deployment-and-promotion.md,
 docs/adr/0012-direct-dev-prod-delivery.md.
 -->
@@ -61,9 +61,13 @@ requires an independent Product Owner GO and the configured production
 runtime, identity, secrets, security/readiness and backup/rollback gates.
 
 The repository's historical `deployment/environments/prod.json` retains
-`deployment_enabled=false` and null runtime references until a separately
-reviewed real PROD installation. Changing the required predecessor to DEV
-does not itself deploy an application or enable public ingress.
+`required_prior_stage=staging`, `deployment_enabled=false` and null
+runtime references. That is inert Task014 Phase-1 source, NOT a production
+configuration or permission for a staging server. The approved two-host
+policy is implemented separately by `direct_dev_prod_preflight.py`.
+It is source-only and cannot deploy. The eventual PROD operator must wire
+that exact evidence check to the existing signed-release, owner approval,
+health, backup and rollback controls before public activation.
 
 ## Recovery and database safety
 

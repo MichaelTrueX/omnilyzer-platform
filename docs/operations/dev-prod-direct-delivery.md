@@ -1,8 +1,8 @@
 <!--
 File: docs/operations/dev-prod-direct-delivery.md
 Purpose: Give one owner and one delivery chat a practical two-host workflow.
-Related: AGENTS.md, ADR 0012, deployment/environments/prod.json,
-deployment/controller.py, docs/architecture/deployment-model.md,
+Related: AGENTS.md, ADR 0012, deployment/direct_dev_prod_preflight.py,
+deployment/controller.py (historical), docs/architecture/deployment-model.md,
 docs/operations/task013-release-readiness.md.
 -->
 
@@ -76,9 +76,12 @@ without changing the installed signed release until the candidate is ready.
   recoverable backups.
 - Inactive-slot health and controlled traffic switch, previous immutable
   release retained for rollback, non-destructive schema compatibility.
-- Existing `deployment/environments/prod.json` remains disabled until
-  an approved real PROD runtime/ingress/secrets installation. Changing the
-  prior stage to DEV is not a release action.
+- The historical Task014 `deployment/environments/prod.json` is still
+  disabled and retains its old STAGING predecessor for frozen-source
+  compatibility. It is NOT the new PROD operator. The separate
+  `direct_dev_prod_preflight.py` checks matching DEV evidence but cannot
+  activate PROD. A properly reviewed PROD adapter and runtime/ingress/secrets
+  installation are required before any real promotion.
 
 ## Boundaries and next real migration
 

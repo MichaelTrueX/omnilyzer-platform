@@ -2,7 +2,7 @@
 File: docs/adr/0012-direct-dev-prod-delivery.md
 Purpose: Record the two-server development, owner preview and immutable release decision.
 Related: AGENTS.md, docs/adr/0006-immutable-oci-deployment-and-promotion.md,
-deployment/policy.py, deployment/controller.py, deployment/environments/prod.json,
+deployment/direct_dev_prod_preflight.py, deployment/controller.py (historical),
 docs/operations/dev-prod-direct-delivery.md.
 -->
 
@@ -80,10 +80,15 @@ PROD environment has not been activated by this decision.
 
 ## Migration and rollback implications
 
-The present change migrates the repository's PROD prerequisite from
-STAGING to DEV and adds regression tests rejecting unmatched staging-only
-evidence. The currently disabled PROD config remains disabled. Existing
-historical STAGING fixtures and metadata remain untouched to avoid loss of
-evidence. Application rollback remains previous signed digest plus compatible
-database state. The old three-stage rule can be restored only by a reviewed
-policy decision and matching source/test change, never by a runtime shortcut.
+The present change adds a separate, pure, read-only
+`deployment/direct_dev_prod_preflight.py` which requires exactly one
+matching DEV audit success and ignores historical STAGING events. It is NOT
+a privileged deployment operator or authorization. The installed original
+DEV Task014 `controller.py`, `policy.py` and disabled legacy
+`deployment/environments/prod.json` remain byte-identical, preserving
+their historic exact-source receipts and source-handoff tests. The legacy
+controller's old STAGING policy is NOT used for a new PROD release. A future
+owner-approved PROD release adapter must bind real signed evidence, trusted
+DEV receipts, runtime credentials, readiness and rollback to the new
+preflight before activation. No current PROD deployment is authorized.
+Application rollback remains the retained signed digest and compatible data.
