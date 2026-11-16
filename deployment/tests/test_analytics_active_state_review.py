@@ -6,8 +6,8 @@ Related: deployment/analytics_active_state_review.py,
          deployment/tests/test_analytics_execution.py,
          platform PR278 analytics_loopback_guard.py.
 
-Sections: exact blue/green identity, route-to-image binding, rejected
-          counterfeit state/port rules, and no privileged/live API calls.
+Sections: exact blue/green identity, route-to-image binding, strict
+          opposite-slot absence, counterfeit state denial and no live calls.
 No Docker, RootlessKit, database or ingress changes in these tests.
 """
 from __future__ import annotations
@@ -437,6 +437,50 @@ class AnalyticsActiveStateReviewTests(unittest.TestCase):
             self.assertRaises(AnalyticsActiveStateDenied),
         ):
             source.verify_empty_analytics_successor_slot()
+
+    def test_ordinary_candidate_slot_absence_is_strict_and_read_only(self):
+        """Only UID991 may inspect either exact absent slot; never adopt residue."""
+        from deployment import analytics_active_state_review as source
+
+        for slot in ("blue", "green"):
+            with self.subTest(slot=slot):
+                target = (
+                    "/containers/omnilyzer-analytics-dev-analytics-"
+                    + slot + "-1/json"
+                )
+                with (
+                    patch.object(source.os, "geteuid", return_value=991),
+                    patch.object(source, "_unix_get", return_value=None) as read,
+                ):
+                    self.assertIsNone(source.verify_empty_analytics_candidate_slot(slot))
+                read.assert_called_once_with(source._DOCKER, target)
+                for existing in (
+                    container(slot, "172.20.0.3", PREFIX + DIGEST_BLUE),
+                    {"State": {"Running": False}},
+                ):
+                    with (
+                        patch.object(source.os, "geteuid", return_value=991),
+                        patch.object(source, "_unix_get", return_value=existing),
+                        self.assertRaises(AnalyticsActiveStateDenied),
+                    ):
+                        source.verify_empty_analytics_candidate_slot(slot)
+        for invalid in ("", "BLUE", "other", "blue-1/json", None, 1, True):
+            with (
+                self.subTest(invalid=invalid),
+                patch.object(source.os, "geteuid", return_value=991),
+                patch.object(source, "_unix_get") as read,
+                self.assertRaises(AnalyticsActiveStateDenied),
+            ):
+                source.verify_empty_analytics_candidate_slot(invalid)
+            read.assert_not_called()
+        for actor in (0, 1000):
+            with (
+                patch.object(source.os, "geteuid", return_value=actor),
+                patch.object(source, "_unix_get") as read,
+                self.assertRaises(AnalyticsActiveStateDenied),
+            ):
+                source.verify_empty_analytics_candidate_slot("blue")
+            read.assert_not_called()
 
     def test_absent_or_stopped_candidate_still_allows_verified_active_image(self):
         for candidate in (None, {
