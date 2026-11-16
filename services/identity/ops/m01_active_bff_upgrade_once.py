@@ -161,6 +161,39 @@ def validate_archive():
     return members
 
 
+def snapshot_reviewed_archive(destination):
+    """Pin exact user-staged source bytes inside a private root-owned directory.
+
+    The user-owned archive may change between initial preflight and staging.
+    Never extract from that mutable pathname: read a single no-follow regular
+    source file descriptor, copy bounded bytes, and verify the private copy's
+    complete approved digest before opening it as TAR.
+    """
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    with os.fdopen(os.open(ARCHIVE, flags), "rb") as source:
+        meta = os.fstat(source.fileno())
+        expected_uid = pwd.getpwnam("trusthansen").pw_uid
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != expected_uid
+                or meta.st_nlink != 1 or stat.S_IMODE(meta.st_mode) != 0o400
+                or meta.st_size != SOURCE_ARCHIVE_BYTES):
+            hold("REVIEWED_ARCHIVE_SOURCE_FD_CHANGED")
+        out_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        checksum = hashlib.sha256()
+        count = 0
+        with os.fdopen(os.open(destination, out_flags, 0o600), "wb") as target:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                count += len(chunk)
+                if count > SOURCE_ARCHIVE_BYTES:
+                    hold("REVIEWED_SOURCE_ARCHIVE_SHA_MISMATCH")
+                checksum.update(chunk)
+                target.write(chunk)
+            target.flush()
+            os.fsync(target.fileno())
+    if count != SOURCE_ARCHIVE_BYTES or checksum.hexdigest() != SOURCE_ARCHIVE_SHA256:
+        hold("REVIEWED_SOURCE_ARCHIVE_SHA_MISMATCH")
+    return destination
+
+
 def proposed_unit(original):
     """Derive exactly four reviewed immutable release-path substitutions."""
     before = OLD_SHA.encode("ascii")
@@ -302,8 +335,12 @@ def stage_new_release():
     temp = Path(tempfile.mkdtemp(prefix=".m01-98d74-", dir=RELEASES))
     published = False
     try:
-        with tarfile.open(ARCHIVE, "r:") as tf:
+        # The initial validated user path is mutable. Extract ONLY the
+        # byte-identical, digest-verified copy within this root-owned 0700 dir.
+        private_archive = snapshot_reviewed_archive(temp / ".m01-pinned-source.tar")
+        with tarfile.open(private_archive, "r:") as tf:
             tf.extractall(temp, filter="data")
+        private_archive.unlink()
         normalize_source_directories(temp, members)
         shutil.copytree(OLD / ".venv", temp / ".venv", symlinks=True)
         # The new venv must be relocated against its final immutable path.

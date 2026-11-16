@@ -62,6 +62,54 @@ class SourceOnlyActiveUpgradeTests(unittest.TestCase):
                                                 "REVIEWED_SOURCE_ARCHIVE_SHA_MISMATCH"):
                         UP.validate_archive()
 
+    def test_private_snapshot_rejects_mutable_source_after_preflight(self):
+        """Never extract bytes swapped after an earlier source validation."""
+        with tempfile.TemporaryDirectory(prefix="m01-pin-") as d:
+            root = Path(d)
+            source = root / "source.tar"
+            private = root / "root-private"
+            private.mkdir(mode=0o700)
+            approved = b"exact-original-reviewed-archive-bytes"
+            source.write_bytes(approved)
+            source.chmod(0o400)
+            with (mock.patch.object(UP, "ARCHIVE", source),
+                  mock.patch.object(UP, "SOURCE_ARCHIVE_BYTES", len(approved)),
+                  mock.patch.object(UP, "SOURCE_ARCHIVE_SHA256",
+                                    hashlib.sha256(approved).hexdigest()),
+                  mock.patch.object(UP.pwd, "getpwnam",
+                                    return_value=mock.Mock(pw_uid=os.getuid()))):
+                pinned = UP.snapshot_reviewed_archive(private / "fixed.tar")
+                self.assertEqual(pinned.read_bytes(), approved)
+                self.assertEqual(pinned.stat().st_mode & 0o777, 0o600)
+                # A source owner can chmod and mutate after preflight; the
+                # immutable private copy never follows that replacement.
+                source.chmod(0o600)
+                source.write_bytes(b"X" * len(approved))
+                source.chmod(0o400)
+                with self.assertRaisesRegex(
+                        UP.UpgradeHold, "REVIEWED_SOURCE_ARCHIVE_SHA_MISMATCH"):
+                    UP.snapshot_reviewed_archive(private / "changed.tar")
+                self.assertEqual(pinned.read_bytes(), approved)
+
+    def test_source_archive_symlink_rejected_by_descriptor(self):
+        """A swapped user-owned link cannot redirect the root file read."""
+        with tempfile.TemporaryDirectory(prefix="m01-pinlink-") as d:
+            root = Path(d)
+            original = root / "original.tar"
+            link = root / "source.tar"
+            original.write_bytes(b"safe-test-bytes")
+            original.chmod(0o400)
+            link.symlink_to(original)
+            with (mock.patch.object(UP, "ARCHIVE", link),
+                  mock.patch.object(UP, "SOURCE_ARCHIVE_BYTES", 15),
+                  mock.patch.object(UP, "SOURCE_ARCHIVE_SHA256",
+                                    hashlib.sha256(b"safe-test-bytes").hexdigest()),
+                  mock.patch.object(UP.pwd, "getpwnam",
+                                    return_value=mock.Mock(pw_uid=os.getuid()))):
+                with self.assertRaises(OSError):
+                    UP.snapshot_reviewed_archive(root / "must-not-create.tar")
+            self.assertFalse((root / "must-not-create.tar").exists())
+
     def test_derive_unit_changes_only_four_exact_version_pins(self):
         """Full candidate unit retains every existing restriction except SHA."""
         old = (ROOT / "omnilyzer-identity.service").read_bytes()
