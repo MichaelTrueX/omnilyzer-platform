@@ -28,29 +28,33 @@ SPEC.loader.exec_module(UP)
 
 
 class SourceOnlyActiveUpgradeTests(unittest.TestCase):
-    """Test deterministic source and safety gates at exact PR243 SHA."""
+    """Test reviewed direct old-to-canonical immutable release gates at PR298."""
 
     def test_exact_pins_and_offline_source_sha(self):
         """All executable identity code has an approved immutable version."""
-        self.assertEqual(UP.NEW_SHA, "98d74f4093d854ac401d8cb754b1fb40dab007d5")
+        self.assertEqual(UP.NEW_SHA, "def92cdb254beeb58e34dc08f9a5aeca2ae2e612")
         self.assertEqual(UP.OLD_SHA, "3481cacbef910a37d87a3c26341b1a8f16a6612f")
         self.assertEqual(UP.SOURCE_ARCHIVE_SHA256,
-            "c9d74a9dbadfd6ef4250d74bc5978768fbd903db07037a9f36a3a33d94f405cb")
-        self.assertEqual(UP.SOURCE_ARCHIVE_BYTES, 573440)
-        self.assertEqual(UP.GO_SCOPE, "M01_PRIVATE_BFF_98D74_UPGRADE_GO")
+            "fd46713dd62b407c0d1ea8b4afb45e342fdc87dd9a3baf53a730b5d0447e0db9")
+        self.assertEqual(UP.SOURCE_ARCHIVE_BYTES, 675840)
+        self.assertEqual(UP.GO_SCOPE, "M01_CANONICAL_BFF_DEF92_DIRECT_UPGRADE_GO")
+        self.assertEqual(UP.NEW_UNIT_SHA256,
+                         "0198baceb956ef7d36ade346c49e953e365f36f53789f11aebcc2d4ff93d95b3")
+        self.assertEqual(UP.OPERATOR.name, "m01-active-bff-def92-upgrade-once")
+        self.assertEqual(UP.RECEIPTS.name, "m01-bff-def92-once")
 
     def test_exact_source_file_archive_is_read_only_and_bounded(self):
         """Validate the real source-only archive created from canonical Git."""
         if not UP.ARCHIVE.is_file():
             self.skipTest("external source-only Git archive not staged on this runner")
-        self.assertEqual(len(UP.validate_archive()), 60)
+        self.assertEqual(len(UP.validate_archive()), 65)
 
     def test_one_byte_archive_mutation_fails_closed(self):
         """A changed owner-owned tar must not be accepted by a privileged op."""
         with tempfile.TemporaryDirectory(prefix="m01-review-") as d:
             folder = Path(d)
             folder.chmod(0o700)
-            p = folder / "identity-source-98d74f4.tar"
+            p = folder / "identity-source-def92.tar"
             p.write_bytes(b"not reviewed git source")
             p.chmod(0o400)
             # GitHub runners lack the PROD account. Stub only that UID
@@ -124,6 +128,21 @@ class SourceOnlyActiveUpgradeTests(unittest.TestCase):
                          b"ExecCondition=/usr/bin/test",
                          b"EnvironmentFile=/etc/omnilyzer/identity/identity.env"):
             self.assertIn(required, new)
+
+    def test_canonical_source_and_staged_runtime_shas_pinned(self):
+        """Require the actual public origin/CSRF/OIDC implementation bytes."""
+        pinned = {
+            "config/settings.py": "732b0f05db064b60330d28adaf6d94d220f07a885c1a0baf96c272a7a3cf90d0",
+            "config/urls.py": "7640a6251e8263187e26e58b7fa472c3f667c56aa2884f8fd1671f05e817db97",
+            "identity_bff/views.py": "f75f67b669c5dd6f9c8eccdd7897cd6189ac2ef6b6642d8c1afc40471c4b4b21",
+            "identity_bff/oidc.py": "0a37989b4e8d6e77d16f0a27b85be9515eea37001c305d7bd3cb46f140a6a698",
+            "identity_bff/formative.py": "c3c39f499b9f9126982930ffeb4ee3bf7591716a56b622d1dba9155e51bd7a5c",
+        }
+        for name, expected in pinned.items():
+            with self.subTest(name=name):
+                self.assertEqual(hashlib.sha256(
+                    (ROOT / name).read_bytes()).hexdigest(), expected)
+        self.assertIn("expected_staged = {", SOURCE.read_text())
 
     def test_unexpected_template_refused(self):
         """Unit generator rejects changed source SHA or missing protected guard."""

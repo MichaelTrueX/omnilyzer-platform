@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """File: services/identity/ops/m01_active_bff_upgrade_once.py
 
-Purpose: Source-pin and stage the existing Django/OIDC BFF as one NEW immutable
-    release, then (only after a distinct explicit Product Owner GO) replace
-    the already ACTIVE private BFF with automatic rollback to its old ACTIVE
-    version if verified readiness fails. This is NOT the 2026-11-08 inactive
-    bootstrap operator, and deliberately cannot change Native, NGINX, DB,
-    product flags, Keycloak, DNS, users, or token/session storage.
+Purpose: One direct, SHA-bound immutable BFF upgrade from the currently
+    active private 3481cac version to M04 source-approved canonical
+    def92cdb, with rollback to the old ACTIVE version on failed readiness.
+    The public site feature flag remains separately governed and OFF by default.
+    No Keycloak client, Native, NGINX, DB, DNS, session, or public site mutation.
+    This is the old PR243 operator's reviewed lifecycle reused on PR298 with
+    changed-only source pins. No staging or production apply without explicit GO.
 Related: services/identity/{requirements.txt,omnilyzer-identity.service},
     services/identity/ops/install_inactive_identity_release.py,
     services/identity/identity_bff/{formative,views}.py,
     services/identity/tests/test_m01_active_upgrade_source.py,
-    platform PR #243, Sumlaude PR #325 and PR #389.
+    platform PR #243 and PR #298, Sumlaude PR #421, S01 PR #364.
 
 The root-only operator must first be installed as an exact SHA-reviewed,
 root-owned 0500 file at OPERATOR. Never run a writable user-home copy as
@@ -37,28 +38,28 @@ import time
 
 # Section 1: Exact immutable approved sources, host, old live runtime.
 OLD_SHA = "3481cacbef910a37d87a3c26341b1a8f16a6612f"
-NEW_SHA = "98d74f4093d854ac401d8cb754b1fb40dab007d5"
+NEW_SHA = "def92cdb254beeb58e34dc08f9a5aeca2ae2e612"
 OLD_UNIT_SHA256 = "9f49c797f8ca266b873ae7cebabcc110f35ae6f42b37d67a74e3f522e90c0586"
-NEW_UNIT_SHA256 = "31d84e9b453982ed9ba68a2024ddc9b824f5cbfdea94e7fb671f9fa8acbfae74"
+NEW_UNIT_SHA256 = "0198baceb956ef7d36ade346c49e953e365f36f53789f11aebcc2d4ff93d95b3"
 REQUIREMENTS_SHA256 = "c864060dcac5945ef86cce56a0dedb9a368e190d74cb1f65ec3178ec0e117c9c"
-SOURCE_ARCHIVE_SHA256 = "c9d74a9dbadfd6ef4250d74bc5978768fbd903db07037a9f36a3a33d94f405cb"
-SOURCE_ARCHIVE_BYTES = 573440
-ARCHIVE = Path("/home/trusthansen/m01-bff-98d74-source-20261115/identity-source-98d74f4.tar")
-OPERATOR = Path("/usr/local/sbin/m01-active-bff-98d74-upgrade-once")
+SOURCE_ARCHIVE_SHA256 = "fd46713dd62b407c0d1ea8b4afb45e342fdc87dd9a3baf53a730b5d0447e0db9"
+SOURCE_ARCHIVE_BYTES = 675840
+ARCHIVE = Path("/home/trusthansen/m01-bff-def92-source-20261116/identity-source-def92.tar")
+OPERATOR = Path("/usr/local/sbin/m01-active-bff-def92-upgrade-once")
 RELEASES = Path("/opt/omnilyzer/identity/releases")
 OLD = RELEASES / OLD_SHA
 NEW = RELEASES / NEW_SHA
 CURRENT = Path("/opt/omnilyzer/identity/current")
 UNIT = Path("/etc/systemd/system/omnilyzer-identity.service")
 GO_MARKER = Path("/etc/omnilyzer/identity/owner-approved-go")
-RECEIPTS = Path("/etc/omnilyzer/identity/m01-bff-98d74-once")
+RECEIPTS = Path("/etc/omnilyzer/identity/m01-bff-def92-once")
 SERVICE = "omnilyzer-identity.service"
 NATIVE = "sumlaude-native.service"
 VHOST = Path("/etc/nginx/sites-enabled/app.sumlaude.com.conf")
 OLD_VHOST_SHA256 = "49753649cac70dceaf893ea03c5b74fd475bb8500166c7a8ced00b8612710769"
 NATIVE_CURRENT = Path("/opt/sumlaude/native/current")
 NATIVE_APPROVED = Path("/opt/sumlaude/native/releases/ca5b54ccf3e179cc5706bd129cf4f9350f41e026")
-GO_SCOPE = "M01_PRIVATE_BFF_98D74_UPGRADE_GO"
+GO_SCOPE = "M01_CANONICAL_BFF_DEF92_DIRECT_UPGRADE_GO"
 
 
 class UpgradeHold(RuntimeError):
@@ -118,8 +119,9 @@ def valid_regular(path, *, uid, mode):
 def validate_archive():
     """Check complete exact Git archive bytes, ownership and traversal safety.
 
-    The authoritative commit is PR243 NEW_SHA, already M04 source accepted.
-    SOURCE_ARCHIVE_SHA256 was reproduced from actual Git archive on DEV.
+    The immutable BFF source commit is PR298 parent def92cdb, independently
+    M04 SOURCE accepted. The final current PR commit adds only its operator/
+    tests and MUST NOT be silently substituted for the pinned BFF archive.
     """
     try:
         user = pwd.getpwnam("trusthansen").pw_uid
@@ -134,7 +136,7 @@ def validate_archive():
         hold("REVIEWED_SOURCE_ARCHIVE_SHA_MISMATCH")
     with tarfile.open(ARCHIVE, "r:") as tar:
         members = tar.getmembers()
-        if len(members) != 60:
+        if len(members) != 65:
             hold("REVIEWED_SOURCE_ARCHIVE_MEMBER_COUNT")
         for item in members:
             name = PurePosixPath(item.name)
@@ -148,11 +150,17 @@ def validate_archive():
             "services/identity/requirements.txt": REQUIREMENTS_SHA256,
             "services/identity/omnilyzer-identity.service": OLD_UNIT_SHA256,
             "services/identity/config/urls.py":
-                "ffc92367db4882c4e0a5812711465d80f06a10ce8e271ee3b3c7dba9e52cf811",
+                "7640a6251e8263187e26e58b7fa472c3f667c56aa2884f8fd1671f05e817db97",
             "services/identity/identity_bff/formative.py":
-                "68e603458b57816981e38d0842c28b35bca45bfcb6019e03568d90a86c88d134",
-            "services/identity/tests/test_formative_reveals.py":
-                "28a73e810717926cc2a48348422cca6066d08491a8e9d81dc8b69ab493dc539f",
+                "c3c39f499b9f9126982930ffeb4ee3bf7591716a56b622d1dba9155e51bd7a5c",
+            "services/identity/tests/test_canonical_public_host.py":
+                "f4cb56320de1b3cb360dfd0a96e7811143c5dad871121ac4cb31fefc2fdc5461",
+            "services/identity/config/settings.py":
+                "732b0f05db064b60330d28adaf6d94d220f07a885c1a0baf96c272a7a3cf90d0",
+            "services/identity/identity_bff/views.py":
+                "f75f67b669c5dd6f9c8eccdd7897cd6189ac2ef6b6642d8c1afc40471c4b4b21",
+            "services/identity/identity_bff/oidc.py":
+                "0a37989b4e8d6e77d16f0a27b85be9515eea37001c305d7bd3cb46f140a6a698",
         }
         for name, digest in expected.items():
             f = tar.extractfile(name)
@@ -332,7 +340,7 @@ def stage_new_release():
     old_pid, native_pid = validate_live_before_upgrade()
     if NEW.exists() or NEW.is_symlink() or RECEIPTS.exists():
         hold("ONE_TIME_STAGE_ALREADY_EXISTS")
-    temp = Path(tempfile.mkdtemp(prefix=".m01-98d74-", dir=RELEASES))
+    temp = Path(tempfile.mkdtemp(prefix=".m01-def92-", dir=RELEASES))
     published = False
     try:
         # The initial validated user path is mutable. Extract ONLY the
@@ -400,9 +408,16 @@ def staged_proof():
         hold("STAGED_RECEIPT_NOT_SOURCE_PINNED")
     if NEW.is_symlink() or not NEW.is_dir():
         hold("STAGED_RELEASE_MISSING")
-    if (sha256(NEW / "services/identity/requirements.txt") != REQUIREMENTS_SHA256
-            or sha256(NEW / "services/identity/identity_bff/formative.py")
-            != "68e603458b57816981e38d0842c28b35bca45bfcb6019e03568d90a86c88d134"
+    expected_staged = {
+        "requirements.txt": REQUIREMENTS_SHA256,
+        "config/settings.py": "732b0f05db064b60330d28adaf6d94d220f07a885c1a0baf96c272a7a3cf90d0",
+        "config/urls.py": "7640a6251e8263187e26e58b7fa472c3f667c56aa2884f8fd1671f05e817db97",
+        "identity_bff/views.py": "f75f67b669c5dd6f9c8eccdd7897cd6189ac2ef6b6642d8c1afc40471c4b4b21",
+        "identity_bff/oidc.py": "0a37989b4e8d6e77d16f0a27b85be9515eea37001c305d7bd3cb46f140a6a698",
+        "identity_bff/formative.py": "c3c39f499b9f9126982930ffeb4ee3bf7591716a56b622d1dba9155e51bd7a5c",
+    }
+    if (any(sha256(NEW / "services/identity" / name) != digest
+            for name, digest in expected_staged.items())
             or sha256(NEW / "m01-reviewed-upgrade.service") != NEW_UNIT_SHA256):
         hold("STAGED_RUNTIME_SOURCE_OR_UNIT_DRIFT")
     verify_packages()
@@ -410,7 +425,7 @@ def staged_proof():
 
 def replace_unit(content):
     """Atomically replace only the reviewed systemd unit, never edit in place."""
-    descriptor, name = tempfile.mkstemp(prefix=".m01-98d74-unit-", dir=UNIT.parent)
+    descriptor, name = tempfile.mkstemp(prefix=".m01-def92-unit-", dir=UNIT.parent)
     p = Path(name)
     try:
         with os.fdopen(descriptor, "wb") as f:
@@ -425,7 +440,7 @@ def replace_unit(content):
 
 def replace_current(target):
     """Atomically select an immutable release, preserving a rollback target."""
-    tmp = CURRENT.parent / ".m01-98d74-next"
+    tmp = CURRENT.parent / ".m01-def92-next"
     if tmp.exists() or tmp.is_symlink():
         hold("CURRENT_SWITCH_TEMPORARY_PATH_OCCUPIED")
     tmp.symlink_to(target)
@@ -437,7 +452,7 @@ def replace_current(target):
 
 def private_http_ready(target=NEW, *, attempts=25):
     """Prove the selected old/new private loopback HTTP, never a remote proxy."""
-    with tempfile.TemporaryDirectory(prefix="m01-98d74-http-") as d:
+    with tempfile.TemporaryDirectory(prefix="m01-def92-http-") as d:
         body = str(Path(d) / "body.json")
         header = str(Path(d) / "headers")
         for _ in range(attempts):
@@ -510,7 +525,7 @@ def apply_once():
         if GO_MARKER.exists():
             valid_regular(GO_MARKER, uid=0, mode=0o600)
         else:
-            write_exclusive(GO_MARKER, b"reviewed-private-bff-98d74-owner-go\n")
+            write_exclusive(GO_MARKER, b"reviewed-canonical-bff-def92-owner-go\n")
             created_go_marker = True
         command(["/usr/bin/systemctl", "daemon-reload"])
         if (systemd("WorkingDirectory") != str(NEW / "services/identity")
@@ -527,7 +542,7 @@ def apply_once():
         if CURRENT.resolve() != NEW or service_active(SERVICE) != "active":
             hold("NEW_RUNTIME_CHANGED_AFTER_VERIFIED_START")
         write_exclusive(RECEIPTS / "applied.json", json.dumps({
-            "status": "PRIVATE_BFF_98D74_ACTIVE_DIRECT_ORIGIN_PASS",
+            "status": "CANONICAL_BFF_DEF92_ACTIVE_DIRECT_ORIGIN_PASS",
             "old_release": OLD_SHA, "new_release": NEW_SHA,
             "old_pid": old_pid, "new_pid": pid,
             "unit_sha256": NEW_UNIT_SHA256,
@@ -536,7 +551,7 @@ def apply_once():
             "nginx_unchanged": True,
             "learner_features_unchanged": True,
         }, sort_keys=True).encode())
-        print("M01_BFF_98D74_IMMUTABLE_ACTIVE_UPGRADE_AND_DIRECT_HTTPS_PASS")
+        print("M01_BFF_DEF92_IMMUTABLE_ACTIVE_UPGRADE_AND_DIRECT_HTTPS_PASS")
     except BaseException:
         # Ignore a second ordinary termination only while recovering the
         # existing active BFF. SIGKILL cannot be controlled; receipts remain.
@@ -563,10 +578,10 @@ def apply_once():
                     "status": "OLD_ACTIVE_BFF_RESTORED_NEW_RELEASE_NOT_SELECTED",
                     "old_release": OLD_SHA, "new_release": NEW_SHA,
                 }, sort_keys=True).encode())
-                print("M01_BFF_98D74_AUTO_ROLLBACK_OLD_ACTIVE_PASS",
+                print("M01_BFF_DEF92_AUTO_ROLLBACK_OLD_ACTIVE_PASS",
                       file=sys.stderr)
             except BaseException:
-                print("M01_BFF_98D74_ROLLBACK_UNCERTAIN_HOLD_NO_REPLAY",
+                print("M01_BFF_DEF92_ROLLBACK_UNCERTAIN_HOLD_NO_REPLAY",
                       file=sys.stderr)
         raise
     finally:
@@ -580,7 +595,7 @@ def verify_installed():
     staged_proof()
     valid_regular(RECEIPTS / "applied.json", uid=0, mode=0o600)
     receipt = json.loads((RECEIPTS / "applied.json").read_text())
-    if (receipt.get("status") != "PRIVATE_BFF_98D74_ACTIVE_DIRECT_ORIGIN_PASS"
+    if (receipt.get("status") != "CANONICAL_BFF_DEF92_ACTIVE_DIRECT_ORIGIN_PASS"
             or receipt.get("unit_sha256") != NEW_UNIT_SHA256
             or CURRENT.resolve() != NEW
             or sha256(UNIT) != NEW_UNIT_SHA256
@@ -588,7 +603,7 @@ def verify_installed():
             or service_active(SERVICE) != "active"):
         hold("POST_APPLY_RUNTIME_OR_RECEIPT_CHANGED")
     private_http_ready()
-    print("M01_BFF_98D74_PRIVATE_RUNTIME_INDEPENDENT_VERIFY_PASS")
+    print("M01_BFF_DEF92_PRIVATE_RUNTIME_INDEPENDENT_VERIFY_PASS")
 
 
 def main():
@@ -599,7 +614,7 @@ def main():
     if args.action == "preflight":
         validate_archive()
         validate_live_before_upgrade()
-        print("M01_BFF_98D74_SOURCE_PRECHECK_PASS_NO_PROD_WRITE")
+        print("M01_BFF_DEF92_SOURCE_PRECHECK_PASS_NO_PROD_WRITE")
     elif args.action == "stage":
         stage_new_release()
     elif args.action == "apply":
