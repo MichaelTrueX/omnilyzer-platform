@@ -1,0 +1,31 @@
+[Unit]
+Description=sumlaude AI operations fixed-purpose root service (%i)
+Documentation=https://github.com/MichaelTrueX/omnilyzer-platform
+After=local-fs.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/shared-ai-ops/dispatcher.py sumlaude %i
+UMask=0077
+Environment=PYTHONNOUSERSITE=1
+NoNewPrivileges=yes
+CapabilityBoundingSet=~CAP_SYS_ADMIN
+SystemCallFilter=~@mount
+RestrictNamespaces=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=-/var/lib/sumlaude-s03-current35-108-110-once /usr/local/sbin
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+TimeoutStartSec=60

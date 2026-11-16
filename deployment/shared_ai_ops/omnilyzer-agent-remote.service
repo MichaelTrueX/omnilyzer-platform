@@ -1,0 +1,26 @@
+[Unit]
+Description=omnilyzer limited Desktop Commander agent (runs as non-admin OS user)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=omnilyzer-agent
+Group=omnilyzer-agent
+WorkingDirectory=/home/omnilyzer-agent
+ExecStart=/usr/local/libexec/shared-ai-ops/node /home/omnilyzer-agent/.local/share/omnilyzer-agent/node_modules/@wonderwhy-er/desktop-commander/dist/index.js remote
+Environment=HOME=/home/omnilyzer-agent
+Environment=PATH=/usr/local/libexec/shared-ai-ops:/usr/bin:/bin
+NoNewPrivileges=yes
+UMask=0077
+ProtectSystem=strict
+ReadWritePaths=/home/omnilyzer-agent
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

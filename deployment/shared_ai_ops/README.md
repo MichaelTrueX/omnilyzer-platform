@@ -1,0 +1,168 @@
+# Shared AI Operations v0.1 - Sumlaude and Omnilyzer
+
+**Status: source candidate only, not installed or activated in production.**
+The operating concept is permanent, not a one-time sudo exception.
+Every privileged job remains tightly bounded and source-verified.
+
+## Architecture and trust boundary
+
+- `sumlaude-agent` is a dedicated Linux user on `truexmainserver`;
+  `omnilyzer-agent` is reserved for `omnilyzerdev`.
+  Neither belongs to sudo, docker, adm or the PostgreSQL group. A separate
+  OAuth device pairing is required for each host.
+- Each account runs its own Desktop Commander **as that non-admin user**.
+  The existing `trusthansen` remote device retains its current sudo block.
+  Do not weaken or disable that block.
+- A root-owned polkit rule allows each agent only the **start** verb on its
+  corresponding `<product>-ai-ops@<job>.service` systemd units.
+  It grants no control over arbitrary services, unit files or sudo.
+- systemd starts a **root-owned** `dispatcher.py` with no custom arguments
+  besides the product and the unit instance name, which are strictly checked.
+  Root-owned `/etc/shared-ai-ops/policy.json` registers the job names and
+  exact SHA256 of root-owned job files. There is no arbitrary command input,
+  shell interpretation, dynamic interpreter path or agent-writable policy.
+- The dedicated service is sandboxed with private devices/tmp, no privilege
+  escalation, restricted kernel controls and product-specific write paths.
+  Each run emits journald markers and an exact systemd exit result.
+- Adding a new privileged capability requires a source-reviewed root-owned
+  job and policy update. **The agent cannot register its own root code.**
+  After such registration, approved executions need no more terminal sudo.
+  This is not a way to bypass the Product Owner's release approvals.
+
+## Initial registered operations
+
+| Product | Job | Actual effect |
+| --- | --- | --- |
+| Sumlaude | `status` | Reports whether protected S03 108-110 postcommit receipt is present. Read-only. |
+| Sumlaude | `cleanup-108-110` | Requires exact original SHA-pinned 108-110 SQL and root operator, root file ownership/modes and independent COMMIT/postcheck receipts. Deletes only protected temporary SQL and the superseded one-shot operator. Root-only audit receipts remain. |
+| Omnilyzer | `status` | Reports agent dispatcher readiness on `omnilyzerdev`. Does not activate Analytics or touch Task014. |
+
+Further deployments, backups, restore rehearsals and system changes are **not yet
+registered privileged operations**. Their own exact-source operators must be
+reviewed and registered before unattended execution. A content or application
+release is not automatically authorized by having this service installed.
+
+## Installer and owner bootstrap
+
+The canonical source is
+`deployment/shared_ai_ops/` in a dedicated branch of
+`MichaelTrueX/omnilyzer-platform`. `install-root.py` verifies fixed SHA256
+for all source files before any operating-system modifications. It creates
+the appropriate non-admin OS user, installs root-owned policy, job files,
+polkit rule and systemd templates, and reloads systemd. It does **not** start
+any migration, run cleanup, install the Desktop Commander package,
+start an agent, expose a port, request a password, or enable a root service.
+
+A local administrator first copies the SHA-reviewed installer to a protected
+root-owned file, independently verifies its SHA, and runs that protected copy.
+Do not `sudo python` a user-writable checkout. The exact owner bootstrap
+command and staging SHA are recorded in the PR handoff once the candidate is
+committed and copied to the correct server. Do not use an unpinned latest file.
+
+**One-time OAuth pairing after installer PASS** on the intended host:
+
+1. Install a fixed Desktop Commander package (pinned proposal 0.3.1) under
+   the new dedicated agent user's own private home. The account has
+   /usr/sbin/nologin, not an interactive or password-login shell. A local
+   administrator invokes the executable explicitly AS that user.
+2. An administrator independently verifies an approved Node.js binary
+   22.12+ and installs a COPY as a root-owned runtime at
+   /usr/local/libexec/shared-ai-ops/node. The service never updates or uses
+   the system's existing Node18 binary.
+   - truexmainserver: available Node 24.22.0 at the existing owner's
+     private NVM source, independently verified SHA256
+     67ca5783febb8bf85736c79fcdd92c8d6d465a0eb2a082672bcdfa76a506751c.
+   - omnilyzerdev: already running Node 22.23.3 from
+     /opt/nodejs/node-v22.23.3-linux-x64/bin/node, exact SHA256
+     fde6a4bf8d0562f7751d1a2d6cb9b417c4cfe107bbcb0aa3e9a24e125e348f48,
+     root:root 0755 with root-controlled /opt ancestors. An owner-local
+     pinned COPY is still required; the agent cannot mutate system paths.
+3. Invoke the pinned Node copy once as the dedicated nonadmin account to
+   start the installed remote Desktop Commander script. The Product Owner
+   checks the OAuth device verification code in the Desktop Commander UI.
+   Never post the code or credentials in GitHub or chat.
+4. Once paired, stop the foreground process and the administrator enables
+   the product-specific remote systemd service. Confirm the visible new
+   device process is genuinely running as sumlaude-agent/omnilyzer-agent.
+   Do not disable sudo restrictions of the existing user account.
+
+**Actual omnilyzerdev host access correction:** An earlier remote-agent
+findmnt command showed ext4 root as read-only, but that was only
+the existing Desktop Commander service's isolated mount namespace.
+Actual PID1 root mountinfo reports rw, while the connected agent reports
+ro. The service has ProtectSystem=strict and ProtectHome=read-only, with
+ReadWritePaths limited to its approved repositories and device state.
+This is deliberate systemd isolation, not evidence that the underlying
+host root filesystem is damaged. Do not remount/reboot/fsck on that basis.
+The remote agent cannot place the private source stage directly under
+/home/omnigpt; arrange one authorized owner-local staging after source
+security review, without weakening that existing agent's protections.
+
+Example authorized connected-agent operation AFTER pairing:
+
+    systemctl start sumlaude-ai-ops@status.service
+    systemctl show sumlaude-ai-ops@status.service -p Result -p ExecMainStatus --no-pager
+
+When the owner-approved postcommit cleanup job is run:
+
+    systemctl start sumlaude-ai-ops@cleanup-108-110.service
+    systemctl show sumlaude-ai-ops@cleanup-108-110.service -p Result -p ExecMainStatus --no-pager
+
+A systemd status `success` is necessary, but it is NOT a substitute for checking
+the specific root job's success markers and the unchanged protected audit data.
+The connecting ChatGPT client must target the new dedicated-agent device ID
+explicitly, not the existing `trusthansen` device.
+
+## Security and operational limits
+
+- No general sudo, sudoers `ALL`, SSH key injection, password sharing,
+  privileged desktop process or user-writable root scripts.
+- Neither product can start the other's job. The dispatcher rejects wrong
+  host, unknown job, foreign policy/owner/mode, changed source SHA and
+  unregistered parameters.
+- Source changes require review and a root-owned policy update; do not build
+  an unsupervised arbitrary-root deployment broker.
+- Authentication of an 18+ learner, S01/M01 browser acceptance, school-admin
+  feature activation and Analytics 0.16.0 Task014 are not implied by the
+  existence of an operations agent.
+- To revoke agent permissions: disable its remote systemd service and remove
+  its polkit rule or revoke its Desktop Commander device; keep required audit
+  receipts. The dedicated OS user can remain locked.
+- Existing S03 one-shot mutation receipts are not discarded. Future generic
+  DB release support must bind exact signed provenance, changed-risk QA, owner
+  GO, preflight and postcommit readback before adding that registered job.
+
+## Focused DEV-only verification
+
+No paid GitHub Actions:
+
+    python3 -m py_compile deployment/shared_ai_ops/*.py deployment/shared_ai_ops/jobs/*/*.py
+    node deployment/shared_ai_ops/tests/test_polkit_policy.cjs
+    systemd-analyze verify deployment/shared_ai_ops/*.service
+    bash deployment/shared_ai_ops/tests/test_dispatcher_isolated.sh
+    bash deployment/shared_ai_ops/tests/test_installer_isolated.sh
+
+The last two tests run **isolated disposable containers** with `--network none`
+on authorized development infrastructure; they never access production.
+## Host-specific bootstrap provenance (2026-11-15 correction)
+
+Actual on-host read-only inspection found different source owners. The first installer assumed trusthansen existed on both hosts and was rejected BEFORE root installation. The corrected installer selects a fixed owner/path by exact hostname:
+
+| Host | Non-root source owner | Private source stage |
+| --- | --- | --- |
+| truexmainserver | trusthansen | /home/trusthansen/shared-ai-ops-source-20261115/ |
+| omnilyzerdev | omnigpt | /home/omnigpt/shared-ai-ops-source-20261115/ |
+
+The root installer verifies the host, passwd entry, ownership and mode0700 of the private source directory and all exact source SHA256 before creating a privileged resource. The source path cannot be supplied by an agent argument.
+
+The corrected installer was tested on BOTH emulated hostnames in separate disposable, network-disabled Python 3.12 containers. Both reported SHARED_AGENT_PERMANENT_NONADMIN_ROOT_DISPATCH_INSTALLED_PASS, the correct product remote service installed, the opposite product remote service absent, non-sudo agent, valid root dispatcher, denied replay, and fixture cleanup exit0. Nothing was installed on either actual server.
+
+Production remains only staged nonprivileged source. Root installation requires the exact commit/SHA review and one local protected bootstrap, followed by OAuth pairing and actual host polkit/systemd acceptance.
+
+## Privilege-boundary hardening at next source revision
+
+The initial authenticated agent account is created with /usr/sbin/nologin, a private home and precisely its own primary group, with no supplementary group access. Separate OAuth pairing is performed by a human invoking the pinned Node executable explicitly as that account, not through a login shell. The root installer deploys ONLY the local systemd template: sumlaude-ai-ops@.service on truexmainserver, omnilyzer-ai-ops@.service on omnilyzerdev, plus the appropriate separate non-admin remote unit. The other product's privileged template is absent. Root-owned policy/dispatcher independently deny cross-product jobs. Both host-specific root installer paths, negative replay checks and nonlogin/group restrictions were verified in isolated network-disabled containers. Source-only, not a live installation.
+
+## Root job mount and namespace hardening (2026-11-16)
+
+The product-specific root service templates explicitly remove CAP_SYS_ADMIN from the capability bounding set, block the systemd mount syscall group using SystemCallFilter=~@mount, and restrict namespace creation via RestrictNamespaces=yes. ProtectSystem=strict remains set, and only the known, bounded Sumlaude temporary stage and /usr/local/sbin paths are writable in that product's job. The Omnilyzer status-only root unit receives no writable path exception. These directives reflect systemd's documented caveat that filesystem namespace protections alone can be undone by privileged processes with mount capabilities. New focused static tests in tests/test_root_service_sandbox.py pin these invariants, while both isolated host bootstrap tests and the original source-pinned cleanup job regression were rerun successfully. These are author DEV tests, not yet an independent security review or live production systemd/polkit acceptance.

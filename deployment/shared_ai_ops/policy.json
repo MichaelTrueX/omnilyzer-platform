@@ -1,0 +1,18 @@
+{
+  "products": {
+    "omnilyzer": {
+      "status": {
+        "sha256": "7c1a9d4d5e7a480404564efa84a0526936cb1718d3f239471fc1bc617ea8b2f0"
+      }
+    },
+    "sumlaude": {
+      "cleanup-108-110": {
+        "sha256": "52567f5ad1b22b005b33b1eed7f18d77e3181a8361390d9ae7092a6ce8325e20"
+      },
+      "status": {
+        "sha256": "0fc4b81856da371d63f12853efcf48d8ffbd92911a895fa043506e753326de81"
+      }
+    }
+  },
+  "version": 1
+}
