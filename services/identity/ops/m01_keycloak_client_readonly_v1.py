@@ -80,7 +80,15 @@ def load_reviewed_operator():
     if spec is None:
         reject("REVIEWED_SOURCE_IMPORT")
     module = module_from_spec(spec)
-    loader.exec_module(module)
+    # The audit must not create persistent root-owned __pycache__ files while
+    # loading the already reviewed operator. Only /run temporary admin
+    # session data is permitted for this read-only inspection.
+    prior = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = prior
     return module
 
 
