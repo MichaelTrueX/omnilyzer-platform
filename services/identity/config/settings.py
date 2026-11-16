@@ -68,6 +68,10 @@ PRODUCT_SESSION_SECONDS = 600
 # Ordinary adult declaration is NOT age verification. Existing S03 secure
 # issuer remains the only authorization authority after this choice.
 REQUIRE_GTM_ADULT_CHOICE = True
+_guardian_flag = os.environ.get("SUMLAUDE_GUARDIAN_EMAIL_ENABLED", "0")
+if _guardian_flag not in ("0", "1"):
+    raise RuntimeError("invalid guardian email release flag")
+GUARDIAN_EMAIL_ENABLED = _guardian_flag == "1"
 
 ROOT_URLCONF = "config.urls"
 USE_TZ = True

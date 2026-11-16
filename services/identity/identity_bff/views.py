@@ -19,7 +19,7 @@ from django.middleware.csrf import get_token, rotate_token
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
-from . import issuer, oidc
+from . import issuer, oidc, guardian
 
 
 def _fail(status=401):
@@ -133,7 +133,8 @@ def _active(request):
     if not value or not request.session.get("s03_digest"):
         return None
     if (settings.REQUIRE_GTM_ADULT_CHOICE and
-            request.session.get("age_choice") != "adult"):
+            request.session.get("age_choice") not in (
+                ("adult", "guardian") if settings.GUARDIAN_EMAIL_ENABLED else ("adult",))):
         return None
     return value
 
@@ -226,13 +227,15 @@ def callback(request):
         # 18+ users receive only a Django identity cookie, never Native.
         request.session.cycle_key()
         if settings.REQUIRE_GTM_ADULT_CHOICE:
+            known_minor = (settings.GUARDIAN_EMAIL_ENABLED and
+                           guardian.state(principal) != "unknown")
             request.session.clear()
             now = int(time.time())
             request.session.update({
                 "principal": principal, "sealed_tokens": sealed,
                 "oauth_deadline": deadline,
                 "absolute_deadline": now + settings.IDENTITY_ABSOLUTE_SECONDS,
-                "last_seen": now, "age_choice": "pending",
+                "last_seen": now, "age_choice": "under18" if known_minor else "pending",
                 "session_origin": bound_origin,
             })
             request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
@@ -279,6 +282,14 @@ def session_state(request):
                     return JsonResponse({"authenticated": True,
                         "productAuthorized": "adult-choice-required"})
                 if state == "under18":
+                    if settings.GUARDIAN_EMAIL_ENABLED:
+                        try:
+                            consent = guardian.state(identity)
+                        except issuer.AdmissionError:
+                            return _fail(503)
+                        return JsonResponse({"authenticated": True,
+                            "productAuthorized": "guardian-" + (
+                                consent if consent in ("pending", "confirmed") else "required")})
                     return JsonResponse({"authenticated": True,
                         "productAuthorized": "adult-pilot-denied"})
         return JsonResponse({"authenticated": False})
@@ -317,6 +328,11 @@ def age_choice(request):
     except (ValueError, UnicodeError, TypeError):
         return _fail(400)
     if payload["ageBand"] == "under18":
+        if settings.GUARDIAN_EMAIL_ENABLED:
+            try:
+                guardian.declare_minor(principal)
+            except issuer.AdmissionError:
+                return _fail(503)
         request.session["age_choice"] = "under18"
         try:
             request.session.save()
@@ -325,7 +341,13 @@ def age_choice(request):
         # Under-18 choice irrevocably changes the identity authorization state.
         rotate_token(request)
         return JsonResponse({"authenticated": True,
-            "productAuthorized": "adult-pilot-denied"})
+            "productAuthorized": "guardian-required" if settings.GUARDIAN_EMAIL_ENABLED else "adult-pilot-denied"})
+    if settings.GUARDIAN_EMAIL_ENABLED:
+        try:
+            if guardian.state(principal) != "unknown":
+                return _fail(403)
+        except issuer.AdmissionError:
+            return _fail(503)
     # Even after initial signed OIDC verification, do not mint the
     # S03 cookie based solely on stale provider session claims.
     try:
@@ -356,6 +378,41 @@ def age_choice(request):
         "authenticated": True, "productAuthorized": "check-S03",
         "adultDeclared": True, "csrfResetRequired": True,
     }), product_cookie)
+
+
+@never_cache
+@require_POST
+def guardian_continue(request):
+    """Issue only after Native confirms this signed learner's guardian consent."""
+    if not settings.GUARDIAN_EMAIL_ENABLED:
+        return _fail(404)
+    principal = _identity_active(request)
+    if not principal or request.session.get("age_choice") != "under18":
+        return _fail(403)
+    try:
+        if guardian.state(principal) != "confirmed":
+            return _fail(403)
+        old = oidc.unseal(request.session["sealed_tokens"])
+        new = oidc.refresh(old["refresh_token"])
+        if not new.get("refresh_token"):
+            new["refresh_token"] = old["refresh_token"]
+        verified = oidc.verify_id(new["id_token"], new["access_token"],
+                                  previous_sub=principal["sub"])
+        if verified != principal:
+            raise oidc.IdentityError("changed identity")
+        sealed, deadline = oidc.seal(new), oidc.deadline(new)
+        cookie, digest = issuer.issue(principal)
+    except (issuer.AdmissionError, oidc.IdentityError, KeyError, TypeError, ValueError):
+        return _fail(403)
+    request.session.update({"s03_digest": digest, "sealed_tokens": sealed,
+        "oauth_deadline": deadline, "age_choice": "guardian",
+        "last_seen": int(time.time())})
+    request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
+    if not _persist_issued_session(request, digest):
+        return _unpaired_session_response()
+    rotate_token(request)
+    return _product_cookie(JsonResponse({"authenticated": True,
+        "productAuthorized": "check-S03", "csrfResetRequired": True}), cookie)
 
 
 @never_cache
