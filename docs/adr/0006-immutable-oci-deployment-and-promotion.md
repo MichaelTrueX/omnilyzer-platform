@@ -3,6 +3,15 @@
 - Status: Accepted
 - Date: 2026-08-29
 
+**Stage-count amendment (16 November 2026):** This ADR's original
+DEV -> STAGING -> PROD diagrams describe the historical Task007 experiment.
+For the current one-owner production platform they are superseded only as to
+stage count by [ADR 0012](0012-direct-dev-prod-delivery.md): the normal
+promotion is **DEV -> PROD directly**, with no staging host. The original
+signed-digest, deployment gate, migration, readiness, rollback and audit
+requirements remain effective. Historical descriptions below are retained
+as the test record, not as current operational instructions.
+
 ## Context
 
 Omnilyzer needs deployment behavior that separates source and build activity from environment deployment. A reviewed artifact must progress through DEV, STAGING, and PROD without per-environment rebuilds, while environment configuration and secrets remain outside the image. Deployments also need explicit database migrations, readiness gates that prevent traffic from reaching an unready release, controlled traffic switching and rollback, structured audit evidence, and operational simplicity appropriate to the platform's initial scale.

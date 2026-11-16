@@ -1,50 +1,86 @@
 <!--
 File: docs/architecture/deployment-model.md
-Purpose: Defines the planned promotion flow and immutable deployment principles.
-Related:
-- docs/architecture/platform-principles.md
-- docs/architecture/security-model.md
-- docs/architecture/technology-decisions.md
+Purpose: Define the current two-server developer-preview and immutable release model.
+Related: AGENTS.md, deployment/direct_dev_prod_preflight.py,
+deployment/controller.py (historical DEV source),
+docs/adr/0006-immutable-oci-deployment-and-promotion.md,
+docs/adr/0012-direct-dev-prod-delivery.md.
 -->
 
 # Deployment Model
 
-## Promotion flow
+## Current operating environments
 
 ```text
-developer workspace
-    ->
-feature branch
-    ->
-pull request
-    ->
-CI
-    ->
-DEV
-    ->
-STAGING
-    ->
-PROD
+                 GitHub
+             versioned source
+                   |
+                   v
+   DEV: omnilyzerdev (also backup)
+   edit -> safe preview -> test -> owner sees it
+                   |
+             Product Owner GO
+          exact signed DEV digest
+                   |
+                   v
+   PROD: truexmainserver
+   verify -> readiness -> atomic traffic switch
+              retain rollback
 ```
 
-DEV, STAGING, and PROD are separate deployment stages. CI builds an immutable application image once; promotion uses that identical image digest across stages. Only environment-specific configuration, externally managed secrets, and stage-specific scale differ. Rebuilding for a later stage is not promotion.
+Only these two actual hosts are used for application development and
+production. There is no permanent STAGING server or mandatory staging release.
+Legacy STAGING fixtures remain disabled solely for old test and audit
+compatibility; they are not part of the current promotion sequence.
 
-Production source editing and direct production development are prohibited. Codex must not code on PROD. PROD must contain no uncommitted application source; deployments are traceable released artifacts produced through review and CI.
+## Develop visibly on DEV
 
-## Release and rollback
+Use the existing Git workspace on omnilyzerdev. The accountable delivery chat
+edits, runs tests and shows a real user journey on DEV as the feature evolves.
+The owner sees functional changes through approved private browser access;
+the delivered preview URL and actual running version must be explicit.
+Analytics 0.16.0 is currently a signed private DEV container on
+`127.0.0.1:3141` and remains immutable while active. It is not a writable
+development directory. Incremental application changes need a legitimate
+DEV deployment/reload before they can be called browser-visible. Do not
+modify the live signed container filesystem or bypass identity/tenant controls.
+Private Tailscale/SSH access may be used for preview, not unreviewed public DNS.
 
-Releases require automated checks, artifact provenance, configuration validation, deployment health checks, and an auditable approval path. Rollback normally redeploys the last known-good immutable image and compatible configuration. Database changes require a tested recovery plan because application rollback alone may not reverse data changes.
+## Source, review and promotion
 
-Use expand/migrate/contract for incompatible database evolution:
+One feature chat, one source branch and one cohesive PR. GitHub is authoritative.
+Use the existing Task013/014 build, scan, evidence, SBOM, provenance, signature,
+promotion and rollback logic. A release candidate is built once, is identified
+by a pinned OCI digest, and is the **same artifact** promoted from a successful
+DEV release to PROD. No rebuild of application source in PROD.
 
-1. **Expand:** add backward-compatible schema and dual-compatible application behavior.
-2. **Migrate:** transform/backfill data with observable, restartable operations.
-3. **Contract:** remove old structures only after all consumers have migrated and rollback windows have closed.
+The mandatory PROD predecessor is the exact DEV success event with matching
+version, source commit, repository and OCI manifest digest. Historical
+STAGING success cannot substitute for missing DEV evidence. Production
+requires an independent Product Owner GO and the configured production
+runtime, identity, secrets, security/readiness and backup/rollback gates.
 
-Destructive migrations require explicit approval, backups appropriate to the risk, restore validation, and a documented rollback or forward-recovery strategy.
+The repository's historical `deployment/environments/prod.json` retains
+`required_prior_stage=staging`, `deployment_enabled=false` and null
+runtime references. That is inert Task014 Phase-1 source, NOT a production
+configuration or permission for a staging server. The approved two-host
+policy is implemented separately by `direct_dev_prod_preflight.py`.
+It is source-only and cannot deploy. The eventual PROD operator must wire
+that exact evidence check to the existing signed-release, owner approval,
+health, backup and rollback controls before public activation.
 
-## Scale and orchestration
+## Recovery and database safety
 
-Production should eventually scale horizontally, so application instances must not depend on memory-only shared state or mutable local source. OCI containers, simple initial orchestration, Nginx, and pgBackRest remain **TO VALIDATE**. Kubernetes is not initially required and needs demonstrated operational justification before introduction.
+Keep the last healthy immutable version ready for rollback. Roll back the
+application release/traffic route, not customer data or database history.
+Apply backward-compatible schema expansion with serialized and checked
+migrations; remove old schema only after consumers and rollback windows have
+been addressed. Preserve tenant authorization, authentication and CSP/CORS.
 
-Historically, source development is located under `/home/trusthansen/repos/`, while deployed websites have lived under `/var/www/`. These paths describe current history, not platform requirements. Development source and deployment artifacts must remain conceptually and operationally separate regardless of future host layout.
+## Explicit non-goals
+
+No new staging server, generic preview framework, Kubernetes, cluster,
+repeated QA organization, global DEV source hot patch to PROD, paid GitHub
+service requirement or automatic production approval. Legacy experiments and
+recorded evidence may remain as documentation and must not be used to
+silently change current live deployment authority.
