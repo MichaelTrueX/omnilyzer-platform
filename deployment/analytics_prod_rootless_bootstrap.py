@@ -279,7 +279,7 @@ def install() -> None:
     run("/usr/sbin/apparmor_parser", "-r", str(APPARMOR))
     Path("/var/lib/omnilyzer").mkdir(mode=0o755, exist_ok=True)
     run(
-        "/usr/sbin/useradd", "--system", "--create-home", "--user-group",
+        "/usr/sbin/useradd", "--system", "--no-create-home", "--user-group",
         "--home-dir", str(HOME), "--shell", "/usr/sbin/nologin", USER,
     )
     run(
@@ -292,8 +292,11 @@ def install() -> None:
         mappings = [line for line in lines if line.startswith(f"{USER}:")]
         if mappings != [f"{USER}:{SUBID_START}:{SUBID_COUNT}"]:
             raise RuntimeError(f"service user subordinate IDs differ: {path}")
-    HOME.chmod(0o700)
-    HOME.chown(account.pw_uid, account.pw_gid)
+    # Prevent persistent user-unit overrides under ~/.config or ~/.local.
+    # The vendor rootless launcher only requires HOME to exist; all daemon
+    # writes use the explicit data-root and XDG_RUNTIME_DIR paths.
+    HOME.mkdir(mode=0o755)
+    HOME.chown(0, 0)
     data = HOME / "docker-data"
     data.mkdir(mode=0o700)
     data.chown(account.pw_uid, account.pw_gid)
