@@ -37,6 +37,7 @@ INPUTS = PROMOTION_INPUTS | {
     "auth_probe", "product_id", "analytics_installed_commit",
     "analytics_source_claim_sha256", "analytics_successor",
     "analytics_product_source_sha", "analytics_owner_approval_sha256",
+    "analytics_owner_source_proof",
     "analytics_active_digest", "analytics_active_slot",
 }
 AUDIENCES = (
@@ -101,6 +102,7 @@ class FinalDevWorkflowTests(unittest.TestCase):
         for key in (
             "analytics_installed_commit", "analytics_source_claim_sha256",
             "analytics_product_source_sha", "analytics_owner_approval_sha256",
+            "analytics_owner_source_proof",
             "analytics_active_digest", "analytics_active_slot",
         ):
             self.assertEqual(inputs[key]["required"], "false")
@@ -239,6 +241,7 @@ class FinalDevWorkflowTests(unittest.TestCase):
             "REQUESTED_BY", "TASK014_PRODUCT", "ANALYTICS_INSTALLED_COMMIT",
             "ANALYTICS_SOURCE_CLAIM_SHA256", "ANALYTICS_SUCCESSOR",
             "ANALYTICS_PRODUCT_SOURCE_SHA", "ANALYTICS_OWNER_APPROVAL_SHA256",
+            "ANALYTICS_OWNER_SOURCE_PROOF",
             "ANALYTICS_ACTIVE_DIGEST", "ANALYTICS_ACTIVE_SLOT",
         })
         self.assertEqual(create["env"]["TASK014_PRODUCT"], "${{ inputs.product_id }}")

@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv@sha256:df6ea28f3caf5eb77ebae34d38e9b177b41a4e58ee963b1cbc5c8c1c92710238
+FROM ghcr.io/astral-sh/uv@sha256:77f6e42a88636e1a4eb30d0a250aaba62226e93566df21855bc3a2709865b3be
 
 # File: release/fixtures/task013-canary/oci/Dockerfile
 # Purpose: Build the immutable Task013 nonroot Python Canary with patched
@@ -12,7 +12,8 @@ FROM ghcr.io/astral-sh/uv@sha256:df6ea28f3caf5eb77ebae34d38e9b177b41a4e58ee963b1
 # This build INPUT is checksum-locked before use. Unlike Docker RUN, BuildKit
 # may fetch this exact HTTPS URL; its bytes must match the review-time digest.
 # Alpine apk itself additionally verifies the vendor's normal signing keys.
-# The original Astral base digest and upstream GHCR attestation are unchanged.
+# Python3.12.16 avoids Python3.14.10 CVE-2026-119170 and matches CI.
+# Keep the same Astral GHCR repository and mandatory upstream attestation.
 ADD --checksum=sha256:22ff5ae6b704ac1786d6565dcb3f5dde489e44a5038297a565382b76f656ee08 \
     https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/zlib-1.4-r0.apk \
     /tmp/zlib-1.4-r0.apk
@@ -33,7 +34,7 @@ RUN set -eu; \
     if grep -qx 'P:sqlite-libs' /lib/apk/db/installed; then exit 1; fi; \
     test "$(grep -xc 'P:zlib' /lib/apk/db/installed)" = 1; \
     grep -A1 -x 'P:zlib' /lib/apk/db/installed | grep -qx 'V:1.4-r0'; \
-    find /usr/local/lib/python3.14 -iname '*sqlite*' -exec rm -rf {} +; \
+    find /usr/local/lib/python3.12 -iname '*sqlite*' -exec rm -rf {} +; \
     test -z "$(find /usr/local/lib /usr/lib -iname '*sqlite*' -print -quit)"; \
     test -e /lib/ld-musl-x86_64.so.1; \
     ln -s /usr/local/bin/python /usr/bin/python; \
@@ -49,7 +50,7 @@ LABEL org.opencontainers.image.title="$OCI_REPOSITORY" \
       org.opencontainers.image.version="$RELEASE_VERSION" \
       org.opencontainers.image.revision="$SOURCE_SHA" \
       ai.omnilyzer.canary="true" \
-      ai.omnilyzer.base.digest="sha256:df6ea28f3caf5eb77ebae34d38e9b177b41a4e58ee963b1cbc5c8c1c92710238"
+      ai.omnilyzer.base.digest="sha256:77f6e42a88636e1a4eb30d0a250aaba62226e93566df21855bc3a2709865b3be"
 
 ENV CANARY_RELEASE_VERSION="$RELEASE_VERSION" \
     CANARY_SOURCE_SHA="$SOURCE_SHA" \

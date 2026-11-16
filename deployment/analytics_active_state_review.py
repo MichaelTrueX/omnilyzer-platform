@@ -2,7 +2,7 @@
 
 Purpose: Independently observe the actual private Analytics DEV active
          blue/green OCI image from rootless Docker AND RootlessKit forwarding.
-         Read-only groundwork for the existing Task014 successor request.
+         Read-only groundwork for Task014 first and ordinary opposite-slot successors.
 Related: deployment/analytics_execution.py (inert schema-3 admission),
          deployment/analytics_dev_release_review.py (existing slot contract),
          deployment/runtime/dev/analytics.compose.review.yaml,
@@ -453,27 +453,35 @@ def inspect_analytics_active_state() -> AnalyticsActiveState:
         raise AnalyticsActiveStateDenied(ERROR) from None
 
 
-# Section 5b: a first successor must not reuse a previous, unrouted green
-# container. Port absence alone does NOT establish an empty Docker slot.
-def verify_empty_analytics_successor_slot() -> None:
-    """Require the fixed green container to be truly absent before cold pull.
+# Section 5b: an opposite-slot candidate must not reuse an old, unrouted
+# container. Port absence alone NEVER establishes an empty Docker slot.
+def verify_empty_analytics_candidate_slot(slot: str) -> None:
+    """Require the exact named private blue/green candidate to be absent.
 
-    Only UID991 may read this exact rootless Docker endpoint; the result is
-    never a signature, permission, source trust, release GO or deployment.
-    A stopped or unprobed green from a prior attempt must instead undergo
-    separately authorized recovery; it cannot be adopted by a new request.
+    Only UID991 may read the fixed rootless Docker endpoint. A stopped,
+    unrouted or otherwise existing container requires separately authorized
+    retirement/recovery before an ordinary successor can use that slot.
+    This read-only check never removes a container, selects a signed release,
+    approves a route, or grants deployment permission.
     """
     try:
-        if os.geteuid() != 991:
-            raise ValueError("not the fixed rootless executor")
-        green = _unix_get(_DOCKER, "/containers/" + _PREFIX + "green-1/json")
-        if green is not None:
+        if os.geteuid() != 991 or type(slot) is not str or slot not in ("blue", "green"):
+            raise ValueError("unreviewed candidate slot or principal")
+        existing = _unix_get(
+            _DOCKER, "/containers/" + _PREFIX + slot + "-1/json",
+        )
+        if existing is not None:
             raise ValueError("previous candidate container requires recovery")
         return None
     except (KeyboardInterrupt, SystemExit, GeneratorExit):
         raise
     except Exception:
         raise AnalyticsActiveStateDenied(ERROR) from None
+
+
+def verify_empty_analytics_successor_slot() -> None:
+    """Preserve the original first-successor green-only pre-pull contract."""
+    return verify_empty_analytics_candidate_slot("green")
 
 
 # Section 6: read-only restart reconciliation against externally reviewed

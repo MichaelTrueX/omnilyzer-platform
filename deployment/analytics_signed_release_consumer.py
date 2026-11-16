@@ -36,7 +36,7 @@ from typing import Any
 
 from release.analytics_owner_source_selection import (
     AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
-    load_and_verify_owner_signed_source,
+    load_and_verify_owner_signed_source, verify_owner_signed_source_proof,
 )
 
 from .analytics_signed_source_pin import (
@@ -547,23 +547,27 @@ def acquire_and_review_owner_approved_analytics_release(
     blob_signatures: ReleaseBlobSignatureVerifier,
     oci_signatures: OCISignatureVerifier, *,
     received_at: int,
-    approval_file: Path,
-    signature_file: Path,
+    approval_file: Path | None,
+    signature_file: Path | None,
+    owner_source_proof: str | None = None,
     zot_factory=_connection,
     forgejo_factory=_connection,
 ) -> AnalyticsSignedEvidenceReview:
     """Use original authenticated registry readers for a signed successor.
 
     Exact version and workflow/source identities come ONLY from an independently
-    trusted owner signature, never a mutable tag or deployment request.
+    trusted owner signature. Optional public evidence may travel with the
+    request but supplies no signer authority; mutable tags are never trusted.
     The manifest digest comes from verified original release evidence and is
     read back from Zot by immutable SHA256, using existing TLS/credential rules.
     This is a read-only review, not broker/executor/rollout authorization.
     """
     phase = "owner_source"
     try:
-        selected, owner = load_and_verify_owner_signed_source(
-            approval_file, signature_file,
+        selected, owner = (
+            verify_owner_signed_source_proof(owner_source_proof)
+            if owner_source_proof is not None else
+            load_and_verify_owner_signed_source(approval_file, signature_file)
         )
         phase = "forgejo_credential"
         forgejo_token = _credential(

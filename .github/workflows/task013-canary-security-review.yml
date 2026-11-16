@@ -58,7 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           gh attestation verify \
-            'oci://ghcr.io/astral-sh/uv@sha256:df6ea28f3caf5eb77ebae34d38e9b177b41a4e58ee963b1cbc5c8c1c92710238' \
+            'oci://ghcr.io/astral-sh/uv@sha256:77f6e42a88636e1a4eb30d0a250aaba62226e93566df21855bc3a2709865b3be' \
             --repo astral-sh/uv
 
       # Section 4: Reuse the exact pinned release builder without publishing.

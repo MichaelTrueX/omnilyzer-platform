@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-29
+- Promotion-order amendment: 2026-11-16, explicit Product Owner decision.
 
 **Stage-count amendment (16 November 2026):** This ADR's original
 DEV -> STAGING -> PROD diagrams describe the historical Task007 experiment.
@@ -31,7 +32,7 @@ Reference evidence:
 2. Application code is built into an image before environment deployment.
 3. A deployment candidate is approved and promoted by immutable OCI digest.
 4. After a candidate digest is established, deployments use digest references such as `repository@sha256:...`, not mutable application tags.
-5. DEV, STAGING, and PROD promotion uses the same approved application image digest.
+5. Promotion between approved environments uses the same approved application image digest.
 6. A stage must not rebuild the application.
 7. Environment configuration is injected at runtime rather than baked into the application image.
 8. Environment secrets are supplied through runtime secret mechanisms rather than Dockerfiles, source, image labels, or release metadata.
@@ -69,12 +70,18 @@ Promotion follows this order:
 ```text
 DEV
  ↓
-STAGING
- ↓
 PROD
 ```
 
-A later stage must not accept a candidate until the required earlier-stage promotion gates have succeeded. Production promotion is explicit. Direct source editing or ad-hoc rebuilding on PROD is not part of the deployment model.
+The [owner's 16 November instruction](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281#issuecomment-6915187222)
+removes the requirement for a staging server. Accepted DEV may promote directly
+to PROD; this supersedes the original mandatory three-stage order. The historical
+Task007 three-environment validation remains valid for its tested scope.
+Existing disabled Canary staging/production configuration does not establish an
+Analytics production deployment path. Production still requires its own approved
+runtime, configuration, secrets, ingress, health, recovery and security evidence.
+Production promotion is explicit. Direct source editing or ad-hoc rebuilding on
+PROD is not part of the deployment model.
 
 ### Deployment state
 

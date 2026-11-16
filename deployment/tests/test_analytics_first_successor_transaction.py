@@ -12,9 +12,10 @@ Related: deployment/analytics_executor.py (exact future coordinator),
 Sections: isolated Analytics collaborators, sequence assertions, fail-closed
           deny scenarios and recovery after all substantive failure phases.
 
-All Docker, sockets, JWTs, signing, permissions, SQLite mutations and routes
-are simulated only in this file. Existing independent real-source security
-and replay/socket tests continue to cover those components. Nothing installs,
+Docker, sockets, JWTs, signing and live routes are simulated. Storage tests
+use real isolated journal files, fsync and SQLite replay transitions with the
+test process's own custody. Production UID/configuration is simulated only
+at the startup entry boundary. Nothing installs,
 starts, publishes, signs, deploys, or opens a public Analytics service.
 """
 from __future__ import annotations
@@ -31,6 +32,9 @@ import unittest
 from unittest.mock import patch
 
 from deployment.analytics_execution import parse_analytics_successor_request
+from deployment.tests.test_replay_sqlite import ReplayTestCase, HASH_A, NOW
+from deployment.replay_sqlite import DATABASE_MODE
+from deployment.analytics_executor import _read_analytics_execution_status
 from deployment.analytics_executor import (
     AnalyticsPrivilegedExecutor, _execute_reviewed_first_successor_transaction,
 )
@@ -226,6 +230,9 @@ class FirstSuccessorTransactionTests(unittest.TestCase):
         ))
         self.stack.enter_context(patch.object(
             AnalyticsRouteJournal, "read", side_effect=self.journal_read,
+        ))
+        self.receipt = self.stack.enter_context(patch.object(
+            AnalyticsRouteJournal, "record_execution",
         ))
 
     def review(self, canonical_request, credential_fd, **kwargs):
@@ -512,6 +519,17 @@ class FirstSuccessorTransactionTests(unittest.TestCase):
             "verify_green",
         ])
         self.assertEqual(self.stop.call_count, 0)
+        self.receipt.assert_called_once_with(self.raw, GREEN_ID)
+
+    def test_receipt_write_failure_rolls_back_before_replay_finish(self):
+        self.receipt.side_effect = RuntimeError('synthetic proof fsync failure')
+        with self.assertRaises(ExecutorUnavailableError):
+            self.execute()
+        self.assertEqual(self.replay.events, ['begin'])
+        self.assertEqual(self.phase, 'restored')
+        self.assertEqual(self.events[-3:], [
+            'rollback_committed', 'verify_blue', 'stop_exact_green'])
+        self.assertEqual(self.stop.call_count, 1)
 
     def test_unverified_signature_blocks_replay_and_all_runtime(self):
         """No replay, private route or candidate after failed original signature."""
@@ -791,6 +809,87 @@ class ProtectedSuccessorRestartTests(unittest.TestCase):
             self.attempt()
         self.recover.assert_not_called()
 
+    def completed_context(self):
+        self.loader.return_value[1].update({
+            'expected_replay_directory_uid': 0,
+            'expected_replay_directory_gid': 992,
+            'expected_broker_uid': 990,
+        })
+        self.reader.return_value = {**self.record, 'phase': 'switched'}
+        self.proof_reader = self.stack.enter_context(patch(
+            'deployment.analytics_route_journal.AnalyticsRouteJournal.read_execution',
+            return_value={'image': self.next, 'container_id': GREEN_ID,
+                          'canonical_request': b'simulated accepted request'},
+        ))
+        self.observed.return_value = SimpleNamespace(
+            active_slot='green', active_image=self.next,
+            active_container_id=GREEN_ID,
+        )
+        return self.stack.enter_context(patch(
+            'deployment.analytics_executor._read_analytics_execution_status',
+            return_value='finished',
+        ))
+
+    def test_completed_release_restarts_readonly_without_replaying_request(self):
+        status = self.completed_context()
+        self.assertIsNone(self.attempt())
+        self.assertEqual(status.call_count, 2)
+        status.assert_called_with(unittest.mock.ANY, 'c' * 64)
+        self.recover.assert_not_called()
+        self.observed.assert_called_once_with(
+            journal=unittest.mock.ANY, reviewed_image=self.next,
+            reviewed_slot='green', reviewed_container_id=GREEN_ID,
+            reviewed_request_sha256='c' * 64,
+        )
+
+    def test_unknown_incomplete_or_unavailable_replay_never_adopts_green(self):
+        from deployment.executor import ExecutorUnavailableError
+        from deployment.identity import ReplayUnavailableError
+        status = self.completed_context()
+        for state in (None, 'consumed', 'executing'):
+            with self.subTest(state=state):
+                status.return_value = state
+                with self.assertRaises(ExecutorUnavailableError):
+                    self.attempt()
+                self.observed.assert_not_called()
+                self.recover.assert_not_called()
+        status.side_effect = ReplayUnavailableError('private-storage-marker')
+        with self.assertRaises(ExecutorUnavailableError) as caught:
+            self.attempt()
+        self.assertNotIn('private-storage-marker', str(caught.exception))
+
+    def test_committed_route_or_journal_drift_holds_without_route_mutation(self):
+        from deployment.executor import ExecutorUnavailableError
+        self.completed_context()
+        self.observed.return_value.active_container_id = 'f' * 64
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.observed.return_value.active_container_id = GREEN_ID
+        intent = self.reader.return_value
+        self.reader.side_effect = [intent, {**intent, 'request_sha256': 'd' * 64}]
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.recover.assert_not_called()
+
+    def test_finished_hash_does_not_authenticate_forged_journal_image(self):
+        self.completed_context()
+        self.reader.return_value = {**self.reader.return_value,
+            'next_image': 'oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:' + 'f' * 64}
+        from deployment.executor import ExecutorUnavailableError
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.observed.assert_not_called()
+        self.recover.assert_not_called()
+
+    def test_legacy_missing_execution_proof_is_hold_without_mutation(self):
+        self.completed_context()
+        self.proof_reader.side_effect = ValueError('missing independent proof')
+        from deployment.executor import ExecutorUnavailableError
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.observed.assert_not_called()
+        self.recover.assert_not_called()
+
     def test_missing_root_scope_or_uid_does_not_even_read_journal(self):
         """Neither public env nor UID1005 may initiate protected recovery."""
         from deployment.executor import ExecutorUnavailableError
@@ -818,6 +917,168 @@ class ProtectedSuccessorRestartTests(unittest.TestCase):
         with self.assertRaises(ExecutorUnavailableError):
             self.attempt()
         self.recover.assert_called_once()
+
+
+
+
+
+
+class DurableCompletedRestartTests(ReplayTestCase):
+    """Exercise journal + proof + actual replay together across startup.
+
+    The real host UID/config and Docker observation are substituted; neither
+    journal reads, proof reads nor SQLite operations are mocked. This catches
+    cross-component failures that separate state-machine mocks cannot prove.
+    """
+
+    def setUp(self):
+        super().setUp()
+        data, context = AnalyticsSuccessorRequestTests().candidate()
+        request = parse_analytics_successor_request(canonical_bytes(data), **context)
+        self.raw = request.canonical_bytes()
+        self.request_hash = hashlib.sha256(self.raw).hexdigest()
+        self.initialize()
+        self.binding = dict(request_hash=self.request_hash, run_id=7, run_attempt=1)
+        self.consume(**self.binding)
+        self.guard.begin_execution('jti-1', **self.binding)
+        temp = tempfile.TemporaryDirectory(prefix='m05-completed-route-')
+        self.addCleanup(temp.cleanup)
+        Path(temp.name).chmod(0o700)
+        self.journal = AnalyticsRouteJournal(temp.name,
+            expected_uid=os.getuid(), expected_gid=os.getgid())
+        from deployment.tests.test_analytics_route_journal import approval
+        intent = self.journal.begin(**approval(request_sha256=self.request_hash,
+            next_image=request.exact_image_reference))
+        ready = self.journal.finish(intent, phase='candidate_ready')
+        self.switched = self.journal.finish(ready, phase='switched')
+
+    def complete(self):
+        self.journal.record_execution(self.raw, 'e' * 64)
+        self.guard.finish_execution('jti-1', **self.binding)
+
+    def attempt(self):
+        from deployment.analytics_executor import (
+            _reconcile_interrupted_first_successor_before_receive,
+        )
+        identities = {
+            'expected_executor_uid': 991, 'expected_executor_gid': 991,
+            'expected_replay_directory_uid': os.getuid(),
+            'expected_replay_directory_gid': os.getgid(),
+            'expected_broker_uid': 990,
+            'owner_authorized_first_successor': True,
+        }
+        def observe(**kwargs):
+            # Hardware response is synthetic; the underlying journal is real.
+            self.assertIs(kwargs['journal'], self.journal)
+            self.assertEqual(self.journal.read(), self.switched)
+            return SimpleNamespace(active_slot='green',
+                active_image=self.switched['next_image'], active_container_id='e' * 64)
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ,
+                {'ANALYTICS_REVIEWED_SUPERVISOR_V2': '1'}))
+            for name in ('getuid', 'geteuid', 'getgid', 'getegid'):
+                stack.enter_context(patch('deployment.analytics_executor.os.' + name,
+                    return_value=991))
+            stack.enter_context(patch(
+                'deployment.analytics_executor_service_config.load_analytics_executor_service_config',
+                return_value=(EXPECTED, identities)))
+            stack.enter_context(patch('deployment.analytics_route_journal.AnalyticsRouteJournal',
+                return_value=self.journal))
+            stack.enter_context(patch('deployment.replay_sqlite.PRODUCTION_REPLAY_DATABASE', self.path))
+            recovery = stack.enter_context(patch(
+                'deployment.analytics_loopback_guard._recover_reviewed_private_route'))
+            stack.enter_context(patch(
+                'deployment.analytics_active_state_review.inspect_committed_analytics_route',
+                side_effect=observe))
+            try:
+                return _reconcile_interrupted_first_successor_before_receive()
+            finally:
+                recovery.assert_not_called()
+
+    def test_finished_restart_and_second_restart_preserve_all_storage_bytes(self):
+        self.complete()
+        def storage():
+            return {str(path): path.read_bytes() for root in (
+                self.directory, Path(self.journal._directory))
+                for path in root.rglob('*') if path.is_file()}
+        before = storage()
+        self.assertIsNone(self.attempt())
+        self.assertIsNone(self.attempt())
+        self.assertEqual(storage(), before)
+
+    def test_proof_without_finished_replay_is_hold_with_original_evidence(self):
+        self.journal.record_execution(self.raw, 'e' * 64)
+        before = self.path.read_bytes()
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(self.journal.read(), self.switched)
+
+    def test_finished_replay_without_proof_is_hold_without_synthesis(self):
+        self.guard.finish_execution('jti-1', **self.binding)
+        before = self.path.read_bytes()
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(set(Path(self.journal._directory).iterdir()),
+            {Path(self.journal._directory) / 'transaction.json'})
+
+
+class AnalyticsExecutionStatusReadOnlyTests(ReplayTestCase):
+    def test_observes_each_state_without_changing_bytes_clock_or_rows(self):
+        self.initialize()
+        binding = dict(request_hash=HASH_A, run_id=1, run_attempt=1)
+        self.consume()
+        for expected in ('consumed', 'executing', 'finished'):
+            if expected == 'executing':
+                self.guard.begin_execution('jti-1', **binding)
+            elif expected == 'finished':
+                self.guard.finish_execution('jti-1', **binding)
+            before = self.path.read_bytes()
+            entries = set(self.directory.iterdir())
+            self.now = NOW + 1000
+            self.assertEqual(_read_analytics_execution_status(self.guard, HASH_A), expected)
+            self.assertEqual(self.path.read_bytes(), before)
+            self.assertEqual(set(self.directory.iterdir()), entries)
+            self.now = NOW
+
+    def test_missing_hash_is_unknown_without_initializing_or_mutating(self):
+        self.initialize()
+        before = self.path.read_bytes()
+        self.assertIsNone(_read_analytics_execution_status(self.guard, HASH_A))
+        self.assertEqual(self.path.read_bytes(), before)
+        self.path.unlink()
+        self.unavailable(lambda: _read_analytics_execution_status(self.guard, HASH_A))
+        self.assertFalse(self.path.exists())
+
+    def test_ambiguous_hash_never_selects_an_arbitrary_finished_row(self):
+        self.initialize()
+        self.consume()
+        self.consume('jti-2', run_id=2)
+        before = self.path.read_bytes()
+        self.unavailable(lambda: _read_analytics_execution_status(self.guard, HASH_A))
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_invalid_hash_fails_before_opening_the_store(self):
+        with patch.object(self.guard, '_open_directory') as opened:
+            for value in (None, True, '', 'A' * 64, 'a' * 63, '0' * 64):
+                with self.subTest(value=value):
+                    self.unavailable(lambda: _read_analytics_execution_status(self.guard, value))
+            opened.assert_not_called()
+
+    def test_invalid_store_and_symlink_do_not_become_authority(self):
+        self.initialize()
+        self.consume()
+        before = self.path.read_bytes()
+        self.path.chmod(0o666)
+        self.unavailable(lambda: _read_analytics_execution_status(self.guard, HASH_A))
+        self.assertEqual(self.path.read_bytes(), before)
+        self.path.chmod(DATABASE_MODE)
+        renamed = self.directory / 'foreign.sqlite3'
+        self.path.rename(renamed)
+        self.path.symlink_to(renamed)
+        self.unavailable(lambda: _read_analytics_execution_status(self.guard, HASH_A))
+        self.assertEqual(renamed.read_bytes(), before)
 
 
 if __name__ == "__main__":

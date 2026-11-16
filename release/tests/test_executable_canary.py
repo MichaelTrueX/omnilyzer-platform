@@ -304,7 +304,7 @@ def _oci_archive(path: Path, mutate=None) -> str:
 class ImageAndPipelineTests(unittest.TestCase):
     def test_dockerfile_is_digest_pinned_and_has_non_root_runtime_contract(self) -> None:
         dockerfile = (CANARY / "Dockerfile").read_text()
-        self.assertEqual(BASE_IMAGE_DIGEST, "sha256:df6ea28f3caf5eb77ebae34d38e9b177b41a4e58ee963b1cbc5c8c1c92710238")
+        self.assertEqual(BASE_IMAGE_DIGEST, "sha256:77f6e42a88636e1a4eb30d0a250aaba62226e93566df21855bc3a2709865b3be")
         self.assertEqual(dockerfile.splitlines()[0], f"FROM ghcr.io/astral-sh/uv@{BASE_IMAGE_DIGEST}")
         self.assertNotIn("FROM scratch", dockerfile)
         fixed_package = (
@@ -332,7 +332,7 @@ class ImageAndPipelineTests(unittest.TestCase):
         )
         self.assertIn('zlib.ZLIB_RUNTIME_VERSION.startswith("1.4")', dockerfile)
         self.assertIn("rm -f /tmp/" + fixed_package, dockerfile)
-        self.assertIn("find /usr/local/lib/python3.14 -iname '*sqlite*' -exec rm -rf {} +", dockerfile)
+        self.assertIn("find /usr/local/lib/python3.12 -iname '*sqlite*' -exec rm -rf {} +", dockerfile)
         self.assertIn("find /usr/local/lib /usr/lib -iname '*sqlite*'", dockerfile)
         self.assertNotIn("apk add --allow-untrusted", dockerfile)
         self.assertNotIn("apk add --update", dockerfile)
@@ -461,7 +461,7 @@ class ImageAndPipelineTests(unittest.TestCase):
         workflow = yaml.safe_load((ROOT / ".github/workflows/platform-release.yml").read_text())
         capable = [name for name, job in workflow["jobs"].items()
                    if job.get("permissions", {}).get("id-token") == "write"]
-        self.assertEqual(capable, ["forgejo-auth-probe", "analytics-publish-zot",
+        self.assertEqual(capable, ["forgejo-auth-probe", "analytics-registry-preflight", "analytics-publish-zot",
                                    "analytics-publish-forgejo", "publish-zot", "publish-forgejo"])
         # Existing package builders/publishers are semantically byte-unchanged.
         for name, expected_hash in LEGACY_RELEASE_JOB_SHA256.items():
