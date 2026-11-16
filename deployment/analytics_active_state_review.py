@@ -388,6 +388,23 @@ def _candidate_health() -> None:
 
 
 # Section 5: authorized rootless executor or root-host preflight only.
+def _port_rules_snapshot(ports: object) -> tuple[str, ...]:
+    """Compare complete rules by ID; RootlessKit enumerates a Go map.
+
+    Array order is not a routing identity. Preserve every field and JSON type
+    while rejecting malformed or duplicate IDs before sorting.
+    """
+    if type(ports) is not list or len(ports) not in (2, 3) or any(
+        type(rule) is not dict or type(rule.get("id")) is not int
+        or rule["id"] < 1 or type(rule.get("spec")) is not dict
+        for rule in ports
+    ) or len({rule["id"] for rule in ports}) != len(ports):
+        raise ValueError("invalid port snapshot")
+    return tuple(json.dumps(rule, sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=True, allow_nan=False)
+                 for rule in sorted(ports, key=lambda rule: rule["id"]))
+
+
 def inspect_analytics_active_state() -> AnalyticsActiveState:
     """Observe real local Docker+RootlessKit, without trusting CI slot hints.
 
@@ -429,7 +446,7 @@ def inspect_analytics_active_state() -> AnalyticsActiveState:
             _candidate_health()
         # Re-read forwarding at end of other socket reads. A route changing
         # during inspection is a hard failure. No mutable active ledger used.
-        if _unix_get(_ROOTLESS, "/v1/ports") != ports:
+        if _port_rules_snapshot(_unix_get(_ROOTLESS, "/v1/ports")) != _port_rules_snapshot(ports):
             raise ValueError("forwarding changed during inspection")
         return observed
     except Exception:
