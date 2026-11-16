@@ -602,6 +602,34 @@ class AnalyticsSuccessorRouteTransactionTests(unittest.TestCase):
             if entry["spec"].get("parentPort") != 3142
         ]
 
+    def test_transaction_and_rollback_accept_only_api_array_reordering(self):
+        """Exercise the real parser when every GET reverses the route array."""
+        self._without_candidate_route()
+        reads = 0
+
+        def unordered(path, method, resource, body=None, status=200):
+            nonlocal reads
+            result = self.backend(path, method, resource, body, status)
+            if (path, method, resource) == (guard._ROOTLESS, "GET", "/v1/ports"):
+                reads += 1
+                if reads % 2:
+                    result.reverse()
+            return result
+
+        with patch.object(guard, "_api", side_effect=unordered):
+            guard._stage_reviewed_private_candidate_probe(**self.old)
+            self.assertEqual(self.journal.read()["phase"], "candidate_ready")
+            guard._switch_reviewed_private_route(**self.old)
+            self.assertEqual(self.journal.read()["phase"], "switched")
+            guard._rollback_committed_private_successor(**self.old)
+            self.assertEqual(self.journal.read()["phase"], "restored")
+
+        self.assertGreater(reads, 4)
+        self.assertEqual(self.backend.route(3141)[0]["spec"],
+                         self.original_stable["spec"])
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+        self.assertEqual(self.backend.route(3142), [])
+
     def test_journaled_candidate_probe_then_exact_green_cutover(self):
         """Persist pre-3142 intent, prove health and reuse only candidate_ready."""
         self._without_candidate_route()
