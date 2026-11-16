@@ -12,6 +12,48 @@ Authority: Owner approved Ed25519 key-separation DESIGN on 2026-11-03.
 
 # Task14B: signed Analytics successor-release identity contract
 
+## Current baseline and optimization scope — 16 November 2026
+
+The dated implementation notes below are historical. The
+[accepted private DEV `0.16.0` receipt](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281#issuecomment-6913244435)
+supersedes their source-only/installation-HOLD claims: original signed Task013
+`42534753909`, signed Task014 `43838827603`, installed authority
+`c6d6b067f932e60d82f8b7a9d75a2629a62606c8`, signed OCI
+`sha256:a0ce1e63dd379c939a2e558b04307b129fa79128da1362caa90d963d8bb3f6a1`.
+Real app and browser acceptance plus explicitly owner-authorized maintenance
+rollback/return passed; nonempty event survival was not demonstrated.
+This does not prove ordinary release repeatability.
+
+The owner approved work in this existing issue on: current runbooks, the
+ordinary executor release/recovery cycle, and the next real release proof.
+The latter explicitly waits for the next approved product change. No new
+version, signature, deployment, replay reset or consumed operator retry follows
+from the optimization work.
+
+| Boundary | Accepted installed generation 3 | Optimization work / remaining limitation |
+| --- | --- | --- |
+| Task013 product selection | Exact successor Git SHA and owner signature supported; signed `0.16.0` accepted | Correct obsolete fixed-source-only instructions; keep legacy `0.15.0` fallback and all scan/signature gates. |
+| Completed executor restart | A nonempty terminal journal always causes HOLD before receive | Candidate code reads the exact request's protected FINISHED replay and verifies the unchanged committed live route before a read-only restart. Missing, ambiguous, unfinished or changed evidence still HOLDs. This code is not installed by a documentation update. |
+| Ordinary next-source authorization | Broker and executor read installed per-release owner approval files | Still requires implementation of per-release public proof verified against the unchanged independent root signer, bound to both signed evidence and request, without rewriting root authority for each product version. A request-provided signer must never be trusted. |
+| Repeated blue/green changes | Parser can describe either slot; positive runtime still anchors original `0.15.0` blue and an empty green | Still requires the existing broker, executor, candidate operation and supervisor to agree on independently verified current/previous signed releases and opposite-slot lifecycle. Caller-supplied active fields are hints, not authority. Preserve historical signed recovery assets. |
+| Normal post-success rollback/return | A separate one-time owner maintenance exception was needed for the `0.16.0` OAT | Still requires an authenticated executor operation with a fresh identity and explicit rollback/return scope, no reuse of the original completed request as a new deployment and no weakening of replay or database preservation. |
+
+The completed-restart correction is a bounded first implementation increment,
+not an ordinary-upgrade grant. The original first-successor request admission
+remains unchanged; a read-only replay lookup cannot consume, finish, reset,
+prune or enumerate requests. Tests must distinguish missing completion proof,
+protected-state corruption, route/journal drift and successful nonmutating
+restart. Installed source and workflow SHA remain root-reviewed; unrelated
+main commits do not silently rotate that authority.
+
+The remaining runtime changes are one cohesive continuation of this same
+Task14B work, with independent review of the material boundary before any
+installation. Reuse original OIDC, registry, owner Ed25519, Sigstore/Cosign,
+zero Critical/High, socket/FD, replay and product-isolation primitives; do not
+add a parallel deployment framework. See the
+[next ordinary-release proof](m05-analytics-normal-release-procedure-20261029.md#5-next-ordinary-release-proof--prepared-awaiting-a-real-product-change)
+and [event classification/comparison contract](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281#issuecomment-6914004314).
+
 ## Current local workflow integration (2026-11-03)
 
 The owner approved the **model only**: private Ed25519 approval key remains

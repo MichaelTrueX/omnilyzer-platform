@@ -301,11 +301,30 @@ class SQLiteReplayGuard:
 
     def validate(self) -> None:
         """Read-only validate one already initialized exact replay store."""
+        self._read_validated_execution_status()
+
+    def execution_status(self, request_hash: str) -> str | None:
+        """Observe one existing request without consuming, advancing or pruning.
+
+        This is completion evidence, never permission to execute a request.
+        Missing is UNKNOWN; ambiguous hashes or an untrusted store fail closed.
+        The original ownership, inode, schema and integrity checks still apply.
+        """
+        if (type(request_hash) is not str or _HASH.fullmatch(request_hash) is None
+                or request_hash == '0' * 64):
+            raise ReplayUnavailableError(_GENERIC_UNAVAILABLE)
+        return self._read_validated_execution_status(request_hash)
+
+    def _read_validated_execution_status(
+        self, request_hash: str | None = None,
+    ) -> str | None:
+        """Share the existing read-only custody checks, using one SQL snapshot."""
 
         directory_descriptor: int | None = None
         database_descriptor: int | None = None
         connection: sqlite3.Connection | None = None
         failed = False
+        observed_status = None
         try:
             directory_descriptor = self._open_directory()
             self._validate_quiescent_filesystem(directory_descriptor)
@@ -327,7 +346,18 @@ class SQLiteReplayGuard:
             connection.execute("PRAGMA temp_store=MEMORY")
             connection.execute(f"PRAGMA busy_timeout={self._busy_timeout_ms}")
             self._validate_bound_file(directory_descriptor, database_descriptor)
+            connection.execute("BEGIN")
             self._validate_open_store(connection, require_connection_limit=False)
+            if request_hash is not None:
+                rows = connection.execute(
+                    "SELECT status FROM consumptions WHERE executor_request_sha256 = ?",
+                    (request_hash,),
+                ).fetchmany(2)
+                if len(rows) > 1:
+                    raise ReplayUnavailableError(_GENERIC_UNAVAILABLE)
+                if rows:
+                    observed_status = rows[0][0]
+            connection.execute("ROLLBACK")
             self._validate_quiescent_filesystem(directory_descriptor)
             self._validate_bound_file(directory_descriptor, database_descriptor)
         except (KeyboardInterrupt, SystemExit, GeneratorExit):
@@ -358,6 +388,7 @@ class SQLiteReplayGuard:
                     failed = True
         if failed:
             raise ReplayUnavailableError(_GENERIC_UNAVAILABLE) from None
+        return observed_status
 
     def consume(
         self, jti: str, *, expires_at: int, request_hash: str,

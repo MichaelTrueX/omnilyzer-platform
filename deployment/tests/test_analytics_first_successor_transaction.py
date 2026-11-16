@@ -791,6 +791,63 @@ class ProtectedSuccessorRestartTests(unittest.TestCase):
             self.attempt()
         self.recover.assert_not_called()
 
+    def completed_context(self):
+        self.loader.return_value[1].update({
+            'expected_replay_directory_uid': 0,
+            'expected_replay_directory_gid': 992,
+            'expected_broker_uid': 990,
+        })
+        self.reader.return_value = {**self.record, 'phase': 'switched'}
+        self.observed.return_value = SimpleNamespace(
+            active_slot='green', active_image=self.next,
+            active_container_id=GREEN_ID,
+        )
+        return self.stack.enter_context(patch(
+            'deployment.replay_sqlite.SQLiteReplayGuard.execution_status',
+            return_value='finished',
+        ))
+
+    def test_completed_release_restarts_readonly_without_replaying_request(self):
+        status = self.completed_context()
+        self.assertIsNone(self.attempt())
+        self.assertEqual(status.call_count, 2)
+        status.assert_called_with('c' * 64)
+        self.recover.assert_not_called()
+        self.observed.assert_called_once_with(
+            journal=unittest.mock.ANY, reviewed_image=self.next,
+            reviewed_slot='green', reviewed_container_id=GREEN_ID,
+            reviewed_request_sha256='c' * 64,
+        )
+
+    def test_unknown_incomplete_or_unavailable_replay_never_adopts_green(self):
+        from deployment.executor import ExecutorUnavailableError
+        from deployment.identity import ReplayUnavailableError
+        status = self.completed_context()
+        for state in (None, 'consumed', 'executing'):
+            with self.subTest(state=state):
+                status.return_value = state
+                with self.assertRaises(ExecutorUnavailableError):
+                    self.attempt()
+                self.observed.assert_not_called()
+                self.recover.assert_not_called()
+        status.side_effect = ReplayUnavailableError('private-storage-marker')
+        with self.assertRaises(ExecutorUnavailableError) as caught:
+            self.attempt()
+        self.assertNotIn('private-storage-marker', str(caught.exception))
+
+    def test_committed_route_or_journal_drift_holds_without_route_mutation(self):
+        from deployment.executor import ExecutorUnavailableError
+        self.completed_context()
+        self.observed.return_value.active_container_id = 'f' * 64
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.observed.return_value.active_container_id = GREEN_ID
+        intent = self.reader.return_value
+        self.reader.side_effect = [intent, {**intent, 'request_sha256': 'd' * 64}]
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.recover.assert_not_called()
+
     def test_missing_root_scope_or_uid_does_not_even_read_journal(self):
         """Neither public env nor UID1005 may initiate protected recovery."""
         from deployment.executor import ExecutorUnavailableError

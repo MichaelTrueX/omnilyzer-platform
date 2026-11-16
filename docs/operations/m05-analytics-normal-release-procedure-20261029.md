@@ -7,37 +7,41 @@ SECURITY: This document is not a deployment approval, signing identity or substi
 
 # M05 – Ordinary Analytics releases (Task013 → Task014)
 
-## Status update: 2026-10-31 (supersedes the historical 2026-10-29 snapshot)
+## Current status: 16 November 2026
 
-Actual original protected Task013 Analytics version `0.15.0` completed SUCCESS in
-[workflow run #40881693662](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/40881693662),
-Zot digest `sha256:6dbdc6319218b19257311d2885e9f697a75fc6066b4eef34068cc8ae6a51c1f1`;
-actual Syft/Grype zero-waiver policy, private GPG handoff, Zot publication,
-Cosign signature verification and Forgejo evidence publication PASS.
-This is **Task013 distribution acceptance only**. The old table below is
-retained as a dated historic snapshot, not the present release status.
+**Completed:** Original signed Analytics `0.16.0` Task013
+[#42534753909](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/42534753909)
+and actual private DEV Task014
+[#43838827603](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/43838827603).
+Exact OCI digest:
+`sha256:a0ce1e63dd379c939a2e558b04307b129fa79128da1362caa90d963d8bb3f6a1`.
+The [canonical release receipt](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281#issuecomment-6913244435)
+records real auth/two-tenant/collector persistence, browser consent, health,
+retained signed `0.15.0`, unchanged replay and actual rollback/return OAT.
+The OAT used an explicit one-time maintenance exception, with empty app tables;
+it does not prove nonempty event survival or authorize another such operation.
 
-**Mandatory for every next Analytics Task013 dispatch:**
-[ChatGPT Task013 release-readiness checkfile](task013-release-readiness.md).
-The existing workflow still performs authenticated Zot/Forgejo version-absence
-preflight **immediately before publication**, after its BuildKit work. The
-suggested additional early read-only gate is NOT merged because current canary
-CI detected unrelated Critical/High vulnerabilities in the pinned canary base.
-Do not pretend that early automatic gate exists. **The dynamic Analytics source
-commit is still NOT reusable**: its PR52 SHA remains pinned in multiple source
-contracts and workflow checkouts. Any different product source commit requires a separately
-reviewed secure source-admission change; the checkfile MUST mark it HOLD until
-that capability is actually delivered. Task014 deployment and product smoke
-remain separate, and no production activation is implied.
+**Implemented Task013 source selection:** an exact reviewed product commit
+and genuine owner signature select the existing successor path. Legacy PR52
+pins still protect the original path. The owner-signed read-only pre-build
+`auth_probe=true` is implemented; the authenticated destination-absence
+check is repeated immediately before immutable publication because the early
+probe does not reserve a version.
+
+**Still open:** ordinary repeatable Task014 promotion/recovery. The installed
+coordinator admits the first original-blue `0.15.0` successor and deliberately
+HOLDs a completed journal on a later receive. Root-installed owner approval
+files and the exact workflow authority also constrain the next release.
+Task014 must not be called reusable merely because `0.16.0` now works.
+No next signed release is authorized by this document.
 
 ## Task014 entry checks
 
-Before promotion, read the [Task014 pre-release checklist](task014-pre-release-checklist.md)
-and [registry stream/deadline qualification](task014-registry-stream-deadline.md).
-The implementation table below is historical. Owner-reported 0.15.0 server
-readiness has passed, while actual signed application acceptance and subsequent
-ordinary-version repeatability remain unproven. Current promotion still has
-fixed version/source/run admission; a checklist does not remove that limitation.
+Read the [Task014 checklist](task014-pre-release-checklist.md),
+[Task013 readiness checkfile](task013-release-readiness.md) and relevant
+[registry stream/deadline qualification](task014-registry-stream-deadline.md).
+The 29 October table below is explicitly historical. Current source and host
+receipts take precedence; never relaunch consumed setup or recovery operators.
 
 ## 1. Permanent operator contract
 
@@ -54,7 +58,7 @@ Once the original protected Task013/014 product integration is accepted and inst
 7. If deployment, functional health or promotion fails, return to the previous signed slot/ingress without deleting database writes. If the production environment requires an approval, use its one protected GitHub environment approval before actual traffic activation.
 8. Preserve automated signed evidence, registry digests, workflow run IDs, tests, deployment result and rollback evidence for audit. No manual vulnerability spreadsheet or per-release platform-code modification.
 
-## 3. Verified current implementation versus remaining mandatory work
+## 3. Historical implementation snapshot — 29 October 2026, not current state
 
 | Boundary | Current verification at 2026-10-29 | Acceptance state |
 | --- | --- | --- |
@@ -71,3 +75,33 @@ Once the original protected Task013/014 product integration is accepted and inst
 Do not mark this integration complete until the following are evidenced by **one real protected GitHub Actions Analytics release** on the accepted source: actual source SHA not hardcoded into platform release infrastructure for future code revisions, automatic tests and real OCI scanner pass, original GitHub OIDC and Cosign signatures verified, immutable Zot/Forgejo exact digest readback, Task014 signed admission, installed isolated service with UID10001-mapped 0600 file secrets and least-privilege PostgreSQL, authenticated functional checks, real rollback, and one successful subsequent dry-run using a new approved product commit without editing platform release code.
 
 The required next work is **executable code and actual runtime validation**, not another generic review or an unverified owner assertion. Existing canary must remain operational and fail-closed throughout.
+
+
+## 5. Next ordinary-release proof — prepared, awaiting a real product change
+
+The owner chose to await the next genuinely approved Analytics product change
+(16 November 2026). Do not invent a version, rebuild/re-sign `0.16.0` or run a
+signed test-only deployment to fill this evidence gap. Isolated code/fixture
+tests qualify implementation only, not ordinary live release acceptance.
+
+M05 remains the accountable owner in [Issue #281](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281).
+Before the next real request:
+
+1. Record the reviewed new product SHA/version, accepted installed platform
+   baseline, actual previous digest/slot and the already authorized promotion,
+   rollback, return and cleanup scope. Reuse unchanged security evidence.
+2. Complete original Task013 build/scan/sign/publish, then the reviewed ordinary
+   Task014 path with a fresh authenticated request/JTI. No per-version platform
+   source/config rewrite, one-off root helper or maintenance exception may be
+   counted as proof of ordinary repeatability. Preserve consumed history.
+3. Observe actual health, signed digest/traffic, auth, tenant/consent boundaries
+   and persistence. If data survival is claimed, keep authorized nonempty
+   synthetic data through rollback and return, verify authorized readback, then
+   clean up only the fixture. Reuse unchanged acceptance where applicable.
+4. Capture unexpected events and the final comparison to `0.16.0` using the
+   [existing root-cause evidence contract](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281#issuecomment-6914004314)
+   in the same release comment/receipt. No separate metrics script or QA gate.
+
+Until the real accepted source and installed ordinary executor path exist,
+**NEXT-RELEASE PROOF WAITING; Task14B repeatability NOT YET PROVEN**. This does
+not reopen the scoped, accepted private DEV `0.16.0` release.

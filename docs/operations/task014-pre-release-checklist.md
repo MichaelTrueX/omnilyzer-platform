@@ -21,6 +21,24 @@ signed consumer contract are implemented and accepted.
 The delivery agent owns this checklist; the owner should not relay routine
 commands, collect test evidence or reconstruct the release inputs.
 
+## Current accepted state: 16 November 2026
+
+Analytics `0.16.0` completed the real signed private DEV promotion in
+[Task014 #43838827603](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/43838827603).
+The [canonical closeout](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281#issuecomment-6913244435)
+binds the exact signed image, source, installed authority, real HTTP/PG and
+browser consent acceptance, preserved replay and actual `0.16 -> 0.15 -> 0.16`
+maintenance OAT. That OAT had an explicitly approved one-time caller exception;
+it is not a standing executor bypass. Its app tables were empty after fixture
+cleanup, so nonempty event survival was not demonstrated.
+
+**This completed release is not proof of ordinary release repeatability.**
+The installed generation-3 coordinator remains first-successor-only. A next
+product version and an ordinary post-success rollback require the supported,
+reviewed executor path; do not reuse the consumed dispatch, OAT or installers.
+Sections 5-6 below retain dated integration history, not current instructions
+to repeat installation. Re-read current GitHub and live receipts before action.
+
 ## 1. Decide which kind of work this is
 
 | Kind | Expected work |
@@ -157,9 +175,10 @@ Rollback/recovery evidence and current state:
 Remaining blocker and next action:
 ```
 
-## 5. Actual signed Analytics 0.16.0 to protected Task014 V3 handoff (9 November 2026)
+## 5. Historical V3 handoff: 9 November 2026 — superseded by acceptance above
 
-**Distribution accepted, installation still HOLD.** The original signed
+**Historical pre-install state; DO NOT repeat these completed operations.**
+At that time distribution was accepted and installation was still HOLD. The original signed
 [Task013 run #42534753909](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/42534753909)
 produced a real Syft/Grype zero-Critical/High, Zot+Forgejo+keyless-Cosign
 signed Analytics `0.16.0` (immutable

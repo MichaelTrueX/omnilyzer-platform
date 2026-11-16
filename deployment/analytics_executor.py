@@ -829,11 +829,11 @@ def _reconcile_interrupted_first_successor_before_receive() -> None:
     from an incomplete journal, stop a possibly serving green container,
     erase data/volume writes, or switch public ingress.
 
-    SWITCHED could mean replay.finish committed before service interruption;
-    without a verified replay status it is intentionally HOLD with NO route
-    mutation. A finished or restored journal is also HOLD until the next
-    source-reviewed transition is separately approved; only an empty journal
-    permits this first-release-only service to receive a new request.
+    SWITCHED plus the exact protected FINISHED replay and unchanged verified
+    live route permits a read-only restart. Missing/ambiguous completion is
+    still HOLD without route mutation. This does not replay the old request
+    or widen the first-successor-only admission contract for a new release.
+    A restored journal still requires separately authorized recovery.
     """
     from .analytics_executor_service_config import (
         load_analytics_executor_service_config,
@@ -904,9 +904,36 @@ def _reconcile_interrupted_first_successor_before_receive() -> None:
             sys.stderr.write(
                 "TASK014_ANALYTICS_SUCCESSOR_HOLD phase=restart_blue_restored\n"
             )
-        # An already SWITCHED transaction is ambiguous with a finished JTI.
-        # Do NOT roll it back without the exact independently verified replay
-        # status and owner-approved future new-release recovery workflow.
+        if intent.get("phase") == "switched":
+            from .replay_sqlite import PRODUCTION_REPLAY_DATABASE, SQLiteReplayGuard
+            replay = SQLiteReplayGuard(
+                PRODUCTION_REPLAY_DATABASE,
+                expected_directory_uid=identities['expected_replay_directory_uid'],
+                expected_directory_gid=identities['expected_replay_directory_gid'],
+                expected_broker_uid=identities['expected_broker_uid'],
+                expected_executor_uid=identities['expected_executor_uid'],
+            )
+            request_hash = intent['request_sha256']
+            if replay.execution_status(request_hash) != 'finished':
+                raise ValueError('committed route has no proven completed execution')
+            observed = inspect_committed_analytics_route(
+                journal=journal, reviewed_image=intent['next_image'],
+                reviewed_slot='green',
+                reviewed_container_id=intent['next_container_id'],
+                reviewed_request_sha256=request_hash,
+            )
+            if (
+                getattr(observed, 'active_slot', None) != 'green'
+                or getattr(observed, 'active_image', None) != intent['next_image']
+                or getattr(observed, 'active_container_id', None)
+                    != intent['next_container_id']
+                or journal.read() != intent
+                or replay.execution_status(request_hash) != 'finished'
+            ):
+                raise ValueError('completed execution or live route changed')
+            return None
+        # No recovery mutation or new request is inferred from restored or
+        # ambiguous records. Original signature/OIDC/replay admission remains.
         raise ValueError("previous signed successor requires review")
     except _CONTROL:
         raise

@@ -63,14 +63,16 @@ not operational evidence.
   (`MichaelTrueX/omnilyzer` for Analytics) and the reviewed commit exists.
   Confirm required product CI, source manifest, critical-file hashes, Docker
   runtime profile and source-to-OCI binding for that exact commit.
-- [ ] **Known current blocker for the next changed Analytics commit:**
-  `release/products/analytics-source.json`, the release build candidate and
-  two workflow checkouts still pin PR52 SHA
-  `4cdda7faeba57abb3388f9be5c450fe6afb1140d`. Until a separate reviewed
-  dynamic-source admission implementation is merged, a different Analytics
-  source SHA is **HOLD**, even if the version is new. Do not silently repin
-  or relax critical-file checks as a workaround. Source commit approval and
-  platform workflow SHA must never be confused.
+- [ ] **Supported source path:** The workflow accepts an exact reviewed
+  `analytics_source_sha` together with its genuine detached
+  `analytics_owner_signature_base64`. The original PR52 pin remains only
+  the explicit legacy fallback. The signed Analytics `0.16.0` release from
+  product SHA `a86a9b5e6a72afac05628e85335cbdf47c6f0255` proved this successor
+  source path in [Task013 #42534753909](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/42534753909).
+  For another source, verify its exact owner approval, source tree, runtime
+  profile and consumer compatibility; do not repin platform constants or
+  infer Task014 support from Task013 success. Keep source approval distinct
+  from the platform workflow SHA and deployment authorization.
 - [ ] Protected platform `main` has the exact reviewed workflow and all
   required repository checks passed. The Task013 dispatch input named
   `source_sha` is the **platform-main SHA**, not the Analytics source SHA.
@@ -200,6 +202,7 @@ immutable digest
 This version is occupied and MUST NOT be released again.
 
 **No additional frameworks, per-release platform PRs or manual vulnerability
-spreadsheets.** The one-time dynamic Analytics source-binding gap above
-remains separately outstanding until an accepted implementation proves an
-ordinary changed-product-code release without repinning Task013 itself.
+spreadsheets.** Task013 successor source binding and signed `0.16.0`
+distribution are accepted. Ordinary repeatable Task014 upgrades remain a
+separate open boundary in [Issue #281](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281);
+do not rebuild or re-sign occupied `0.16.0` to test that boundary.

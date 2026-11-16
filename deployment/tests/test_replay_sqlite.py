@@ -139,6 +139,63 @@ class ReplayTestCase(unittest.TestCase):
         self.assertEqual(str(captured.exception), GENERIC_REPLAY)
 
 
+class ExecutionStatusReadOnlyTests(ReplayTestCase):
+    def test_observes_each_state_without_changing_bytes_clock_or_rows(self):
+        self.initialize()
+        binding = dict(request_hash=HASH_A, run_id=1, run_attempt=1)
+        self.consume()
+        for expected in ('consumed', 'executing', 'finished'):
+            if expected == 'executing':
+                self.guard.begin_execution('jti-1', **binding)
+            elif expected == 'finished':
+                self.guard.finish_execution('jti-1', **binding)
+            before = self.path.read_bytes()
+            entries = set(self.directory.iterdir())
+            self.now = NOW + 1000
+            self.assertEqual(self.guard.execution_status(HASH_A), expected)
+            self.assertEqual(self.path.read_bytes(), before)
+            self.assertEqual(set(self.directory.iterdir()), entries)
+            self.now = NOW
+
+    def test_missing_hash_is_unknown_without_initializing_or_mutating(self):
+        self.initialize()
+        before = self.path.read_bytes()
+        self.assertIsNone(self.guard.execution_status(HASH_A))
+        self.assertEqual(self.path.read_bytes(), before)
+        self.path.unlink()
+        self.unavailable(lambda: self.guard.execution_status(HASH_A))
+        self.assertFalse(self.path.exists())
+
+    def test_ambiguous_hash_never_selects_an_arbitrary_finished_row(self):
+        self.initialize()
+        self.consume()
+        self.consume('jti-2', run_id=2)
+        before = self.path.read_bytes()
+        self.unavailable(lambda: self.guard.execution_status(HASH_A))
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_invalid_hash_fails_before_opening_the_store(self):
+        with patch.object(self.guard, '_open_directory') as opened:
+            for value in (None, True, '', 'A' * 64, 'a' * 63, '0' * 64):
+                with self.subTest(value=value):
+                    self.unavailable(lambda: self.guard.execution_status(value))
+            opened.assert_not_called()
+
+    def test_invalid_store_and_symlink_do_not_become_authority(self):
+        self.initialize()
+        self.consume()
+        before = self.path.read_bytes()
+        self.path.chmod(0o666)
+        self.unavailable(lambda: self.guard.execution_status(HASH_A))
+        self.assertEqual(self.path.read_bytes(), before)
+        self.path.chmod(DATABASE_MODE)
+        renamed = self.directory / 'foreign.sqlite3'
+        self.path.rename(renamed)
+        self.path.symlink_to(renamed)
+        self.unavailable(lambda: self.guard.execution_status(HASH_A))
+        self.assertEqual(renamed.read_bytes(), before)
+
+
 class InitializationAndFilesystemTests(ReplayTestCase):
     def test_initializer_inherits_distinct_reviewed_replay_gid(self) -> None:
         # The provisioning process has a different effective GID from C13's
@@ -1509,7 +1566,8 @@ class CorrectiveSemanticsTests(ReplayTestCase):
         }
         self.assertEqual(
             public,
-            {"initialize", "validate", "consume", "begin_execution", "finish_execution"},
+            {"initialize", "validate", "execution_status", "consume",
+             "begin_execution", "finish_execution"},
         )
 
     def test_maximum_configuration_bound_is_accepted(self) -> None:
