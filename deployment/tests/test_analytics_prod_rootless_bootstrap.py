@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import stat
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -30,6 +32,25 @@ class AnalyticsProdRootlessBootstrapTests(unittest.TestCase):
             self.assertIn("overlapping", result[0])
             self.assertIn("invalid", result[1])
 
+    def test_real_host_ids_cannot_overlap_subordinate_ids(self):
+        """Protect actual host identities even without an /etc/subuid entry."""
+        accounts = [SimpleNamespace(pw_name="other", pw_uid=231072, pw_gid=231073)]
+        groups = [SimpleNamespace(gr_name="othergroup", gr_gid=231074)]
+        with patch.object(boot.pwd, "getpwall", return_value=accounts):
+            with patch.object(boot.grp, "getgrall", return_value=groups):
+                errors = boot.host_id_conflicts()
+        self.assertEqual(len(errors), 3)
+        self.assertTrue(any("host UID" in error for error in errors))
+        self.assertTrue(any("host GID" in error for error in errors))
+
+    def test_docker_key_bundle_requires_exactly_one_pinned_primary(self):
+        """A second attacker-controlled primary key cannot enter apt trust."""
+        good = "pub:::::::::\nfpr:::::::::" + boot.DOCKER_FINGERPRINT + ":\n"
+        self.assertTrue(boot.valid_docker_key_listing(good))
+        self.assertFalse(boot.valid_docker_key_listing(good + "pub:::::::::\nfpr:::::::::BAD:\n"))
+        self.assertFalse(boot.valid_docker_key_listing("pub:::::::::\nfpr:::::::::BAD:\n"))
+        self.assertFalse(boot.valid_docker_key_listing("fpr:::::::::" + boot.DOCKER_FINGERPRINT + ":\n"))
+
     def test_exclusive_file_creation_denies_overwrite_and_symlink(self):
         """Root-controlled artifacts cannot overwrite unrelated files."""
         with tempfile.TemporaryDirectory() as directory:
@@ -42,6 +63,13 @@ class AnalyticsProdRootlessBootstrapTests(unittest.TestCase):
             alias.symlink_to(path)
             with self.assertRaises(FileExistsError):
                 boot.write_new(alias, b"replacement", 0o600)
+            public = Path(directory) / "public"
+            old_umask = os.umask(0o077)
+            try:
+                boot.write_new(public, b"unit", 0o644)
+            finally:
+                os.umask(old_umask)
+            self.assertEqual(stat.S_IMODE(public.stat().st_mode), 0o644)
 
     def test_apply_requires_root_before_any_mutation(self):
         """No unprivileged user can enter the package installation path."""
@@ -60,6 +88,8 @@ class AnalyticsProdRootlessBootstrapTests(unittest.TestCase):
         self.assertTrue(all("=" in package for package in boot.PACKAGES))
         self.assertIn("unix://%t/docker.sock", boot.UNIT_TEXT)
         self.assertIn("ConditionUser=omnilyzer-analytics", boot.UNIT_TEXT)
+        self.assertEqual(str(boot.UNIT), "/etc/systemd/user/omnilyzer-analytics-docker.service")
+        self.assertEqual(str(boot.WANTS.parent), "/etc/systemd/user/default.target.wants")
         self.assertIn("DOCKERD_ROOTLESS_ROOTLESSKIT_DISABLE_HOST_LOOPBACK=true", boot.UNIT_TEXT)
         self.assertNotIn("tcp://", boot.UNIT_TEXT)
         self.assertNotIn("0.0.0.0", boot.UNIT_TEXT)
