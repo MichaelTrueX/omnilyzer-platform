@@ -39,7 +39,7 @@ BFF = Path("/usr/local/sbin/m01-active-bff-def92-upgrade-once")
 KEYCLOAK_HASH = "6a43414a89a38514a3553bb92374d9f520e278d4bf8b4a3bc2a61e7015ff2d2d"
 BFF_HASH = "83e8748ba898b339da1a4811682a934ab58a6e13e5700b4235b96af5e9dffe0e"
 NODE_SOURCE = Path("/home/trusthansen/.nvm/versions/node/v24.22.0/bin/node")
-NODE_TARGET = HOME / "bin/node"
+NODE_TARGET = Path("/usr/local/bin/omnilyzer-ops-node24")
 NODE_HASH = "67ca5783febb8bf85736c79fcdd92c8d6d465a0eb2a082672bcdfa76a506751c"
 KC_GO = "M01_CANONICAL_KEYCLOAK_OWNER_GO=M01_CANONICAL_KEYCLOAK_EXACT_CALLBACK_ONCE_GO"
 BFF_GO = (
@@ -117,7 +117,8 @@ def root_preflight() -> None:
             or stat.S_IMODE(m.st_mode) != 0o500):
         hold("BOOTSTRAP_PERMISSIONS_CHANGED")
     for directory, accepted in ((SUDOERS_DIR, (0o750, 0o755)),
-                                (Path("/usr/local/sbin"), (0o755,))):
+                                (Path("/usr/local/sbin"), (0o755,)),
+                                (Path("/usr/local/bin"), (0o755,))):
         state = directory.lstat()
         if (not stat.S_ISDIR(state.st_mode) or state.st_uid != 0
                 or stat.S_IMODE(state.st_mode) not in accepted):
@@ -173,11 +174,13 @@ def install_node() -> None:
     if NODE_TARGET.exists() or NODE_TARGET.is_symlink():
         trusted_file(NODE_TARGET, uid=0, mode=0o755, expected=NODE_HASH)
         return
+    # Use the existing root-owned /usr/local/bin, not an AI-writable home:
+    # a directory replacement race must not redirect root's Node copy.
     parent = NODE_TARGET.parent
-    if parent.exists() or parent.is_symlink():
-        hold("AGENT_BIN_ALREADY_OCCUPIED")
-    parent.mkdir(mode=0o755)
-    os.chown(parent, 0, 0)
+    m = parent.lstat()
+    if (not stat.S_ISDIR(m.st_mode) or m.st_uid != 0
+            or stat.S_IMODE(m.st_mode) != 0o755):
+        hold("AGENT_NODE_PARENT_UNSAFE")
     fd, name = tempfile.mkstemp(prefix=".node24-", dir=parent)
     temp = Path(name)
     try:

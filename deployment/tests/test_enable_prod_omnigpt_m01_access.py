@@ -81,7 +81,7 @@ class ProdAIPermanentAccessTests(unittest.TestCase):
 
     def test_agent_node_is_a_pinned_unprivileged_binary(self):
         """Pin the actual Node24 runtime without opening a root script path."""
-        self.assertEqual(APP.NODE_TARGET, Path("/home/omnigpt/bin/node"))
+        self.assertEqual(APP.NODE_TARGET, Path("/usr/local/bin/omnilyzer-ops-node24"))
         self.assertEqual(APP.NODE_HASH, "67ca5783febb8bf85736c79fcdd92c8d6d465a0eb2a082672bcdfa76a506751c")
         self.assertIn("v24.22.0", str(APP.NODE_SOURCE))
 

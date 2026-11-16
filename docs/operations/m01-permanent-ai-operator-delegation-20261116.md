@@ -56,7 +56,7 @@ cookies, secrets or public site configuration.
 Run the following command as the owner to start a separate unprivileged
 agent process on truexmainserver:
 
-    sudo -u omnigpt -H /home/omnigpt/bin/node /usr/lib/node_modules/npm/bin/npx-cli.js --yes @wonderwhy-er/desktop-commander@0.3.1 remote
+    sudo -u omnigpt -H /usr/local/bin/omnilyzer-ops-node24 /usr/lib/node_modules/npm/bin/npx-cli.js --yes @wonderwhy-er/desktop-commander@0.3.1 remote
 
 Follow the connector's ordinary authorization UI. Never copy tokens from
 trusthansen. Verify the new connected device shows hostname truexmainserver,
