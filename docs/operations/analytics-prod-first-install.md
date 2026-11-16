@@ -27,10 +27,11 @@ activation. Rootful Docker/containerd services are masked before package
 post-install scripts run.
 
 The installer creates only a dedicated system user, subordinate UID/GID
-ranges, a root-owned user systemd unit, a rootless daemon and a private
-Docker Unix socket. It reuses the existing AppArmor user-namespace profile
-whose SHA256 exactly matches accepted DEV. It installs no application
-image. The rootless daemon has no TCP listener. Public Nginx/PM2 routes
+ranges, a root-owned global user systemd unit limited by ConditionUser,
+a rootless daemon and a private Docker Unix socket. It reuses the
+existing AppArmor user-namespace profile whose SHA256 exactly matches
+accepted DEV. It installs no application image. The rootless daemon
+has no TCP listener. Public Nginx/PM2 routes
 remain unchanged.
 
 ## Operator execution
