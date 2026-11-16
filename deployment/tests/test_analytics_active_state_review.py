@@ -117,6 +117,50 @@ def staged(*, active_slot: str = "blue", candidate_digest: str | None = None) ->
 class AnalyticsActiveStateReviewTests(unittest.TestCase):
     """Reject forged candidate state, stale routes, public exposure and drift."""
 
+    def test_live_inspection_accepts_only_rule_order_changes(self):
+        """RootlessKit builtin ListPorts iterates a map, without sorting it."""
+        fixture = observed()
+        local_image = {
+            "Id": fixture["blue"]["Image"], "RepoDigests": [PREFIX + DIGEST_BLUE],
+            "Os": "linux", "Architecture": "amd64",
+        }
+        sequence = [fixture["info"], fixture["ports"], fixture["network"],
+                    fixture["blue"], fixture["green"], local_image,
+                    list(reversed(deepcopy(fixture["ports"])))]
+        with patch("deployment.analytics_active_state_review.os.geteuid", return_value=991), patch(
+            "deployment.analytics_active_state_review._unix_get", side_effect=sequence,
+        ):
+            self.assertEqual(inspect_analytics_active_state().active_digest, DIGEST_BLUE)
+
+        changes = (
+            lambda p: p[0].update(id=99),
+            lambda p: p[0].update(id=p[1]["id"]),
+            lambda p: p[0].update(id=True),
+            lambda p: p[0].update(extra=True),
+            lambda p: p[1]["spec"].update(childIP="172.20.0.9"),
+            lambda p: p[1]["spec"].update(parentIP="0.0.0.0"),
+            lambda p: p[1]["spec"].update(parentPort=3141.0),
+            lambda p: p[1]["spec"].update(childPort=3001),
+            lambda p: p[1]["spec"].update(proto="tcp6"),
+            lambda p: p.pop(),
+        )
+        for change in changes:
+            ports = deepcopy(fixture["ports"])
+            change(ports)
+            with self.subTest(change=change), patch(
+                "deployment.analytics_active_state_review.os.geteuid", return_value=991,
+            ), patch("deployment.analytics_active_state_review._unix_get",
+                     side_effect=sequence[:-1] + [ports]), self.assertRaises(AnalyticsActiveStateDenied):
+                inspect_analytics_active_state()
+
+    def test_port_snapshot_keeps_candidate_and_every_rule_field(self):
+        from deployment.analytics_active_state_review import _port_rules_snapshot
+        ports = staged()["ports"]
+        self.assertEqual(_port_rules_snapshot(ports), _port_rules_snapshot(list(reversed(ports))))
+        changed = deepcopy(ports)
+        changed[2]["spec"]["childIP"] = "172.20.0.9"
+        self.assertNotEqual(_port_rules_snapshot(ports), _port_rules_snapshot(changed))
+
     def test_active_blue_and_green_derive_from_real_port_forward_not_ci(self):
         for slot in ("blue", "green"):
             with self.subTest(slot=slot):
