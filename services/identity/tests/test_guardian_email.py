@@ -47,6 +47,30 @@ class GuardianEmailTests(SimpleTestCase):
         self.assertEqual(self.post("adult").status_code, 403)
         self.assertEqual(self.mocks[5].call_count, 0)
 
+    def test_adult_declares_inside_product_after_fresh_signed_identity(self):
+        self.login_identity_only()
+        with mock.patch.object(guardian, "declare_adult", return_value=True) as declare:
+            response = self.post(body=json.dumps({"ageBand":"adult","country":"DK"}))
+        self.assertEqual(response.status_code, 200)
+        declare.assert_called_once_with(age.trusted(), "DK")
+        self.assertEqual(self.client.session["age_choice"], "adult")
+
+    def test_failed_fresh_identity_never_records_adult_admission(self):
+        self.login_identity_only()
+        with mock.patch.object(guardian, "declare_adult") as declare, \
+             mock.patch.object(age.oidc, "verify_id", side_effect=age.oidc.IdentityError):
+            response = self.post(body=json.dumps({"ageBand":"adult","country":"DK"}))
+        self.assertEqual(response.status_code, 403)
+        declare.assert_not_called()
+
+    def test_adult_needs_own_country_and_cannot_replace_known_minor(self):
+        self.login_identity_only()
+        with mock.patch.object(guardian, "declare_adult") as declare:
+            self.assertEqual(self.post(body=json.dumps({"ageBand":"adult","country":"bad"})).status_code, 400)
+            self.state_mock.return_value = "required"
+            self.assertEqual(self.post(body=json.dumps({"ageBand":"adult","country":"DK"})).status_code, 403)
+            declare.assert_not_called()
+
     def test_minor_declaration_failure_does_not_report_success(self):
         self.login_identity_only()
         with mock.patch.object(guardian, "declare_minor", side_effect=issuer.AdmissionError):

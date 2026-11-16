@@ -48,7 +48,7 @@ def digest(token):
 def _call(name, args):
     # Names are internal literals, never browser or environment input.
     if name not in {"guardian_request", "guardian_confirm", "guardian_state",
-                    "declare_minor"}:
+                    "declare_minor", "declare_adult"}:
         raise ValueError("unsupported admission operation")
     placeholders = ",".join(["%s"] * len(args))
     try:
@@ -76,6 +76,12 @@ def principal_args(principal):
 
 def declare_minor(principal):
     return _call("declare_minor", principal_args(principal))
+
+
+def declare_adult(principal, country):
+    if country is not None and (not isinstance(country, str) or not re.fullmatch(r"[A-Z]{2}", country)):
+        raise ValueError("country required")
+    return _call("declare_adult", (*principal_args(principal), country))
 
 
 def state(principal):

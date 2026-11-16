@@ -308,9 +308,9 @@ def csrf(request):
 def age_choice(request):
     """CSRF-checked 18+ choice, tied only to the signed OIDC Django session.
 
-    This DOES NOT register an adult admission and does not accept a browser
-    email, issuer, subject or entitlement. The restricted S03 issuer
-    independently denies absent declared_adult / known-minor / course role.
+    The enabled product onboarding records an honest adult self-declaration
+    through Native's narrow registrar. Browser identity/entitlement input is
+    never accepted. Guardian restrictions and course roles remain independent.
     """
     if not settings.REQUIRE_GTM_ADULT_CHOICE:
         return _fail(404)
@@ -322,7 +322,8 @@ def age_choice(request):
             return _fail(400)
         payload = json.loads(request.body)
         if (not isinstance(payload, dict) or
-                set(payload) != {"ageBand"} or
+                set(payload) not in (({"ageBand"}, {"ageBand", "country"})
+                    if settings.GUARDIAN_EMAIL_ENABLED else ({"ageBand"},)) or
                 payload["ageBand"] not in ("adult", "under18")):
             return _fail(400)
     except (ValueError, UnicodeError, TypeError):
@@ -348,6 +349,10 @@ def age_choice(request):
                 return _fail(403)
         except issuer.AdmissionError:
             return _fail(503)
+        country = payload.get("country")
+        if country is not None and (not isinstance(country, str) or len(country) != 2 or
+                not country.isascii() or not country.isalpha() or not country.isupper()):
+            return JsonResponse({"error": "Enter your two-letter country code."}, status=400)
     # Even after initial signed OIDC verification, do not mint the
     # S03 cookie based solely on stale provider session claims.
     try:
@@ -361,6 +366,8 @@ def age_choice(request):
             raise oidc.IdentityError("changed identity")
         sealed = oidc.seal(new)
         deadline = oidc.deadline(new)
+        if settings.GUARDIAN_EMAIL_ENABLED:
+            guardian.declare_adult(principal, payload.get("country"))
         product_cookie, digest = issuer.issue(principal)
     except (issuer.AdmissionError, oidc.IdentityError, KeyError, TypeError, ValueError):
         return _fail(403)
