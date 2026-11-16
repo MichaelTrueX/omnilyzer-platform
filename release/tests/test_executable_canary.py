@@ -52,7 +52,7 @@ PROTECTED_HASHES = {
     "release/provenance.py": "9f11ebb52ada10782a7b2d5027cafe882842e6c432c744068b64e41317271e5e",
     "deployment/environments/dev.json": "4b1cf03bdcd1fa7d8fd848862137a4dca7dc834b1cc45fa1d7cffd2756722ae8",
     "deployment/environments/staging.json": "7fde448d38022e4e435218c1fe6049c629ee091031845fce93156dcc787a7358",
-    "deployment/environments/prod.json": "a08cd3d718ffa0531071ed7ad0aeafc19b4edeb0a82e74bd87a6044bbabebcce",
+    "deployment/environments/prod.json": "8a887448d6f59c005fdb25d1bf899f1730a72078206fbb1bbbf95c5197cb4f04",
 }
 
 
@@ -461,8 +461,11 @@ class ImageAndPipelineTests(unittest.TestCase):
         workflow = yaml.safe_load((ROOT / ".github/workflows/platform-release.yml").read_text())
         capable = [name for name, job in workflow["jobs"].items()
                    if job.get("permissions", {}).get("id-token") == "write"]
-        self.assertEqual(capable, ["forgejo-auth-probe", "analytics-publish-zot",
-                                   "analytics-publish-forgejo", "publish-zot", "publish-forgejo"])
+        # Protected main already includes the reviewed registry preflight;
+        # retain it in the exact OIDC-capable job inventory, not a stale list.
+        self.assertEqual(capable, ["forgejo-auth-probe", "analytics-registry-preflight",
+                                   "analytics-publish-zot", "analytics-publish-forgejo",
+                                   "publish-zot", "publish-forgejo"])
         # Existing package builders/publishers are semantically byte-unchanged.
         for name, expected_hash in LEGACY_RELEASE_JOB_SHA256.items():
             with self.subTest(legacy_job=name):

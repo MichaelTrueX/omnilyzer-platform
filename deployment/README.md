@@ -1,5 +1,13 @@
 # Task 014: exact-digest promotion and deployment control plane
 
+**Current operating rule (16 November 2026):** Develop and preview on
+`omnilyzerdev`; promote the same signed artifact directly to PROD on
+`truexmainserver` with owner GO and retained release safety gates. A
+STAGING server and STAGING success event are no longer required. The old
+C31/C33 notes below are historical. See
+[ADR 0012](../docs/adr/0012-direct-dev-prod-delivery.md).
+
+
 ## Current runtime outcome (20–21 October 2026)
 
 **DEV SIGNED CANARY ACCEPTED.** The historical sections below remain
@@ -3339,7 +3347,7 @@ A promotion request binds the strict release version, source SHA, approved OCI r
 
 `verify_release_evidence` consumes Task 013 outputs rather than duplicating publication. It requires the request hashes to match the supplied release manifest and provenance bytes, then cross-checks version, source, zot origin, repository, digest, exact image reference, release workflow, certificate identity, issuer, both blob verification results, and the exact OCI signature result. No formal SLSA level is claimed.
 
-Promotion order is exactly DEV, STAGING, PROD. STAGING requires one matching successful DEV audit event; PROD requires one matching successful STAGING event. The receipt must match version, source SHA, repository, and digest. A tag, branch, or version alone is never promotion evidence.
+The original Task007 promotion chain used DEV, STAGING, PROD. Under the 16 November 2026 owner-approved two-host model, the current mandatory promotion order is **DEV -> PROD directly**. PROD requires exactly one successful matching DEV audit event, with the same version, source SHA, OCI repository and digest. A historical STAGING event cannot replace DEV evidence; STAGING is not deployed. The PROD runtime remains disabled until separately qualified and Product Owner approved. A tag, branch, or version alone is never promotion evidence. See ADR 0012 and docs/operations/dev-prod-direct-delivery.md.
 
 ## Blue/green and health model
 

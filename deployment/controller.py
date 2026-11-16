@@ -12,8 +12,8 @@ from .audit import AuditEvent
 from .policy import (
     APPROVED_OCI_REPOSITORIES,
     APPROVED_OCI_ORIGIN,
+    PROMOTION_PREDECESSORS,
     SCHEMA_VERSION,
-    STAGES,
     DeploymentPolicyError,
     canonical_bytes,
     closed_object,
@@ -83,7 +83,8 @@ def validate_environment(value: Any) -> dict[str, Any]:
     promotion = closed_object(
         data["promotion_policy"], PROMOTION_POLICY_FIELDS, "promotion policy",
     )
-    required = None if stage == "dev" else STAGES[STAGES.index(stage) - 1]
+    # PROD requires the exact successful DEV artifact, never a staging hop.
+    required = PROMOTION_PREDECESSORS[stage]
     if (promotion["required_prior_stage"] != required
             or promotion["source_registry_origin"] != APPROVED_OCI_ORIGIN
             or promotion["approved_repositories"] != ["omnilyzer/task013-release-canary"]
@@ -101,10 +102,15 @@ def validate_environment(value: Any) -> dict[str, Any]:
 
 
 def require_stage_order(request: PromotionRequest, events: list[AuditEvent]) -> None:
-    index = STAGES.index(request.target_stage)
-    if index == 0:
+    """Require an exact prior DEV success for PROD, including OCI/source identity.
+
+    A historical staging success never substitutes for the approved DEV digest.
+    DEV itself has no earlier environment. This function does not authorize a
+    deployment or override the separately required PROD owner approval.
+    """
+    required_stage = PROMOTION_PREDECESSORS[validate_stage(request.target_stage)]
+    if required_stage is None:
         return
-    required_stage = STAGES[index - 1]
     matching = [
         event for event in events
         if event.event_type == "promotion_succeeded" and event.result == "succeeded"

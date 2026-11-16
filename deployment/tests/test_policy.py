@@ -55,7 +55,7 @@ class EnvironmentPolicyTests(unittest.TestCase):
                 self.assertTrue(all(item is None for item in environment["runtime"].values()))
 
     def test_stage_order_and_production_approval_are_declarative(self) -> None:
-        expected = {"dev": None, "staging": "dev", "prod": "staging"}
+        expected = {"dev": None, "staging": "dev", "prod": "dev"}
         for stage, prior in expected.items():
             value = json.loads((DEPLOYMENT_ROOT / "environments" / f"{stage}.json").read_text())
             self.assertEqual(value["promotion_policy"]["required_prior_stage"], prior)
@@ -67,6 +67,15 @@ class EnvironmentPolicyTests(unittest.TestCase):
                 value["promotion_policy"]["approved_repositories"],
                 list(APPROVED_OCI_REPOSITORIES),
             )
+
+    def test_prod_requires_dev_not_historical_staging(self) -> None:
+        """Do not accept an outdated DEV -> STAGING -> PROD policy as current."""
+        prod = json.loads((DEPLOYMENT_ROOT / "environments/prod.json").read_text())
+        self.assertEqual(prod["promotion_policy"]["required_prior_stage"], "dev")
+        prod["promotion_policy"]["required_prior_stage"] = "staging"
+        from deployment.policy import DeploymentPolicyError
+        with self.assertRaises(DeploymentPolicyError):
+            validate_environment(prod)
 
 
 class WorkflowPolicyTests(unittest.TestCase):
