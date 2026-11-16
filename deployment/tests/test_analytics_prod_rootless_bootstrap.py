@@ -115,6 +115,9 @@ class AnalyticsProdRootlessBootstrapTests(unittest.TestCase):
         self.assertNotIn("nginx", source)
         self.assertNotIn("prisma", source)
         self.assertIn("prod_application_installed", source)
+        self.assertIn('"--no-create-home"', source)
+        self.assertIn("HOME.chown(0, 0)", source)
+        self.assertIn("data.chown(account.pw_uid, account.pw_gid)", source)
 
 
 if __name__ == "__main__":
