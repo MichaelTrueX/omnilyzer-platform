@@ -34,6 +34,20 @@ class PR299SourceTransitionTests(unittest.TestCase):
         self.assertNotEqual(m.FIX_SHA, m.OLD_SHA)
         self.assertNotEqual(m.NEW_MAIN, m.OLD_MAIN)
 
+    def test_opened_descriptor_custody_must_match_named_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'code.py';path.write_bytes(b'fixture');path.chmod(0o400)
+            values = list(path.lstat());values[4] = values[5] = 0
+            before = os.stat_result(values)
+            values[4] = values[5] = 991
+            opened = os.stat_result(values)
+            with patch.object(Path, 'lstat', return_value=before), \
+                    patch.object(m.os, 'fstat', return_value=opened), \
+                    patch.object(m.os, 'fdopen') as reader:
+                with self.assertRaises(ValueError):
+                    m.pinned(path, 0o400, hashlib.sha256(b'fixture').hexdigest())
+                reader.assert_not_called()
+
     def test_bootstrap_pins_payloads_and_only_two_exact_commands(self):
         owner = SOURCE.parent / 'm05_pr299_access_owner_once.py'
         tree = ast.parse(owner.read_text())

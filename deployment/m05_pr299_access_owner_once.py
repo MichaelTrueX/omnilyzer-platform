@@ -17,7 +17,7 @@ umask 077
 D=/home/trust/m05-pr299-source-review
 P="$D/transition.py"
 F="$D/analytics_active_state_review.py"
-SHA=3e3512509efb1473fbb1faf6ed9b8913011494059794adb9f253b84fe9a66bcf
+SHA=8ad25df8c10c86d9b85f1820d6b6272627a8069ae50f34d1b0fd74e784996f56
 FS=25a193c3c8511d060d8d1d4b7528edf2671a507cb7b97acde86e33d391d0fddb
 RS=0d38abdf0f8fe285e715f01edb5c5c459131fd182654fefb33745fe29f19df9b
 SS=e4ea1e0d6d1657672a4aeeafba4d444b72f89223742a7b7ddf339f67e3b6694a

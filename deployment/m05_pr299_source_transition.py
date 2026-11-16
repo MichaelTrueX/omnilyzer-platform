@@ -88,7 +88,10 @@ def pinned(path, mode, digest, gid=0):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
         opened = os.fstat(fd)
-        require((opened.st_dev, opened.st_ino) == (before.st_dev, before.st_ino))
+        require((opened.st_dev, opened.st_ino, opened.st_uid, opened.st_gid,
+                 opened.st_mode, opened.st_nlink, opened.st_size) ==
+                (before.st_dev, before.st_ino, before.st_uid, before.st_gid,
+                 before.st_mode, before.st_nlink, before.st_size))
         with os.fdopen(fd, 'rb', closefd=False) as stream:
             raw = stream.read(65537)
         after = os.fstat(fd)
