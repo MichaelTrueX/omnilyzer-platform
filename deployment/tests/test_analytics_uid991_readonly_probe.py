@@ -100,6 +100,23 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(result.stdout, b"M05_UID991_PROCESS_HOLD\n")
         self.assertEqual(result.stderr, b"")
 
+    def test_unprivileged_launcher_refuses_without_writes(self):
+        """The privileged launcher must refuse a normal user immediately."""
+        launcher = _SOURCE.parent / "m05_uid991_readonly_once.sh"
+        for tail in ([], ["unexpected"]):
+            with self.subTest(tail=tail):
+                result = subprocess.run(
+                    ["/usr/bin/bash", str(launcher), *tail],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    check=False, timeout=4,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(
+                    result.stdout,
+                    b"M05_UID991_READONLY_LAUNCH_HOLD_NO_RETRY\n",
+                )
+                self.assertEqual(result.stderr, b"")
+
     def test_approved_null_and_single_digest(self):
         """Preserve the original rootless Docker fixture's fixed green state."""
         with patch.object(_probe, "_trusted_source_root", return_value=True):
