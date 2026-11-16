@@ -18,7 +18,7 @@ import unittest
 from unittest.mock import patch
 
 # Section 1: Load only the locally checked first-party source for tests.
-_SOURCE = Path(__file__).with_name("analytics_uid991_readonly_probe.py")
+_SOURCE = Path(__file__).resolve().parent.parent / "analytics_uid991_readonly_probe.py"
 _spec = importlib.util.spec_from_file_location("uid991_probe_under_test", _SOURCE)
 assert _spec is not None and _spec.loader is not None
 _probe = importlib.util.module_from_spec(_spec)
