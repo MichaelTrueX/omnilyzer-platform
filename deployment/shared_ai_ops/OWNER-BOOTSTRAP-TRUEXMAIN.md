@@ -19,7 +19,7 @@ test "$(id -un)" = trusthansen
 d=/home/trusthansen/shared-ai-ops-source-20261115
 test -d "$d" && test ! -L "$d"
 test "$(stat -c '%U:%G:%a' "$d")" = trusthansen:trusthansen:700
-test "$(sha256sum "$d/install-root.py" | cut -d' ' -f1)" = a99b2c2417416c143135d1e62262891425d58a8512692b50b0e421f2f923f8f7
+test "$(sha256sum "$d/install-root.py" | cut -d' ' -f1)" = dcb5eacc173c49940be727714ecdf1502f720ae3f223d1922ab1f64801c912a7
 python3 - "$d" <<'PY'
 import ast, hashlib, os, stat, sys
 from pathlib import Path
@@ -57,7 +57,7 @@ test "$(hostname)" = truexmainserver
 test "$(id -un)" = root
 source=/home/trusthansen/shared-ai-ops-source-20261115/install-root.py
 target=/usr/local/sbin/shared-ai-ops-bootstrap-20261115.py
-expected=a99b2c2417416c143135d1e62262891425d58a8512692b50b0e421f2f923f8f7
+expected=dcb5eacc173c49940be727714ecdf1502f720ae3f223d1922ab1f64801c912a7
 test -f "$source" && test ! -L "$source"
 test "$(stat -c '%U:%G:%a' "$source")" = trusthansen:trusthansen:600
 test "$(sha256sum "$source" | cut -d' ' -f1)" = "$expected"

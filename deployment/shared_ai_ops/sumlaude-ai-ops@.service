@@ -13,6 +13,9 @@ ExecStart=/usr/bin/python3 -I /usr/local/libexec/shared-ai-ops/dispatcher.py sum
 UMask=0077
 Environment=PYTHONNOUSERSITE=1
 NoNewPrivileges=yes
+CapabilityBoundingSet=~CAP_SYS_ADMIN
+SystemCallFilter=~@mount
+RestrictNamespaces=yes
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectSystem=strict

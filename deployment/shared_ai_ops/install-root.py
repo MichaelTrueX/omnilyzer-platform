@@ -24,8 +24,8 @@ FILES = {
     "jobs/omnilyzer/status.py": "7c1a9d4d5e7a480404564efa84a0526936cb1718d3f239471fc1bc617ea8b2f0",
     "policy.json": "4f16fa453cbf7adf5b4d91891a5a3d93ee9d0106037d6e8adbb4b5dbe7d8a345",
     "50-shared-ai-ops.rules": "3e6a558a8ee877b70832a12d7748f01e259eff36584b523118f1318c8c5caf64",
-    "sumlaude-ai-ops@.service": "623521880de6a805fdea71486ac675e18ae7dd3afb7e2d069c0d1c22aed0b48b",
-    "omnilyzer-ai-ops@.service": "694c186dc396fb9af6b218c50aa3580734e5502968e307f7d173cda6d865d436",
+    "sumlaude-ai-ops@.service": "9cdaa376eaf910b995a42733697038081281e7c896f19720ea2bd2fa9a7c938e",
+    "omnilyzer-ai-ops@.service": "f05adc9bd402b6e1d8a23805bc8bd4303e55ec656529c6e18b60879daddde6b4",
     "sumlaude-agent-remote.service": "98c6460647ae9c9e9e48095d70cade64ccceff8c8636834cb029103224fe9711",
     "omnilyzer-agent-remote.service": "7b3772a9cca4a4df0fd3d1a1a8e74f8f70e0fa0826a6d9afed6ee2f07830d2bc",
 }
