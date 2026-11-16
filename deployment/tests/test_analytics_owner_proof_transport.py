@@ -197,4 +197,3 @@ class OwnerProofTransportTests(unittest.TestCase):
                 case.signed.assert_not_called()
         finally:
             case.doCleanups()
-
