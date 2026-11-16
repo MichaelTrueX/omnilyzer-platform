@@ -18,6 +18,7 @@ import tempfile
 import unittest
 from unittest import mock
 import json
+import subprocess
 
 # Section: Load the operator as code without executing its guarded entrypoint.
 ROOT = Path(__file__).resolve().parents[1]
@@ -130,7 +131,11 @@ class SourceOnlyActiveUpgradeTests(unittest.TestCase):
             self.assertIn(required, new)
 
     def test_canonical_source_and_staged_runtime_shas_pinned(self):
-        """Require the actual public origin/CSRF/OIDC implementation bytes."""
+        """Keep the consumed def92 operator bound to its immutable Git source.
+
+        Later feature source must not repin or make this historical installer
+        reusable. Its successor has a separate release/authorization boundary.
+        """
         pinned = {
             "config/settings.py": "732b0f05db064b60330d28adaf6d94d220f07a885c1a0baf96c272a7a3cf90d0",
             "config/urls.py": "7640a6251e8263187e26e58b7fa472c3f667c56aa2884f8fd1671f05e817db97",
@@ -141,7 +146,9 @@ class SourceOnlyActiveUpgradeTests(unittest.TestCase):
         for name, expected in pinned.items():
             with self.subTest(name=name):
                 self.assertEqual(hashlib.sha256(
-                    (ROOT / name).read_bytes()).hexdigest(), expected)
+                    subprocess.check_output(["git", "-C", str(ROOT), "show",
+                        UP.NEW_SHA + ":services/identity/" + name],
+                        timeout=10)).hexdigest(), expected)
         self.assertIn("expected_staged = {", SOURCE.read_text())
 
     def test_unexpected_template_refused(self):

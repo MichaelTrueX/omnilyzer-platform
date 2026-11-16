@@ -304,6 +304,10 @@ class InactiveReleaseTests(unittest.TestCase):
                 tf.extractall(installed, filter="data")
             target = installed / "services/identity/identity_bff/views.py"
             target.write_bytes(b"tampered")
+            # Model installed traversable directories, rather than TarInfo's
+            # default 0644 directory mode masking the intended byte-drift check.
+            for rel in ("services/identity", "services/identity/identity_bff"):
+                (installed / rel).chmod(0o755)
             (installed / "services").chmod(0o700)
             (installed / ".venv/bin").mkdir(parents=True)
             for exe in ("python", "gunicorn"):
