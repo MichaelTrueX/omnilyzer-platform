@@ -33,15 +33,18 @@ from the optimization work.
 | Boundary | Accepted installed generation 3 | Optimization work / remaining limitation |
 | --- | --- | --- |
 | Task013 product selection | Exact successor Git SHA and owner signature supported; signed `0.16.0` accepted | Correct obsolete fixed-source-only instructions; keep legacy `0.15.0` fallback and all scan/signature gates. |
-| Completed executor restart | A nonempty terminal journal always causes HOLD before receive | Candidate code reads the exact request's protected FINISHED replay and verifies the unchanged committed live route before a read-only restart. Missing, ambiguous, unfinished or changed evidence still HOLDs. This code is not installed by a documentation update. |
+| Completed executor restart | A nonempty terminal journal always causes HOLD before receive | Candidate code stores an immutable execution proof from the independently verified request and actual candidate ID before replay finish. A read-only restart requires that proof, the exact protected FINISHED replay and the unchanged committed live route. Legacy/missing proof, ambiguity, unfinished or changed evidence still HOLDs. No proof is synthesized from the journal and no code is installed by this document. |
 | Ordinary next-source authorization | Broker and executor read installed per-release owner approval files | Still requires implementation of per-release public proof verified against the unchanged independent root signer, bound to both signed evidence and request, without rewriting root authority for each product version. A request-provided signer must never be trusted. |
 | Repeated blue/green changes | Parser can describe either slot; positive runtime still anchors original `0.15.0` blue and an empty green | Still requires the existing broker, executor, candidate operation and supervisor to agree on independently verified current/previous signed releases and opposite-slot lifecycle. Caller-supplied active fields are hints, not authority. Preserve historical signed recovery assets. |
 | Normal post-success rollback/return | A separate one-time owner maintenance exception was needed for the `0.16.0` OAT | Still requires an authenticated executor operation with a fresh identity and explicit rollback/return scope, no reuse of the original completed request as a new deployment and no weakening of replay or database preservation. |
 
 The completed-restart correction is a bounded first implementation increment,
-not an ordinary-upgrade grant. The original first-successor request admission
-remains unchanged; a read-only replay lookup cannot consume, finish, reset,
-prune or enumerate requests. Tests must distinguish missing completion proof,
+not an ordinary-upgrade grant. Existing legacy releases without execution proof
+remain HOLD until a separately reviewed migration; no old dispatch is repeated.
+The original first-successor request admission and shared Canary replay API
+remain unchanged; Analytics reuses its read-only custody/integrity primitives
+without modifying their historical source contract. Completion lookup cannot
+consume, finish, reset, prune or enumerate requests. Tests must distinguish missing completion proof,
 protected-state corruption, route/journal drift and successful nonmutating
 restart. Installed source and workflow SHA remain root-reviewed; unrelated
 main commits do not silently rotate that authority.

@@ -31,6 +31,9 @@ import unittest
 from unittest.mock import patch
 
 from deployment.analytics_execution import parse_analytics_successor_request
+from deployment.tests.test_replay_sqlite import ReplayTestCase, HASH_A, NOW
+from deployment.replay_sqlite import DATABASE_MODE
+from deployment.analytics_executor import _read_analytics_execution_status
 from deployment.analytics_executor import (
     AnalyticsPrivilegedExecutor, _execute_reviewed_first_successor_transaction,
 )
@@ -226,6 +229,9 @@ class FirstSuccessorTransactionTests(unittest.TestCase):
         ))
         self.stack.enter_context(patch.object(
             AnalyticsRouteJournal, "read", side_effect=self.journal_read,
+        ))
+        self.receipt = self.stack.enter_context(patch.object(
+            AnalyticsRouteJournal, "record_execution",
         ))
 
     def review(self, canonical_request, credential_fd, **kwargs):
@@ -512,6 +518,17 @@ class FirstSuccessorTransactionTests(unittest.TestCase):
             "verify_green",
         ])
         self.assertEqual(self.stop.call_count, 0)
+        self.receipt.assert_called_once_with(self.raw, GREEN_ID)
+
+    def test_receipt_write_failure_rolls_back_before_replay_finish(self):
+        self.receipt.side_effect = RuntimeError('synthetic proof fsync failure')
+        with self.assertRaises(ExecutorUnavailableError):
+            self.execute()
+        self.assertEqual(self.replay.events, ['begin'])
+        self.assertEqual(self.phase, 'restored')
+        self.assertEqual(self.events[-3:], [
+            'rollback_committed', 'verify_blue', 'stop_exact_green'])
+        self.assertEqual(self.stop.call_count, 1)
 
     def test_unverified_signature_blocks_replay_and_all_runtime(self):
         """No replay, private route or candidate after failed original signature."""
@@ -798,12 +815,17 @@ class ProtectedSuccessorRestartTests(unittest.TestCase):
             'expected_broker_uid': 990,
         })
         self.reader.return_value = {**self.record, 'phase': 'switched'}
+        self.proof_reader = self.stack.enter_context(patch(
+            'deployment.analytics_route_journal.AnalyticsRouteJournal.read_execution',
+            return_value={'image': self.next, 'container_id': GREEN_ID,
+                          'canonical_request': b'simulated accepted request'},
+        ))
         self.observed.return_value = SimpleNamespace(
             active_slot='green', active_image=self.next,
             active_container_id=GREEN_ID,
         )
         return self.stack.enter_context(patch(
-            'deployment.replay_sqlite.SQLiteReplayGuard.execution_status',
+            'deployment.analytics_executor._read_analytics_execution_status',
             return_value='finished',
         ))
 
@@ -811,7 +833,7 @@ class ProtectedSuccessorRestartTests(unittest.TestCase):
         status = self.completed_context()
         self.assertIsNone(self.attempt())
         self.assertEqual(status.call_count, 2)
-        status.assert_called_with('c' * 64)
+        status.assert_called_with(unittest.mock.ANY, 'c' * 64)
         self.recover.assert_not_called()
         self.observed.assert_called_once_with(
             journal=unittest.mock.ANY, reviewed_image=self.next,
@@ -848,6 +870,25 @@ class ProtectedSuccessorRestartTests(unittest.TestCase):
             self.attempt()
         self.recover.assert_not_called()
 
+    def test_finished_hash_does_not_authenticate_forged_journal_image(self):
+        self.completed_context()
+        self.reader.return_value = {**self.reader.return_value,
+            'next_image': 'oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:' + 'f' * 64}
+        from deployment.executor import ExecutorUnavailableError
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.observed.assert_not_called()
+        self.recover.assert_not_called()
+
+    def test_legacy_missing_execution_proof_is_hold_without_mutation(self):
+        self.completed_context()
+        self.proof_reader.side_effect = ValueError('missing independent proof')
+        from deployment.executor import ExecutorUnavailableError
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.observed.assert_not_called()
+        self.recover.assert_not_called()
+
     def test_missing_root_scope_or_uid_does_not_even_read_journal(self):
         """Neither public env nor UID1005 may initiate protected recovery."""
         from deployment.executor import ExecutorUnavailableError
@@ -875,6 +916,67 @@ class ProtectedSuccessorRestartTests(unittest.TestCase):
         with self.assertRaises(ExecutorUnavailableError):
             self.attempt()
         self.recover.assert_called_once()
+
+
+
+
+
+
+class AnalyticsExecutionStatusReadOnlyTests(ReplayTestCase):
+    def test_observes_each_state_without_changing_bytes_clock_or_rows(self):
+        self.initialize()
+        binding = dict(request_hash=HASH_A, run_id=1, run_attempt=1)
+        self.consume()
+        for expected in ('consumed', 'executing', 'finished'):
+            if expected == 'executing':
+                self.guard.begin_execution('jti-1', **binding)
+            elif expected == 'finished':
+                self.guard.finish_execution('jti-1', **binding)
+            before = self.path.read_bytes()
+            entries = set(self.directory.iterdir())
+            self.now = NOW + 1000
+            self.assertEqual(_read_analytics_execution_status(self.guard, HASH_A), expected)
+            self.assertEqual(self.path.read_bytes(), before)
+            self.assertEqual(set(self.directory.iterdir()), entries)
+            self.now = NOW
+
+    def test_missing_hash_is_unknown_without_initializing_or_mutating(self):
+        self.initialize()
+        before = self.path.read_bytes()
+        self.assertIsNone(_read_analytics_execution_status(self.guard, HASH_A))
+        self.assertEqual(self.path.read_bytes(), before)
+        self.path.unlink()
+        self.unavailable(lambda: _read_analytics_execution_status(self.guard, HASH_A))
+        self.assertFalse(self.path.exists())
+
+    def test_ambiguous_hash_never_selects_an_arbitrary_finished_row(self):
+        self.initialize()
+        self.consume()
+        self.consume('jti-2', run_id=2)
+        before = self.path.read_bytes()
+        self.unavailable(lambda: _read_analytics_execution_status(self.guard, HASH_A))
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_invalid_hash_fails_before_opening_the_store(self):
+        with patch.object(self.guard, '_open_directory') as opened:
+            for value in (None, True, '', 'A' * 64, 'a' * 63, '0' * 64):
+                with self.subTest(value=value):
+                    self.unavailable(lambda: _read_analytics_execution_status(self.guard, value))
+            opened.assert_not_called()
+
+    def test_invalid_store_and_symlink_do_not_become_authority(self):
+        self.initialize()
+        self.consume()
+        before = self.path.read_bytes()
+        self.path.chmod(0o666)
+        self.unavailable(lambda: _read_analytics_execution_status(self.guard, HASH_A))
+        self.assertEqual(self.path.read_bytes(), before)
+        self.path.chmod(DATABASE_MODE)
+        renamed = self.directory / 'foreign.sqlite3'
+        self.path.rename(renamed)
+        self.path.symlink_to(renamed)
+        self.unavailable(lambda: _read_analytics_execution_status(self.guard, HASH_A))
+        self.assertEqual(renamed.read_bytes(), before)
 
 
 if __name__ == "__main__":

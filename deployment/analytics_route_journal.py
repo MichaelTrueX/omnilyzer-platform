@@ -20,7 +20,9 @@ Security: This is a storage/consistency primitive, NEVER an approval of an
 from __future__ import annotations
 
 from contextlib import contextmanager
+import base64
 import fcntl
+import hashlib
 import ipaddress
 import json
 import os
@@ -38,6 +40,7 @@ _TEMP = ".transaction.json.next"
 _IMAGE_PREFIX = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:"
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_BYTES = 2048
+_MAX_EXECUTION_PROOF_BYTES = 24 * 1024
 _MAX_GENERATION = 2**63 - 1
 _KEYS = frozenset({
     "schema_version", "phase", "generation", "request_sha256",
@@ -136,6 +139,53 @@ def _decode(payload: bytes) -> dict[str, object]:
         if payload != canonical_bytes(verified):
             _reject()
         return verified
+    except _CONTROL:
+        raise
+    except Exception:
+        _reject()
+
+
+def _execution_proof(payload: bytes, request_hash: str) -> dict[str, object]:
+    """Decode request bytes; a FINISHED replay must authenticate them separately."""
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                _reject()
+            result[key] = value
+        return result
+
+    try:
+        if (type(payload) is not bytes or not 0 < len(payload) <= _MAX_EXECUTION_PROOF_BYTES
+                or type(request_hash) is not str or _SHA.fullmatch(request_hash) is None):
+            _reject()
+        proof = json.loads(payload.decode('ascii'), object_pairs_hook=unique)
+        if (type(proof) is not dict or set(proof) != {
+                'schema_version', 'request_base64', 'container_id'}
+                or type(proof['schema_version']) is not int or proof['schema_version'] != 1
+                or type(proof['container_id']) is not str
+                or _SHA.fullmatch(proof['container_id']) is None
+                or type(proof['request_base64']) is not str
+                or canonical_bytes(proof) != payload):
+            _reject()
+        raw = base64.b64decode(proof['request_base64'], validate=True)
+        if (not 0 < len(raw) <= 16 * 1024
+                or base64.b64encode(raw).decode('ascii') != proof['request_base64']
+                or hashlib.sha256(raw).hexdigest() != request_hash):
+            _reject()
+        request = json.loads(raw.decode('ascii'), object_pairs_hook=unique)
+        if (type(request) is not dict or canonical_bytes(request) != raw
+                or type(request.get('schema_version')) is not int
+                or request['schema_version'] != 3
+                or request.get('product_id') != 'analytics' or request.get('stage') != 'dev'
+                or type(request.get('manifest_digest')) is not str
+                or not request['manifest_digest'].startswith('sha256:')
+                or _SHA.fullmatch(request['manifest_digest'][7:]) is None
+                or request.get('exact_image_reference') !=
+                    _IMAGE_PREFIX + request['manifest_digest'][7:]):
+            _reject()
+        return {'canonical_request': raw, 'container_id': proof['container_id'],
+                'image': request['exact_image_reference']}
     except _CONTROL:
         raise
     except Exception:
@@ -291,6 +341,92 @@ class AnalyticsRouteJournal:
             raise
         except Exception:
             _reject()
+
+    def record_execution(self, canonical_request: bytes, container_id: str) -> None:
+        """Persist verified coordinator inputs BEFORE replay.finish_execution.
+
+        Not approval by itself. The coordinator supplies the independently
+        verified canonical signed request and actual staged container ID, never
+        copies an image from the route journal. A later reader must match the
+        request hash to the protected FINISHED replay before adopting anything.
+        Immutable per-request files preserve partial/failed execution evidence.
+        """
+        try:
+            if type(canonical_request) is not bytes:
+                _reject()
+            request_hash = hashlib.sha256(canonical_request).hexdigest()
+            payload = canonical_bytes({'schema_version': 1,
+                'request_base64': base64.b64encode(canonical_request).decode('ascii'),
+                'container_id': container_id})
+            proof = _execution_proof(payload, request_hash)
+            with self.exclusive():
+                intent = self.read()
+                if (type(intent) is not dict or intent.get('phase') != 'switched'
+                        or intent.get('request_sha256') != request_hash
+                        or intent.get('next_image') != proof['image']
+                        or intent.get('next_container_id') != container_id):
+                    _reject()
+                directory = object.__getattribute__(self, '_locked_fd')
+                fd = os.open('execution-' + request_hash + '.json',
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    0o600, dir_fd=directory)
+                try:
+                    st = os.fstat(fd)
+                    if (st.st_uid != object.__getattribute__(self, '_uid')
+                            or st.st_gid != object.__getattribute__(self, '_gid')
+                            or st.st_nlink != 1 or stat.S_IMODE(st.st_mode) != 0o600):
+                        _reject()
+                    with os.fdopen(os.dup(fd), 'wb') as handle:
+                        handle.write(payload)
+                        handle.flush()
+                    os.fsync(fd)
+                    os.fsync(directory)
+                finally:
+                    os.close(fd)
+                if self.read_execution(request_hash) != proof:
+                    _reject()
+        except _CONTROL:
+            raise
+        except Exception:
+            _reject()
+
+    def read_execution(self, request_hash: str) -> dict[str, object]:
+        """Read one exact protected proof; legacy/missing proof is HOLD."""
+        directory = descriptor = None
+        try:
+            if type(request_hash) is not str or _SHA.fullmatch(request_hash) is None:
+                _reject()
+            name = 'execution-' + request_hash + '.json'
+            directory = self._open_dir()
+            descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                | os.O_CLOEXEC, dir_fd=directory)
+            opened = os.fstat(descriptor)
+            if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+                    or opened.st_uid != object.__getattribute__(self, '_uid')
+                    or opened.st_gid != object.__getattribute__(self, '_gid')
+                    or stat.S_IMODE(opened.st_mode) != 0o600
+                    or not 0 < opened.st_size <= _MAX_EXECUTION_PROOF_BYTES):
+                _reject()
+            with os.fdopen(os.dup(descriptor), 'rb') as handle:
+                payload = handle.read(_MAX_EXECUTION_PROOF_BYTES + 1)
+            def identity(st):
+                return (st.st_dev, st.st_ino, st.st_uid, st.st_gid, st.st_mode,
+                        st.st_nlink, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+            if (len(payload) != opened.st_size
+                    or identity(os.fstat(descriptor)) != identity(opened)
+                    or identity(os.stat(name, dir_fd=directory, follow_symlinks=False))
+                        != identity(opened)):
+                _reject()
+            return _execution_proof(payload, request_hash)
+        except _CONTROL:
+            raise
+        except Exception:
+            _reject()
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+            if directory is not None:
+                os.close(directory)
 
     def _replace_at(self, directory_fd: int, new: dict[str, object]) -> None:
         """Write/fsync private temp, atomic rename and fsync enclosing dir."""

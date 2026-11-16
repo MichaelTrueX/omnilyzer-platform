@@ -14,6 +14,8 @@ No production path, Docker, RootlessKit, systemd, registry or PostgreSQL touched
 from __future__ import annotations
 
 import json
+import base64
+import hashlib
 import os
 from pathlib import Path
 import stat
@@ -71,6 +73,68 @@ class AnalyticsRouteJournalTests(unittest.TestCase):
         with self.assertRaises(AnalyticsRouteJournalUnavailable) as raised:
             operation()
         self.assertNotIn(str(self.directory), str(raised.exception))
+
+    def execution_request(self):
+        raw = canonical_bytes({'schema_version': 3, 'product_id': 'analytics',
+            'stage': 'dev', 'manifest_digest': 'sha256:' + 'a' * 64,
+            'exact_image_reference': NEXT})
+        request_hash = hashlib.sha256(raw).hexdigest()
+        intent = self.journal.begin(**approval(request_sha256=request_hash))
+        ready = self.journal.finish(intent, phase='candidate_ready')
+        self.journal.finish(ready, phase='switched')
+        return raw, request_hash
+
+    def test_execution_proof_persists_independent_request_and_container(self):
+        raw, request_hash = self.execution_request()
+        before = self.path.read_bytes()
+        self.journal.record_execution(raw, 'e' * 64)
+        proof = self.journal.read_execution(request_hash)
+        self.assertEqual(proof, {'canonical_request': raw,
+            'container_id': 'e' * 64, 'image': NEXT})
+        file = self.directory / ('execution-' + request_hash + '.json')
+        self.assertEqual(stat.S_IMODE(file.stat().st_mode), 0o600)
+        self.assertEqual(self.path.read_bytes(), before)
+        self.denied(lambda: self.journal.record_execution(raw, 'e' * 64))
+        # A forged journal cannot change the independently recorded expectation.
+        changed = json.loads(self.path.read_bytes())
+        changed['next_image'] = LATER
+        self.path.write_bytes(canonical_bytes(changed))
+        self.assertEqual(self.journal.read_execution(request_hash)['image'], NEXT)
+
+    def test_execution_proof_rejects_changed_request_wrong_hash_or_identity(self):
+        raw, request_hash = self.execution_request()
+        self.denied(lambda: self.journal.record_execution(raw, 'f' * 64))
+        self.journal.record_execution(raw, 'e' * 64)
+        file = self.directory / ('execution-' + request_hash + '.json')
+        saved = file.read_bytes()
+        altered = json.loads(saved)
+        altered['request_base64'] = base64.b64encode(raw.replace(b'"dev"', b'"prod"')).decode()
+        file.write_bytes(canonical_bytes(altered))
+        self.denied(lambda: self.journal.read_execution(request_hash))
+        file.write_bytes(saved)
+        file.chmod(0o644)
+        self.denied(lambda: self.journal.read_execution(request_hash))
+        file.chmod(0o600)
+        file.unlink()
+        file.symlink_to(self.path)
+        self.denied(lambda: self.journal.read_execution(request_hash))
+
+    def test_missing_partial_or_noncanonical_execution_proof_is_hold(self):
+        _, request_hash = self.execution_request()
+        self.denied(lambda: self.journal.read_execution(request_hash))
+        file = self.directory / ('execution-' + request_hash + '.json')
+        file.write_bytes(b'{')
+        file.chmod(0o600)
+        self.denied(lambda: self.journal.read_execution(request_hash))
+        self.denied(lambda: self.journal.read_execution('../untrusted'))
+
+    def test_failed_proof_fsync_preserves_failure_evidence(self):
+        raw, request_hash = self.execution_request()
+        before = self.path.read_bytes()
+        with patch('deployment.analytics_route_journal.os.fsync', side_effect=OSError):
+            self.denied(lambda: self.journal.record_execution(raw, 'e' * 64))
+        self.assertTrue((self.directory / ('execution-' + request_hash + '.json')).exists())
+        self.assertEqual(self.path.read_bytes(), before)
 
     def test_begin_switched_reopen_reuse_previous_signed_image(self):
         """Both durable phases survive a fresh process object's first read."""

@@ -72,7 +72,7 @@ _UID991_FAILURE_PHASES = frozenset({
     "private_stability", "replay_begin",
     "candidate_stage", "candidate_identity", "candidate_probe",
     "candidate_ready_preflight", "private_route_switch",
-    "private_route_verify", "replay_finish", "signed_success_reply",
+    "private_route_verify", "execution_receipt", "replay_finish", "signed_success_reply",
 })
 
 
@@ -817,6 +817,91 @@ class AnalyticsPrivilegedExecutor:
 # Section 7b: exact UID991 owner-approved restart reconciliation.
 # This source-only helper is invoked only by the root-owned generation3
 # service before accepting the inherited broker Unix socket.
+def _read_analytics_execution_status(guard: object, request_hash: str) -> str | None:
+    """Read one completion through the unchanged C13 store custody checks.
+
+    Analytics owns this consumer; the frozen shared Canary source/API is not
+    widened. This result alone authenticates neither an image nor a container.
+    """
+    import re
+    import sqlite3
+    from .identity import ReplayUnavailableError
+    from .replay_sqlite import REPLAY_FILENAME, SQLiteReplayGuard
+    if (type(guard) is not SQLiteReplayGuard or type(request_hash) is not str
+            or re.fullmatch(r'[0-9a-f]{64}', request_hash) is None
+            or request_hash == '0' * 64):
+        raise ReplayUnavailableError('replay storage is unavailable')
+    directory_descriptor: int | None = None
+    database_descriptor: int | None = None
+    connection: sqlite3.Connection | None = None
+    failed = False
+    observed_status = None
+    try:
+        directory_descriptor = guard._open_directory()
+        guard._validate_quiescent_filesystem(directory_descriptor)
+        database_descriptor = os.open(
+            REPLAY_FILENAME, os.O_RDONLY | os.O_NOFOLLOW,
+            dir_fd=directory_descriptor,
+        )
+        guard._validate_bound_file(directory_descriptor, database_descriptor)
+        bound_path = Path(f"/proc/self/fd/{database_descriptor}")
+        connection = sqlite3.connect(
+            bound_path.as_uri() + "?mode=ro", uri=True,
+            timeout=guard._busy_timeout_ms / 1000, isolation_level=None,
+        )
+        connection.enable_load_extension(False)
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("PRAGMA trusted_schema=OFF")
+        connection.execute("PRAGMA temp_store=MEMORY")
+        connection.execute(f"PRAGMA busy_timeout={guard._busy_timeout_ms}")
+        guard._validate_bound_file(directory_descriptor, database_descriptor)
+        connection.execute("BEGIN")
+        guard._validate_open_store(connection, require_connection_limit=False)
+        if request_hash is not None:
+            rows = connection.execute(
+                "SELECT status FROM consumptions WHERE executor_request_sha256 = ?",
+                (request_hash,),
+            ).fetchmany(2)
+            if len(rows) > 1:
+                raise ReplayUnavailableError('replay storage is unavailable')
+            if rows:
+                observed_status = rows[0][0]
+        connection.execute("ROLLBACK")
+        guard._validate_quiescent_filesystem(directory_descriptor)
+        guard._validate_bound_file(directory_descriptor, database_descriptor)
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except Exception:
+        failed = True
+    finally:
+        if connection is not None:
+            try:
+                connection.close()
+            except (KeyboardInterrupt, SystemExit, GeneratorExit):
+                raise
+            except Exception:
+                failed = True
+        if database_descriptor is not None:
+            try:
+                os.close(database_descriptor)
+            except (KeyboardInterrupt, SystemExit, GeneratorExit):
+                raise
+            except Exception:
+                failed = True
+        if directory_descriptor is not None:
+            try:
+                os.close(directory_descriptor)
+            except (KeyboardInterrupt, SystemExit, GeneratorExit):
+                raise
+            except Exception:
+                failed = True
+    if failed:
+        raise ReplayUnavailableError('replay storage is unavailable') from None
+    return observed_status
+
+
 def _reconcile_interrupted_first_successor_before_receive() -> None:
     """Restore original signed blue0.15 from a provable incomplete journal.
 
@@ -829,9 +914,10 @@ def _reconcile_interrupted_first_successor_before_receive() -> None:
     from an incomplete journal, stop a possibly serving green container,
     erase data/volume writes, or switch public ingress.
 
-    SWITCHED plus the exact protected FINISHED replay and unchanged verified
-    live route permits a read-only restart. Missing/ambiguous completion is
-    still HOLD without route mutation. This does not replay the old request
+    SWITCHED plus an immutable independently recorded request/container proof,
+    its exact protected FINISHED replay and unchanged verified live route
+    permits a read-only restart. Legacy/missing/ambiguous completion is still
+    HOLD without route mutation. This does not replay the old request
     or widen the first-successor-only admission contract for a new release.
     A restored journal still requires separately authorized recovery.
     """
@@ -914,21 +1000,26 @@ def _reconcile_interrupted_first_successor_before_receive() -> None:
                 expected_executor_uid=identities['expected_executor_uid'],
             )
             request_hash = intent['request_sha256']
-            if replay.execution_status(request_hash) != 'finished':
+            if _read_analytics_execution_status(replay, request_hash) != 'finished':
                 raise ValueError('committed route has no proven completed execution')
+            proof = journal.read_execution(request_hash)
+            if (intent['next_image'] != proof['image']
+                    or intent['next_container_id'] != proof['container_id']):
+                raise ValueError('route intent differs from completed signed request')
             observed = inspect_committed_analytics_route(
-                journal=journal, reviewed_image=intent['next_image'],
+                journal=journal, reviewed_image=proof['image'],
                 reviewed_slot='green',
-                reviewed_container_id=intent['next_container_id'],
+                reviewed_container_id=proof['container_id'],
                 reviewed_request_sha256=request_hash,
             )
             if (
                 getattr(observed, 'active_slot', None) != 'green'
-                or getattr(observed, 'active_image', None) != intent['next_image']
+                or getattr(observed, 'active_image', None) != proof['image']
                 or getattr(observed, 'active_container_id', None)
-                    != intent['next_container_id']
+                    != proof['container_id']
                 or journal.read() != intent
-                or replay.execution_status(request_hash) != 'finished'
+                or journal.read_execution(request_hash) != proof
+                or _read_analytics_execution_status(replay, request_hash) != 'finished'
             ):
                 raise ValueError('completed execution or live route changed')
             return None
@@ -1192,6 +1283,8 @@ def _execute_reviewed_first_successor_transaction(
                 or final.active_container_id != candidate_id
             ):
                 raise ValueError("green writer does not match durable journal")
+            phase = "execution_receipt"
+            journal.record_execution(canonical_request, candidate_id)
             phase = "replay_finish"
             if replay_finish(
                 request.oidc_jti, request_hash=request_hash,
