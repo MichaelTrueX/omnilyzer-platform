@@ -197,6 +197,12 @@ class FormativeSessionCsrfTests(SimpleTestCase):
 class FormativeForwardingTests(unittest.TestCase):
     """Bound exact internal Native transport, no upstream redirects or cookies."""
 
+    def setUp(self):
+        patch = mock.patch.object(formative, "_forward_native_get",
+            return_value=(200, {"csrfToken": "f" * 64}, "application/json"))
+        self.challenge = patch.start()
+        self.addCleanup(patch.stop)
+
     def test_only_fixed_loopback_uri_and_product_cookie_forwarded(self):
         response = mock.Mock()
         response.status = 200
@@ -213,7 +219,9 @@ class FormativeForwardingTests(unittest.TestCase):
         self.assertEqual((method, path), ("POST", ROUTE))
         headers = connection.request.call_args.kwargs["headers"]
         self.assertEqual(headers["Cookie"], "__Host-sumlaude_session=" + COOKIE)
-        self.assertEqual(headers["X-CSRF-Token"], "session-csrf")
+        self.challenge.assert_called_once_with("/api/auth/csrf", COOKIE)
+        self.assertEqual(headers["X-CSRF-Token"], "f" * 64)
+        self.assertNotEqual(headers["X-CSRF-Token"], "session-csrf")
         self.assertEqual(headers["Origin"], "https://app.sumlaude.com")
         self.assertNotIn("Authorization", headers)
         self.assertNotIn("__Host-omnilyzer_identity", str(headers))

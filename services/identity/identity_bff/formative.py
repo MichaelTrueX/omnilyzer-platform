@@ -61,8 +61,23 @@ def _forward_native(path, content, cookie, validated_csrf):
     """Forward one bounded JSON POST to the fixed loopback Native runtime.
 
     Do not proxy Django cookies, Keycloak secrets or inbound browser headers.
-    Native independently authorizes the existing product session and course.
+    Django already validated its own session CSRF. Native independently
+    requires its cookie-bound challenge, fetched only for this paired cookie.
+    Neither protection is substituted for the other or exposed cross-origin.
     """
+    if not isinstance(validated_csrf, str) or not validated_csrf:
+        return None
+    challenge = _forward_native_get("/api/auth/csrf", cookie)
+    if challenge is None:
+        return None
+    status, payload, media_type = challenge
+    if status != 200:
+        return status, payload
+    if (media_type != "application/json" or not isinstance(payload, dict)
+            or set(payload) != {"csrfToken"}
+            or not isinstance(payload["csrfToken"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", payload["csrfToken"])):
+        return None
     headers = {
         "Host": "app.sumlaude.com",
         "Accept": "application/json",
@@ -70,7 +85,7 @@ def _forward_native(path, content, cookie, validated_csrf):
         "Cookie": "__Host-sumlaude_session=" + cookie,
         "Origin": settings.PRODUCT_ORIGIN,
         "Sec-Fetch-Site": "same-origin",
-        "X-CSRF-Token": validated_csrf,
+        "X-CSRF-Token": payload["csrfToken"],
     }
     connection = http.client.HTTPConnection(_NATIVE_HOST, _NATIVE_PORT, timeout=6)
     try:
