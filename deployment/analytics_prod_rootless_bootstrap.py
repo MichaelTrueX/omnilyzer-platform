@@ -7,6 +7,7 @@ No PROD application image, DB mutation, Nginx change, or release authorization.
 from __future__ import annotations
 
 import argparse
+import grp
 import hashlib
 import json
 import os
@@ -42,7 +43,8 @@ ROOTFUL_UNITS = ("docker.service", "docker.socket", "containerd.service")
 KEY = Path("/etc/apt/keyrings/omnilyzer-docker.asc")
 SOURCE = Path("/etc/apt/sources.list.d/omnilyzer-docker.sources")
 APPARMOR = Path("/etc/apparmor.d/rootlesskit")
-UNIT = HOME / ".config/systemd/user/docker.service"
+UNIT = Path("/etc/systemd/user/omnilyzer-analytics-docker.service")
+WANTS = Path("/etc/systemd/user/default.target.wants/omnilyzer-analytics-docker.service")
 CONFIG = Path("/etc/omnilyzer/analytics/docker/daemon.json")
 MARKER = Path("/var/lib/omnilyzer/analytics-bootstrap-v1.json")
 SOURCE_TEXT = (
@@ -50,7 +52,7 @@ SOURCE_TEXT = (
     "Suites: noble\nComponents: stable\nArchitectures: amd64\n"
     "Signed-By: /etc/apt/keyrings/omnilyzer-docker.asc\n"
 )
-UNIT_TEXT = """# File: /var/lib/omnilyzer/analytics/.config/systemd/user/docker.service
+UNIT_TEXT = """# File: /etc/systemd/user/omnilyzer-analytics-docker.service
 # Purpose: Dedicated non-root Analytics Docker daemon. No TCP listener.
 # Related: deployment/analytics_prod_rootless_bootstrap.py.
 [Unit]
@@ -115,6 +117,31 @@ def subid_conflicts(path: Path) -> list[str]:
     return errors
 
 
+def host_id_conflicts() -> list[str]:
+    """Reject subordinate IDs already used by actual host users or groups."""
+    errors: list[str] = []
+    for account in pwd.getpwall():
+        if SUBID_START <= account.pw_uid <= SUBID_END:
+            errors.append(f"host UID overlap: {account.pw_name}")
+        if SUBID_START <= account.pw_gid <= SUBID_END:
+            errors.append(f"host primary GID overlap: {account.pw_name}")
+    for group in grp.getgrall():
+        if SUBID_START <= group.gr_gid <= SUBID_END:
+            errors.append(f"host GID overlap: {group.gr_name}")
+    return errors
+
+
+def valid_docker_key_listing(listing: str) -> bool:
+    """Accept one pinned primary Docker signing key, with optional subkeys."""
+    lines = listing.splitlines()
+    primary = [line for line in lines if line.startswith("pub:")]
+    fingerprints = [
+        line.split(":")[9] for line in lines
+        if line.startswith("fpr:") and len(line.split(":")) > 9
+    ]
+    return len(primary) == 1 and bool(fingerprints) and fingerprints[0] == DOCKER_FINGERPRINT
+
+
 def preflight() -> None:
     """Report independent mismatches together before any privileged mutation."""
     errors: list[str] = []
@@ -130,9 +157,15 @@ def preflight() -> None:
         errors.append("service user exists; no automatic retry")
     except KeyError:
         pass
-    for path in (KEY, SOURCE, UNIT, CONFIG, MARKER, HOME):
+    for path in (KEY, SOURCE, UNIT, WANTS, CONFIG, MARKER, HOME):
         if os.path.lexists(path):
             errors.append(f"pre-existing managed path: {path}")
+    for parent in (UNIT.parent, WANTS.parent):
+        if os.path.lexists(parent):
+            found = os.lstat(parent)
+            if (not stat.S_ISDIR(found.st_mode) or found.st_uid != 0
+                    or found.st_gid != 0 or stat.S_IMODE(found.st_mode) != 0o755):
+                errors.append(f"unsafe root-owned systemd directory: {parent}")
     # PROD already has the exact DEV-approved rootlesskit AppArmor profile.
     # Reuse it without overwriting unrelated security configuration.
     try:
@@ -161,6 +194,7 @@ def preflight() -> None:
             errors.extend(subid_conflicts(path))
         except (OSError, UnicodeError):
             errors.append(f"cannot inspect {path}")
+    errors.extend(host_id_conflicts())
     for port in (3141, 3142):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             probe.settimeout(1)
@@ -222,12 +256,8 @@ def install() -> None:
             raise RuntimeError("Docker signing key too large")
         key_file.write_bytes(key_data)
         key_result = run("/usr/bin/gpg", "--batch", "--show-keys", "--with-colons", str(key_file))
-        fingerprints = [
-            line.split(":")[9] for line in key_result.stdout.splitlines()
-            if line.startswith("fpr:")
-        ]
-        if not fingerprints or fingerprints[0] != DOCKER_FINGERPRINT:
-            raise RuntimeError("Docker signing-key fingerprint mismatch")
+        if not valid_docker_key_listing(key_result.stdout):
+            raise RuntimeError("Docker signing-key bundle differs from one pinned primary key")
         # Prevent vendor post-install scripts from starting rootful services.
         run("/usr/bin/systemctl", "mask", "--now", *ROOTFUL_UNITS)
         write_new(KEY, key_data, 0o644)
@@ -269,17 +299,15 @@ def install() -> None:
     data.chown(account.pw_uid, account.pw_gid)
     CONFIG.parent.mkdir(parents=True, mode=0o755)
     write_new(CONFIG, b'{"features":{"containerd-snapshotter":false}}\n', 0o644)
-    UNIT.parent.mkdir(parents=True, mode=0o755)
+    # The user manager reads this unit from the root-owned global user-unit
+    # directory, not from the service account's writable home directory.
     write_new(UNIT, UNIT_TEXT.encode("utf-8"), 0o644)
-    # Keep the user unit and its enablement root-owned; the service user
-    # can start the daemon but cannot rewrite its startup configuration.
-    wants = UNIT.parent / "default.target.wants"
-    wants.mkdir(mode=0o755)
-    (wants / "docker.service").symlink_to("../docker.service")
+    WANTS.parent.mkdir(mode=0o755, exist_ok=True)
+    WANTS.symlink_to("../omnilyzer-analytics-docker.service")
     run("/usr/bin/loginctl", "enable-linger", USER)
     run("/usr/bin/systemctl", "start", f"user@{account.pw_uid}.service")
     user_command(account.pw_uid, "/usr/bin/systemctl", "--user", "daemon-reload")
-    user_command(account.pw_uid, "/usr/bin/systemctl", "--user", "start", "docker.service")
+    user_command(account.pw_uid, "/usr/bin/systemctl", "--user", "start", "omnilyzer-analytics-docker.service")
     result = user_command(
         account.pw_uid, "/usr/bin/docker", "info",
         "--format", "{{json .SecurityOptions}}",
