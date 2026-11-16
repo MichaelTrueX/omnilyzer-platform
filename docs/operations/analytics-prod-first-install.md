@@ -28,11 +28,12 @@ post-install scripts run.
 
 The installer creates only a dedicated system user, subordinate UID/GID
 ranges, a root-owned global user systemd unit limited by ConditionUser,
-a rootless daemon and a private Docker Unix socket. It reuses the
-existing AppArmor user-namespace profile whose SHA256 exactly matches
-accepted DEV. It installs no application image. The rootless daemon
-has no TCP listener. Public Nginx/PM2 routes
-remain unchanged.
+a rootless daemon and a private Docker Unix socket. The service home
+is root-owned to prevent persistent user-unit overrides; only the
+explicit Docker data directory is service-user-writable. It reuses the
+existing AppArmor user-namespace profile whose SHA256 matches DEV. It
+installs no application image. The rootless daemon has no TCP listener.
+Public Nginx/PM2 routes remain unchanged.
 
 ## Operator execution
 
