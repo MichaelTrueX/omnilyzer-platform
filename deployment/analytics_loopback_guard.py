@@ -189,7 +189,8 @@ def _raw_rules() -> list[dict[str, object]]:
             raise ValueError("RootlessKit port record invalid")
     if len({r["id"] for r in inventory}) != len(inventory):
         raise ValueError("duplicate RootlessKit port ID")
-    return inventory
+    # RootlessKit enumerates a Go map. Preserve every field, with stable ID order.
+    return sorted(inventory, key=lambda record: record["id"])
 
 
 def _rules() -> list[dict[str, object]]:
