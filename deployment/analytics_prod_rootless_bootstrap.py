@@ -390,9 +390,10 @@ def check_consumed_partial_install() -> pwd.struct_passwd:
             errors.append(f"root-owned source missing: {path}")
     for spec in PACKAGES:
         name, version = spec.split("=", 1)
-        found = run("/usr/bin/dpkg-query", "-W", "-f=" + chr(36) + "{Version}", name, check=False)
-        if found.returncode or found.stdout.strip() != version:
-            errors.append(f"package differs: {name}")
+        fields = "-f=" + chr(36) + "{Status} " + chr(36) + "{Version}"
+        found = run("/usr/bin/dpkg-query", "-W", fields, name, check=False)
+        if found.returncode or found.stdout.strip() != f"install ok installed {version}":
+            errors.append(f"package not fully installed at pinned version: {name}")
     audit = run("/usr/bin/dpkg", "--audit", check=False)
     if audit.returncode or audit.stdout.strip():
         errors.append("dpkg has incomplete package state")
