@@ -6,8 +6,9 @@ No host package, user, service, database or network changes occur.
 """
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
 from io import StringIO
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -197,6 +198,176 @@ class AnalyticsProdRootlessBootstrapTests(unittest.TestCase):
         self.assertNotIn("data.chown(", code)
         self.assertIn("os.chown(HOME, 0, 0)", code)
         self.assertIn("os.chown(data, account.pw_uid, account.pw_gid)", code)
+
+
+    @contextmanager
+    def fake_exact_partial_state(self):
+        """Model original root-owned PROD receipts without root or live writes."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            home = base / "lib" / "analytics"
+            home.mkdir(parents=True, mode=0o755)
+            lib = home.parent
+            unit = base / "etc" / "systemd" / "user" / "analytics.service"
+            unit.parent.mkdir(parents=True, mode=0o755)
+            for parent in (home, lib, unit.parent):
+                parent.chmod(0o755)
+            files = {
+                "original": base / "old-first-install",
+                "key": base / "apt-key",
+                "source": base / "apt-source",
+                "apparmor": base / "apparmor-profile",
+                "vendor": base / "dockerd-rootless.sh",
+                "release": base / "os-release",
+                "subuid": base / "subuid",
+                "subgid": base / "subgid",
+            }
+            payloads = {
+                "original": b"original-root-custody",
+                "key": b"original-pinned-docker-key",
+                "source": b"original-docker-repository",
+                "apparmor": b"original-approved-apparmor",
+                "vendor": b"original-pinned-vendor-rootless",
+                "release": b'ID=ubuntu\nVERSION_ID="24.04"\n',
+                "subuid": b"trust:100000:65536\nomnigpt:165536:65536\nomnilyzer-analytics:231072:65536\n",
+                "subgid": b"trust:100000:65536\nomnigpt:165536:65536\nomnilyzer-analytics:231072:65536\n",
+            }
+            for name, file in files.items():
+                file.write_bytes(payloads[name])
+                file.chmod(0o500 if name == "original" else 0o644)
+            account = SimpleNamespace(
+                pw_uid=990, pw_gid=982, pw_dir=str(home),
+                pw_shell="/usr/sbin/nologin", pw_name="omnilyzer-analytics"
+            )
+            service_group = SimpleNamespace(gr_gid=982, gr_mem=[])
+            package_state = {"status": "install ok installed"}
+            mapping = {
+                "/etc/os-release": files["release"],
+                "/usr/bin/dockerd-rootless.sh": files["vendor"],
+                "/etc/subuid": files["subuid"],
+                "/etc/subgid": files["subgid"],
+                "/var/lib/omnilyzer": lib,
+                "/var/lib/systemd/linger": base / "linger",
+            }
+            orig_lstat = os.lstat
+            orig_lexists = os.path.lexists
+
+            def source_path(value):
+                """Redirect only fixed root-state reads into temporary fixtures."""
+                return mapping.get(str(value), Path(value))
+
+            def root_stat(path):
+                """Represent temporary test files as root-owned with real modes."""
+                entry = orig_lstat(path)
+                if str(path).startswith(str(base)):
+                    return SimpleNamespace(
+                        st_mode=entry.st_mode, st_uid=0,
+                        st_gid=0, st_nlink=entry.st_nlink
+                    )
+                return entry
+
+            def fake_run(*argv, **kwargs):
+                """Model explicit package statuses and masked rootful services."""
+                if argv[0] == "/usr/bin/dpkg-query":
+                    versions = dict(spec.split("=", 1) for spec in boot.PACKAGES)
+                    return subprocess.CompletedProcess(
+                        argv, 0, package_state["status"] + " " + versions[argv[-1]], ""
+                    )
+                if "is-enabled" in argv:
+                    return subprocess.CompletedProcess(argv, 0, "masked", "")
+                if "is-active" in argv:
+                    return subprocess.CompletedProcess(argv, 0, "inactive", "")
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            class ClosedPort:
+                """Simulate available localhost Analytics ports without networking."""
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def connect_ex(self, address):
+                    return 111
+
+            with ExitStack() as stack:
+                stack.enter_context(patch.multiple(
+                    boot, HOME=home, KEY=files["key"], SOURCE=files["source"],
+                    APPARMOR=files["apparmor"], UNIT=unit,
+                    WANTS=unit.parent / "default.target.wants" / "analytics.service",
+                    CONFIG=base / "etc" / "analytics" / "daemon.json",
+                    MARKER=base / "complete.json",
+                    ORIGINAL_INSTALLER=files["original"],
+                    ORIGINAL_INSTALLER_SHA256=hashlib.sha256(payloads["original"]).hexdigest(),
+                    PARTIAL_APT_KEY_SHA256=hashlib.sha256(payloads["key"]).hexdigest(),
+                    PARTIAL_APT_SOURCE_SHA256=hashlib.sha256(payloads["source"]).hexdigest(),
+                    APPARMOR_SHA256=hashlib.sha256(payloads["apparmor"]).hexdigest(),
+                    VENDOR_SHA256=hashlib.sha256(payloads["vendor"]).hexdigest()
+                ))
+                stack.enter_context(patch.object(boot, "Path", side_effect=source_path))
+                stack.enter_context(patch.object(boot.os, "geteuid", return_value=0))
+                stack.enter_context(patch.object(boot.os, "lstat", side_effect=root_stat))
+                stack.enter_context(patch.object(
+                    boot.os.path, "lexists",
+                    side_effect=lambda path: False if str(path) == "/var/run/docker.sock"
+                    else orig_lexists(path)
+                ))
+                stack.enter_context(patch.object(boot.pwd, "getpwnam", return_value=account))
+                stack.enter_context(patch.object(boot.grp, "getgrnam", return_value=service_group))
+                stack.enter_context(patch.object(boot.pwd, "getpwall", return_value=[]))
+                stack.enter_context(patch.object(boot.grp, "getgrall", return_value=[]))
+                stack.enter_context(patch.object(boot.socket, "gethostname", return_value=boot.HOST))
+                stack.enter_context(patch.object(boot.socket, "socket", return_value=ClosedPort()))
+                stack.enter_context(patch.object(boot.platform, "machine", return_value="x86_64"))
+                stack.enter_context(patch.object(
+                    boot.shutil, "disk_usage",
+                    return_value=SimpleNamespace(free=40 * 1024**3)
+                ))
+                stack.enter_context(patch.object(boot, "run", side_effect=fake_run))
+                yield files, account, package_state
+
+    def test_exact_partial_state_and_negative_authority_gate(self):
+        """Reject changed source, packages, identity, symlinks and later writes."""
+        with self.fake_exact_partial_state() as (files, account, package_state):
+            with redirect_stdout(StringIO()):
+                found = boot.check_consumed_partial_install()
+            self.assertEqual(found.pw_uid, 990)
+
+            def rejected():
+                """Any mismatch must stop BEFORE the privileged remainder runs."""
+                with patch.object(boot, "finish_service_install") as finish:
+                    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                        with self.assertRaisesRegex(RuntimeError, "preflight rejected"):
+                            boot.resume_after_user_created()
+                    finish.assert_not_called()
+
+            with patch.object(boot, "ORIGINAL_INSTALLER_SHA256", "0" * 64):
+                rejected()
+
+            package_state["status"] = "deinstall ok config-files"
+            rejected()
+            package_state["status"] = "install ok installed"
+
+            with patch.object(
+                boot.pwd, "getpwnam",
+                return_value=SimpleNamespace(
+                    pw_uid=991, pw_gid=account.pw_gid,
+                    pw_dir=account.pw_dir, pw_shell=account.pw_shell
+                ),
+            ):
+                rejected()
+
+            files["key"].rename(files["key"].with_suffix(".saved"))
+            files["key"].symlink_to(files["key"].with_suffix(".saved"))
+            rejected()
+            files["key"].unlink()
+            files["key"].with_suffix(".saved").rename(files["key"])
+
+            next_stage = boot.CONFIG
+            next_stage.parent.mkdir(parents=True)
+            next_stage.write_text("premature-install")
+            rejected()
+            next_stage.unlink()
 
 
 if __name__ == "__main__":
