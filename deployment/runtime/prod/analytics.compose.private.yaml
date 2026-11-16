@@ -1,0 +1,112 @@
+# File: deployment/runtime/prod/analytics.compose.private.yaml
+# Purpose: Private PROD-only Analytics 0.16.0 first blue-slot runtime.
+# Related: deployment/runtime/dev/analytics.compose.review.yaml,
+#          deployment/analytics_prod_rootless_bootstrap.py,
+#          deployment/direct_dev_prod_preflight.py,
+#          docs/operations/dev-prod-direct-delivery.md.
+#
+# Section 0: This is inert source configuration, NOT release authorization.
+# Only a separately approved root-owned PROD Task014 adapter may use this file
+# after verifying the original signed OCI digest, exact DEV acceptance, owner
+# approval, isolated PostgreSQL roles/RLS, secret custody, backups and rollback.
+# No STAGING, public routing, dev secrets, or application source rebuild.
+name: omnilyzer-analytics-prod
+
+# Section 1: Hardened minimal Next.js runtime, matching accepted DEV controls
+# except for bounded PROD memory and intentionally disabled auto-restart.
+x-private-analytics: &private_analytics
+  image: ${ANALYTICS_PROD_IMAGE:?original signed 0.16.0 OCI digest required}
+  user: "10001:10001"
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+  pids_limit: 192
+  cpus: "1.00"
+  mem_limit: 768m
+  restart: "no"
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+  environment:
+    NODE_ENV: production
+    NEXT_TELEMETRY_DISABLED: "1"
+    NODE_OPTIONS: "--max-old-space-size=512"
+  command:
+    - node
+    - --env-file=/run/secrets/COLLECTOR_DATABASE_URL
+    - --env-file=/run/secrets/DATABASE_URL
+    - --env-file=/run/secrets/JWT_REFRESH_SECRET
+    - --env-file=/run/secrets/JWT_SECRET
+    - node_modules/next/dist/bin/next
+    - start
+    - -H
+    - 0.0.0.0
+    - -p
+    - "3000"
+  secrets:
+    - source: PROD_COLLECTOR_DATABASE_URL
+      target: COLLECTOR_DATABASE_URL
+    - source: PROD_DATABASE_URL
+      target: DATABASE_URL
+    - source: PROD_JWT_REFRESH_SECRET
+      target: JWT_REFRESH_SECRET
+    - source: PROD_JWT_SECRET
+      target: JWT_SECRET
+  # Section 2: Reuse existing host PostgreSQL over a LOCAL UNIX SOCKET.
+  # No PostgreSQL TCP listener is opened and no second database server is
+  # installed. Dedicated PROD SCRAM roles and RLS must be reviewed first.
+  # Prisma 6 supports ?host=/var/run/postgresql/ in connection URLs.
+  volumes:
+    - type: bind
+      source: /var/run/postgresql
+      target: /var/run/postgresql
+      read_only: true
+      bind:
+        create_host_path: false
+  healthcheck:
+    test:
+      - CMD
+      - node
+      - -e
+      - 'fetch("http://127.0.0.1:3000/readyz",{cache:"no-store"}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'
+    interval: 15s
+    timeout: 5s
+    retries: 3
+    start_period: 30s
+  networks:
+    - analytics_backend
+
+# Section 3: First private candidate only. Never start a second slot on this
+# 3.7-GiB / no-swap PROD host before independent memory-capacity acceptance.
+services:
+  analytics-blue:
+    <<: *private_analytics
+    profiles: ["blue"]
+    ports:
+      - "127.0.0.1:3141:3000"
+
+# Section 4: Fixed, separate PROD-only network and secret-source references.
+# The network and secrets must already exist; this Compose file provisions
+# neither and cannot authorize release. Files should be owned by the exact
+# rootless-mapped container UID/GID241072, mode0600; the containing directory
+# must remain root-controlled with restricted traversal for GID982.
+networks:
+  analytics_backend:
+    external: true
+    name: omnilyzer-analytics-backend-prod
+
+secrets:
+  PROD_COLLECTOR_DATABASE_URL:
+    file: /var/lib/omnilyzer/analytics/prod/secrets/COLLECTOR_DATABASE_URL
+  PROD_DATABASE_URL:
+    file: /var/lib/omnilyzer/analytics/prod/secrets/DATABASE_URL
+  PROD_JWT_REFRESH_SECRET:
+    file: /var/lib/omnilyzer/analytics/prod/secrets/JWT_REFRESH_SECRET
+  PROD_JWT_SECRET:
+    file: /var/lib/omnilyzer/analytics/prod/secrets/JWT_SECRET
