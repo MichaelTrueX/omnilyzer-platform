@@ -57,7 +57,7 @@ class AnalyticsPrivateProdComposeTests(unittest.TestCase):
         for unsafe in (
             "privileged", "build", "network_mode", "pid", "userns_mode",
             "devices", "volumes_from", "extra_hosts", "entrypoint", "dns",
-            "container_name", "env_file",
+            "container_name", "env_file", "extends",
         ):
             self.assertNotIn(unsafe, service)
 
@@ -135,7 +135,7 @@ class AnalyticsPrivateProdComposeTests(unittest.TestCase):
 
     def test_reject_public_port_and_additional_service(self) -> None:
         """Detect accidental public ingress or an unreviewed green release."""
-        for change in ("public_port", "second_service", "extra_port"):
+        for change in ("public_port", "second_service", "extra_port", "inherited_port"):
             with self.subTest(change=change):
                 config = deepcopy(self.config)
                 if change == "public_port":
@@ -146,10 +146,15 @@ class AnalyticsPrivateProdComposeTests(unittest.TestCase):
                     config["services"]["analytics-green"] = deepcopy(
                         config["services"]["analytics-blue"]
                     )
-                else:
+                elif change == "extra_port":
                     config["services"]["analytics-blue"]["ports"].append(
                         "127.0.0.1:3142:3000"
                     )
+                else:
+                    config["services"]["analytics-blue"]["extends"] = {
+                        "file": "./unexpected-public-service.yaml",
+                        "service": "public-base",
+                    }
                 with self.assertRaises(AssertionError):
                     self.assert_private_prod_contract(config)
 
