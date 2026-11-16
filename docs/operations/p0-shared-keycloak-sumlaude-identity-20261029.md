@@ -9,6 +9,38 @@ Related: services/identity/omnilyzer-identity.service,
 # P0 shared platform identity BFF for Sumlaude (29 Oct 2026)
 
 
+### Existing Keycloak exact public callback - one-client operator candidate (16 Nov 2026)
+
+Actual anonymous Keycloak loopback authorization probe on truexmainserver
+(before this source change) returned app.sumlaude.com callback HTTP200 but
+sumlaude.com callback HTTP400. Therefore, no existing public OIDC callback is
+registered; a new vhost alone does not establish working login.
+
+The existing M01 scope now includes services/identity/ops/keycloak_add_public_callback_once.py,
+a limited, NOT installed, NOT authorized, NOT executed operator source candidate.
+Its status action anonymously checks both exact callbacks on the existing
+Keycloak loopback without provider login, cookies, users or database write.
+Separately approved apply authenticates the previously installed master
+realm's root-only admin via a temporary /run file and changes only
+redirectUris on the single existing confidential sumlaude-bff client.
+The accepted value is the old https://app.sumlaude.com/auth/callback plus
+the new exact https://sumlaude.com/auth/callback (in that order).
+It preserves webOrigins, client ID/secret, PKCE S256, code-only confidential
+flow and all users. Wildcard redirects, extra origins, other-client edits,
+and changes to existing client security settings are rejected.
+
+Before any root mutation, M04 must independently accept the exact operator
+source/hash, the Product Owner must authorize this exact callback addition,
+and a root-controlled operator copy must be installed/verified under existing
+M01 production procedures. Apply requires the exact owner scope
+M01_CANONICAL_KEYCLOAK_EXACT_CALLBACK_ONCE_GO in the environment variable
+M01_CANONICAL_KEYCLOAK_OWNER_GO, plus root on truexmainserver.
+The operator writes a root-only attempt.json receipt BEFORE the API call.
+Ambiguous errors require inspection, never an automatic retry. It verifies
+unchanged security settings and both exact callbacks before success.json.
+Never claim tests, status or an attempt receipt as a live login, and never
+run an unreviewed operator or make arbitrary admin-console changes.
+
 ## Canonical same-URL public lessons - OFF-by-default source candidate (16 Nov 2026)
 
 **Existing private pilot remains the active production contract.** This
