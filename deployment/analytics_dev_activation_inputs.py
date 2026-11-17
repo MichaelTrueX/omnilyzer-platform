@@ -15,7 +15,8 @@ Related: deployment/analytics_source_handoff.py (32 Git objects),
 
 Sections: fixed destinations, read-only source binding, independent root
           approval, exact broker/executor configs, immutable systemd source
-          selection and product-private mount-namespace isolation.
+          selection, SHA-named ordinary source directory and product-private
+          mount-namespace isolation.
 
 SECURITY: Review data is NOT root installation authority. No write, network,
 secret, Docker, systemd, session, OIDC, replay or database side effect.
@@ -54,6 +55,9 @@ DESTINATION = "/opt/omnilyzer/deployment/analytics-app"
 # V2 reviewed candidate must be independently installed *beside* V1.
 # The original V1 active service continues to refer to DESTINATION.
 SUCCESSOR_DESTINATION = "/opt/omnilyzer/deployment/analytics-app-candidate"
+# Generation4 is a SHA-named immutable source, not the older V2/V3 candidate.
+from .analytics_isolated_source_install import _ordinary_approval
+from .analytics_executor_service_config import ordinary_analytics_source_root
 _CLOSED_PATHS = (SOURCE_ARCHIVE, SOURCE_APPROVAL, EXECUTOR_CONFIG, BROKER_CONFIG)
 # These systemd objects remain inert until separately installed by root.
 # Exactly three are already bound in the canonical 32-object reviewed archive.
@@ -357,13 +361,19 @@ def build_unsigned_analytics_activation_inputs(
         # distinct root-owned *runtime execution* selection, not permission
         # to weaken or replace the immutable 38-entry source archive.
         approval = canonical_bytes({
-            "schema_version": 2 if successor_source else 1,
+            "schema_version": (
+                3 if owner_authorized_ordinary_successor else
+                2 if successor_source else 1
+            ),
             "product_id": "analytics", "stage": "dev",
             "reviewed_commit": reviewed_commit,
             "manifest_sha256": manifest_sha,
             "archive_sha256": hashlib.sha256(archive).hexdigest(),
-            "destination": (SUCCESSOR_DESTINATION if successor_source
-                            else DESTINATION),
+            "destination": (
+                ordinary_analytics_source_root(reviewed_commit)
+                if owner_authorized_ordinary_successor else
+                SUCCESSOR_DESTINATION if successor_source else DESTINATION
+            ),
         })
         # Original ROOT installer still accepts V1 ONLY: allowing V2 here
         # makes a reproducible reviewed input, not a usable root install.
@@ -439,12 +449,19 @@ def build_unsigned_analytics_service_inputs(
                 approved_workflow_sha=approved_workflow_sha,
             )
             from .analytics_isolated_source_install import _successor_approval
-            approved_candidate = _successor_approval(candidate[SOURCE_APPROVAL])
+            approved_candidate = (
+                _ordinary_approval(candidate[SOURCE_APPROVAL])
+                if owner_authorized_ordinary_successor else
+                _successor_approval(candidate[SOURCE_APPROVAL])
+            )
             parsed_candidate = parse_analytics_executor_service_config(
                 candidate[EXECUTOR_CONFIG]
             )
             if (
-                approved_candidate["destination"] != SUCCESSOR_DESTINATION
+                approved_candidate["destination"] != (
+                    ordinary_analytics_source_root(reviewed_commit)
+                    if owner_authorized_ordinary_successor else SUCCESSOR_DESTINATION
+                )
                 or parsed_candidate["source_generation"] != (
                     4 if owner_authorized_ordinary_successor else
                     3 if owner_authorized_first_successor else 2
@@ -537,8 +554,12 @@ def build_unsigned_analytics_service_inputs(
         # grant a service restart, source selection or signed release GO.
         # Neither overrides ExecStart, identity, secrets, sockets nor ports.
         if successor_source:
+            selected_source = (
+                ordinary_analytics_source_root(reviewed_commit)
+                if owner_authorized_ordinary_successor else SUCCESSOR_DESTINATION
+            )
             candidate_bytes = (
-                "[Service]\nWorkingDirectory=" + SUCCESSOR_DESTINATION + "\n"
+                "[Service]\nWorkingDirectory=" + selected_source + "\n"
             ).encode("ascii")
             result[_SUCCESSOR_BROKER_DROPIN] = candidate_bytes
             # The broker uses its own already-qualified UID990 signer assets.
