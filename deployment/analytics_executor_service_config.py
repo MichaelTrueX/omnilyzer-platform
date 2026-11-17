@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import stat
 
@@ -113,6 +114,20 @@ _INSTALLED_ROOT = Path("/opt/omnilyzer/deployment/analytics-app")
 # A separately owner-installed schema-2 source is verified only beside V1.
 # This is NOT a generic source root or permission to alter active service.
 _SUCCESSOR_INSTALLED_ROOT = Path("/opt/omnilyzer/deployment/analytics-app-candidate")
+# Section: pure SHA-named source selection; no I/O and no installer import.
+def ordinary_analytics_source_root(reviewed_commit: str) -> str:
+    """Derive one fixed root-owned immutable source path from an exact Git SHA.
+
+    This pure function is NOT install permission. No caller-supplied path or
+    mutable label is accepted. The protected schema4 service config must pin
+    the exact same SHA and independently rehash every installed source file.
+    """
+    if (type(reviewed_commit) is not str
+            or re.fullmatch(r"[0-9a-f]{40}", reviewed_commit) is None
+            or reviewed_commit == "0" * 40):
+        raise ValueError("untrusted ordinary source revision")
+    return str(_SUCCESSOR_INSTALLED_ROOT.parent / ("analytics-app-release-" + reviewed_commit))
+
 _CONFIGURATION_NAME = "analytics-executor.json"
 _FIELDS = frozenset({
     "schema_version", "product_id", "stage", "reviewed_installed_commit",
@@ -245,13 +260,28 @@ def _verify_source_bytes(
     """Read exact generation-specific source via fd-relative O_NOFOLLOW.
 
     Root-owned schema 1 accepts only the original 20-file live directory;
-    schema2/3 accept only the exact 26-file inactive candidate directory.
+    schema2/3 accept only the exact 26-file inactive candidate directory;
+    schema4 accepts only the SHA-named root-controlled immutable source.
     The real installed root and all ancestors must be root-owned and not
     writable by any unprivileged role. Files must be single-link, mode0644,
     bounded, regular and byte-hash identical to root-owned installed policy.
     """
-    if type(expected) is not tuple or root not in (
-        _INSTALLED_ROOT, _SUCCESSOR_INSTALLED_ROOT,
+    # Root-controlled schema4 may read an immutable per-commit ordinary path;
+    # no generic arbitrary root or symbolic link can be introduced by config.
+    ordinary_root = False
+    if isinstance(root, Path):
+        try:
+            ordinary_root = (
+                str(root) == ordinary_analytics_source_root(root.name.removeprefix(
+                    "analytics-app-release-"
+                ))
+                and root.name.startswith("analytics-app-release-")
+            )
+        except ValueError:
+            ordinary_root = False
+    if type(expected) is not tuple or (
+        root not in (_INSTALLED_ROOT, _SUCCESSOR_INSTALLED_ROOT)
+        and not ordinary_root
     ):
         raise AnalyticsInstalledAuthorityError(_ERROR)
     # Check generation/root pairing before opening even one host descriptor.
@@ -262,6 +292,7 @@ def _verify_source_bytes(
     if (
         (root == _INSTALLED_ROOT and names != v1_names)
         or (root == _SUCCESSOR_INSTALLED_ROOT and names != v2_names)
+        or (ordinary_root and names != v2_names)
     ):
         raise AnalyticsInstalledAuthorityError(_ERROR)
     descriptors: list[int] = []
@@ -420,7 +451,9 @@ def load_analytics_executor_service_config(
         ):
             raise ValueError
         source_root = (
-            _SUCCESSOR_INSTALLED_ROOT if product["source_generation"] in (2, 3, 4)
+            Path(ordinary_analytics_source_root(product["reviewed_installed_commit"]))
+            if product["source_generation"] == 4 else
+            _SUCCESSOR_INSTALLED_ROOT if product["source_generation"] in (2, 3)
             else _INSTALLED_ROOT
         )
         _verify_source_bytes((
