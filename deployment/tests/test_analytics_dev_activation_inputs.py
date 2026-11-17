@@ -168,11 +168,18 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
             repository_root=str(ROOT), reviewed_commit=self.sha,
             successor_source=True, owner_authorized_ordinary_successor=True,
         )
-        approval = _ordinary_approval(review[activation.SOURCE_APPROVAL])
+        approval = _ordinary_approval(review[activation.ORDINARY_SOURCE_APPROVAL])
         target = ordinary_analytics_source_root(self.sha)
+        self.assertEqual(set(review), {
+            activation.ORDINARY_SOURCE_APPROVAL,
+            activation.ORDINARY_SOURCE_ARCHIVE,
+            activation.EXECUTOR_CONFIG, activation.BROKER_CONFIG,
+        })
+        self.assertNotIn(activation.SOURCE_ARCHIVE, review)
+        self.assertNotIn(activation.SOURCE_APPROVAL, review)
         self.assertEqual(approval["schema_version"], 3)
         self.assertEqual(approval["destination"], target)
-        self.assertEqual(hashlib.sha256(review[activation.SOURCE_ARCHIVE]).hexdigest(),
+        self.assertEqual(hashlib.sha256(review[activation.ORDINARY_SOURCE_ARCHIVE]).hexdigest(),
                          approval["archive_sha256"])
         config = activation.parse_analytics_executor_service_config(
             review[activation.EXECUTOR_CONFIG],
