@@ -204,6 +204,58 @@ class ProductRouterTests(unittest.TestCase):
         self.assertEqual(self.analytics_replay.calls, [])
         self.assertEqual(self.canary_replay.calls, [])
 
+    def test_separate_root_generation_four_selects_only_signed_ordinary(self):
+        """V4 can never silently activate by using the old first release flag."""
+        from deployment.analytics_promotion_broker import AnalyticsPrivatePromotionBroker
+        from deployment.executor import _build_success_response
+        import hashlib
+        data, _ = AnalyticsSuccessorRequestTests().candidate()
+        data["owner_source_proof"] = "synthetic-signed-ordinary-source"
+        raw = canonical_bytes(data)
+        response = _build_success_response(hashlib.sha256(raw).hexdigest())
+        with patch.object(
+            AnalyticsPrivatePromotionBroker, "authorize_and_forward_ordinary_successor",
+            return_value=response,
+        ) as ordinary, patch.object(
+            AnalyticsPrivatePromotionBroker, "authorize_and_forward_first_successor",
+            side_effect=AssertionError("first release must be isolated"),
+        ) as historical:
+            router = AnalyticsDEVPromotionRouter(
+                canary=self.canary, analytics=self.analytics,
+                reviewed_installed_source=EXPECTED,
+                owner_authorized_ordinary_successor=True,
+            )
+            self.assertIs(object.__getattribute__(router, "_allow_ordinary_successor"), True)
+            self.assertIs(object.__getattribute__(router, "_allow_first_successor"), False)
+            actual = router.handle(
+                compact_token="synthetic", zot_token="synthetic",
+                forgejo_token="synthetic", promotion_request=raw,
+                received_at=NOW,
+            )
+            self.assertEqual(actual, response)
+            ordinary.assert_called_once()
+            historical.assert_not_called()
+        for kwargs in (
+            {"owner_authorized_ordinary_successor": True,
+             "owner_authorized_first_successor": True},
+            {"owner_authorized_ordinary_successor": True,
+             "successor_preflight_only": True},
+            {"owner_authorized_ordinary_successor": 1},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(TypeError):
+                AnalyticsDEVPromotionRouter(
+                    canary=self.canary, analytics=self.analytics,
+                    reviewed_installed_source=EXPECTED, **kwargs,
+                )
+        with self.assertRaises(BrokerRejectedError):
+            self.router.handle(
+                compact_token="synthetic", zot_token="synthetic",
+                forgejo_token="synthetic", promotion_request=raw,
+                received_at=NOW,
+            )
+        self.assertEqual(self.canary_transport.calls, [])
+        self.assertEqual(self.analytics_transport.requests, [])
+
     def test_root_generation_three_positive_route_is_distinct_from_v2_review(self):
         """A source-only receiver choice must not upgrade review-only V2."""
         from deployment.tests.test_analytics_execution import (
