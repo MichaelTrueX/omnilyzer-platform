@@ -2,7 +2,8 @@
 
 Purpose: Preserve original signed blue-only loopback lifecycle tests,
          plus synthetic journaled 3142 candidate preparation, exact-image
-         blue/green route replacement and recovery across crash boundaries.
+         blue/green route replacement and recovery across crash boundaries,
+         including reuse of an exact pre-prepared ordinary signed journal.
 Related: deployment/analytics_loopback_guard.py,
          deployment/analytics_active_state_review.py,
          deployment/systemd/rootless/omnilyzer-analytics-loopback.service,
@@ -818,6 +819,61 @@ class AnalyticsSuccessorRouteTransactionTests(unittest.TestCase):
         self.assertEqual(self.backend.rules[0], self.original_canary)
         self.assertEqual(self.backend.route(3141), [self.original_stable])
         self.assertEqual(self.backend.route(3142), [])
+
+    def _already_prepared_ordinary_blue(self):
+        """Construct a safely adopted second journal before 3142 is added."""
+        self._without_candidate_route()
+        guard._stage_reviewed_private_candidate_probe(**self.old)
+        guard._switch_reviewed_private_route(**self.old)
+        image = guard._SUCCESSOR_REPOSITORY + "e" * 64
+        self.backend.state["blue"]["Config"]["Image"] = image
+        self.backend.state["blue"]["Image"] = "sha256:" + "e" * 64
+        self.backend.state["blue"]["HostConfig"]["PortBindings"] = {}
+        later = {
+            **self.old,
+            "previous_slot": "green",
+            "previous_image": self.backend.state["green"]["Config"]["Image"],
+            "previous_id": self.backend.state["green"]["Id"],
+            "next_slot": "blue", "next_image": image,
+            "next_id": self.backend.state["blue"]["Id"],
+            "request_sha256": "d" * 64,
+        }
+        previous_ip = "172.20.0.4"
+        next_ip = "172.20.0.3"
+        precreated = self.journal.begin(
+            request_sha256=later["request_sha256"],
+            previous_slot="green", previous_image=later["previous_image"],
+            previous_container_id=later["previous_id"], previous_ip=previous_ip,
+            next_slot="blue", next_image=image,
+            next_container_id=later["next_id"], next_ip=next_ip,
+        )
+        self.assertEqual(precreated["phase"], "prepared")
+        self.assertEqual(precreated["generation"], 2)
+        return later
+
+    def test_durable_retirement_prepared_record_reuses_existing_probe(self):
+        """No duplicate journal.begin or invented 3141/3142 port route."""
+        later = self._already_prepared_ordinary_blue()
+        self.assertIsNone(guard._stage_reviewed_private_candidate_probe(**later))
+        self.assertEqual(self.journal.read()["phase"], "candidate_ready")
+        self.assertEqual(self.journal.read()["generation"], 2)
+        self.assertIsNone(guard._switch_reviewed_private_route(**later))
+        self.assertEqual(self.journal.read()["phase"], "switched")
+        self.assertEqual(self.backend.route(3141)[0]["spec"]["childIP"],
+                         "172.20.0.3")
+        self.assertEqual(self.backend.route(3142), [])
+        self.assertEqual(self.backend.rules[0], self.original_canary)
+
+    def test_precreated_wrong_request_never_opens_candidate_port(self):
+        """A route intent from a different signed request is not adopted."""
+        later = self._already_prepared_ordinary_blue()
+        with self.assertRaises(ValueError):
+            guard._stage_reviewed_private_candidate_probe(
+                **{**later, "request_sha256": "b" * 64},
+            )
+        self.assertEqual(self.journal.read()["phase"], "prepared")
+        self.assertEqual(self.backend.route(3142), [])
+        self.assertEqual(self.backend.rules[0], self.original_canary)
 
     def test_two_generations_reuse_same_probe_without_new_issuer_or_port(self):
         """Blue0.15.0 -> green successor -> blue next, same durable journal."""
