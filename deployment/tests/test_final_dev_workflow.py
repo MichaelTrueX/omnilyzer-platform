@@ -295,8 +295,8 @@ class FinalDevWorkflowTests(unittest.TestCase):
                       prod["steps"][2]["run"])
         self.assertEqual(prod["steps"][3]["uses"],
                          "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
-        self.assertEqual(prod["steps"][3]["with"]["retention-days"], 1)
-        self.assertEqual(prod["steps"][3]["with"]["compression-level"], 0)
+        self.assertEqual(prod["steps"][3]["with"]["retention-days"], "1")
+        self.assertEqual(prod["steps"][3]["with"]["compression-level"], "0")
         self.assertNotIn("docker", str(prod).lower())
         self.assertNotIn("task014/dev/promote", str(prod))
         self.assertEqual(self.raw.count("secrets."), 2)
