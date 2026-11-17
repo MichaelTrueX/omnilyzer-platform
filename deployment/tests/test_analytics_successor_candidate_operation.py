@@ -711,5 +711,125 @@ class OrdinarySuccessorComposeImagesTests(unittest.TestCase):
                     )
 
 
+# Section 5: exact dormant rollback retirement, ONLY under existing UID991
+# journal lock and independently reviewed canonical candidate request.
+class DormantRollbackRetirementOperationTests(unittest.TestCase):
+    """No active writer, volume, OCI image or database can be deleted."""
+
+    def setUp(self):
+        """Make an ordinary green->blue request and original journal identity."""
+        from deployment.analytics_route_journal import AnalyticsRouteJournal
+        from deployment.analytics_active_state_review import AnalyticsActiveState
+        import hashlib
+        data, context = AnalyticsSuccessorRequestTests().candidate()
+        active = "sha256:" + "a" * 64
+        PREFIX = "oci-dev.omnilyzer.ai/omnilyzer/analytics@"
+        data["ingress_reference"] = {
+            **data["ingress_reference"], "slot": "blue", "active_slot": "green",
+        }
+        data["rollback_reference"] = {
+            **data["rollback_reference"], "previous_digest": active,
+            "previous_slot": "green",
+        }
+        context["observed_active_digest"] = active
+        context["observed_active_slot"] = "green"
+        selected, signed, owner, identity = (
+            context["selected"], context["signed_release"],
+            context["owner_approval"], context["identity"],
+        )
+        intent = canonical_bytes({
+            "product_id": "analytics", "release_version": selected.release_version,
+            "source_sha": selected.platform_workflow_commit, "image": signed.image,
+            "run_id": identity.run_id, "run_attempt": identity.run_attempt,
+            "release_manifest_sha256": signed.manifest_sha256,
+            "provenance_sha256": signed.provenance_sha256,
+            "source_claim_sha256": signed.source.claim_sha256,
+            "owner_approval_sha256": owner.approval_sha256,
+            "previous_digest": active,
+        })
+        data["promotion_request_sha256"] = hashlib.sha256(intent).hexdigest()
+        self.request = parse_analytics_successor_request(canonical_bytes(data), **context)
+        self.pending = {
+            "phase": "retirement_pending",
+            "request_sha256": hashlib.sha256(self.request.canonical_bytes()).hexdigest(),
+            "active_slot": "green", "active_image": PREFIX + active,
+            "active_container_id": "e" * 64,
+            "dormant_slot": "blue", "dormant_image": PREFIX + "sha256:" + "d" * 64,
+            "dormant_container_id": "d" * 64,
+            "next_image": signed.image,
+        }
+        self.live = AnalyticsActiveState(
+            schema_version=1, active_slot="green", active_digest=active,
+            active_image=PREFIX + active, active_container_id="e" * 64,
+            active_child_ip="172.20.0.4", active_network_id="f" * 64,
+            private_ingress_port=3141, candidate_slot="blue", candidate_port=3142,
+        )
+        self.journal = object.__new__(AnalyticsRouteJournal)
+        self.operation = object.__new__(AnalyticsSuccessorCandidateOperation)
+
+    def run_retirement(self, *, changes=None, replacement=None, stop_result=None,
+                       occupied=False, uid=991, locked=True):
+        """Capture exactly one narrow Docker removal and closed journal state."""
+        from deployment.analytics_route_journal import AnalyticsRouteJournal
+        from unittest.mock import patch
+        from dataclasses import replace
+        pending = self.pending if changes is None else {**self.pending, **changes}
+        snapshot = self.live if replacement is None else replacement
+        with patch("deployment.analytics_first_install.os.getuid", return_value=uid), patch(
+            "deployment.analytics_first_install.os.geteuid", return_value=uid,
+        ), patch("deployment.analytics_first_install.os.getgid", return_value=uid), patch(
+            "deployment.analytics_first_install.os.getegid", return_value=uid,
+        ), patch.object(AnalyticsRouteJournal, "exclusive_active", return_value=locked), patch.object(
+            AnalyticsRouteJournal, "read_slot_retirement", return_value=pending,
+        ), patch.object(
+            AnalyticsRouteJournal, "confirm_slot_retired",
+        ) as confirmed, patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            return_value=snapshot,
+        ) as live, patch(
+            "deployment.analytics_active_state_review.inspect_dormant_analytics_candidate",
+            side_effect=ValueError("occupied") if occupied else None,
+        ) as dormant, patch.object(
+            AnalyticsSuccessorCandidateOperation, "_docker",
+            return_value=CommandResult(0,
+                self.pending["dormant_container_id"] if stop_result is None else stop_result,
+                ""),
+        ) as docker:
+            self.operation.retire_dormant_rollback_container(
+                request=self.request, journal=self.journal,
+            )
+            return docker, confirmed, live, dormant
+
+    def test_exact_stopped_id_only_no_data_or_image_mutation(self):
+        """A verified stale blue can be removed only by ID without --volumes."""
+        docker, confirmed, live, dormant = self.run_retirement()
+        docker.assert_called_once_with(
+            self.request.exact_image_reference, "container", "rm", "d" * 64,
+            previous_image=self.pending["active_image"], candidate_slot="blue",
+        )
+        confirmed.assert_called_once_with(pending=self.pending)
+        dormant.assert_called_once()
+        self.assertEqual(live.call_count, 2)
+        self.assertFalse(any(
+            word in repr(docker.call_args) for word in (
+                "--volumes", "--force", "down", "image rm", "prune", "compose",
+            )
+        ))
+
+    def test_wrong_uid_journal_lock_old_id_and_route_never_remove(self):
+        """Do not remove anything unless every trusted boundary matches."""
+        from dataclasses import replace
+        for variant in (
+            {"uid": 1005}, {"locked": False},
+            {"changes": {"active_container_id": "c" * 64}},
+            {"changes": {"request_sha256": "f" * 64}},
+            {"replacement": replace(self.live, active_slot="blue")},
+            {"occupied": True},
+            {"stop_result": "c" * 64},
+        ):
+            with self.subTest(variant=variant), self.assertRaises(AnalyticsFirstInstallError):
+                self.run_retirement(**variant)
+
+
 if __name__ == "__main__":
     unittest.main()
