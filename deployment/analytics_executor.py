@@ -18,7 +18,8 @@ Sections: root-reviewed input capture, original FD+request execution, separate
          three-JWT successor identity verification, original replay
           transitions, protected product-only operation and source-only
           end-to-end first-successor staging/cutover/rollback coordinator;
-          isolated ordinary signed prior/new release and live-route preflight.
+          isolated ordinary signed prior/new release and live-route preflight;
+          read-only gen2+ completed-replay restart reconciliation.
 
 NOT A DEPLOYMENT: This class is not installed in the Task014 application
 source set; no host listener, rootless runtime, secret, DB, Docker or release
@@ -1123,6 +1124,153 @@ def _read_analytics_execution_status(guard: object, request_hash: str) -> str | 
     return observed_status
 
 
+# Section: root-proven second-and-later successful private route restart.
+def _review_completed_ordinary_successor_restart(
+    *, journal: object, intent: dict[str, object], identities: dict[str, object],
+) -> None:
+    """Admit only fully finished, signed, exact-route ordinary deployment.
+
+    An offline restart has no fresh CI OIDC/registry JWT to re-fetch Task013.
+    Therefore it MUST reuse independently protected root owner signatures,
+    the exact original signed request persisted before replay.finish, the
+    original durable FINISHED SQLite replay, verified local OCI RepoDigests,
+    Canary and unchanged RootlessKit routing. A missing previous/next signer
+    or changed request/receipt fails closed; no Docker/route mutation or
+    replacement credential is minted. Incomplete gen2+ is hard HOLD until
+    separately authorized recovery, not an accidental promotion.
+    """
+    from .analytics_route_journal import AnalyticsRouteJournal
+    from .analytics_active_state_review import inspect_committed_analytics_route
+    from .replay_sqlite import PRODUCTION_REPLAY_DATABASE, SQLiteReplayGuard
+    from release.analytics_owner_source_selection import (
+        AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
+        load_and_verify_owner_signed_source,
+        verify_owner_signed_source_proof, expected_owner_approval_bytes,
+    )
+    from .policy import canonical_bytes
+    import json
+    if (
+        type(journal) is not AnalyticsRouteJournal
+        or type(intent) is not dict
+        or type(identities) is not dict
+        or (os.getuid(), os.geteuid(), os.getgid(), os.getegid())
+            != (991, 991, 991, 991)
+        or type(intent.get("generation")) is not int
+        or intent["generation"] < 2
+        or intent.get("phase") != "switched"
+        or intent.get("previous_slot") not in ("blue", "green")
+        or intent.get("next_slot") not in ("blue", "green")
+        or intent["previous_slot"] == intent["next_slot"]
+        or intent.get("request_sha256") == "0" * 64
+    ):
+        raise ValueError("ordinary restart not independently authorized")
+    # The exact UID991/UID990 shared replay database is the SAME one used
+    # in the original protected first successor; never a new success store.
+    replay = SQLiteReplayGuard(
+        PRODUCTION_REPLAY_DATABASE,
+        expected_directory_uid=identities["expected_replay_directory_uid"],
+        expected_directory_gid=identities["expected_replay_directory_gid"],
+        expected_broker_uid=identities["expected_broker_uid"],
+        expected_executor_uid=identities["expected_executor_uid"],
+    )
+    request_hash = intent["request_sha256"]
+    if _read_analytics_execution_status(replay, request_hash) != "finished":
+        raise ValueError("no finished ordinary signed replay")
+    proof = journal.read_execution(request_hash)
+    if (
+        type(proof) is not dict
+        or proof.get("image") != intent["next_image"]
+        or proof.get("container_id") != intent["next_container_id"]
+        or type(proof.get("canonical_request")) is not bytes
+        or hashlib.sha256(proof["canonical_request"]).hexdigest() != request_hash
+    ):
+        raise ValueError("ordinary journal differs from protected replay")
+
+    def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        """Reject all duplicate nested source/owner or rollback fields."""
+        seen: dict[str, object] = {}
+        for name, value in pairs:
+            if name in seen:
+                raise ValueError("ambiguous protected signed request")
+            seen[name] = value
+        return seen
+
+    raw = json.loads(
+        proof["canonical_request"].decode("ascii"),
+        object_pairs_hook=unique,
+        parse_constant=lambda _: (_ for _ in ()).throw(ValueError),
+    )
+    if (
+        type(raw) is not dict
+        or canonical_bytes(raw) != proof["canonical_request"]
+        or type(raw.get("schema_version")) is not int
+        or raw["schema_version"] != 3
+        or raw.get("stage") != "dev"
+        or raw.get("product_id") != "analytics"
+        or raw.get("exact_image_reference") != intent["next_image"]
+        or raw.get("manifest_digest") != intent["next_image"].rsplit("@", 1)[-1]
+        or type(raw.get("owner_source_proof")) is not str
+        or not 0 < len(raw["owner_source_proof"]) <= 2048
+        or type(raw.get("rollback_reference")) is not dict
+        or raw["rollback_reference"].get("previous_digest")
+            != intent["previous_image"].rsplit("@", 1)[-1]
+        or raw["rollback_reference"].get("previous_slot") != intent["previous_slot"]
+        or type(raw.get("ingress_reference")) is not dict
+        or raw["ingress_reference"].get("active_slot") != intent["previous_slot"]
+        or raw["ingress_reference"].get("slot") != intent["next_slot"]
+    ):
+        raise ValueError("ordinary executed request does not bind private route")
+    # Verify BOTH owner approvals using the same original protected root trust,
+    # never accept an unsigned durable request as source of release identity.
+    prior, prior_owner = load_and_verify_owner_signed_source(
+        _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
+    )
+    selected, owner = verify_owner_signed_source_proof(raw["owner_source_proof"])
+    for selection, receipt in ((prior, prior_owner), (selected, owner)):
+        if (
+            type(selection) is not AnalyticsOwnerSourceSelection
+            or type(receipt) is not AnalyticsOwnerSignatureReceipt
+            or receipt.owner_signature_verified is not True
+            or selection.release_authorized is not False
+            or selection.deployment_authorized is not False
+            or receipt.release_authorized is not False
+            or receipt.deployment_authorized is not False
+            or selection.source_commit != receipt.source_commit
+            or selection.source_tree != receipt.source_tree
+            or selection.release_version != receipt.release_version
+            or receipt.approval_sha256 != hashlib.sha256(
+                expected_owner_approval_bytes(selection)
+            ).hexdigest()
+        ):
+            raise ValueError("untrusted prior or next owner signature")
+    if (
+        tuple(map(int, prior.release_version.split("."))) >=
+            tuple(map(int, selected.release_version.split(".")))
+        or selected.release_version != raw.get("release_version")
+        or selected.source_commit != raw.get("product_source_sha")
+        or selected.platform_workflow_commit != raw.get("source_sha")
+        or owner.approval_sha256 != raw.get("owner_approval_sha256")
+        or raw.get("source_sha") == "0" * 40
+    ):
+        raise ValueError("signed release owner identity changed after commit")
+    observed = inspect_committed_analytics_route(
+        journal=journal, reviewed_image=proof["image"],
+        reviewed_slot=intent["next_slot"],
+        reviewed_container_id=proof["container_id"],
+        reviewed_request_sha256=request_hash,
+    )
+    if (
+        getattr(observed, "active_slot", None) != intent["next_slot"]
+        or getattr(observed, "active_image", None) != intent["next_image"]
+        or getattr(observed, "active_container_id", None) != intent["next_container_id"]
+        or journal.read() != intent
+        or journal.read_execution(request_hash) != proof
+        or _read_analytics_execution_status(replay, request_hash) != "finished"
+    ):
+        raise ValueError("ordinary signed active route changed during restart")
+    return None
+
+
 def _reconcile_interrupted_first_successor_before_receive() -> None:
     """Restore original signed blue0.15 from a provable incomplete journal.
 
@@ -1177,6 +1325,13 @@ def _reconcile_interrupted_first_successor_before_receive() -> None:
         intent = journal.read()
         if intent is None:
             return None
+        # Preserve the original generation1 blue0.15->green contract exactly.
+        # Later generations must prove signed prior/current source, durable
+        # FINISHED replay and actual immutable OCI+Canary private route.
+        if type(intent) is dict and type(intent.get("generation")) is int and intent["generation"] >= 2:
+            return _review_completed_ordinary_successor_restart(
+                journal=journal, intent=intent, identities=identities,
+            )
         if (
             type(intent) is not dict
             or intent.get("previous_slot") != "blue"
