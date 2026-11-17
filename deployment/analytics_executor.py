@@ -1314,7 +1314,14 @@ def _reconcile_interrupted_first_successor_before_receive() -> None:
         if (
             type(source) is not dict
             or type(identities) is not dict
-            or identities.get("owner_authorized_first_successor") is not True
+            or not (
+                identities.get("owner_authorized_first_successor") is True
+                or identities.get("owner_authorized_ordinary_successor") is True
+            )
+            or (
+                identities.get("owner_authorized_first_successor") is True
+                and identities.get("owner_authorized_ordinary_successor") is True
+            )
             or identities.get("expected_executor_uid") != 991
             or identities.get("expected_executor_gid") != 991
         ):
@@ -1809,7 +1816,8 @@ def _execute_reviewed_ordinary_successor_transaction(
             type(installed) is not dict or installed != source
             or type(identities) is not dict
             or identities.get("expected_workflow_sha") != workflow
-            or identities.get("owner_authorized_first_successor") is not True
+            or identities.get("owner_authorized_ordinary_successor") is not True
+            or identities.get("owner_authorized_first_successor") is True
             or identities.get("expected_executor_uid") != 991
             or identities.get("expected_executor_gid") != 991
         ):
