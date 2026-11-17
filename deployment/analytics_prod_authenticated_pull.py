@@ -67,8 +67,8 @@ class PullHold(RuntimeError):
     """Fixed nonsecret failure for source, signature, auth or Docker drift."""
 
 
-def owned_file(path: Path, *, uid: int, gid: int, mode: int, limit: int) -> bytes:
-    """Read a single owned inode without following a symlink or exceeding limit."""
+def owned_sha256(path: Path, *, uid: int, gid: int, mode: int, limit: int) -> str:
+    """Hash an owned, single-link trusted inode with bounded streaming memory."""
     try:
         before = os.lstat(path)
         if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
@@ -81,11 +81,17 @@ def owned_file(path: Path, *, uid: int, gid: int, mode: int, limit: int) -> byte
             if (after.st_dev, after.st_ino, after.st_size) != (
                     before.st_dev, before.st_ino, before.st_size):
                 raise PullHold("trusted input changed during read")
-            with os.fdopen(fd, "rb", closefd=False) as f:
-                data = f.read(limit + 1)
-            if len(data) != before.st_size:
+            digest = hashlib.sha256()
+            total = 0
+            while total <= limit:
+                block = os.read(fd, min(131072, limit + 1 - total))
+                if not block:
+                    break
+                digest.update(block)
+                total += len(block)
+            if total != before.st_size:
                 raise PullHold("trusted input length differs")
-            return data
+            return digest.hexdigest()
         finally:
             os.close(fd)
     except OSError:
@@ -115,11 +121,9 @@ def check_identity() -> None:
 
 def signature_preflight() -> None:
     """Verify exact original Sigstore bundle with pinned Cosign, never trusting a claim alone."""
-    data = owned_file(BUNDLE, uid=0, gid=GID, mode=0o440, limit=100000)
-    if hashlib.sha256(data).hexdigest() != BUNDLE_SHA:
+    if owned_sha256(BUNDLE, uid=0, gid=GID, mode=0o440, limit=100000) != BUNDLE_SHA:
         raise PullHold("original signed release bundle changed")
-    executable = owned_file(COSIGN, uid=0, gid=0, mode=0o555, limit=160_000_000)
-    if hashlib.sha256(executable).hexdigest() != COSIGN_SHA:
+    if owned_sha256(COSIGN, uid=0, gid=0, mode=0o555, limit=160_000_000) != COSIGN_SHA:
         raise PullHold("original verification binary changed")
     command = (
         str(COSIGN), "verify-blob-attestation",
