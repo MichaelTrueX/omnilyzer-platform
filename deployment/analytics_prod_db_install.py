@@ -48,7 +48,7 @@ HBA_EXPECTED = "0709ada1b9a61908ceb70255346b83da131f37a5758b39820ced1f2b23b8f01c
 GATE = Path(__file__).with_name("analytics_prod_sql_admission.py")
 # SHA must be updated to exactly the independently reviewed, installed
 # admission source at the final release boundary, not an editable file.
-GATE_SHA256 = ""
+GATE_SHA256 = "883b8a7eb029abe2c7ca6f768ff0ef6955633c3ee88e2a487e1e368f5a2d5504"
 ENV = {
     "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
     "HOME": "/var/lib/postgresql",
