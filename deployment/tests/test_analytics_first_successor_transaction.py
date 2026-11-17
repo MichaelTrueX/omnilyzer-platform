@@ -758,7 +758,7 @@ class OrdinarySuccessorTransactionTests(unittest.TestCase):
             return_value=(EXPECTED, {
                 "expected_workflow_sha": WORKFLOW_SHA,
                 "expected_executor_uid": 991, "expected_executor_gid": 991,
-                "owner_authorized_first_successor": True,
+                "owner_authorized_ordinary_successor": True,
             }),
         ))
         self.signed = self.stack.enter_context(patch(
@@ -1450,7 +1450,7 @@ class OrdinaryCommittedRestartTests(ReplayTestCase):
             "expected_replay_directory_uid": os.getuid(),
             "expected_replay_directory_gid": os.getgid(),
             "expected_broker_uid": 990,
-            "owner_authorized_first_successor": True,
+            "owner_authorized_ordinary_successor": True,
         }
         with ExitStack() as stack:
             stack.enter_context(patch.dict(
