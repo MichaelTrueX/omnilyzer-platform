@@ -219,6 +219,20 @@ def execute_sql(gate: object) -> None:
         print(f"ANALYTICS_PROD_DB_SQL_APPLIED {name}", flush=True)
 
 
+def restrict_database_access() -> None:
+    """Revoke PG default PUBLIC database access and grant only active Analytics roles.
+
+    CREATE DATABASE normally grants CONNECT and TEMPORARY to PUBLIC. In this
+    shared cluster those defaults would be broader than the isolated DEV DB.
+    Keep archive and definer roles without application DB CONNECT privileges.
+    """
+    psql("postgres", b"""BEGIN;
+REVOKE ALL ON DATABASE omnilyzer_analytics_prod FROM PUBLIC;
+GRANT CONNECT ON DATABASE omnilyzer_analytics_prod TO omni_runtime, collector_runtime;
+COMMIT;
+""")
+
+
 def generate_credentials() -> dict[str, bytes]:
     """Generate new production-only secrets in memory, never from DEV."""
     passwords = {name: secrets.token_urlsafe(48) for name in
@@ -292,6 +306,26 @@ COMMIT;
 """)
     if output.strip().splitlines() != [b"RLS|5", b"ROLES|4"]:
         raise InstallHold("post-install tenant RLS or role validation failed")
+    access = psql("postgres", b"""BEGIN TRANSACTION READ ONLY;
+SELECT 'PUBLIC|'||count(*) FROM pg_catalog.pg_database d
+CROSS JOIN LATERAL pg_catalog.aclexplode(
+  COALESCE(d.datacl,pg_catalog.acldefault('d',d.datdba))) acl
+WHERE d.datname='omnilyzer_analytics_prod' AND acl.grantee=0;
+SELECT 'APP|' || has_database_privilege('omni_runtime',
+  'omnilyzer_analytics_prod','CONNECT')::text;
+SELECT 'COLLECTOR|' || has_database_privilege('collector_runtime',
+  'omnilyzer_analytics_prod','CONNECT')::text;
+SELECT 'ARCHIVE|' || has_database_privilege('archive_runtime',
+  'omnilyzer_analytics_prod','CONNECT')::text;
+SELECT 'DEFINER|' || has_database_privilege('collector_lock_definer',
+  'omnilyzer_analytics_prod','CONNECT')::text;
+COMMIT;
+""")
+    if access.strip().splitlines() != [
+        b"PUBLIC|0", b"APP|true", b"COLLECTOR|true",
+        b"ARCHIVE|false", b"DEFINER|false",
+    ]:
+        raise InstallHold("PROD database CONNECT/CREATE/TEMP privilege scope differs")
 
 
 def apply() -> None:
@@ -301,6 +335,7 @@ def apply() -> None:
     start_marker()
     print("ANALYTICS_PROD_DB_FIRST_INSTALL_MARKER_SET no_retry=true", flush=True)
     execute_sql(gate)
+    restrict_database_access()
     secrets_data = generate_credentials()
     seal_secrets(secrets_data)
     install_hba()
