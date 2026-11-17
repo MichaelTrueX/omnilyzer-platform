@@ -141,7 +141,7 @@ def signature_preflight() -> None:
                                 timeout=40, check=False)
     except (OSError, subprocess.SubprocessError):
         raise PullHold("Sigstore verifier unavailable") from None
-    if result.returncode != 0 or b"Verified OK" not in result.stdout:
+    if result.returncode != 0 or b"Verified OK" not in result.stderr:
         raise PullHold("original release signature not verified")
 
 
