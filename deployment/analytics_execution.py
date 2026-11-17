@@ -407,8 +407,9 @@ def review_analytics_successor_with_live_active(
     owner_approval: AnalyticsOwnerSignatureReceipt,
     identity: AuthorizedGitHubIdentity,
     require_staged_candidate: bool = False,
+    require_empty_candidate: bool = False,
 ) -> AnalyticsSuccessorRequest:
-    """Compare real routes and, when staged, probe the signed next image.
+    """Compare signed predecessor to live route and verify candidate occupancy.
 
     No client-provided active-slot/digest is admitted as installed authority.
     This function does NOT authenticate passed Python objects. The
@@ -421,6 +422,7 @@ def review_analytics_successor_with_live_active(
     try:
         from .analytics_active_state_review import (
             AnalyticsActiveState, inspect_analytics_active_state,
+            verify_empty_analytics_candidate_slot,
         )
 
         live = inspect_analytics_active_state()
@@ -439,6 +441,9 @@ def review_analytics_successor_with_live_active(
             )
             or live.candidate_port != ANALYTICS_SUCCESSOR_CANDIDATE_PORT
             or type(require_staged_candidate) is not bool
+            or type(require_empty_candidate) is not bool
+            or (require_staged_candidate and require_empty_candidate)
+            or (require_empty_candidate and live.candidate_probe_present)
             or (
                 require_staged_candidate
                 and live.candidate_probe_present is not True
@@ -464,6 +469,17 @@ def review_analytics_successor_with_live_active(
                 >= tuple(map(int, selected.release_version.split(".")))
         ):
             raise ValueError("current private signed release not verified")
+        # A missing 3142 probe alone does NOT prove the opposite Docker slot
+        # is free. UID991 must independently reject stopped, stale or hidden
+        # opposite-slot containers before a signed successor is staged.
+        if require_empty_candidate:
+            verify_empty_analytics_candidate_slot(live.candidate_slot)
+        # A route can change while the Docker absence query executes. This
+        # read-only guard rejects that drift without consuming replay or OIDC.
+        if (require_empty_candidate or require_staged_candidate) and (
+            inspect_analytics_active_state() != live
+        ):
+            raise ValueError("signed active route changed during candidate review")
         return parse_analytics_successor_request(
             raw,
             reviewed_installed_commit=reviewed_installed_commit,
