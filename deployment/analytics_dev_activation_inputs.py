@@ -56,9 +56,18 @@ DESTINATION = "/opt/omnilyzer/deployment/analytics-app"
 # The original V1 active service continues to refer to DESTINATION.
 SUCCESSOR_DESTINATION = "/opt/omnilyzer/deployment/analytics-app-candidate"
 # Generation4 is a SHA-named immutable source, not the older V2/V3 candidate.
-from .analytics_isolated_source_install import _ordinary_approval
+from .analytics_isolated_source_install import (
+    _ordinary_approval, _ORDINARY_APPROVAL_PATH, _ORDINARY_ARCHIVE_PATH,
+)
 from .analytics_executor_service_config import ordinary_analytics_source_root
 _CLOSED_PATHS = (SOURCE_ARCHIVE, SOURCE_APPROVAL, EXECUTOR_CONFIG, BROKER_CONFIG)
+# Do not overwrite the existing protected first-install inputs when publishing
+# the unsigned ordinary generation4 candidate for separate root approval.
+ORDINARY_SOURCE_ARCHIVE = _ORDINARY_ARCHIVE_PATH
+ORDINARY_SOURCE_APPROVAL = _ORDINARY_APPROVAL_PATH
+_ORDINARY_CLOSED_PATHS = (
+    ORDINARY_SOURCE_ARCHIVE, ORDINARY_SOURCE_APPROVAL, EXECUTOR_CONFIG, BROKER_CONFIG,
+)
 # These systemd objects remain inert until separately installed by root.
 # Exactly three are already bound in the canonical 32-object reviewed archive.
 _SERVICE_SOURCES = (
@@ -382,12 +391,17 @@ def build_unsigned_analytics_activation_inputs(
         ):
             raise ValueError
         result = {
-            SOURCE_ARCHIVE: archive,
-            SOURCE_APPROVAL: approval,
+            (ORDINARY_SOURCE_ARCHIVE if owner_authorized_ordinary_successor
+             else SOURCE_ARCHIVE): archive,
+            (ORDINARY_SOURCE_APPROVAL if owner_authorized_ordinary_successor
+             else SOURCE_APPROVAL): approval,
             EXECUTOR_CONFIG: product_config,
             BROKER_CONFIG: product_config,
         }
-        if set(result) != set(_CLOSED_PATHS):
+        if set(result) != set(
+            _ORDINARY_CLOSED_PATHS if owner_authorized_ordinary_successor
+            else _CLOSED_PATHS
+        ):
             raise ValueError
         return result
     except _CONTROL:
@@ -450,7 +464,7 @@ def build_unsigned_analytics_service_inputs(
             )
             from .analytics_isolated_source_install import _successor_approval
             approved_candidate = (
-                _ordinary_approval(candidate[SOURCE_APPROVAL])
+                _ordinary_approval(candidate[ORDINARY_SOURCE_APPROVAL])
                 if owner_authorized_ordinary_successor else
                 _successor_approval(candidate[SOURCE_APPROVAL])
             )
@@ -638,7 +652,8 @@ def build_unsigned_analytics_service_inputs(
 
 __all__ = (
     "AnalyticsActivationInputsError", "build_unsigned_analytics_activation_inputs",
-    "SOURCE_ARCHIVE", "SOURCE_APPROVAL", "EXECUTOR_CONFIG", "BROKER_CONFIG",
+    "SOURCE_ARCHIVE", "SOURCE_APPROVAL", "ORDINARY_SOURCE_ARCHIVE",
+    "ORDINARY_SOURCE_APPROVAL", "EXECUTOR_CONFIG", "BROKER_CONFIG",
     "build_unsigned_analytics_service_inputs",
 )
 
