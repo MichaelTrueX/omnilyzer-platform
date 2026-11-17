@@ -15,7 +15,8 @@ Related: deployment/analytics_unix_boundary.py (Analytics-only original
          deployment/tests/test_analytics_executor_composition.py.
 
 Sections: root-reviewed source binding; inert product-only dependency graph;
-          original socket listener's explicit one-connection delegation.
+          original socket listener's explicit one-connection delegation;
+          root generation4 ordinary owner-authorized selection.
 
 SECURITY: This composition does not grant source authorization. The caller MUST
 first independently attest the root-owned Task014 installed source manifest,
@@ -57,6 +58,7 @@ class AnalyticsExecutorComposition:
         expected_socket_owner_uid: int, expected_socket_group_gid: int,
         expected_workflow_sha: str | None = None,
         owner_authorized_first_successor: bool = False,
+        owner_authorized_ordinary_successor: bool = False,
     ) -> None:
         """Wire the original same replay DB and a strictly separate product.
 
@@ -69,7 +71,12 @@ class AnalyticsExecutorComposition:
             # V1 remains the original first-install graph. Root V2 is signed
             # review-only DENY. Separately owner-installed root V3 alone
             # selects the original signed UID991 replay/cutover transaction.
-            if type(owner_authorized_first_successor) is not bool:
+            if (
+                type(owner_authorized_first_successor) is not bool
+                or type(owner_authorized_ordinary_successor) is not bool
+                or (owner_authorized_first_successor
+                    and owner_authorized_ordinary_successor)
+            ):
                 raise ValueError("invalid owner authorization")
             workflow = None
             if expected_workflow_sha is not None:
@@ -104,7 +111,7 @@ class AnalyticsExecutorComposition:
             # Existing V1/V2 service configs cannot select this path.
             candidate = None
             journal = None
-            if owner_authorized_first_successor:
+            if owner_authorized_first_successor or owner_authorized_ordinary_successor:
                 if workflow is None:
                     raise ValueError("missing signed successor workflow")
                 from .analytics_first_install import (
@@ -126,8 +133,13 @@ class AnalyticsExecutorComposition:
                 executor=executor, expected_broker_uid=expected_broker_uid,
                 expected_broker_gid=expected_broker_gid,
                 reviewed_installed_source=dict(source),
-                full_signed_successor_review_only=(workflow is not None and not owner_authorized_first_successor),
+                full_signed_successor_review_only=(
+                    workflow is not None
+                    and not owner_authorized_first_successor
+                    and not owner_authorized_ordinary_successor
+                ),
                 owner_authorized_first_successor=owner_authorized_first_successor,
+                owner_authorized_ordinary_successor=owner_authorized_ordinary_successor,
                 candidate_operation=candidate, route_journal=journal,
                 expected_workflow_sha=workflow,
             )
