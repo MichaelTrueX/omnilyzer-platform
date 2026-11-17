@@ -43,6 +43,7 @@ from deployment.private_registry_fd import (
 from deployment.registry_oidc_credentials import VerifiedRegistryCredentials
 from deployment.tests.test_analytics_execution import (
     EXPECTED, PRODUCT_SHA, RUNTIME_SHA, fixture,
+    AnalyticsSuccessorRequestTests,
 )
 from deployment.tests.test_analytics_review_composition import handler
 from deployment.tests.test_broker import Replay, Verifier
@@ -492,6 +493,69 @@ class OrdinarySignedPredecessorTests(unittest.TestCase):
                     canonical_request=canonical_bytes(case), received_at=NOW,
                 )
             self.assertEqual(reviews.call_count, signed_calls)
+        self.assertEqual(replay.calls, [])
+        self.assertEqual(transport.requests, [])
+
+    def test_ordinary_signed_broker_reuses_sealed_fd_replay_and_receipt(self):
+        """Two signed releases, three JWTs, one replay before exact Unix send."""
+        from deployment.analytics_signed_release_consumer import PINNED_DIGEST
+        data, _context = AnalyticsSuccessorRequestTests().candidate()
+        data["owner_source_proof"] = "synthetic-public-proof"
+        raw = canonical_bytes(data)
+        previous, future = self.pair()
+        previous = (
+            replace(previous[0], image=PINNED_IMAGE,
+                source=replace(previous[0].source, oci_manifest_digest=PINNED_DIGEST)),
+            previous[1], previous[2],
+        )
+        transport = SyntheticPositiveSuccessorTransport()
+        broker, replay, _ = make_broker(
+            transport=transport, owner_files=(
+                Path("/root/prior-approved.json"),
+                Path("/root/prior-approved.json.sig"),
+            ),
+        )
+        before = set(os.listdir("/proc/self/fd"))
+        with patch(
+            "deployment.analytics_promotion_broker.time.time", return_value=NOW,
+        ), patch(
+            "deployment.analytics_registry_review_composition.load_and_verify_owner_signed_source",
+            return_value=previous[1:],
+        ), patch(
+            "deployment.analytics_registry_review_composition.verify_owner_signed_source_proof",
+            return_value=future[1:],
+        ), patch(
+            "deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release",
+            side_effect=[previous[0], future[0]],
+        ) as signatures:
+            receipt = broker.authorize_and_forward_ordinary_successor(
+                compact_token=TOKEN, zot_token=ZOT_TOKEN,
+                forgejo_token=FORGEJO_TOKEN,
+                canonical_request=raw, received_at=NOW,
+            )
+        from deployment.executor import parse_canonical_response
+        self.assertEqual(
+            parse_canonical_response(receipt).executor_request_sha256,
+            hashlib.sha256(raw).hexdigest(),
+        )
+        self.assertEqual(signatures.call_count, 2)
+        self.assertEqual(len(replay.calls), 1)
+        self.assertEqual(transport.checked, [(raw, future[0].image)])
+        self.assertEqual(before, set(os.listdir("/proc/self/fd")))
+        self.assertNotIn(ZOT_TOKEN.encode(), raw)
+
+    def test_ordinary_signed_broker_no_sender_never_consumes_replay(self):
+        """Without an installed exact receiver the ordinary method is HOLD."""
+        data, _ = AnalyticsSuccessorRequestTests().candidate()
+        data["owner_source_proof"] = "synthetic-public-proof"
+        raw = canonical_bytes(data)
+        broker, replay, transport = make_broker()
+        with self.assertRaises(BrokerUnavailableError):
+            broker.authorize_and_forward_ordinary_successor(
+                compact_token=TOKEN, zot_token=ZOT_TOKEN,
+                forgejo_token=FORGEJO_TOKEN,
+                canonical_request=raw, received_at=NOW,
+            )
         self.assertEqual(replay.calls, [])
         self.assertEqual(transport.requests, [])
 
