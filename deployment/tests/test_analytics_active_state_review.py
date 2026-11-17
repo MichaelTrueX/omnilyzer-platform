@@ -113,6 +113,86 @@ def staged(*, active_slot: str = "blue", candidate_digest: str | None = None) ->
     return raw
 
 
+# Section 2b: strict read-only identity of a previously retained rollback
+# container. The old image may be removed only by a separately authorized
+# durable retirement coordinator, never by this inspector.
+class DormantRollbackContainerReviewTests(unittest.TestCase):
+    """Refuse retiring the serving writer, wrong ID, routed or running slot."""
+
+    def fixture(self):
+        """Create a signed-active green with dormant original blue rollback."""
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        raw = observed(active_slot="green")
+        active = _active_state(**raw)
+        old = deepcopy(raw["blue"])
+        old["State"] = {"Running": False}
+        old["Config"]["Image"] = PINNED_IMAGE
+        return active, old
+
+    def review(self, *, old=None, active=None, image=None, identifier=None):
+        """Run only fixed read-only Unix GETs under a synthetic UID991."""
+        from deployment.analytics_active_state_review import inspect_dormant_analytics_candidate
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        baseline, old_original = self.fixture()
+        candidate = old_original if old is None else old
+        live = baseline if active is None else active
+        with patch("deployment.analytics_active_state_review.os.geteuid", return_value=991), patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            return_value=baseline,
+        ) as inspector, patch(
+            "deployment.analytics_active_state_review._unix_get",
+            return_value=candidate,
+        ) as unix:
+            result = inspect_dormant_analytics_candidate(
+                active=live, expected_slot="blue",
+                expected_image=PINNED_IMAGE if image is None else image,
+                expected_container_id=old_original["Id"] if identifier is None else identifier,
+            )
+            self.assertIsNone(result)
+            self.assertEqual(inspector.call_count, 2)
+            unix.assert_called_once_with(
+                "/run/user/991/docker.sock",
+                "/containers/omnilyzer-analytics-dev-analytics-blue-1/json",
+            )
+
+    def test_stopped_unrouted_original_blue_is_only_observed_not_removed(self):
+        """One fixed GET and zero Docker stop/remove or journal writes."""
+        self.review()
+
+    def test_active_or_substituted_candidate_never_passes_retirement(self):
+        """No ID substitution, active container or wrong image can pass."""
+        from deployment.analytics_active_state_review import (
+            inspect_dormant_analytics_candidate, AnalyticsActiveStateDenied,
+        )
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        baseline, old = self.fixture()
+        cases = [
+            {"old": {**old, "State": {"Running": True}}},
+            {"old": {**old, "Id": "d" * 64}},
+            {"old": {**old, "Name": "/other-product-blue"}},
+            {"old": {**old, "Config": {**old["Config"], "Image": PREFIX + DIGEST_GREEN}}},
+            {"old": {**old, "HostConfig": {**old["HostConfig"], "Privileged": True}}},
+            {"old": {**old, "NetworkSettings": {"Networks": {
+                NET: {"NetworkID": "e" * 64},
+            }}}},
+            {"old": {**old, "NetworkSettings": {"Networks": {
+                "public-network": {},
+            }}}},
+            {"old": {}},
+            {"identifier": "d" * 64},
+            {"image": "omnilyzer/analytics:latest"},
+            {"active": "untrusted"},
+        ]
+        for i, case in enumerate(cases):
+            with self.subTest(case=i), self.assertRaises(AnalyticsActiveStateDenied):
+                self.review(**case)
+        with patch("deployment.analytics_active_state_review.os.geteuid", return_value=1005), self.assertRaises(AnalyticsActiveStateDenied):
+            inspect_dormant_analytics_candidate(
+                active=baseline, expected_slot="blue", expected_image=PINNED_IMAGE,
+                expected_container_id=old["Id"],
+            )
+
+
 # Section 3: actual read-only parser tests with observed Router-Docker equality.
 class AnalyticsActiveStateReviewTests(unittest.TestCase):
     """Reject forged candidate state, stale routes, public exposure and drift."""
