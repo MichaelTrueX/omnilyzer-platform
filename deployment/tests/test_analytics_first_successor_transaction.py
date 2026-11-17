@@ -10,7 +10,8 @@ Related: deployment/analytics_executor.py (exact future coordinator),
          deployment/tests/test_analytics_executor_composition.py (live DENY).
 
 Sections: isolated Analytics collaborators, sequence assertions, fail-closed
-          deny scenarios and recovery after all substantive failure phases.
+          deny scenarios and recovery after all substantive failure phases;
+          ordinary signed predecessor green->blue using same replay/route.
 
 Docker, sockets, JWTs, signing and live routes are simulated. Storage tests
 use real isolated journal files, fsync and SQLite replay transitions with the
@@ -692,6 +693,338 @@ class FirstSuccessorTransactionTests(unittest.TestCase):
 # Section: separately root-selected generation3 *startup*, not synthetic
 # replay execution. The product must reconcile one proven incomplete route
 # before it can possibly accept another SCM_RIGHTS Unix request.
+# Section: ordinary signed green->blue coordinator. These source-only tests
+# exercise original owner/replay/port boundaries with synthetic collaborators.
+class OrdinarySuccessorTransactionTests(unittest.TestCase):
+    """The second release must not require an operator to delete old blue."""
+
+    def setUp(self):
+        """Reuse real typed executor/registry/replay objects and mocked I/O."""
+        import hashlib
+        from contextlib import nullcontext
+        from deployment.analytics_active_state_review import AnalyticsActiveState
+        from deployment.analytics_loopback_guard import _SUCCESSOR_SCOPE
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        from deployment.tests.test_analytics_successor_candidate_operation import (
+            OrdinaryBlueCandidateStageTests,
+        )
+        self.fixture = OrdinaryBlueCandidateStageTests(
+            "test_active_green_stages_private_healthy_blue_and_rollback_is_exact"
+        )
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.request = self.fixture.request
+        self.raw = self.request.canonical_bytes()
+        self.hash = hashlib.sha256(self.raw).hexdigest()
+        self.old = self.fixture.inspector.return_value
+        self.new_id = GREEN_ID
+        self.new_ip = "172.20.0.3"
+        self.replay = ConsumedReplay()
+        self.original_operation = AnalyticsFirstInstallOperation(
+            runner=self.fixture.runner, private_registry=self.fixture.registry,
+            reviewed_installed_source=EXPECTED,
+        )
+        self.executor = AnalyticsPrivilegedExecutor(
+            replay_guard=self.replay,
+            private_registry_preflight=self.fixture.registry,
+            operation=self.original_operation,
+            reviewed_installed_source=EXPECTED,
+        )
+        self.candidate = self.fixture.operation
+        self.journal = AnalyticsRouteJournal(
+            "/var/lib/omnilyzer/deployment/analytics-route",
+            expected_uid=991, expected_gid=991,
+        )
+        self.current = {
+            "phase": "switched", "request_sha256": "1" * 64,
+            "next_slot": "green", "next_image": self.old.active_image,
+            "next_container_id": self.old.active_container_id,
+            "next_ip": self.old.active_child_ip,
+            "previous_slot": "blue", "previous_image": PINNED_IMAGE,
+            "previous_container_id": "a" * 64,
+            "previous_ip": "172.20.0.3", "generation": 1,
+        }
+        self.phase = "historical"
+        self.failure = None
+        self.events = []
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        self.stack.enter_context(patch.dict(os.environ, {_SUCCESSOR_SCOPE: "1"}))
+        self.stack.enter_context(patch(
+            "deployment.analytics_executor.time.time", return_value=NOW,
+        ))
+        self.stack.enter_context(patch(
+            "deployment.analytics_executor_service_config.load_analytics_executor_service_config",
+            return_value=(EXPECTED, {
+                "expected_workflow_sha": WORKFLOW_SHA,
+                "expected_executor_uid": 991, "expected_executor_gid": 991,
+                "owner_authorized_first_successor": True,
+            }),
+        ))
+        self.signed = self.stack.enter_context(patch(
+            "deployment.analytics_executor._review_executor_ordinary_signed_release",
+            return_value=self.request,
+        ))
+        self.inspector = self.stack.enter_context(patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            side_effect=self.observe,
+        ))
+        self.stack.enter_context(patch(
+            "deployment.analytics_executor.read_sealed_credential",
+            return_value=SimpleNamespace(expires_at=NOW + 270),
+        ))
+        self.probe = self.stack.enter_context(patch.object(
+            AnalyticsPrivateZotPullAdapter, "_run_private", return_value=None,
+        ))
+        self.stack.enter_context(patch.object(
+            AnalyticsRouteJournal, "exclusive",
+            side_effect=lambda: nullcontext(self.journal),
+        ))
+        self.stack.enter_context(patch.object(
+            AnalyticsRouteJournal, "exclusive_active", return_value=True,
+        ))
+        self.stack.enter_context(patch.object(
+            AnalyticsRouteJournal, "read", side_effect=self.journal_read,
+        ))
+        self.retire_intent = self.stack.enter_context(patch.object(
+            AnalyticsRouteJournal, "prepare_slot_retirement",
+            side_effect=self.prepare_retirement,
+        ))
+        self.retire = self.stack.enter_context(patch.object(
+            AnalyticsSuccessorCandidateOperation, "retire_dormant_rollback_container",
+            side_effect=self.remove_dormant,
+        ))
+        self.stage = self.stack.enter_context(patch.object(
+            AnalyticsSuccessorCandidateOperation, "stage_ordinary_successor",
+            side_effect=self.stage_candidate,
+        ))
+        self.stack.enter_context(patch(
+            "deployment.analytics_loopback_guard._verified_slot",
+            return_value=self.new_ip,
+        ))
+        self.begin_next = self.stack.enter_context(patch.object(
+            AnalyticsRouteJournal, "begin_after_retirement",
+            side_effect=self.begin_prepared,
+        ))
+        self.stack.enter_context(patch(
+            "deployment.analytics_loopback_guard._stage_reviewed_private_candidate_probe",
+            side_effect=self.stage_route,
+        ))
+        self.stack.enter_context(patch(
+            "deployment.analytics_loopback_guard._switch_reviewed_private_route",
+            side_effect=self.switch_route,
+        ))
+        self.stack.enter_context(patch(
+            "deployment.analytics_loopback_guard._recover_reviewed_private_route",
+            side_effect=self.restore_route,
+        ))
+        self.stack.enter_context(patch(
+            "deployment.analytics_loopback_guard._rollback_committed_private_successor",
+            side_effect=self.restore_route,
+        ))
+        self.stack.enter_context(patch(
+            "deployment.analytics_active_state_review.inspect_committed_analytics_route",
+            side_effect=self.committed,
+        ))
+        self.execution = self.stack.enter_context(patch.object(
+            AnalyticsRouteJournal, "record_execution",
+            side_effect=self.record_execution,
+        ))
+        self.stop = self.stack.enter_context(patch.object(
+            AnalyticsSuccessorCandidateOperation, "rollback_staged_successor",
+            side_effect=self.stop_candidate,
+        ))
+
+    def observe(self):
+        """Only a verified green, staged-blue or committed-blue may be read."""
+        if self.phase in ("historical", "retirement_pending", "slot_empty", "prepared"):
+            return self.old
+        if self.phase == "candidate_ready":
+            return replace(
+                self.old, candidate_probe_present=True,
+                candidate_digest=self.request.manifest_digest,
+                candidate_container_id=self.new_id,
+            )
+        if self.phase == "switched":
+            return replace(
+                self.old, active_slot="blue",
+                active_image=self.request.exact_image_reference,
+                active_digest=self.request.manifest_digest,
+                active_container_id=self.new_id,
+                active_child_ip=self.new_ip, candidate_slot="green",
+                candidate_probe_present=False,
+            )
+        if self.phase == "restored":
+            return self.old
+        raise AssertionError("unsupported synthetic route phase")
+
+    def journal_read(self):
+        """Return exact expected journal metadata for each transaction phase."""
+        if self.phase == "historical":
+            return dict(self.current)
+        if self.phase in ("retirement_pending", "slot_empty"):
+            raise AssertionError("original journal MUST hard HOLD during retirement")
+        if self.phase in ("prepared", "candidate_ready", "switched", "restored"):
+            return {
+                **self.current, "phase": self.phase,
+                "request_sha256": self.hash,
+                "previous_slot": "green", "previous_image": self.old.active_image,
+                "previous_container_id": self.old.active_container_id,
+                "next_slot": "blue", "next_image": self.request.exact_image_reference,
+                "next_container_id": self.new_id,
+            }
+        raise AssertionError("unsupported journal phase")
+
+    def prepare_retirement(self, **kw):
+        """Must fsync signed old active/old dormant before any container removal."""
+        self.assertEqual(self.phase, "historical")
+        self.assertEqual(kw["next_image"], self.request.exact_image_reference)
+        self.assertEqual(kw["dormant_image"], self.current["previous_image"])
+        self.assertEqual(kw["active_container_id"], self.old.active_container_id)
+        self.events.append("fsync_retirement")
+        self.phase = "retirement_pending"
+        return None
+
+    def remove_dormant(self, *, request, journal):
+        """Only exact historical blue removal after its durable intent."""
+        self.assertEqual(self.phase, "retirement_pending")
+        self.assertIs(request, self.request)
+        self.assertIs(journal, self.journal)
+        self.events.append("remove_exact_stopped_blue")
+        self.phase = "slot_empty"
+        if self.failure == "retire":
+            raise RuntimeError("synthetic removed but journal uncertain")
+        return None
+
+    def stage_candidate(self, request, *, journal):
+        """Candidate can start only after signed retirement and replay begin."""
+        self.assertEqual(self.phase, "slot_empty")
+        self.assertIs(request, self.request)
+        self.assertIs(journal, self.journal)
+        self.assertEqual(self.replay.events, ["begin"])
+        self.events.append("stage_signed_blue")
+        if self.failure == "stage":
+            raise RuntimeError("synthetic private image unavailable")
+        return self.new_id
+
+    def begin_prepared(self, *, request_sha256, next_container_id, next_ip):
+        """Rejoin the existing route journal only after reviewed next Docker IP."""
+        self.assertEqual(self.phase, "slot_empty")
+        self.assertEqual(request_sha256, self.hash)
+        self.assertEqual(next_container_id, self.new_id)
+        self.assertEqual(next_ip, self.new_ip)
+        self.events.append("fsync_prepared")
+        self.phase = "prepared"
+        return self.journal_read()
+
+    def stage_route(self, **route):
+        """Route only fixed 3142 after durable prepared signed intent."""
+        self.assertEqual(self.phase, "prepared")
+        self.assertEqual(route["previous_slot"], "green")
+        self.assertEqual(route["next_slot"], "blue")
+        self.assertEqual(route["next_id"], self.new_id)
+        self.events.append("3142_ready")
+        self.phase = "candidate_ready"
+        return None
+
+    def switch_route(self, **route):
+        """Preserve Canary and actual writer until signed 3142 is healthy."""
+        self.assertEqual(self.phase, "candidate_ready")
+        self.events.append("3141_switch")
+        if self.failure == "cutover":
+            raise RuntimeError("synthetic route switch refused")
+        self.phase = "switched"
+        return None
+
+    def restore_route(self, **route):
+        """Recover only to exact original signed active green."""
+        self.events.append("restore_green")
+        self.phase = "restored"
+        return None
+
+    def committed(self, *, journal, reviewed_image, reviewed_slot,
+                  reviewed_container_id, reviewed_request_sha256):
+        """The verified exact signed writer must match its route journal."""
+        self.assertIs(journal, self.journal)
+        self.assertEqual(reviewed_request_sha256, self.hash)
+        self.events.append("verify_committed")
+        if reviewed_slot == "blue":
+            self.assertEqual(self.phase, "switched")
+            self.assertEqual(reviewed_image, self.request.exact_image_reference)
+            self.assertEqual(reviewed_container_id, self.new_id)
+            return self.observe()
+        self.assertEqual(self.phase, "restored")
+        self.assertEqual(reviewed_image, self.old.active_image)
+        return self.old
+
+    def record_execution(self, raw, container_id):
+        """No success response before a source-bound durable request proof."""
+        self.assertEqual(raw, self.raw)
+        self.assertEqual(container_id, self.new_id)
+        self.assertEqual(self.phase, "switched")
+        self.events.append("fsync_execution")
+        if self.failure == "receipt":
+            raise RuntimeError("synthetic journal disk loss")
+        return None
+
+    def stop_candidate(self, request, identifier):
+        """Stop only the exact verified next ID AFTER old green restored."""
+        self.assertEqual(self.phase, "restored")
+        self.assertIs(request, self.request)
+        self.assertEqual(identifier, self.new_id)
+        self.events.append("stop_exact_blue")
+        return None
+
+    def execute(self):
+        """Call only uninstalled, owner-review-pending ordinary executor source."""
+        from deployment.analytics_executor import (
+            _execute_reviewed_ordinary_successor_transaction,
+        )
+        return _execute_reviewed_ordinary_successor_transaction(
+            self.raw, credential_fd=21,
+            expected_workflow_sha=WORKFLOW_SHA, executor=self.executor,
+            candidate_operation=self.candidate, journal=self.journal,
+        )
+
+    def test_signed_ordinary_second_upgrade_replays_once_and_switches(self):
+        """No new release component, sign bypass or extra host publication."""
+        reply = self.execute()
+        self.assertEqual(
+            parse_canonical_response(reply).executor_request_sha256, self.hash,
+        )
+        self.assertEqual(self.replay.events, ["begin", "finish"])
+        self.assertEqual(self.events, [
+            "fsync_retirement", "remove_exact_stopped_blue",
+            "stage_signed_blue", "fsync_prepared", "3142_ready",
+            "3141_switch", "verify_committed", "fsync_execution",
+        ])
+        self.signed.assert_called_once()
+        self.execution.assert_called_once()
+        self.stop.assert_not_called()
+
+    def test_failed_retirement_never_stages_or_switches(self):
+        """A pending intent remains visible but never grants new deployment."""
+        self.failure = "retire"
+        with self.assertRaises(ExecutorUnavailableError):
+            self.execute()
+        self.assertEqual(self.replay.events, ["begin"])
+        self.assertEqual(self.events, [
+            "fsync_retirement", "remove_exact_stopped_blue",
+        ])
+        self.stage.assert_not_called()
+        self.execution.assert_not_called()
+
+    def test_failed_3141_switch_recovers_green_then_stops_only_blue(self):
+        """A candidate may never be stopped until private green is restored."""
+        self.failure = "cutover"
+        with self.assertRaises(ExecutorUnavailableError):
+            self.execute()
+        self.assertEqual(self.replay.events, ["begin"])
+        self.assertEqual(self.events[-3:], [
+            "restore_green", "verify_committed", "stop_exact_blue",
+        ])
+        self.execution.assert_not_called()
+
 class ProtectedSuccessorRestartTests(unittest.TestCase):
     """No crash-state adoption, false success or silent public route change."""
 
