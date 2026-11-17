@@ -8,7 +8,8 @@ Related: deployment/analytics_route_journal.py,
          deployment/replay_sqlite.py (independent JTI replay).
 Sections: prepared/candidate_ready/switched/restored phase transitions;
           corrupt/stale file protection; real fsync
-          publication/rename; negative transition and restart simulations.
+          publication/rename; negative transition and restart simulations;
+          immutable dormant-slot retirement intent and interrupted fsync HOLD.
 No production path, Docker, RootlessKit, systemd, registry or PostgreSQL touched.
 """
 from __future__ import annotations
@@ -83,6 +84,148 @@ class AnalyticsRouteJournalTests(unittest.TestCase):
         ready = self.journal.finish(intent, phase='candidate_ready')
         self.journal.finish(ready, phase='switched')
         return raw, request_hash
+
+    # Section: no historical rollback slot may be retired without an
+    # immutable fsynced pre-retirement record. No Docker operation here.
+    def test_durable_retirement_intent_blocks_original_route_transitions(self):
+        """Crash/restart reads exact intent but cannot accidentally proceed."""
+        previous = self.journal.begin(**approval())
+        switched = self.journal.finish(
+            self.journal.finish(previous, phase="candidate_ready"),
+            phase="switched",
+        )
+        intent = self.journal.prepare_slot_retirement(
+            request_sha256="f" * 64,
+            active_slot="green", active_image=NEXT,
+            active_container_id="e" * 64,
+            dormant_slot="blue", dormant_image=OLD,
+            dormant_container_id="d" * 64,
+            next_image=LATER,
+        )
+        self.assertEqual(intent["prior_generation"], switched["generation"])
+        pending = self.directory / "slot-retirement.json"
+        self.assertEqual(pending.read_bytes(), canonical_bytes(intent))
+        self.assertEqual(stat.S_IMODE(pending.stat().st_mode), 0o600)
+        restart = AnalyticsRouteJournal(
+            str(self.directory), expected_uid=os.getuid(),
+            expected_gid=os.getgid(),
+        )
+        self.assertEqual(restart.read_slot_retirement(), intent)
+        self.denied(restart.read)
+        self.denied(lambda: restart.begin(**approval(
+            request_sha256="b" * 64, previous_slot="green",
+            previous_image=NEXT, previous_container_id="e" * 64,
+            previous_ip="172.20.0.4", next_slot="blue",
+            next_image=LATER, next_container_id="d" * 64,
+            next_ip="172.20.0.3",
+        )))
+        self.denied(lambda: restart.finish(switched, phase="rollback_pending"))
+        self.denied(lambda: restart.prepare_slot_retirement(
+            request_sha256="b" * 64,
+            active_slot="green", active_image=NEXT,
+            active_container_id="e" * 64,
+            dormant_slot="blue", dormant_image=OLD,
+            dormant_container_id="d" * 64, next_image=LATER,
+        ))
+
+    def test_retirement_unmatched_or_unsigned_source_is_never_recorded(self):
+        """Wrong old image, active ID or noncanonical OCI leaves zero residue."""
+        self.journal.begin(**approval())
+        ready = self.journal.finish(self.journal.read(), phase="candidate_ready")
+        self.journal.finish(ready, phase="switched")
+        baseline = dict(request_sha256="f" * 64,
+            active_slot="green", active_image=NEXT,
+            active_container_id="e" * 64,
+            dormant_slot="blue", dormant_image=OLD,
+            dormant_container_id="d" * 64, next_image=LATER)
+        for field, value in (
+            ("request_sha256", "0" * 64),
+            ("dormant_slot", "green"),
+            ("dormant_image", LATER),
+            ("active_image", OLD),
+            ("active_container_id", "c" * 64),
+            ("dormant_container_id", "0" * 64),
+            ("next_image", "omnilyzer:latest"),
+            ("next_image", NEXT),
+        ):
+            with self.subTest(field=field, value=value):
+                self.denied(lambda: self.journal.prepare_slot_retirement(
+                    **{**baseline, field: value},
+                ))
+                self.assertFalse((self.directory / "slot-retirement.json").exists())
+        # A normal first-successor prepared or restored state is not a
+        # committed source of the active old/new slot identities.
+        self.denied(lambda: self.journal.prepare_slot_retirement(
+            **{**baseline, "active_slot": "blue"},
+        ))
+
+    def test_retirement_file_permission_and_corruption_preserve_hold(self):
+        """A forged symlink, changed mode or partial fsync blocks recovery."""
+        self.journal.begin(**approval())
+        ready = self.journal.finish(self.journal.read(), phase="candidate_ready")
+        self.journal.finish(ready, phase="switched")
+        kwargs = dict(request_sha256="f" * 64,
+            active_slot="green", active_image=NEXT,
+            active_container_id="e" * 64,
+            dormant_slot="blue", dormant_image=OLD,
+            dormant_container_id="d" * 64, next_image=LATER)
+        intent = self.journal.prepare_slot_retirement(**kwargs)
+        file = self.directory / "slot-retirement.json"
+        original = file.read_bytes()
+        file.chmod(0o644)
+        self.denied(self.journal.read_slot_retirement)
+        file.chmod(0o600)
+        file.write_bytes(b"{")
+        self.denied(self.journal.read_slot_retirement)
+        file.write_bytes(original)
+        self.assertEqual(self.journal.read_slot_retirement(), intent)
+        file.rename(self.directory / "saved")
+        file.symlink_to(self.directory / "saved")
+        self.denied(self.journal.read_slot_retirement)
+        self.denied(self.journal.read)
+
+    def test_retirement_restart_rejects_altered_original_route_identity(self):
+        """A valid pending intent cannot be paired with a forged older route."""
+        self.journal.begin(**approval())
+        ready = self.journal.finish(self.journal.read(), phase="candidate_ready")
+        self.journal.finish(ready, phase="switched")
+        self.journal.prepare_slot_retirement(
+            request_sha256="f" * 64, active_slot="green", active_image=NEXT,
+            active_container_id="e" * 64,
+            dormant_slot="blue", dormant_image=OLD,
+            dormant_container_id="d" * 64, next_image=LATER,
+        )
+        prior_bytes = self.path.read_bytes()
+        prior = json.loads(prior_bytes)
+        for key, altered in (
+            ("phase", "restored"),
+            ("generation", 2),
+            ("next_image", LATER),
+            ("next_container_id", "c" * 64),
+            ("previous_container_id", "c" * 64),
+        ):
+            with self.subTest(key=key):
+                self.path.write_bytes(canonical_bytes({**prior, key: altered}))
+                self.denied(self.journal.read_slot_retirement)
+                self.path.write_bytes(prior_bytes)
+        self.assertEqual(self.journal.read_slot_retirement()["active_image"], NEXT)
+
+    def test_retirement_intent_partial_write_fails_closed(self):
+        """A crash at fsync cannot create a false durable retirement success."""
+        self.journal.begin(**approval())
+        ready = self.journal.finish(self.journal.read(), phase="candidate_ready")
+        self.journal.finish(ready, phase="switched")
+        with patch("deployment.analytics_route_journal.os.fsync", side_effect=OSError):
+            self.denied(lambda: self.journal.prepare_slot_retirement(
+                request_sha256="f" * 64,
+                active_slot="green", active_image=NEXT,
+                active_container_id="e" * 64,
+                dormant_slot="blue", dormant_image=OLD,
+                dormant_container_id="d" * 64, next_image=LATER,
+            ))
+        self.assertTrue((self.directory / "slot-retirement.json").exists())
+        self.denied(self.journal.read)
+        self.denied(lambda: self.journal.begin(**approval()))
 
     def test_execution_proof_persists_independent_request_and_container(self):
         raw, request_hash = self.execution_request()
