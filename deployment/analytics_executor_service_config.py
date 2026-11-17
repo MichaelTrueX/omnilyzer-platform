@@ -124,6 +124,7 @@ _FIELDS = frozenset({
 # Historical V1 schema/bytes and source allowlist remain exactly unchanged.
 _SUCCESSOR_FIELDS = _FIELDS | frozenset({"expected_workflow_sha"})
 _EXECUTION_FIELDS = _SUCCESSOR_FIELDS | frozenset({"owner_authorized_first_successor"})
+_ORDINARY_FIELDS = _SUCCESSOR_FIELDS | frozenset({"owner_authorized_ordinary_successor"})
 _MAX_BYTES = 4096
 _FILE_BOUND = 1024 * 1024
 _TOTAL_BOUND = 12 * 1024 * 1024
@@ -160,14 +161,15 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
         # SHA can never make historical schema-1 bytes newly acceptable.
         generation = value.get("schema_version")
         if (
-            type(generation) is not int or generation not in (1, 2, 3)
+            type(generation) is not int or generation not in (1, 2, 3, 4)
             or set(value) != (
                 _FIELDS if generation == 1 else
-                _SUCCESSOR_FIELDS if generation == 2 else _EXECUTION_FIELDS
+                _SUCCESSOR_FIELDS if generation == 2 else
+                _EXECUTION_FIELDS if generation == 3 else _ORDINARY_FIELDS
             )
         ):
             raise ValueError
-        if (type(generation) is not int or generation not in (1, 2, 3)
+        if (type(generation) is not int or generation not in (1, 2, 3, 4)
                 or value["product_id"] != "analytics"
                 or type(value["product_id"]) is not str
                 or type(value["stage"]) is not str or value["stage"] != "dev"):
@@ -191,7 +193,7 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
         ):
             raise ValueError
         workflow = None
-        if generation in (2, 3):
+        if generation in (2, 3, 4):
             workflow = validate_expected_workflow_sha(
                 value["expected_workflow_sha"],
             )
@@ -201,7 +203,12 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
             type(value["owner_authorized_first_successor"]) is not bool
             or value["owner_authorized_first_successor"] is not True
         ):
-            raise ValueError("unsigned positive successor mode")
+            raise ValueError("unsigned positive first successor mode")
+        if generation == 4 and (
+            type(value["owner_authorized_ordinary_successor"]) is not bool
+            or value["owner_authorized_ordinary_successor"] is not True
+        ):
+            raise ValueError("unsigned ordinary successor mode")
         reviewed = _root_reviewed_source({
             key: value[key] for key in (
                 "reviewed_installed_commit",
@@ -218,9 +225,11 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
             **dict(reviewed),
             "source_generation": generation,
             **({"expected_workflow_sha": workflow}
-               if generation in (2, 3) else {}),
+               if generation in (2, 3, 4) else {}),
             **({"owner_authorized_first_successor": True}
                if generation == 3 else {}),
+            **({"owner_authorized_ordinary_successor": True}
+               if generation == 4 else {}),
             "source_sha256": tuple((p, source[p]) for p in paths),
         }
     except _CONTROL:
@@ -393,7 +402,7 @@ def load_analytics_executor_service_config(
         # The original V1 service may keep its unchanged default, but a
         # successor Docker operation must never run against a V1-only root
         # source manifest that did not attest the port-reset overlay.
-        if require_successor and product["source_generation"] not in (2, 3):
+        if require_successor and product["source_generation"] not in (2, 3, 4):
             raise ValueError("candidate requires protected generation two")
         if (
             _configuration_file(os.fstat(desc)) != opened
@@ -411,7 +420,7 @@ def load_analytics_executor_service_config(
         ):
             raise ValueError
         source_root = (
-            _SUCCESSOR_INSTALLED_ROOT if product["source_generation"] in (2, 3)
+            _SUCCESSOR_INSTALLED_ROOT if product["source_generation"] in (2, 3, 4)
             else _INSTALLED_ROOT
         )
         _verify_source_bytes((
@@ -438,9 +447,11 @@ def load_analytics_executor_service_config(
                 "expected_executor_uid": base.executor_uid,
                 "expected_executor_gid": base.executor_gid,
                 **({"expected_workflow_sha": product["expected_workflow_sha"]}
-                   if product["source_generation"] in (2, 3) else {}),
+                   if product["source_generation"] in (2, 3, 4) else {}),
                 **({"owner_authorized_first_successor": True}
                    if product["source_generation"] == 3 else {}),
+                **({"owner_authorized_ordinary_successor": True}
+                   if product["source_generation"] == 4 else {}),
             },
         )
     except _CONTROL:
