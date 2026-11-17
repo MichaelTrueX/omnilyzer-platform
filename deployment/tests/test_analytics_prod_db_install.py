@@ -28,9 +28,9 @@ SPEC.loader.exec_module(m)
 class TestFirstInstall(unittest.TestCase):
     """The interpreter must only support the reviewed new-db contract."""
 
-    def test_empty_gate_pin_holds(self):
-        """An unpinned release operator cannot import writable code as root."""
-        with self.assertRaisesRegex(m.InstallHold, "missing reviewed gate"):
+    def test_untrusted_gate_source_holds(self):
+        """A developer-owned gate cannot be imported as root after digest pinning."""
+        with self.assertRaisesRegex(m.InstallHold, "installed source/file metadata"):
             m.gate_module()
 
     def test_prod_preflight_refuses_marker(self):
