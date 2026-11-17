@@ -17,7 +17,7 @@ Sections: root-controlled authority capture; canonical successor and
           signed-original/owner/GitHub/registry read-only review;
           original sealed Zot handoff, replay and bounded private transport;
           future independently signed schema3 broker replay/FD handoff;
-          ordinary read-only previous and next signed-release validation.
+          ordinary previous/next signing and same protected replay/FD handoff.
 
 NOT ACTIVATED FOR SUCCESSORS: The original Analytics executor systemd
 socket is installed and listens, but its signed 0.15.0 receiver cannot admit
@@ -608,9 +608,29 @@ class AnalyticsPrivatePromotionBroker:
     # Section: future source-only original broker replay/FD/Unix handoff
     # for the independently reviewed first successor. NOT installed in
     # HTTPS routing; the original active receiver remains DENY-only.
+    def authorize_and_forward_ordinary_successor(
+        self, *, compact_token: str, zot_token: str, forgejo_token: str,
+        canonical_request: bytes, received_at: int,
+    ) -> bytes:
+        """Reuse protected first-successor OIDC, sealed FD and SQLite replay.
+
+        Previous signed release and new signed image are independently verified
+        by the ordinary read-only reviewer before consuming replay or sending
+        to the existing exact Analytics-only Unix successor transport. The
+        installed HTTPS router does not select this new method until a root-
+        reviewed ordinary executor and safe restart are independently accepted.
+        """
+        return self.authorize_and_forward_first_successor(
+            compact_token=compact_token, zot_token=zot_token,
+            forgejo_token=forgejo_token,
+            canonical_request=canonical_request, received_at=received_at,
+            _ordinary=True,
+        )
+
     def authorize_and_forward_first_successor(
         self, *, compact_token: str, zot_token: str, forgejo_token: str,
         canonical_request: bytes, received_at: int,
+        _ordinary: bool = False,
     ) -> bytes:
         """Consume the ORIGINAL broker JTI only after signed review and FD.
 
@@ -629,14 +649,18 @@ class AnalyticsPrivatePromotionBroker:
         """
         from .executor import parse_canonical_response
         sender = object.__getattribute__(self, "_successor_transport")
-        if sender is None:
+        if type(_ordinary) is not bool or sender is None:
             _emit_analytics_release_boundary("broker_sender", "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
         # Section: mandatory complete original broker signing admission.
         # This performs original owner Ed25519, OIDC, Cosign, provenance, OCI
         # SBOM, zero-High and exact original 0.15.0 rollback source binding.
-        selected = self.review_first_successor_without_forwarding(
+        reviewer = (
+            self.review_ordinary_successor_without_forwarding
+            if _ordinary else self.review_first_successor_without_forwarding
+        )
+        selected = reviewer(
             compact_token=compact_token, zot_token=zot_token,
             forgejo_token=forgejo_token,
             canonical_request=canonical_request, received_at=received_at,
