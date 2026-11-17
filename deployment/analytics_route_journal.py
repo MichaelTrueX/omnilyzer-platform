@@ -40,6 +40,7 @@ ROUTE_JOURNAL_DIRECTORY = "/var/lib/omnilyzer/deployment/analytics-route"
 _FILENAME = "transaction.json"
 _TEMP = ".transaction.json.next"
 _RETIREMENT = "slot-retirement.json"
+_RETIREMENT_TEMP = ".slot-retirement.json.next"
 _EXECUTIONS = "executions"
 _IMAGE_PREFIX = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:"
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -216,7 +217,7 @@ def _retirement_record(raw: object) -> dict[str, object]:
     if (
         type(record["schema_version"]) is not int
         or record["schema_version"] != 1
-        or record["phase"] != "retirement_pending"
+        or record["phase"] not in ("retirement_pending", "slot_empty")
         or type(record["prior_generation"]) is not int
         or record["prior_generation"] < 1
         or record["prior_generation"] > _MAX_GENERATION
@@ -593,6 +594,7 @@ class AnalyticsRouteJournal:
                     or previous["previous_container_id"] != dormant_container_id
                     or _RETIREMENT in os.listdir(directory)
                     or previous["generation"] >= _MAX_GENERATION
+                    or previous["request_sha256"] == request_sha256
                 ):
                     _reject()
                 record = _retirement_record({
@@ -633,6 +635,102 @@ class AnalyticsRouteJournal:
                 if self._read_retirement_at(directory) != record:
                     _reject()
                 return record
+            finally:
+                if borrowed:
+                    os.close(directory)
+        except _CONTROL:
+            raise
+        except Exception:
+            _reject()
+
+    # Section: mark observed vacancy only after an independent UID991 read.
+    def confirm_slot_retired(self, *, pending: dict[str, object]) -> dict[str, object]:
+        """Persist exact empty-slot observation, never remove Docker assets.
+
+        This method MUST follow an independently approved stopped-container
+        retirement operation. It reads live Docker/RootlessKit under UID991,
+        validates the still-active signed writer and requires the named prior
+        slot to be absent. A failed/crashed confirmation leaves the existing
+        retirement intent and prevents ordinary promotion until recovery.
+        This is not by itself permission to stage, switch routes, or delete.
+        """
+        from .analytics_active_state_review import (
+            AnalyticsActiveState, inspect_analytics_active_state,
+            verify_empty_analytics_candidate_slot,
+        )
+        try:
+            if os.geteuid() != 991 or type(pending) is not dict:
+                _reject()
+            if _retirement_record(pending) != pending or pending["phase"] != "retirement_pending":
+                _reject()
+            directory, borrowed = self._write_handle()
+            try:
+                entries = set(os.listdir(directory))
+                if entries not in (
+                    {_FILENAME, _RETIREMENT},
+                    {_FILENAME, _RETIREMENT, _EXECUTIONS},
+                ):
+                    _reject()
+                recorded = self._read_retirement_at(directory)
+                prior = self._read_at(directory, allow_retirement=True)
+                if (
+                    recorded != pending or prior is None
+                    or prior["phase"] != "switched"
+                    or prior["generation"] != pending["prior_generation"]
+                    or prior["next_slot"] != pending["active_slot"]
+                    or prior["next_image"] != pending["active_image"]
+                    or prior["next_container_id"] != pending["active_container_id"]
+                    or prior["previous_slot"] != pending["dormant_slot"]
+                    or prior["previous_image"] != pending["dormant_image"]
+                    or prior["previous_container_id"] != pending["dormant_container_id"]
+                ):
+                    _reject()
+                live = inspect_analytics_active_state()
+                if (
+                    type(live) is not AnalyticsActiveState
+                    or live.read_only is not True
+                    or live.deployment_authorized is not False
+                    or live.active_slot != pending["active_slot"]
+                    or live.active_image != pending["active_image"]
+                    or live.active_container_id != pending["active_container_id"]
+                    or live.candidate_slot != pending["dormant_slot"]
+                    or live.candidate_probe_present is not False
+                    or live.private_ingress_port != 3141
+                ):
+                    _reject()
+                verify_empty_analytics_candidate_slot(pending["dormant_slot"])
+                if inspect_analytics_active_state() != live:
+                    _reject()
+                done = _retirement_record({**pending, "phase": "slot_empty"})
+                if _RETIREMENT_TEMP in os.listdir(directory):
+                    _reject()
+                descriptor = os.open(
+                    _RETIREMENT_TEMP, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                    | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=directory,
+                )
+                try:
+                    metadata = os.fstat(descriptor)
+                    if (
+                        metadata.st_uid != object.__getattribute__(self, "_uid")
+                        or metadata.st_gid != object.__getattribute__(self, "_gid")
+                        or metadata.st_nlink != 1
+                        or stat.S_IMODE(metadata.st_mode) != 0o600
+                    ):
+                        _reject()
+                    with os.fdopen(os.dup(descriptor), "wb") as output:
+                        output.write(canonical_bytes(done))
+                        output.flush()
+                    os.fsync(descriptor)
+                    os.replace(
+                        _RETIREMENT_TEMP, _RETIREMENT,
+                        src_dir_fd=directory, dst_dir_fd=directory,
+                    )
+                    os.fsync(directory)
+                finally:
+                    os.close(descriptor)
+                if self._read_retirement_at(directory) != done:
+                    _reject()
+                return done
             finally:
                 if borrowed:
                     os.close(directory)
