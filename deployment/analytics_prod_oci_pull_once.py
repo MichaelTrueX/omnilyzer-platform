@@ -107,7 +107,7 @@ def remote_preflight() -> None:
     """Check original signed PROD receiver without changing Docker or the DB."""
     code = (
         "set -eu; "
-        f"test \"$(sha256sum {PROD_RECEIVER} | cut -d' ' -f1)\" = {PROD_RECEIVER_SHA}; "
+        f"test \"$(sudo -n /usr/bin/sha256sum {PROD_RECEIVER} | cut -d' ' -f1)\" = {PROD_RECEIVER_SHA}; "
         "sudo -n /usr/sbin/runuser -u omnilyzer-analytics -- "
         f"/usr/bin/python3 -I -B {PROD_RECEIVER} --preflight"
     )
