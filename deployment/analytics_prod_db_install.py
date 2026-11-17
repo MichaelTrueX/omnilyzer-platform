@@ -213,6 +213,9 @@ def execute_sql(gate: object) -> None:
     run(("/usr/sbin/runuser", "-u", "postgres", "--", "/usr/bin/createdb",
          "-h", "/var/run/postgresql", "-O", "postgres", "-E", "UTF8",
          "-T", "template0", DB), timeout=40)
+    # Close the PostgreSQL PUBLIC CONNECT/TEMPORARY default immediately,
+    # BEFORE tables/policies or cluster-global login roles are installed.
+    psql("postgres", b"REVOKE ALL ON DATABASE omnilyzer_analytics_prod FROM PUBLIC;\n")
     for name in SQL_NAMES:
         source = gate.exact_file(SQL_DIR / name, uid=0, mode=0o400, max_bytes=65536)
         psql(DB, source, timeout=120)
