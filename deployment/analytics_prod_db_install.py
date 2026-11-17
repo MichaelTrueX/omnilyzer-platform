@@ -70,9 +70,23 @@ SQL_NAMES = (
     "rls--analytics-app-events.install.sql",
 )
 SECRET_NAMES = ("DATABASE_URL", "COLLECTOR_DATABASE_URL", "JWT_SECRET", "JWT_REFRESH_SECRET")
+# Distinct PROD app/collector principals must not authenticate to sibling
+# databases in this SHARED PG16 cluster. The accepted DEV DB was isolated
+# in a dedicated container, so this explicit rejection is PROD-specific.
+# Only the two named Unix-socket SCRAM paths to the new DB are admitted.
 HBA_INSERT = (
-    b"local   omnilyzer_analytics_prod omni_runtime scram-sha-256\n"
-    b"local   omnilyzer_analytics_prod collector_runtime scram-sha-256\n"
+    b"local omnilyzer_analytics_prod omni_runtime scram-sha-256\n"
+    b"local omnilyzer_analytics_prod collector_runtime scram-sha-256\n"
+    b"local all omni_runtime reject\n"
+    b"local all collector_runtime reject\n"
+    b"local all archive_runtime reject\n"
+    b"local all collector_lock_definer reject\n"
+    b"host all omni_runtime 127.0.0.1/32 reject\n"
+    b"host all collector_runtime 127.0.0.1/32 reject\n"
+    b"host all archive_runtime 127.0.0.1/32 reject\n"
+    b"host all omni_runtime ::1/128 reject\n"
+    b"host all collector_runtime ::1/128 reject\n"
+    b"host all archive_runtime ::1/128 reject\n"
 )
 HBA_NEEDLE = b"local   all             all                                     peer\n"
 
