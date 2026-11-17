@@ -3,14 +3,16 @@
 Purpose: One signed Analytics 0.15.0 PRIVATE DEV first-install operation for
          original Task014 AnalyticsPrivilegedExecutor.deploy_analytics().
          Reuse original rootless Docker runner, exact Compose YAML, sealed Zot
-         registry adapter, and fail-closed first-slot rollback.
+         registry adapter, and fail-closed first-slot rollback. Also provide
+         exact immutable-image mapping for future opposite-slot upgrades.
 Related: deployment/analytics_execution.py (closed signed request),
          deployment/analytics_private_registry.py (exact digest private pull),
          deployment/analytics_dev_release_review.py (four host secret refs),
          deployment/rootless_docker_authority.py (UID 10001 host mapping),
          deployment/runtime/dev/analytics.compose.review.yaml (only blue slot),
          deployment/docker_runtime.py (original rootless Docker commands),
-         deployment/tests/test_analytics_first_install.py.
+         deployment/tests/test_analytics_first_install.py,
+         deployment/tests/test_analytics_successor_candidate_operation.py.
 
 Sections: fixed product authority and command contracts; required preflight
           (source, secrets, empty blue slot, isolated network); exact signed
@@ -472,7 +474,8 @@ class AnalyticsFirstInstallOperation:
         return None
 
 
-# Section: first-successor-only, still UNWIRED candidate container staging.
+# Section: original first-successor candidate staging and an inert,
+# reusable blue/green image-to-Compose mapping for later signed upgrades.
 # Reuse the original Task014 rootless Docker runner, sealed Zot image pull,
 # UID-mapped secret checks, and closed two-profile Compose sources. The
 # protected V2 root manifest now attests the exact port-reset overlay YAML.
@@ -482,11 +485,46 @@ _SUCCESSOR_COMPOSE_OVERLAY = (
 # Independently check both healthy endpoints inside the candidate without
 # Docker host publishing or importing browser/session/user tokens.
 _SUCCESSOR_LIVE_SCRIPT = _READY_SCRIPT.replace("/readyz", "/livez")
-_SUCCESSOR_ENV = {
-    "PATH": "/usr/bin:/bin",
-    "LANG": "C.UTF-8",
-    "ANALYTICS_BLUE_IMAGE": PINNED_IMAGE,
-}
+_SUCCESSOR_IMAGE_PREFIX = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:"
+
+
+def _review_successor_compose_images(
+    *, previous_image: str, candidate_image: str, candidate_slot: str,
+) -> tuple[dict[str, str], str]:
+    """Map exact immutable OCI images to the two existing Compose profiles.
+
+    This is a shape-only contract for the already installed blue/green Compose
+    file, NOT proof of signatures, live state, previous-release authority or
+    deployment permission. UID991 must independently verify those boundaries
+    before this mapping can be used for an ordinary successor operation.
+    """
+    def image_is_pinned(value: object) -> bool:
+        """Reject mutable tags, foreign repositories and zero digests."""
+        return (
+            type(value) is str
+            and re.fullmatch(
+                re.escape(_SUCCESSOR_IMAGE_PREFIX) + r"[0-9a-f]{64}", value,
+            ) is not None
+            and value != _SUCCESSOR_IMAGE_PREFIX + "0" * 64
+        )
+
+    if (
+        type(candidate_slot) is not str
+        or candidate_slot not in ("blue", "green")
+        or not image_is_pinned(previous_image)
+        or not image_is_pinned(candidate_image)
+        or previous_image == candidate_image
+    ):
+        raise AnalyticsFirstInstallError(_ERROR)
+    images = {
+        "blue": candidate_image if candidate_slot == "blue" else previous_image,
+        "green": candidate_image if candidate_slot == "green" else previous_image,
+    }
+    return {
+        "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
+        "ANALYTICS_BLUE_IMAGE": images["blue"],
+        "ANALYTICS_GREEN_IMAGE": images["green"],
+    }, "analytics-" + candidate_slot
 
 
 class AnalyticsSuccessorCandidateOperation:
@@ -540,8 +578,15 @@ class AnalyticsSuccessorCandidateOperation:
 
     def _docker(
         self, image: str, *parts: str, timeout: float = _RUN_TIMEOUT,
+        previous_image: str = PINNED_IMAGE,
+        candidate_slot: str = "green",
     ) -> CommandResult:
-        """Execute the existing fixed rootless Docker CLI with no token in env."""
+        """Run the fixed rootless Docker CLI with slot-scoped image mapping.
+
+        This lower-level command builder is not release authorization. Its
+        callers must first bind the signed previous/next images to actual live
+        routing and root-approved source before invoking a candidate command.
+        """
         from .docker_runtime import _docker as docker_cli
         _require_rootless_socket()
         if (
@@ -557,10 +602,13 @@ class AnalyticsSuccessorCandidateOperation:
             # and health, well inside the original 720s Unix reply limit.
             # Emergency stop has a separate original 45s reserve.
             timeout = min(timeout, deadline.remaining())
+        environment, _service = _review_successor_compose_images(
+            previous_image=previous_image, candidate_image=image,
+            candidate_slot=candidate_slot,
+        )
         result = object.__getattribute__(self, "_run")(
             docker_cli(*parts), cwd=WORKING_DIRECTORY,
-            environment={**_SUCCESSOR_ENV, "ANALYTICS_GREEN_IMAGE": image},
-            timeout=timeout,
+            environment=environment, timeout=timeout,
         )
         if (
             type(result) is not CommandResult
@@ -573,15 +621,26 @@ class AnalyticsSuccessorCandidateOperation:
             deadline.remaining()
         return result
 
-    def _compose(self, image: str, *parts: str) -> CommandResult:
-        """Use only two independently root-attested Compose files and green."""
+    def _compose(
+        self, image: str, *parts: str,
+        previous_image: str = PINNED_IMAGE,
+        candidate_slot: str = "green",
+    ) -> CommandResult:
+        """Select only the reviewed blue/green Compose profile and image pair."""
+        _environment, service = _review_successor_compose_images(
+            previous_image=previous_image, candidate_image=image,
+            candidate_slot=candidate_slot,
+        )
         args = (
             "compose", "--project-name", _PROJECT,
             "--file", str(COMPOSE_FILE),
             "--file", str(_SUCCESSOR_COMPOSE_OVERLAY),
-            "--profile", "green", *parts,
+            "--profile", service.removeprefix("analytics-"), *parts,
         )
-        return self._docker(image, *args)
+        return self._docker(
+            image, *args, previous_image=previous_image,
+            candidate_slot=candidate_slot,
+        )
 
     def _stop_green_if_owned(
         self, image: str, *, expected_id: str | None = None,
