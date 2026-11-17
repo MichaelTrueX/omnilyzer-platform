@@ -268,7 +268,7 @@ class OrdinaryExecutorSignedPredecessorTests(unittest.TestCase):
             "deployment.analytics_active_state_review.inspect_analytics_active_state",
             return_value=self.live,
         ))
-        self.stack.enter_context(patch(
+        self.empty = self.stack.enter_context(patch(
             "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
             return_value=None,
         ))
@@ -299,12 +299,13 @@ class OrdinaryExecutorSignedPredecessorTests(unittest.TestCase):
             return_value=self.next_release[1:],
         ))
 
-    def review(self):
+    def review(self, *, retirement_journal=None):
         """Invoke the new read-only ordinary executor boundary."""
         from deployment.analytics_executor import _review_executor_ordinary_signed_release
         return _review_executor_ordinary_signed_release(
             self.raw, 21, expected_workflow_sha=WORKFLOW_SHA,
             reviewed_installed_source=EXPECTED, received_at=NOW,
+            retirement_journal=retirement_journal,
         )
 
     def test_read_only_signed_predecessor_and_opposite_slot(self):
@@ -337,8 +338,8 @@ class OrdinaryExecutorSignedPredecessorTests(unittest.TestCase):
         self.assertEqual(self.signed.call_count, 2)
         self.assertEqual(self.inspector.call_count, 4)
 
-    def test_signed_active_green_to_candidate_blue_is_supported(self):
-        """The ordinary request binds the actual signed green, not old blue."""
+    def configure_green_candidate(self):
+        """Build a signed current green with an unpublished blue candidate."""
         import hashlib
         from deployment.policy import canonical_bytes
         from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
@@ -377,10 +378,91 @@ class OrdinaryExecutorSignedPredecessorTests(unittest.TestCase):
         })
         data["promotion_request_sha256"] = hashlib.sha256(intent).hexdigest()
         self.raw = canonical_bytes(data)
+
+    def test_signed_active_green_to_candidate_blue_is_supported(self):
+        """The ordinary request binds the actual signed green, not old blue."""
+        self.configure_green_candidate()
+        prior_digest = self.live.active_digest
         checked = self.review()
         self.assertEqual(checked.ingress_reference["slot"], "blue")
         self.assertEqual(checked.rollback_reference["previous_slot"], "green")
         self.assertEqual(checked.rollback_reference["previous_digest"], prior_digest)
+
+    def test_signed_current_green_reviews_exact_stopped_original_blue(self):
+        """A historical 0.15 rollback can be present BEFORE signed retirement."""
+        from deployment.analytics_route_journal import AnalyticsRouteJournal
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        self.configure_green_candidate()
+        journal = object.__new__(AnalyticsRouteJournal)
+        recorded = {
+            "phase": "switched", "next_slot": "green",
+            "next_image": self.live.active_image,
+            "next_container_id": self.live.active_container_id,
+            "previous_slot": "blue", "previous_image": PINNED_IMAGE,
+            "previous_container_id": "a" * 64,
+        }
+        with patch.object(
+            AnalyticsRouteJournal, "exclusive_active", return_value=True,
+        ), patch.object(
+            AnalyticsRouteJournal, "read", return_value=recorded,
+        ) as journal_reads, patch(
+            "deployment.analytics_active_state_review.inspect_dormant_analytics_candidate",
+            return_value=None,
+        ) as dormant:
+            verified = self.review(retirement_journal=journal)
+        self.assertEqual(verified.ingress_reference["slot"], "blue")
+        self.assertEqual(verified.rollback_reference["previous_slot"], "green")
+        dormant.assert_called_once_with(
+            active=self.live, expected_slot="blue",
+            expected_image=PINNED_IMAGE,
+            expected_container_id="a" * 64,
+        )
+        self.assertEqual(journal_reads.call_count, 3)
+        self.empty.assert_not_called()
+        self.assertEqual(self.signed.call_count, 2)
+
+    def test_unknown_historical_image_or_unlocked_journal_denies_pre_retirement(self):
+        """No caller-invented dormant OCI can substitute for signed history."""
+        from deployment.analytics_route_journal import AnalyticsRouteJournal
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        self.configure_green_candidate()
+        journal = object.__new__(AnalyticsRouteJournal)
+        recorded = {
+            "phase": "switched", "next_slot": "green",
+            "next_image": self.live.active_image,
+            "next_container_id": self.live.active_container_id,
+            "previous_slot": "blue", "previous_image": PINNED_IMAGE,
+            "previous_container_id": "a" * 64,
+        }
+        with patch.object(
+            AnalyticsRouteJournal, "exclusive_active", return_value=False,
+        ), patch.object(
+            AnalyticsRouteJournal, "read", return_value=recorded,
+        ) as read, self.assertRaises(ExecutorUnavailableError):
+            self.review(retirement_journal=journal)
+        read.assert_not_called()
+        # Reuse fresh signed fixture side effects for each independent deny.
+        for malformed in (
+            {**recorded, "previous_image": self.live.active_image},
+            {**recorded, "phase": "prepared"},
+            {**recorded, "next_container_id": "d" * 64},
+        ):
+            self.signed.side_effect = [
+                replace(self.predecessor[0],
+                    image=self.live.active_image,
+                    source=replace(self.predecessor[0].source,
+                        oci_manifest_digest=self.live.active_digest)),
+                self.next_release[0],
+            ]
+            with self.subTest(malformed=malformed), patch.object(
+                AnalyticsRouteJournal, "exclusive_active", return_value=True,
+            ), patch.object(
+                AnalyticsRouteJournal, "read", return_value=malformed,
+            ), patch(
+                "deployment.analytics_active_state_review.inspect_dormant_analytics_candidate",
+            ) as dormant, self.assertRaises(ExecutorUnavailableError):
+                self.review(retirement_journal=journal)
+            dormant.assert_not_called()
 
     def test_foreign_uid_blocks_before_signed_proof_and_docker(self):
         """A non-executor caller cannot cause even a registry read."""
