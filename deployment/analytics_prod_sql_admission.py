@@ -153,7 +153,8 @@ def prod_preflight() -> None:
             or platform.machine() != "x86_64"):
         raise AdmissionHold("exact production root identity required")
     verify_sql(PROD_SQL, uid=0, file_mode=0o400, directory_mode=0o700)
-    contents = exact_file(HBA, uid=0, mode=0o640, max_bytes=65536)
+    contents = exact_file(HBA, uid=pwd.getpwnam("postgres").pw_uid,
+                          mode=0o640, max_bytes=65536)
     if hashlib.sha256(contents).hexdigest() != HBA_SHA256:
         raise AdmissionHold("PROD HBA exact source checksum differs")
     verify_hba(contents.decode("utf-8"))
