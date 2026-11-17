@@ -304,6 +304,85 @@ class AnalyticsRouteJournalTests(unittest.TestCase):
         self.denied(self.journal.read_slot_retirement)
         self.denied(self.journal.read)
 
+    def confirmed_slot_retirement(self):
+        """Persist a synthetic, exact and source-bound slot vacancy first."""
+        pending, live = self.slot_retirement_fixture()
+        with patch("deployment.analytics_route_journal.os.geteuid", return_value=991), patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            return_value=live,
+        ), patch(
+            "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+        ):
+            done = self.journal.confirm_slot_retired(pending=pending)
+        return done
+
+    def test_prepared_second_release_starts_only_from_confirmed_empty_slot(self):
+        """Convert durable vacancy into a normal generation2 route journal."""
+        confirmed = self.confirmed_slot_retirement()
+        with patch("deployment.analytics_route_journal.os.geteuid", return_value=991):
+            next_record = self.journal.begin_after_retirement(
+                request_sha256="f" * 64,
+                next_container_id="c" * 64, next_ip="172.20.0.3",
+            )
+        self.assertEqual(next_record["phase"], "prepared")
+        self.assertEqual(next_record["generation"], confirmed["prior_generation"] + 1)
+        self.assertEqual(next_record["previous_slot"], "green")
+        self.assertEqual(next_record["next_slot"], "blue")
+        self.assertEqual(next_record["next_image"], LATER)
+        self.assertFalse((self.directory / "slot-retirement.json").exists())
+        self.assertEqual(self.journal.read(), next_record)
+        # Existing protected phases now apply, without creating a parallel
+        # route, journal framework or second release-state machine.
+        ready = self.journal.finish(next_record, phase="candidate_ready")
+        switched = self.journal.finish(ready, phase="switched")
+        self.assertEqual(switched["phase"], "switched")
+        self.assertEqual(self.journal.read(), switched)
+
+    def test_unconfirmed_wrong_signed_image_and_wrong_principal_never_stage(self):
+        """Wrong prior request hash and duplicate IDs leave journal blocked."""
+        pending, _live = self.slot_retirement_fixture()
+        self.denied(lambda: self.journal.begin_after_retirement(
+            request_sha256="f" * 64,
+            next_container_id="c" * 64, next_ip="172.20.0.3",
+        ))
+        self.assertEqual(self.journal.read_slot_retirement(), pending)
+
+    def test_confirmed_retirement_refuses_wrong_id_hash_and_uid(self):
+        """Even after safe vacancy, only its one signed next request may begin."""
+        confirmed = self.confirmed_slot_retirement()
+        with patch("deployment.analytics_route_journal.os.geteuid", return_value=1005):
+            self.denied(lambda: self.journal.begin_after_retirement(
+                request_sha256="f" * 64,
+                next_container_id="c" * 64, next_ip="172.20.0.3",
+            ))
+        with patch("deployment.analytics_route_journal.os.geteuid", return_value=991):
+            for values in (
+                {"request_sha256": "b" * 64},
+                {"next_container_id": "e" * 64},
+                {"next_ip": "172.20.0.4"},
+                {"next_container_id": "not-a-container-id"},
+            ):
+                with self.subTest(values=values):
+                    kwargs = dict(request_sha256="f" * 64,
+                        next_container_id="c" * 64, next_ip="172.20.0.3")
+                    kwargs.update(values)
+                    self.denied(lambda: self.journal.begin_after_retirement(**kwargs))
+            self.assertEqual(self.journal.read_slot_retirement(), confirmed)
+
+    def test_interrupted_post_retirement_begin_never_forges_success(self):
+        """An interrupted unlink leaves both intent and route HOLD."""
+        self.confirmed_slot_retirement()
+        with patch("deployment.analytics_route_journal.os.geteuid", return_value=991), patch(
+            "deployment.analytics_route_journal.os.unlink", side_effect=OSError,
+        ), self.assertRaises(AnalyticsRouteJournalUnavailable):
+            self.journal.begin_after_retirement(
+                request_sha256="f" * 64,
+                next_container_id="c" * 64, next_ip="172.20.0.3",
+            )
+        self.assertTrue((self.directory / "slot-retirement.json").exists())
+        self.denied(self.journal.read)
+        self.denied(self.journal.read_slot_retirement)
+
     def test_retirement_intent_partial_write_fails_closed(self):
         """A crash at fsync cannot create a false durable retirement success."""
         self.journal.begin(**approval())
