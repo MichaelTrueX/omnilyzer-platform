@@ -70,7 +70,8 @@ class TestFirstInstall(unittest.TestCase):
                 m, "psql", side_effect=m.InstallHold("stop")) as sql:
             with self.assertRaises(m.InstallHold):
                 m.execute_sql(gate)
-        self.assertEqual(sql.call_count, 2)
+        self.assertEqual(sql.call_count, 1)
+        # A failed immediate PUBLIC revocation prevents every SQL migration.
 
     def test_no_public_connect_on_shared_cluster(self):
         """Restrict the new database before app credentials are provisioned."""
