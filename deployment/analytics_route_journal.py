@@ -536,8 +536,15 @@ class AnalyticsRouteJournal:
             if directory is not None:
                 os.close(directory)
 
-    def _replace_at(self, directory_fd: int, new: dict[str, object]) -> None:
-        """Write/fsync private temp, atomic rename and fsync enclosing dir."""
+    def _replace_at(
+        self, directory_fd: int, new: dict[str, object], *,
+        allow_retirement: bool = False,
+    ) -> None:
+        """Write/fsync private temp, atomic rename and fsync enclosing dir.
+
+        Only the ordinary signed post-retirement transition may read back a
+        transaction while a verified slot_empty intent remains present.
+        """
         encoded = canonical_bytes(_route_record(new))
         if _TEMP in os.listdir(directory_fd):
             _reject()
@@ -560,7 +567,7 @@ class AnalyticsRouteJournal:
             os.fsync(directory_fd)
         finally:
             os.close(descriptor)
-        if self._read_at(directory_fd) != new:
+        if self._read_at(directory_fd, allow_retirement=allow_retirement) != new:
             _reject()
 
     # Section: durable pre-retirement preparation, deliberately NO deletion.
@@ -819,6 +826,77 @@ class AnalyticsRouteJournal:
                 return record
             finally:
                 os.close(directory)
+        except _CONTROL:
+            raise
+        except Exception:
+            _reject()
+
+    # Section: bind staged next container to an already fsynced retired slot.
+    def begin_after_retirement(
+        self, *, request_sha256: str,
+        next_container_id: str, next_ip: str,
+    ) -> dict[str, object]:
+        """Atomically adopt a staged signed candidate after slot_empty proof.
+
+        The independently authorized UID991 executor must have already
+        verified the staged immutable OCI, private network and signed next
+        release before providing its exact container ID and private IP.
+        This journal cannot independently authenticate those external inputs.
+        It never stages Docker, changes ports, consumes replay or selects an
+        image from a caller-provided version. An interrupted file transition
+        remains a hard HOLD until protected recovery reconciles it.
+        """
+        try:
+            if os.geteuid() != 991:
+                _reject()
+            directory, borrowed = self._write_handle()
+            try:
+                entries = set(os.listdir(directory))
+                if entries not in (
+                    {_FILENAME, _RETIREMENT},
+                    {_FILENAME, _RETIREMENT, _EXECUTIONS},
+                ):
+                    _reject()
+                intent = self._read_retirement_at(directory)
+                prior = self._read_at(directory, allow_retirement=True)
+                if (
+                    intent["phase"] != "slot_empty"
+                    or prior is None or prior["phase"] != "switched"
+                    or prior["generation"] != intent["prior_generation"]
+                    or prior["generation"] >= _MAX_GENERATION
+                    or intent["request_sha256"] != request_sha256
+                    or prior["next_slot"] != intent["active_slot"]
+                    or prior["next_image"] != intent["active_image"]
+                    or prior["next_container_id"] != intent["active_container_id"]
+                    or prior["previous_slot"] != intent["dormant_slot"]
+                    or prior["previous_image"] != intent["dormant_image"]
+                    or prior["previous_container_id"] != intent["dormant_container_id"]
+                ):
+                    _reject()
+                next_record = _route_record({
+                    "schema_version": 1, "phase": "prepared",
+                    "generation": prior["generation"] + 1,
+                    "request_sha256": request_sha256,
+                    "previous_slot": intent["active_slot"],
+                    "previous_image": intent["active_image"],
+                    "previous_container_id": intent["active_container_id"],
+                    "previous_ip": prior["next_ip"],
+                    "next_slot": intent["dormant_slot"],
+                    "next_image": intent["next_image"],
+                    "next_container_id": next_container_id,
+                    "next_ip": next_ip,
+                })
+                self._replace_at(directory, next_record, allow_retirement=True)
+                # Replacement journal is now fully fsynced; remove only this
+                # exact marker. If unlink/fsync fails, normal read() DENIES.
+                os.unlink(_RETIREMENT, dir_fd=directory)
+                os.fsync(directory)
+                if self._read_at(directory) != next_record:
+                    _reject()
+                return next_record
+            finally:
+                if borrowed:
+                    os.close(directory)
         except _CONTROL:
             raise
         except Exception:
