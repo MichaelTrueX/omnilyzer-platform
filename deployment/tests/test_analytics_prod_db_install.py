@@ -132,9 +132,9 @@ class TestFirstInstall(unittest.TestCase):
     def test_inspection_has_no_privileged_mutation(self):
         """Metadata-only inspection never contacts DB or Docker."""
         with mock.patch.object(m, "check_context"), \
-             mock.patch.object(m.STATE, "is_file", return_value=False), \
-             mock.patch.object(m.HBA_ORIGINAL, "is_file", return_value=False), \
-             mock.patch.object(m.SECRETS, "is_dir", return_value=False), \
+             mock.patch.object(m, "STATE", mock.Mock(is_file=lambda: False)), \
+             mock.patch.object(m, "HBA_ORIGINAL", mock.Mock(is_file=lambda: False)), \
+             mock.patch.object(m, "SECRETS", mock.Mock(is_dir=lambda: False)), \
              mock.patch.object(m, "run") as run:
             m.inspect()
         run.assert_not_called()
