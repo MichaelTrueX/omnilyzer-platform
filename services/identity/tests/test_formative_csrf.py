@@ -223,6 +223,7 @@ class FormativeForwardingTests(unittest.TestCase):
         self.assertEqual(headers["X-CSRF-Token"], "f" * 64)
         self.assertNotEqual(headers["X-CSRF-Token"], "session-csrf")
         self.assertEqual(headers["Origin"], "https://app.sumlaude.com")
+        self.assertEqual(headers["X-Forwarded-Proto"], "https")
         self.assertNotIn("Authorization", headers)
         self.assertNotIn("__Host-omnilyzer_identity", str(headers))
         connection.close.assert_called_once()

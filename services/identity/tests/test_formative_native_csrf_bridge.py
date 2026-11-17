@@ -24,6 +24,8 @@ class Native(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.server.hits.append(('GET',self.path,self.headers.get('Cookie')))
+        if self.headers.get('X-Forwarded-Proto') != 'https':
+            return self.respond(403,{'code':'SUM_NATIVE_HTTPS_PROXY_REQUIRED'})
         if self.path!='/api/auth/csrf' or self.headers.get('Cookie')!='__Host-sumlaude_session='+fixture.COOKIE:
             return self.respond(403,{'code':'SUM_BFF_UNTRUSTED_SESSION'})
         self.respond(self.server.csrf_status,self.server.csrf_payload)
@@ -31,6 +33,8 @@ class Native(BaseHTTPRequestHandler):
     def do_POST(self):
         self.server.hits.append(('POST',self.path,self.headers.get('Cookie')))
         self.rfile.read(int(self.headers.get('Content-Length','0')))
+        if self.headers.get('X-Forwarded-Proto') != 'https':
+            return self.respond(403,{'code':'SUM_NATIVE_HTTPS_PROXY_REQUIRED'})
         if (self.headers.get('X-CSRF-Token')!='f'*64 or
                 self.headers.get('Cookie')!='__Host-sumlaude_session='+fixture.COOKIE or
                 self.headers.get('Origin')!='https://app.sumlaude.com' or self.server.reject_post):

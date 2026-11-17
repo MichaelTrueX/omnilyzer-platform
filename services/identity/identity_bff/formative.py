@@ -80,6 +80,9 @@ def _forward_native(path, content, cookie, validated_csrf):
         return None
     headers = {
         "Host": "app.sumlaude.com",
+        # Fixed TLS termination assertion on our loopback hop; never copy
+        # this value from an inbound browser/proxy header.
+        "X-Forwarded-Proto": "https",
         "Accept": "application/json",
         "Content-Type": "application/json",
         "Cookie": "__Host-sumlaude_session=" + cookie,
@@ -151,6 +154,7 @@ def _forward_native_get(path, cookie, *, asset=False):
     """
     headers = {
         "Host": "app.sumlaude.com",
+        "X-Forwarded-Proto": "https",
         "Cookie": "__Host-sumlaude_session=" + cookie,
         "Accept": ("image/png, image/webp, text/plain, application/json"
                    if asset else "application/json"),
