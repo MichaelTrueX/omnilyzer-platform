@@ -55,7 +55,7 @@ def mint_encrypt(environment: dict[str, str], output: Path) -> None:
     try:
         result = subprocess.run(
             (AGE, "--encrypt", "--recipient", RECIPIENT, "--output", str(output)),
-            input=jwt.encode("ascii"), stdin=None,
+            input=jwt.encode("ascii"),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
             timeout=12, check=False,
