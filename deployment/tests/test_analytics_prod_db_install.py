@@ -30,7 +30,7 @@ class TestFirstInstall(unittest.TestCase):
 
     def test_untrusted_gate_source_holds(self):
         """A developer-owned gate cannot be imported as root after digest pinning."""
-        with self.assertRaisesRegex(m.InstallHold, "installed source/file metadata"):
+        with self.assertRaisesRegex(m.InstallHold, "required immutable file unavailable"):
             m.gate_module()
 
     def test_prod_preflight_refuses_marker(self):
