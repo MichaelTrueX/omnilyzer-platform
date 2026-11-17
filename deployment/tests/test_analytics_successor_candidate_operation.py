@@ -12,7 +12,8 @@ Related: deployment/analytics_first_install.py,
 
 Sections: closed simulated Docker runtime; real request/credential setup;
           positive private candidate, negative authority and failure rollback;
-          ordinary successor blue/green Compose input contract.
+          ordinary successor blue/green Compose input and staged private
+          registry pull with retained source-approved rollback contract.
 
 The tests make NO real Docker pull, service change, network/RootlessKit route,
 database mutation, release signing, privileged installation or production
@@ -60,9 +61,16 @@ NETWORK_ID = "f" * 64
 class SyntheticGreenRunner:
     """Trace exact rootless commands while never connecting to a daemon."""
 
-    def __init__(self, image: str, failure: str | None = None):
-        """Select one synthetic failure and original immutable OCI identity."""
+    def __init__(
+        self, image: str, failure: str | None = None, *,
+        slot: str = "green", previous_image: str | None = None,
+    ):
+        """Select one private blue/green candidate and exact prior OCI."""
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        assert slot in ("green", "blue")
         self.image = image
+        self.slot = slot
+        self.previous_image = PINNED_IMAGE if previous_image is None else previous_image
         self.failure = failure
         self.created = False
         self.running = False
@@ -90,7 +98,9 @@ class SyntheticGreenRunner:
         assert set(environment) == {
             "PATH", "LANG", "ANALYTICS_BLUE_IMAGE", "ANALYTICS_GREEN_IMAGE",
         }
-        assert environment["ANALYTICS_GREEN_IMAGE"] == self.image
+        assert environment["ANALYTICS_" + self.slot.upper() + "_IMAGE"] == self.image
+        other = "green" if self.slot == "blue" else "blue"
+        assert environment["ANALYTICS_" + other.upper() + "_IMAGE"] == self.previous_image
         assert timeout <= 45.0
         parts = argv[len(DOCKER_PREFIX):]
         self.calls.append(parts)
@@ -137,8 +147,9 @@ class SyntheticGreenRunner:
                 "{{json .NetworkSettings.Networks}}": {
                     NETWORK: {
                         "IPAddress": (
-                            "172.20.0.3" if self.failure == "shared-IP"
-                            else "172.20.0.4"
+                            ("172.20.0.4" if self.slot == "blue" else "172.20.0.3")
+                            if self.failure == "shared-IP" else
+                            ("172.20.0.3" if self.slot == "blue" else "172.20.0.4")
                         ),
                         "NetworkID": NETWORK_ID,
                         "Gateway": "",
@@ -157,7 +168,7 @@ class SyntheticGreenRunner:
                 "analytics.compose.review.yaml"
             )),
             "--file", str(_SUCCESSOR_COMPOSE_OVERLAY),
-            "--profile", "green",
+            "--profile", self.slot,
         )
         assert parts[:len(prefix)] == prefix
         command = parts[len(prefix):]
@@ -168,7 +179,7 @@ class SyntheticGreenRunner:
             if "--all" in command and "--format" in command:
                 return CommandResult(
                     0,
-                    '[{"Name":"unapproved-green"}]'
+                    '[{"Name":"unapproved-candidate"}]'
                     if self.failure == "occupied" else "[]",
                     "",
                 )
@@ -191,7 +202,7 @@ class SyntheticGreenRunner:
         if command[:1] == ("up",):
             assert command == (
                 "up", "--detach", "--no-deps", "--no-recreate",
-                "--no-build", "--pull", "never", "analytics-green",
+                "--no-build", "--pull", "never", "analytics-" + self.slot,
             )
             self.created = True
             self.running = True
@@ -199,13 +210,13 @@ class SyntheticGreenRunner:
                 return CommandResult(1, "", "synthetic partial startup")
             return CommandResult(0, "", "")
         if command[:1] == ("exec",):
-            assert command[:4] == ("exec", "--no-TTY", "analytics-green", "node")
+            assert command[:4] == ("exec", "--no-TTY", "analytics-" + self.slot, "node")
             return CommandResult(
                 0, "FAIL" if self.failure == "not-ready" else "READY\n", "",
             )
         if command[:1] == ("stop",):
             assert command == (
-                "stop", "--timeout", "15", "analytics-green",
+                "stop", "--timeout", "15", "analytics-" + self.slot,
             )
             if self.failure == "stop-error":
                 return CommandResult(1, "", "synthetic stop denial")
@@ -710,6 +721,136 @@ class OrdinarySuccessorComposeImagesTests(unittest.TestCase):
                         candidate_slot=slot,
                     )
 
+
+# Section 4b: the original private signed staging works for a blue
+# candidate after active green and an fsynced verified historical retirement.
+class OrdinaryBlueCandidateStageTests(unittest.TestCase):
+    """Reuse the first-successor implementation for the second opposite slot."""
+
+    def setUp(self):
+        """Keep all protected UID991/signature/rootless fixtures unchanged."""
+        import hashlib
+        from dataclasses import replace
+        from deployment.analytics_route_journal import AnalyticsRouteJournal
+        AnalyticsSuccessorCandidateStageTests.setUp(self)
+        data, context = AnalyticsSuccessorRequestTests().candidate()
+        prior_digest = "sha256:" + "a" * 64
+        prior_image = "oci-dev.omnilyzer.ai/omnilyzer/analytics@" + prior_digest
+        data["ingress_reference"] = {
+            **data["ingress_reference"], "slot": "blue", "active_slot": "green",
+        }
+        data["rollback_reference"] = {
+            **data["rollback_reference"], "previous_digest": prior_digest,
+            "previous_slot": "green",
+        }
+        signed, selected, owner, identity = (
+            context["signed_release"], context["selected"],
+            context["owner_approval"], context["identity"],
+        )
+        intent = canonical_bytes({
+            "product_id": "analytics", "release_version": selected.release_version,
+            "source_sha": selected.platform_workflow_commit, "image": signed.image,
+            "run_id": identity.run_id, "run_attempt": identity.run_attempt,
+            "release_manifest_sha256": signed.manifest_sha256,
+            "provenance_sha256": signed.provenance_sha256,
+            "source_claim_sha256": signed.source.claim_sha256,
+            "owner_approval_sha256": owner.approval_sha256,
+            "previous_digest": prior_digest,
+        })
+        data["promotion_request_sha256"] = hashlib.sha256(intent).hexdigest()
+        context["observed_active_digest"] = prior_digest
+        context["observed_active_slot"] = "green"
+        self.request = parse_analytics_successor_request(canonical_bytes(data), **context)
+        self.raw = self.request.canonical_bytes()
+        self.fd = make_full_successor_fd(self.raw, signed.image)
+        self.addCleanup(os.close, self.fd)
+        self.runner = SyntheticGreenRunner(signed.image, slot="blue", previous_image=prior_image)
+        self.registry = AnalyticsPrivateZotPullAdapter(
+            self.runner, reviewed_installed_source=EXPECTED,
+        )
+        self.operation = AnalyticsSuccessorCandidateOperation(
+            runner=self.runner, private_registry=self.registry,
+            reviewed_installed_source=EXPECTED,
+        )
+        self.inspector.return_value = replace(
+            first_successor_empty_active_state(), active_slot="green",
+            active_image=prior_image, active_digest=prior_digest,
+            active_container_id="e" * 64,
+            active_child_ip="172.20.0.4", candidate_slot="blue",
+        )
+        self.journal = object.__new__(AnalyticsRouteJournal)
+        self.retired = dict(
+            phase="slot_empty", request_sha256=hashlib.sha256(self.raw).hexdigest(),
+            prior_generation=1, active_slot="green", active_image=prior_image,
+            active_container_id="e" * 64, dormant_slot="blue",
+            dormant_image="oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "d" * 64,
+            dormant_container_id="d" * 64, next_image=signed.image,
+        )
+        self.scope.enter_context(patch.object(
+            AnalyticsRouteJournal, "exclusive_active", return_value=True,
+        ))
+        self.retirement = self.scope.enter_context(patch.object(
+            AnalyticsRouteJournal, "read_slot_retirement", return_value=self.retired,
+        ))
+        self.empty_blue = self.scope.enter_context(patch(
+            "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+            return_value=None,
+        ))
+
+    def stage(self):
+        """Stage the ordinary blue under the exact original sealed Zot FD."""
+        with scoped_private_zot_request(self.fd, self.raw):
+            return self.operation.stage_ordinary_successor(
+                self.request, journal=self.journal,
+            )
+
+    def test_active_green_stages_private_healthy_blue_and_rollback_is_exact(self):
+        """Only the candidate is started and it can be stopped by exact ID."""
+        identifier = self.stage()
+        self.assertEqual(identifier, CID)
+        self.assertTrue(self.runner.running)
+        self.assertGreaterEqual(self.inspector.call_count, 3)
+        self.assertEqual(self.empty_blue.call_count, 4)
+        self.assertEqual(self.retirement.call_count, 2)
+        self.assertTrue(any(
+            call and call[0] == "compose" and "--profile" in call
+            and "blue" in call for call in self.runner.calls
+        ))
+        self.operation.rollback_staged_successor(self.request, identifier)
+        self.assertFalse(self.runner.running)
+        self.assertIn(("container", "stop", "--time", "15", CID), self.runner.calls)
+        self.assertFalse(any(
+            "--volumes" in call or "down" in call or "prune" in call
+            for call in self.runner.calls
+        ))
+
+    def test_registry_refuses_occupied_blue_before_pull(self):
+        """An existing stopped or rerouted blue cannot be overwritten."""
+        from deployment.analytics_active_state_review import AnalyticsActiveStateDenied
+        self.empty_blue.side_effect = AnalyticsActiveStateDenied("occupied blue")
+        with self.assertRaises(AnalyticsFirstInstallError):
+            self.stage()
+        self.assertFalse(self.runner.created)
+        self.assertEqual(self.runner.calls, [])
+
+    def test_unlocked_journal_cannot_start_or_pull_blue(self):
+        """A real UID991 operation lock is required for ordinary successor."""
+        from deployment.analytics_route_journal import AnalyticsRouteJournal
+        with patch.object(AnalyticsRouteJournal, "exclusive_active", return_value=False):
+            with self.assertRaises(AnalyticsFirstInstallError):
+                self.stage()
+        self.assertFalse(self.runner.created)
+        self.assertEqual(self.runner.calls, [])
+
+    def test_mismatched_retirement_proof_cannot_start_candidate(self):
+        """No image pull when the durable request/source identity differs."""
+        self.retirement.return_value = {**self.retired, "next_image": (
+            "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "f" * 64
+        )}
+        with self.assertRaises(AnalyticsFirstInstallError):
+            self.stage()
+        self.assertFalse(self.runner.created)
+        self.assertEqual(self.runner.calls, [])
 
 # Section 5: exact dormant rollback retirement, ONLY under existing UID991
 # journal lock and independently reviewed canonical candidate request.
