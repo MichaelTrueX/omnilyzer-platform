@@ -720,6 +720,85 @@ class AnalyticsSuccessorCandidateOperation:
             previous_image=PINNED_IMAGE, candidate_slot="green",
         )
 
+    # Section: exact-id retirement of one stopped, source-bound rollback slot.
+    def retire_dormant_rollback_container(
+        self, *, request: AnalyticsSuccessorRequest, journal: object,
+    ) -> None:
+        """Remove only an authenticated stopped container with durable HOLD.
+
+        This MUST be invoked only by the independently signed, UID991
+        source-reviewed ordinary coordinator while holding the original
+        journal's nonblocking exclusive lock. It preserves OCI images,
+        volumes, networks and database writes. The existing first-successor
+        green staging/rollback path does NOT invoke this function. A failure
+        after Docker removal deliberately leaves the durable retirement
+        intent pending for exact recovery, never fabricates a release GO.
+        A public request dataclass alone is NOT an authorization primitive.
+        """
+        from .analytics_active_state_review import (
+            AnalyticsActiveState, inspect_analytics_active_state,
+            inspect_dormant_analytics_candidate,
+        )
+        from .analytics_route_journal import AnalyticsRouteJournal
+        try:
+            if (
+                (os.getuid(), os.geteuid(), os.getgid(), os.getegid())
+                    != (991, 991, 991, 991)
+                or type(request) is not AnalyticsSuccessorRequest
+                or type(journal) is not AnalyticsRouteJournal
+                or journal.exclusive_active() is not True
+            ):
+                raise ValueError("unauthorized dormant slot operation")
+            pending = journal.read_slot_retirement()
+            if (
+                type(pending) is not dict
+                or pending.get("phase") != "retirement_pending"
+                or hashlib.sha256(request.canonical_bytes()).hexdigest()
+                    != pending["request_sha256"]
+                or pending["next_image"] != request.exact_image_reference
+                or request.rollback_reference.get("previous_slot")
+                    != pending["active_slot"]
+                or pending["active_image"] != (
+                    _SUCCESSOR_IMAGE_PREFIX
+                    + request.rollback_reference.get("previous_digest", "").removeprefix("sha256:")
+                )
+                or request.ingress_reference.get("slot") != pending["dormant_slot"]
+            ):
+                raise ValueError("request differs from durable signed intent")
+            prior = inspect_analytics_active_state()
+            if (
+                type(prior) is not AnalyticsActiveState
+                or prior.active_slot != pending["active_slot"]
+                or prior.active_image != pending["active_image"]
+                or prior.active_container_id != pending["active_container_id"]
+                or prior.candidate_slot != pending["dormant_slot"]
+                or prior.candidate_probe_present is not False
+            ):
+                raise ValueError("active signed writer differs")
+            inspect_dormant_analytics_candidate(
+                active=prior, expected_slot=pending["dormant_slot"],
+                expected_image=pending["dormant_image"],
+                expected_container_id=pending["dormant_container_id"],
+            )
+            # Re-check active writer right before an exact-ID Docker remove.
+            # No --force, --volumes, Compose down, rm image, or database call.
+            if inspect_analytics_active_state() != prior:
+                raise ValueError("active writer drift before retirement")
+            removed = self._docker(
+                request.exact_image_reference,
+                "container", "rm", pending["dormant_container_id"],
+                previous_image=pending["active_image"],
+                candidate_slot=pending["dormant_slot"],
+            ).stdout.strip()
+            if removed != pending["dormant_container_id"]:
+                raise ValueError("wrong stopped container removal result")
+            journal.confirm_slot_retired(pending=pending)
+            return None
+        except _CONTROL:
+            raise
+        except Exception:
+            raise AnalyticsFirstInstallError(_ERROR) from None
+
     def stage_first_successor_green(
         self, request: AnalyticsSuccessorRequest,
     ) -> str:
