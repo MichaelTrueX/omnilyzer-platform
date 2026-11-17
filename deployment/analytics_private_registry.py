@@ -2,7 +2,8 @@
 
 Purpose: Preserve original Task014 rootless Docker Zot read/pull
          adapter for immutable signed Analytics 0.15.0 and add a separate
-         preflight-only exact schema-3 successor manifest inspection.
+         preflight-only exact schema-3 successor manifest inspection,
+         and independently journal-bound opposite-slot ordinary pull.
          The same sealed FD, volatile credential and rootless CLI rules apply.
 Related: deployment/analytics_executor.py (preflight before replay),
          deployment/analytics_execution.py (successor request),
@@ -232,6 +233,7 @@ class AnalyticsPrivateZotPullAdapter:
     def pull_analytics_successor(
         self, request: AnalyticsSuccessorRequest,
         *, timeout: float = ANALYTICS_PULL_TIMEOUT_SECONDS,
+        _ordinary: bool = False, _journal: object | None = None,
     ) -> None:
         """Download the exact source-approved successor image, without running.
 
@@ -252,24 +254,63 @@ class AnalyticsPrivateZotPullAdapter:
             ):
                 raise ValueError("untrusted rootless product principal")
             raw = request.canonical_bytes()
-            _successor_request_image(raw)
+            image = _successor_request_image(raw)
             from .analytics_executor import _verify_executor_owner_source
             from .analytics_active_state_review import (
                 AnalyticsActiveState, inspect_analytics_active_state,
                 verify_empty_analytics_successor_slot,
+                verify_empty_analytics_candidate_slot,
             )
+            from .analytics_route_journal import AnalyticsRouteJournal
+            if type(_ordinary) is not bool:
+                raise ValueError("wrong pull mode")
+            retired = None
+            if _ordinary:
+                if (
+                    type(_journal) is not AnalyticsRouteJournal
+                    or _journal.exclusive_active() is not True
+                ):
+                    raise ValueError("unsigned retirement journal")
+                retired = _journal.read_slot_retirement()
+                if (
+                    type(retired) is not dict
+                    or retired.get("phase") != "slot_empty"
+                    or retired.get("next_image") != image
+                    or request.ingress_reference.get("slot") != retired.get("dormant_slot")
+                    or request.rollback_reference.get("previous_slot") != retired.get("active_slot")
+                ):
+                    raise ValueError("unreviewed signed predecessor")
+                import hashlib
+                if retired.get("request_sha256") != hashlib.sha256(raw).hexdigest():
+                    raise ValueError("request differs from durable retirement")
+            elif _journal is not None:
+                raise ValueError("original pull cannot use ordinary journal")
+            prior_slot = "blue" if retired is None else retired["active_slot"]
+            prior_image = PINNED_IMAGE if retired is None else retired["active_image"]
+            prior_digest = PINNED_DIGEST if retired is None else prior_image.rsplit("@", 1)[-1]
+            target_slot = "green" if retired is None else retired["dormant_slot"]
+
+            def absent() -> None:
+                """Inspect the exact candidate Docker name, not only 3142."""
+                if retired is None:
+                    verify_empty_analytics_successor_slot()
+                else:
+                    verify_empty_analytics_candidate_slot(target_slot)
+
             _verify_executor_owner_source(request.to_dict())
-            # The first signed successor must be a genuine blue-0.15.0 to
+            # Both signed modes require an actual matching previous live OCI.
             # green upgrade. Prevent pulling into an already active/ambiguous
             # or stale candidate. A missing 3142 route alone is insufficient.
             observed = inspect_analytics_active_state()
             if (
                 type(observed) is not AnalyticsActiveState
-                or observed.active_slot != "blue"
-                or observed.active_image != PINNED_IMAGE
-                or observed.active_digest != PINNED_DIGEST
+                or observed.active_slot != prior_slot
+                or observed.active_image != prior_image
+                or observed.active_digest != prior_digest
+                or (retired is not None and observed.active_container_id
+                    != retired["active_container_id"])
                 or observed.private_ingress_port != 3141
-                or observed.candidate_slot != "green"
+                or observed.candidate_slot != target_slot
                 or observed.candidate_port != 3142
                 or observed.candidate_probe_present is not False
                 or observed.candidate_digest is not None
@@ -278,7 +319,7 @@ class AnalyticsPrivateZotPullAdapter:
                 or observed.read_only is not True
             ):
                 raise ValueError("unreviewed previous product release")
-            verify_empty_analytics_successor_slot()
+            absent()
             scoped = current_private_zot_request()
             if type(scoped) is not tuple or len(scoped) != 2:
                 raise ValueError("missing scoped successor credential")
@@ -299,7 +340,7 @@ class AnalyticsPrivateZotPullAdapter:
         try:
             if inspect_analytics_active_state() != observed:
                 raise ValueError("active Analytics changed during pull")
-            verify_empty_analytics_successor_slot()
+            absent()
         except _CONTROL:
             raise
         except Exception:
