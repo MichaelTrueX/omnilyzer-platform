@@ -121,8 +121,12 @@ def load_analytics_broker_installed_source(
         else:
             # Root-installed schema decides ONE fixed source directory;
             # public requests have no influence on generation or source root.
+            from .analytics_executor_service_config import ordinary_analytics_source_root
+            from pathlib import Path
             source_root = (
-                _SUCCESSOR_INSTALLED_ROOT if parsed["source_generation"] in (2, 3, 4)
+                Path(ordinary_analytics_source_root(parsed["reviewed_installed_commit"]))
+                if parsed["source_generation"] == 4 else
+                _SUCCESSOR_INSTALLED_ROOT if parsed["source_generation"] in (2, 3)
                 else _INSTALLED_ROOT
             )
             _verify_source_bytes((
