@@ -69,6 +69,30 @@ class TestFirstInstall(unittest.TestCase):
                 m.execute_sql(gate)
         self.assertEqual(sql.call_count, 1)
 
+    def test_no_public_connect_on_shared_cluster(self):
+        """Restrict the new database before app credentials are provisioned."""
+        with mock.patch.object(m, "psql") as psql:
+            m.restrict_database_access()
+        self.assertEqual(psql.call_count, 1)
+        self.assertEqual(psql.call_args.args[0], "postgres")
+        sql = psql.call_args.args[1]
+        self.assertIn(b"REVOKE ALL ON DATABASE omnilyzer_analytics_prod FROM PUBLIC", sql)
+        self.assertIn(b"GRANT CONNECT ON DATABASE omnilyzer_analytics_prod TO omni_runtime, collector_runtime", sql)
+        self.assertNotIn(b"GRANT CONNECT ON DATABASE omnilyzer_analytics_prod TO PUBLIC", sql)
+
+    def test_restrict_before_credentials_and_hba(self):
+        """A failed DB privilege restriction stops credentials/HBA work."""
+        with mock.patch.object(m, "preflight", return_value=mock.Mock()), \
+             mock.patch.object(m, "start_marker"), \
+             mock.patch.object(m, "execute_sql"), \
+             mock.patch.object(m, "restrict_database_access", side_effect=m.InstallHold("revoke failed")), \
+             mock.patch.object(m, "generate_credentials") as credentials, \
+             mock.patch.object(m, "install_hba") as hba:
+            with self.assertRaises(m.InstallHold):
+                m.apply()
+        credentials.assert_not_called()
+        hba.assert_not_called()
+
     def test_secrets_only_prod_names(self):
         """The prepared credential set matches the existing Compose secrets."""
         with mock.patch.object(m.secrets, "token_urlsafe",
