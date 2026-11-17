@@ -97,7 +97,7 @@ class TestProdAuthenticatedPull(unittest.TestCase):
         with mock.patch.object(m, "owned_sha256",
                                side_effect=[m.BUNDLE_SHA, m.COSIGN_SHA]), \
              mock.patch.object(m.subprocess, "run",
-                               return_value=mock.Mock(returncode=0, stdout=b"Verified OK")) as run:
+                               return_value=mock.Mock(returncode=0, stdout=b"", stderr=b"Verified OK")) as run:
             m.signature_preflight()
         command = run.call_args.args[0]
         self.assertIn(m.SIGNER, command)
