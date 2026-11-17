@@ -502,6 +502,7 @@ def _review_executor_ordinary_signed_release(
     canonical_request: bytes, credential_fd: int, *,
     expected_workflow_sha: str, reviewed_installed_source: dict[str, str],
     received_at: int | None = None, jwks_cache: object | None = None,
+    retirement_journal: object | None = None,
 ):
     """Independently establish both signed releases and real UID991 active slot.
 
@@ -515,6 +516,7 @@ def _review_executor_ordinary_signed_release(
         import json
         from .analytics_active_state_review import (
             AnalyticsActiveState, inspect_analytics_active_state,
+            inspect_dormant_analytics_candidate,
         )
         from .analytics_execution import (
             AnalyticsSuccessorRequest, review_analytics_successor_with_live_active,
@@ -523,6 +525,7 @@ def _review_executor_ordinary_signed_release(
             AnalyticsSignedEvidenceReview,
             acquire_and_review_owner_approved_analytics_release,
         )
+        from .analytics_route_journal import AnalyticsRouteJournal
         from .analytics_unix_boundary import _root_reviewed_source
         from .blob_verifier import CosignReleaseBlobVerifier
         from .oci_verifier import CosignOCISignatureVerifier
@@ -642,6 +645,37 @@ def _review_executor_ordinary_signed_release(
                 or signed.deployment_authorized is not False
             ):
                 raise ValueError("previous/new signed source mismatch")
+        # Before the next blue slot can become empty, its exact stopped
+        # historical rollback container must be authenticated read-only.
+        # The default review still requires a genuinely EMPTY candidate.
+        original_route = None
+        if retirement_journal is not None:
+            if (
+                type(retirement_journal) is not AnalyticsRouteJournal
+                or retirement_journal.exclusive_active() is not True
+            ):
+                raise ValueError("no protected pre-retirement journal custody")
+            original_route = retirement_journal.read()
+            if (
+                type(original_route) is not dict
+                or original_route.get("phase") != "switched"
+                or original_route.get("next_slot") != live.active_slot
+                or original_route.get("next_image") != previous_signed.image
+                or original_route.get("next_container_id") != live.active_container_id
+                or original_route.get("previous_slot") != live.candidate_slot
+                # The ORIGINAL Task013 0.15 signed release is a concrete
+                # existing trust pin, not a caller-controlled prior image.
+                or original_route.get("previous_image") != PINNED_IMAGE
+                or original_route.get("previous_container_id") == live.active_container_id
+            ):
+                raise ValueError("unknown previously signed dormant writer")
+            inspect_dormant_analytics_candidate(
+                active=live, expected_slot=live.candidate_slot,
+                expected_image=PINNED_IMAGE,
+                expected_container_id=original_route["previous_container_id"],
+            )
+            if retirement_journal.read() != original_route:
+                raise ValueError("historical signed rollback journal changed")
         if (
             previous_signed.image == new_signed.image
             or tuple(map(int, previous_signed.release_version.split("."))) >=
@@ -654,12 +688,14 @@ def _review_executor_ordinary_signed_release(
             canonical_request, signed_previous=previous_signed,
             signed_release=new_signed, selected=new_selected,
             owner_approval=new_owner, identity=identity,
-            require_empty_candidate=True, **source,
+            require_empty_candidate=(retirement_journal is None), **source,
         )
         if (
             type(reviewed) is not AnalyticsSuccessorRequest
             or reviewed.canonical_bytes() != canonical_request
             or inspect_analytics_active_state() != live
+            or (retirement_journal is not None
+                and retirement_journal.read() != original_route)
         ):
             raise ValueError("ordinary source or active route changed")
         return reviewed
