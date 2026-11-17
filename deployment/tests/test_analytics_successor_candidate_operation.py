@@ -1,8 +1,9 @@
 """File: deployment/tests/test_analytics_successor_candidate_operation.py
 
-Purpose: Independently qualify first-successor rootless green startup and
-         stop-only rollback with real sealed FD + disposable Ed25519 owner
-         approval, synthetic Docker CLI and a protected V2 source fixture.
+Purpose: Independently qualify first-successor rootless green startup,
+         immutable blue/green image-to-Compose mapping, and stop-only rollback
+         with real sealed FD + disposable Ed25519 owner approval, synthetic
+         Docker CLI and protected V2 source fixture.
 Related: deployment/analytics_first_install.py,
          deployment/analytics_executor_service_config.py,
          deployment/analytics_private_registry.py,
@@ -10,7 +11,8 @@ Related: deployment/analytics_first_install.py,
          deployment/tests/test_analytics_unix_boundary.py.
 
 Sections: closed simulated Docker runtime; real request/credential setup;
-          positive private candidate, negative authority and failure rollback.
+          positive private candidate, negative authority and failure rollback;
+          ordinary successor blue/green Compose input contract.
 
 The tests make NO real Docker pull, service change, network/RootlessKit route,
 database mutation, release signing, privileged installation or production
@@ -30,7 +32,7 @@ from unittest.mock import patch
 from deployment.analytics_execution import parse_analytics_successor_request
 from deployment.analytics_first_install import (
     AnalyticsFirstInstallError, AnalyticsSuccessorCandidateOperation,
-    _SUCCESSOR_COMPOSE_OVERLAY,
+    _SUCCESSOR_COMPOSE_OVERLAY, _review_successor_compose_images,
 )
 from deployment.analytics_private_registry import AnalyticsPrivateZotPullAdapter
 from deployment.docker_runtime import CommandResult, DOCKER_PREFIX
@@ -583,6 +585,77 @@ class AnalyticsSuccessorCandidateStageTests(unittest.TestCase):
                     "down" in a or "rm" in a or "analytics-blue" in a
                     for a in self.runner.calls
                 ))
+
+
+# Section 4: pin the exact image-to-slot relationship for ordinary
+# upgrades without granting deployment to this shape-only helper.
+class OrdinarySuccessorComposeImagesTests(unittest.TestCase):
+    """One immutable previous image and distinct next image in either slot."""
+
+    def test_green_and_blue_candidate_images_are_never_swapped(self):
+        """Both approved Compose profiles use the same isolated image inputs."""
+        previous = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "a" * 64
+        next_image = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "b" * 64
+        for slot in ("blue", "green"):
+            with self.subTest(slot=slot):
+                env, service = _review_successor_compose_images(
+                    previous_image=previous, candidate_image=next_image,
+                    candidate_slot=slot,
+                )
+                self.assertEqual(service, "analytics-" + slot)
+                self.assertEqual(set(env), {
+                    "PATH", "LANG", "ANALYTICS_BLUE_IMAGE", "ANALYTICS_GREEN_IMAGE",
+                })
+                self.assertEqual(env["ANALYTICS_BLUE_IMAGE"],
+                                 next_image if slot == "blue" else previous)
+                self.assertEqual(env["ANALYTICS_GREEN_IMAGE"],
+                                 next_image if slot == "green" else previous)
+                self.assertNotIn("TOKEN", str(env))
+
+    def test_existing_compose_selector_supports_both_private_profiles(self):
+        """No new Compose definition, network or public listener is needed."""
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        operation = object.__new__(AnalyticsSuccessorCandidateOperation)
+        candidate = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "b" * 64
+        for slot in ("green", "blue"):
+            with self.subTest(slot=slot), patch.object(
+                AnalyticsSuccessorCandidateOperation, "_docker",
+                return_value=CommandResult(0, "", ""),
+            ) as docker:
+                operation._compose(
+                    candidate, "config", "--quiet",
+                    previous_image=PINNED_IMAGE, candidate_slot=slot,
+                )
+                args, kwargs = docker.call_args
+                self.assertIn("--profile", args)
+                self.assertEqual(args[args.index("--profile") + 1], slot)
+                self.assertEqual(kwargs, {
+                    "previous_image": PINNED_IMAGE, "candidate_slot": slot,
+                })
+                self.assertIn(str(_SUCCESSOR_COMPOSE_OVERLAY), args)
+
+    def test_mutable_or_ambiguous_successor_images_are_rejected(self):
+        """No mutable tag, foreign registry, zero digest or unreviewed slot."""
+        previous = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "a" * 64
+        next_image = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "b" * 64
+        cases = (
+            (previous, previous, "green"),
+            (previous, next_image, "blue/../green"),
+            (previous, next_image, None),
+            (previous, next_image, True),
+            (previous, "omnilyzer/analytics:latest", "green"),
+            (previous, "oci-dev.omnilyzer.ai/other/analytics@sha256:" + "b" * 64, "green"),
+            (previous, "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "0" * 64, "green"),
+            ("oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "A" * 64, next_image, "green"),
+            (None, next_image, "green"),
+        )
+        for former, candidate, slot in cases:
+            with self.subTest(previous=former, candidate=candidate, slot=slot):
+                with self.assertRaises(AnalyticsFirstInstallError):
+                    _review_successor_compose_images(
+                        previous_image=former, candidate_image=candidate,
+                        candidate_slot=slot,
+                    )
 
 
 if __name__ == "__main__":
