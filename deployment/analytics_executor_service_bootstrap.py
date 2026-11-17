@@ -12,7 +12,8 @@ Related: deployment/analytics_executor_service_config.py,
          deployment/tests/test_analytics_executor_service_bootstrap.py.
 
 Sections: fixed named systemd FD acquisition; single-source installation
-          admission; original one-accept service composition and FD cleanup.
+          admission; original one-accept service composition and FD cleanup;
+          independently root-selected ordinary generation4 before Unix FD.
 
 SECURITY: Import/construction are inert. The root-owned installed config and
 all exact product source SHA hashes MUST pass before touching LISTEN_FDS.
@@ -111,6 +112,8 @@ def run_analytics_executor_service_once() -> None:
                 identity_keys, identity_keys | {"expected_workflow_sha"},
                 identity_keys | {"expected_workflow_sha",
                                  "owner_authorized_first_successor"},
+                identity_keys | {"expected_workflow_sha",
+                                 "owner_authorized_ordinary_successor"},
             )
         ):
             raise TypeError
@@ -118,7 +121,8 @@ def run_analytics_executor_service_once() -> None:
         # boundary. Before accepting a new Unix FD, reconcile any durable
         # incomplete private 3141 transaction to the known signed blue writer
         # and then fail HOLD; never silently adopt an old green container.
-        if identities.get("owner_authorized_first_successor") is True:
+        if (identities.get("owner_authorized_first_successor") is True
+                or identities.get("owner_authorized_ordinary_successor") is True):
             phase = "successor_restart_recovery"
             from .analytics_executor import (
                 _reconcile_interrupted_first_successor_before_receive,
