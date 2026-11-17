@@ -634,6 +634,59 @@ class OrdinarySuccessorComposeImagesTests(unittest.TestCase):
                 })
                 self.assertIn(str(_SUCCESSOR_COMPOSE_OVERLAY), args)
 
+    def test_exact_id_cleanup_is_slot_scoped_without_retargeting(self):
+        """Rollback may stop only the verified candidate ID in either slot."""
+        operation = object.__new__(AnalyticsSuccessorCandidateOperation)
+        previous = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "a" * 64
+        candidate = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "b" * 64
+        target_id = "c" * 64
+        for slot in ("blue", "green"):
+            with self.subTest(slot=slot), patch.object(
+                AnalyticsSuccessorCandidateOperation, "_compose",
+                return_value=CommandResult(0, target_id, ""),
+            ) as compose, patch.object(
+                AnalyticsSuccessorCandidateOperation, "_docker",
+                side_effect=[
+                    CommandResult(0, '"' + candidate + '"', ""),
+                    CommandResult(0, target_id, ""),
+                    CommandResult(0, "false", ""),
+                ],
+            ) as docker:
+                self.assertTrue(operation._stop_candidate_if_owned(
+                    candidate, expected_id=target_id,
+                    previous_image=previous, candidate_slot=slot,
+                ))
+                compose.assert_called_once_with(
+                    candidate, "ps", "--all", "-q", "analytics-" + slot,
+                    previous_image=previous, candidate_slot=slot,
+                )
+                self.assertEqual(docker.call_count, 3)
+                self.assertEqual(docker.call_args_list[1].args[1:4],
+                                 ("container", "stop", "--time"))
+                self.assertEqual(docker.call_args_list[1].args[-1], target_id)
+                self.assertTrue(all(
+                    item.kwargs == {"previous_image": previous, "candidate_slot": slot}
+                    for item in docker.call_args_list
+                ))
+
+    def test_replaced_candidate_never_reaches_docker_stop(self):
+        """A changed Compose container ID cannot be mistaken for owned."""
+        operation = object.__new__(AnalyticsSuccessorCandidateOperation)
+        previous = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "a" * 64
+        candidate = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "b" * 64
+        for slot in ("blue", "green"):
+            with self.subTest(slot=slot), patch.object(
+                AnalyticsSuccessorCandidateOperation, "_compose",
+                return_value=CommandResult(0, "d" * 64, ""),
+            ), patch.object(
+                AnalyticsSuccessorCandidateOperation, "_docker",
+            ) as docker:
+                self.assertFalse(operation._stop_candidate_if_owned(
+                    candidate, expected_id="c" * 64,
+                    previous_image=previous, candidate_slot=slot,
+                ))
+                docker.assert_not_called()
+
     def test_mutable_or_ambiguous_successor_images_are_rejected(self):
         """No mutable tag, foreign registry, zero digest or unreviewed slot."""
         previous = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "a" * 64
