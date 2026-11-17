@@ -3,7 +3,8 @@
 Purpose: Construct exact UNSIGNED Task014 Analytics 0.15.0/V2 DEV review
          inputs from independently verified immutable Git source archives,
          including the original C32ZF rootless socket source contract and inert,
-         generation-specific broker/executor service override inputs.
+         generation-specific broker/executor service override inputs,
+         including root-selected ordinary generation4 using V3 mounts.
 Related: deployment/analytics_source_handoff.py (32 Git objects),
          deployment/analytics_source_archive.py (canonical USTAR),
          deployment/analytics_isolated_source_install.py (root approval),
@@ -204,6 +205,7 @@ def build_unsigned_analytics_activation_inputs(
     *, repository_root: str, reviewed_commit: str,
     successor_source: bool = False,
     owner_authorized_first_successor: bool = False,
+    owner_authorized_ordinary_successor: bool = False,
     approved_workflow_sha: str | None = None,
 ) -> dict[str, bytes]:
     """Bind four review inputs to exactly one verified Git source generation.
@@ -219,9 +221,14 @@ def build_unsigned_analytics_activation_inputs(
         if (
             type(successor_source) is not bool
             or type(owner_authorized_first_successor) is not bool
-            or (owner_authorized_first_successor and not successor_source)
+            or type(owner_authorized_ordinary_successor) is not bool
+            or sum((owner_authorized_first_successor,
+                    owner_authorized_ordinary_successor)) > 1
+            or ((owner_authorized_first_successor
+                 or owner_authorized_ordinary_successor) and not successor_source)
             or (approved_workflow_sha is not None
-                and not owner_authorized_first_successor)
+                and not (owner_authorized_first_successor
+                         or owner_authorized_ordinary_successor))
         ):
             raise ValueError
         # Section: root-reviewed workflow rebind for unsigned V3 review data.
@@ -279,14 +286,47 @@ def build_unsigned_analytics_activation_inputs(
             or baseline["signed_release_authorized"] is not False
         ):
             raise ValueError
-        generation = (3 if owner_authorized_first_successor
-                      else 2 if successor_source else 1)
+        # A protected generation4 approval cannot be emitted from an older
+        # Git commit that only contained the first-successor operator. This
+        # checks exact immutable archive bytes, never a mutable local file.
+        if owner_authorized_ordinary_successor:
+            ordinary_contract = {
+                "deployment/analytics_executor.py": (
+                    b"def _execute_reviewed_ordinary_successor_transaction(",
+                    b"def _review_completed_ordinary_successor_restart(",
+                ),
+                "deployment/analytics_promotion_broker.py": (
+                    b"def authorize_and_forward_ordinary_successor(",
+                ),
+                "deployment/analytics_unix_boundary.py": (
+                    b"def execute_owner_authorized_ordinary(",
+                ),
+                "deployment/analytics_route_journal.py": (
+                    b"def prepare_slot_retirement(",
+                    b"def confirm_slot_retired(",
+                    b"def begin_after_retirement(",
+                ),
+                "deployment/analytics_broker_router.py": (
+                    b"owner_authorized_ordinary_successor",
+                ),
+            }
+            if any(
+                name not in contents
+                or any(marker not in contents[name] for marker in markers)
+                for name, markers in ordinary_contract.items()
+            ):
+                raise ValueError("ordinary signed source not in reviewed Git archive")
+        generation = (4 if owner_authorized_ordinary_successor else
+                      3 if owner_authorized_first_successor else
+                      2 if successor_source else 1)
         product_config = canonical_bytes({
             "schema_version": generation, "product_id": "analytics", "stage": "dev",
             **({"expected_workflow_sha": workflow_sha}
                if successor_source else {}),
             **({"owner_authorized_first_successor": True}
                if owner_authorized_first_successor else {}),
+            **({"owner_authorized_ordinary_successor": True}
+               if owner_authorized_ordinary_successor else {}),
             "reviewed_installed_commit": reviewed_commit,
             "reviewed_compose_sha256": baseline["reviewed_compose_sha256"],
             "reviewed_product_profile_sha256":
@@ -350,6 +390,7 @@ def build_unsigned_analytics_service_inputs(
     *, repository_root: str, reviewed_commit: str,
     successor_source: bool = False,
     owner_authorized_first_successor: bool = False,
+    owner_authorized_ordinary_successor: bool = False,
     approved_workflow_sha: str | None = None,
 ) -> dict[str, bytes]:
     """Bind EXACT service review bytes to one Git generation and original C32ZF.
@@ -376,9 +417,14 @@ def build_unsigned_analytics_service_inputs(
         if (
             type(successor_source) is not bool
             or type(owner_authorized_first_successor) is not bool
-            or (owner_authorized_first_successor and not successor_source)
+            or type(owner_authorized_ordinary_successor) is not bool
+            or sum((owner_authorized_first_successor,
+                    owner_authorized_ordinary_successor)) > 1
+            or ((owner_authorized_first_successor
+                 or owner_authorized_ordinary_successor) and not successor_source)
             or (approved_workflow_sha is not None
-                and not owner_authorized_first_successor)
+                and not (owner_authorized_first_successor
+                         or owner_authorized_ordinary_successor))
         ):
             raise ValueError("invalid source generation")
         # Always preserve the historical 4 original service files byte-for-byte.
@@ -389,6 +435,7 @@ def build_unsigned_analytics_service_inputs(
                 repository_root=repository_root, reviewed_commit=reviewed_commit,
                 successor_source=True,
                 owner_authorized_first_successor=owner_authorized_first_successor,
+                owner_authorized_ordinary_successor=owner_authorized_ordinary_successor,
                 approved_workflow_sha=approved_workflow_sha,
             )
             from .analytics_isolated_source_install import _successor_approval
@@ -399,6 +446,7 @@ def build_unsigned_analytics_service_inputs(
             if (
                 approved_candidate["destination"] != SUCCESSOR_DESTINATION
                 or parsed_candidate["source_generation"] != (
+                    4 if owner_authorized_ordinary_successor else
                     3 if owner_authorized_first_successor else 2
                 )
                 or tuple(name for name, _ in parsed_candidate["source_sha256"])
@@ -503,12 +551,13 @@ def build_unsigned_analytics_service_inputs(
                 + ((b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1\n"
                     + b"ProtectHome=tmpfs\n"
                     + (_SUCCESSOR_V3_USER_SOCKETS + "\n").encode("ascii"))
-                   if owner_authorized_first_successor else b"")
+                   if (owner_authorized_first_successor
+                       or owner_authorized_ordinary_successor) else b"")
             )
             # Only a root-selected V3 reviews these mount inputs. The root
             # installer must independently verify the three protected broker
             # mirrors against the UID991 signer/approval bytes and signature.
-            if owner_authorized_first_successor:
+            if owner_authorized_first_successor or owner_authorized_ordinary_successor:
                 result[_SUCCESSOR_BROKER_OWNER_DROPIN] = (
                     "[Service]\n"
                     + _SUCCESSOR_BROKER_OWNER_TMPFS + "\n"
@@ -548,7 +597,7 @@ def build_unsigned_analytics_service_inputs(
             expected_paths.update((
                 _SUCCESSOR_BROKER_DROPIN, _SUCCESSOR_EXECUTOR_DROPIN,
             ))
-            if owner_authorized_first_successor:
+            if owner_authorized_first_successor or owner_authorized_ordinary_successor:
                 expected_paths.update((
                     _SUCCESSOR_BROKER_OWNER_DROPIN,
                     _SUCCESSOR_SUPERVISOR_INSTALL,
