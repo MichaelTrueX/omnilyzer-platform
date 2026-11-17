@@ -57,7 +57,8 @@ DOCKER = "/usr/bin/docker"
 DOCKER_SOCKET = Path("/run/user/990/docker.sock")
 RUNTIME = Path("/run/user/990")
 SIGNER = "https://github.com/MichaelTrueX/omnilyzer-platform/.github/workflows/platform-release.yml@refs/heads/main"
-ENV = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "LANG": "C.UTF-8"}
+ENV = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "LANG": "C.UTF-8",
+       "HOME": "/run/user/990", "XDG_CACHE_HOME": "/run/user/990"}
 MAX_TOKEN = 8192
 MIN_TOKEN_SECONDS = 230
 PULL_TIMEOUT_SECONDS = 240
