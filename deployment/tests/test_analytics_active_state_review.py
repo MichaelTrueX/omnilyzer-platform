@@ -772,6 +772,97 @@ class AnalyticsLiveSuccessorRequestTests(unittest.TestCase):
                 require_staged_candidate="yes", **kwargs,
             )
 
+    def test_ordinary_candidate_requires_real_empty_opposite_slot(self):
+        """A 3142-less state is insufficient when a stopped slot survives."""
+        from dataclasses import replace
+        from deployment.analytics_execution import (
+            review_analytics_successor_with_live_active, AnalyticsRequestError,
+        )
+        raw, context, previous = self._candidate()
+        kwargs = {
+            name: value for name, value in context.items()
+            if name not in ("observed_active_digest", "observed_active_slot")
+        }
+        live = _active_state(**observed())
+        with patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            side_effect=[live, live],
+        ) as inspect, patch(
+            "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+        ) as empty:
+            result = review_analytics_successor_with_live_active(
+                raw, signed_previous=previous,
+                require_empty_candidate=True, **kwargs,
+            )
+            self.assertEqual(result.ingress_reference["slot"], "green")
+            empty.assert_called_once_with("green")
+            self.assertEqual(inspect.call_count, 2)
+
+        # Residual named container, even stopped and not routed, blocks before
+        # request authorization. Never infer vacancy from an absent probe.
+        with patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            return_value=live,
+        ), patch(
+            "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+            side_effect=AnalyticsActiveStateDenied("slot occupied"),
+        ), self.assertRaises(AnalyticsRequestError):
+            review_analytics_successor_with_live_active(
+                raw, signed_previous=previous,
+                require_empty_candidate=True, **kwargs,
+            )
+
+        for changed in (replace(live, candidate_slot="blue"), None):
+            with patch(
+                "deployment.analytics_active_state_review.inspect_analytics_active_state",
+                side_effect=[live, changed],
+            ), patch(
+                "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+            ), self.assertRaises(AnalyticsRequestError):
+                review_analytics_successor_with_live_active(
+                    raw, signed_previous=previous,
+                    require_empty_candidate=True, **kwargs,
+                )
+
+        for extra in (
+            {"require_staged_candidate": True, "require_empty_candidate": True},
+            {"require_empty_candidate": 1},
+            {"require_empty_candidate": "yes"},
+        ):
+            with self.subTest(extra=extra), patch(
+                "deployment.analytics_active_state_review.inspect_analytics_active_state",
+                return_value=live,
+            ), patch(
+                "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+            ) as empty, self.assertRaises(AnalyticsRequestError):
+                review_analytics_successor_with_live_active(
+                    raw, signed_previous=previous, **extra, **kwargs,
+                )
+            empty.assert_not_called()
+
+    def test_staged_candidate_must_stay_unchanged_on_second_live_read(self):
+        """Do not accept a signed candidate if its route changed mid-review."""
+        from dataclasses import replace
+        from deployment.analytics_execution import (
+            review_analytics_successor_with_live_active, AnalyticsRequestError,
+        )
+        raw, context, previous = self._candidate()
+        kwargs = {
+            name: value for name, value in context.items()
+            if name not in ("observed_active_digest", "observed_active_slot")
+        }
+        ready = _active_state(**staged(
+            candidate_digest=context["signed_release"].source.oci_manifest_digest,
+        ))
+        with patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            side_effect=[ready, replace(ready, candidate_container_id="d" * 64)],
+        ), self.assertRaises(AnalyticsRequestError):
+            review_analytics_successor_with_live_active(
+                raw, signed_previous=previous,
+                require_staged_candidate=True, **kwargs,
+            )
+
     def test_missing_or_counterfeit_live_state_never_authorizes_request(self):
         from dataclasses import replace
         from deployment.analytics_execution import (
