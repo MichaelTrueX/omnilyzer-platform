@@ -1,0 +1,489 @@
+"""File: services/identity/identity_bff/views.py
+Purpose: Product-origin confidential OIDC BFF routes with non-cacheable auth
+    responses. S03 retains sole authority for private learner API admission.
+Related: services/identity/config/{settings,urls}.py,
+    services/identity/identity_bff/{oidc,issuer}.py,
+    services/identity/tests/test_identity.py.
+"""
+import hmac
+import json
+import secrets
+import time
+
+from django.conf import settings
+from django.contrib.sessions.backends.base import UpdateError
+from django.db import DatabaseError
+from django.http import JsonResponse, HttpResponseRedirect
+from django.core.exceptions import DisallowedHost
+from django.middleware.csrf import get_token, rotate_token
+from django.views.decorators.cache import never_cache
+from django.views.decorators.http import require_GET, require_POST
+
+from . import issuer, oidc, guardian
+
+
+def _fail(status=401):
+    return JsonResponse({"error": "authentication unavailable"}, status=status)
+
+
+# Section: Resolve only the two fixed product hostnames. The second public
+# hostname is absent unless an explicit isolated release flag enables it.
+# A proxy must replace inbound Host and X-Forwarded-Proto, never trust browser
+# forwarded values. These host-only cookie namespaces remain separate.
+_PUBLIC_RETURN_PATHS = frozenset((
+    "/learn/math/square-root-function/",
+    "/learn/science/why-earth-supports-life/",
+))
+
+
+def _exact_origin(request):
+    """Resolve the approved HTTPS host, rejecting ports and untrusted hosts."""
+    if not request.is_secure():
+        return None
+    host = request.get_host()
+    if host == "app.sumlaude.com":
+        return settings.PRODUCT_ORIGIN
+    if settings.CANONICAL_AUTH_ENABLED and host == "sumlaude.com":
+        return settings.CANONICAL_ORIGIN
+    return None
+
+
+class ExactOriginMiddleware:
+    """Require exact request Host and unsafe-method Origin before CSRF checks.
+
+    Django still checks the real CSRF secret stored in its PostgreSQL session.
+    This narrower Origin comparison prevents either approved sibling hostname
+    from being treated as a cross-host trusted Origin for browser mutations.
+    """
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        try:
+            origin = _exact_origin(request)
+        except DisallowedHost:
+            origin = None
+        if origin is None:
+            response = JsonResponse({"error": "unapproved origin"}, status=400)
+        elif request.method not in ("GET", "HEAD", "OPTIONS", "TRACE") and (
+                request.META.get("HTTP_ORIGIN", "") != origin):
+            response = JsonResponse({"error": "origin mismatch"}, status=403)
+        else:
+            request.sumlaude_origin = origin
+            return self.get_response(request)
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+
+def _signed_return_path(request):
+    """Restrict public post-login navigation to two real SEO lesson paths."""
+    if request.sumlaude_origin != settings.CANONICAL_ORIGIN:
+        return "/professional/gtm-001"
+    candidate = request.GET.get("next", "")
+    return candidate if candidate in _PUBLIC_RETURN_PATHS else "/learn/"
+
+
+def _product_cookie(response, cookie):
+    response.set_cookie("__Host-sumlaude_session", cookie,
+        max_age=settings.PRODUCT_SESSION_SECONDS, secure=True, httponly=True,
+        samesite="Lax", path="/")
+    return response
+
+
+def _clear_product_cookie(response):
+    response.delete_cookie("__Host-sumlaude_session", path="/", samesite="Lax")
+    return response
+
+
+def _unpaired_session_response():
+    """Invalidate both browser cookies after session persistence has failed.
+
+    The old S03 cookie has been revoked, or no new S03 session was issued.
+    A Django cookie must not continue displaying that identity as logged in
+    while its independent product authorization is no longer valid.
+    """
+    response = _clear_product_cookie(_fail(503))
+    response.delete_cookie(
+        settings.SESSION_COOKIE_NAME, path=settings.SESSION_COOKIE_PATH,
+        samesite=settings.SESSION_COOKIE_SAMESITE)
+    return response
+
+
+def _identity_active(request):
+    """Only a still-live server-held, signed confidential OIDC identity."""
+    value = request.session.get("principal")
+    now = int(time.time())
+    if not isinstance(value, dict) or not value.get("sub"):
+        return None
+    # Old app sessions predate this field and remain valid only on app host.
+    if request.session.get("session_origin", settings.PRODUCT_ORIGIN) != (
+            getattr(request, "sumlaude_origin", None)):
+        return None
+    if now >= request.session.get("absolute_deadline", 0):
+        return None
+    if now - request.session.get("last_seen", 0) > settings.IDENTITY_IDLE_SECONDS:
+        return None
+    if not request.session.get("sealed_tokens"):
+        return None
+    return value
+
+
+def _active(request):
+    value = _identity_active(request)
+    if not value or not request.session.get("s03_digest"):
+        return None
+    if (settings.REQUIRE_GTM_ADULT_CHOICE and
+            request.session.get("age_choice") not in (
+                ("adult", "guardian") if settings.GUARDIAN_EMAIL_ENABLED else ("adult",))):
+        return None
+    return value
+
+
+def _revoke_existing(request):
+    """Revoke the previously admitted S03 cookie before replacement."""
+    old_digest = request.session.get("s03_digest")
+    if old_digest:
+        issuer.revoke(old_digest)
+
+
+def _persist_issued_session(request, digest):
+    """Persist the matching Django session before returning an S03 cookie.
+
+    Django's SessionMiddleware normally persists after a view returns.
+    Explicit persistence here prevents a newly issued S03 token from being
+    delivered if the independent Django session database cannot be updated.
+    Compensate by revoking the new S03 digest on persistence failure.
+    """
+    try:
+        request.session.save()
+    except (DatabaseError, UpdateError):
+        try:
+            issuer.revoke(digest)
+        except issuer.AdmissionError:
+            # Do not return a newly minted cookie even if revocation fails.
+            # S03's independently limited session will expire by itself.
+            pass
+        return False
+    return True
+
+
+@never_cache
+@require_GET
+def login(request):
+    # One pending transaction per browser, 5-minute state lifetime.
+    state, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+    verifier, challenge = oidc.pkce()
+    origin = request.sumlaude_origin
+    request.session["transaction"] = {
+        "state": state, "nonce": nonce, "verifier": verifier,
+        "deadline": int(time.time()) + 300,
+        "origin": origin, "return_path": _signed_return_path(request),
+    }
+    try:
+        # Keep the existing app callback byte-for-byte identical. Public login
+        # selects the second exact callback of the SAME Keycloak client.
+        if origin == settings.PRODUCT_ORIGIN:
+            target = oidc.authorize(state, nonce, challenge)
+        else:
+            target = oidc.authorize(state, nonce, challenge,
+                                    redirect_uri=origin + "/auth/callback")
+        return HttpResponseRedirect(target)
+    except oidc.IdentityError:
+        return _fail(503)
+
+
+@never_cache
+@require_GET
+def callback(request):
+    transaction = request.session.pop("transaction", None)
+    request.session.modified = True
+    if not isinstance(transaction, dict):
+        return _fail(400)
+    bound_origin = transaction.get("origin", settings.PRODUCT_ORIGIN)
+    if (bound_origin != request.sumlaude_origin
+            or int(time.time()) > transaction.get("deadline", 0)
+            or not hmac.compare_digest(request.GET.get("state", ""), transaction.get("state", ""))
+            or request.GET.get("error") or not request.GET.get("code")
+            or request.GET.get("iss", settings.OIDC_ISSUER) != settings.OIDC_ISSUER):
+        return _fail(400)
+    try:
+        if bound_origin == settings.PRODUCT_ORIGIN:
+            tokens = oidc.exchange(request.GET["code"], transaction["verifier"])
+        else:
+            tokens = oidc.exchange(
+                request.GET["code"], transaction["verifier"],
+                redirect_uri=bound_origin + "/auth/callback")
+        principal = oidc.verify_id(tokens["id_token"], tokens["access_token"],
+                                   nonce=transaction["nonce"])
+        # Validate and encrypt *all* OAuth data before creating an S03
+        # database session: a missing refresh token or invalid expiry
+        # must never leave an orphan, unrecoverable learner session.
+        sealed = oidc.seal(tokens)
+        deadline = oidc.deadline(tokens)
+        # No product session is issued on unaudited identity/guardian data.
+        # Existing session is revoked before another cookie is minted.
+        _revoke_existing(request)
+        # Rotate the Django key BEFORE product authorization. Pending
+        # 18+ users receive only a Django identity cookie, never Native.
+        request.session.cycle_key()
+        if settings.REQUIRE_GTM_ADULT_CHOICE:
+            known_minor = (settings.GUARDIAN_EMAIL_ENABLED and
+                           guardian.state(principal) != "unknown")
+            request.session.clear()
+            now = int(time.time())
+            request.session.update({
+                "principal": principal, "sealed_tokens": sealed,
+                "oauth_deadline": deadline,
+                "absolute_deadline": now + settings.IDENTITY_ABSOLUTE_SECONDS,
+                "last_seen": now, "age_choice": "under18" if known_minor else "pending",
+                "session_origin": bound_origin,
+            })
+            request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
+            try:
+                request.session.save()
+            except (DatabaseError, UpdateError):
+                return _unpaired_session_response()
+            # Rotate the secret after OIDC identity changes, not just the
+            # Django session key. A pre-login CSRF token must no longer work.
+            rotate_token(request)
+            return _clear_product_cookie(HttpResponseRedirect(
+                transaction.get("return_path", "/professional/gtm-001")))
+        product_cookie, digest = issuer.issue(principal)
+    except (issuer.AdmissionError, oidc.IdentityError, KeyError, TypeError, ValueError):
+        return _fail(403)
+    except (DatabaseError, UpdateError):
+        return _unpaired_session_response()
+    now = int(time.time())
+    request.session.update({
+        "principal": principal, "s03_digest": digest, "sealed_tokens": sealed,
+        "oauth_deadline": deadline, "absolute_deadline": now + settings.IDENTITY_ABSOLUTE_SECONDS,
+        "last_seen": now, "session_origin": bound_origin,
+    })
+    request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
+    if not _persist_issued_session(request, digest):
+        return _unpaired_session_response()
+    # Invalidate tokens issued before the signed OIDC principal was admitted.
+    rotate_token(request)
+    target = (transaction.get("return_path", "/learn/")
+              if bound_origin == settings.CANONICAL_ORIGIN else "/start")
+    return _product_cookie(HttpResponseRedirect(target), product_cookie)
+
+
+@never_cache
+@require_GET
+def session_state(request):
+    principal = _active(request)
+    if not principal:
+        if settings.REQUIRE_GTM_ADULT_CHOICE:
+            identity = _identity_active(request)
+            if identity:
+                state = request.session.get("age_choice")
+                if state == "pending":
+                    return JsonResponse({"authenticated": True,
+                        "productAuthorized": "adult-choice-required"})
+                if state == "under18":
+                    if settings.GUARDIAN_EMAIL_ENABLED:
+                        try:
+                            consent = guardian.state(identity)
+                        except issuer.AdmissionError:
+                            return _fail(503)
+                        return JsonResponse({"authenticated": True,
+                            "productAuthorized": "guardian-" + (
+                                consent if consent in ("pending", "confirmed") else "required")})
+                    return JsonResponse({"authenticated": True,
+                        "productAuthorized": "adult-pilot-denied"})
+        return JsonResponse({"authenticated": False})
+    # Authentication status does not confer enrollment/guardian authorization.
+    return JsonResponse({"authenticated": True, "productAuthorized": "check-S03"})
+
+
+@never_cache
+@require_GET
+def csrf(request):
+    return JsonResponse({"csrf_token": get_token(request)})
+
+
+@never_cache
+@require_POST
+def age_choice(request):
+    """CSRF-checked 18+ choice, tied only to the signed OIDC Django session.
+
+    The enabled product onboarding records an honest adult self-declaration
+    through Native's narrow registrar. Browser identity/entitlement input is
+    never accepted. Guardian restrictions and course roles remain independent.
+    """
+    if not settings.REQUIRE_GTM_ADULT_CHOICE:
+        return _fail(404)
+    principal = _identity_active(request)
+    if not principal or request.session.get("age_choice") != "pending":
+        return _fail(403)
+    try:
+        if request.content_type != "application/json" or len(request.body) > 128:
+            return _fail(400)
+        payload = json.loads(request.body)
+        if (not isinstance(payload, dict) or
+                set(payload) not in (({"ageBand"}, {"ageBand", "country"})
+                    if settings.GUARDIAN_EMAIL_ENABLED else ({"ageBand"},)) or
+                payload["ageBand"] not in ("adult", "under18")):
+            return _fail(400)
+    except (ValueError, UnicodeError, TypeError):
+        return _fail(400)
+    if payload["ageBand"] == "under18":
+        if settings.GUARDIAN_EMAIL_ENABLED:
+            try:
+                guardian.declare_minor(principal)
+            except issuer.AdmissionError:
+                return _fail(503)
+        request.session["age_choice"] = "under18"
+        try:
+            request.session.save()
+        except (DatabaseError, UpdateError):
+            return _unpaired_session_response()
+        # Under-18 choice irrevocably changes the identity authorization state.
+        rotate_token(request)
+        return JsonResponse({"authenticated": True,
+            "productAuthorized": "guardian-required" if settings.GUARDIAN_EMAIL_ENABLED else "adult-pilot-denied"})
+    if settings.GUARDIAN_EMAIL_ENABLED:
+        try:
+            if guardian.state(principal) != "unknown":
+                return _fail(403)
+        except issuer.AdmissionError:
+            return _fail(503)
+        country = payload.get("country")
+        if country is not None and (not isinstance(country, str) or len(country) != 2 or
+                not country.isascii() or not country.isalpha() or not country.isupper()):
+            return JsonResponse({"error": "Enter your two-letter country code."}, status=400)
+    # Even after initial signed OIDC verification, do not mint the
+    # S03 cookie based solely on stale provider session claims.
+    try:
+        old = oidc.unseal(request.session["sealed_tokens"])
+        new = oidc.refresh(old["refresh_token"])
+        if not new.get("refresh_token"):
+            new["refresh_token"] = old["refresh_token"]
+        verified = oidc.verify_id(
+            new["id_token"], new["access_token"], previous_sub=principal["sub"])
+        if verified != principal:
+            raise oidc.IdentityError("changed identity")
+        sealed = oidc.seal(new)
+        deadline = oidc.deadline(new)
+        if settings.GUARDIAN_EMAIL_ENABLED:
+            guardian.declare_adult(principal, payload.get("country"))
+        product_cookie, digest = issuer.issue(principal)
+    except (issuer.AdmissionError, oidc.IdentityError, KeyError, TypeError, ValueError):
+        return _fail(403)
+    request.session.update({
+        "s03_digest": digest, "sealed_tokens": sealed,
+        "oauth_deadline": deadline, "age_choice": "adult",
+        "last_seen": int(time.time()),
+    })
+    request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
+    if not _persist_issued_session(request, digest):
+        return _unpaired_session_response()
+    # An identity-only choice token must not be usable after adult admission.
+    rotate_token(request)
+    return _product_cookie(JsonResponse({
+        "authenticated": True, "productAuthorized": "check-S03",
+        "adultDeclared": True, "csrfResetRequired": True,
+    }), product_cookie)
+
+
+@never_cache
+@require_POST
+def guardian_continue(request):
+    """Issue only after Native confirms this signed learner's guardian consent."""
+    if not settings.GUARDIAN_EMAIL_ENABLED:
+        return _fail(404)
+    principal = _identity_active(request)
+    if not principal or request.session.get("age_choice") != "under18":
+        return _fail(403)
+    try:
+        if guardian.state(principal) != "confirmed":
+            return _fail(403)
+        old = oidc.unseal(request.session["sealed_tokens"])
+        new = oidc.refresh(old["refresh_token"])
+        if not new.get("refresh_token"):
+            new["refresh_token"] = old["refresh_token"]
+        verified = oidc.verify_id(new["id_token"], new["access_token"],
+                                  previous_sub=principal["sub"])
+        if verified != principal:
+            raise oidc.IdentityError("changed identity")
+        sealed, deadline = oidc.seal(new), oidc.deadline(new)
+        cookie, digest = issuer.issue(principal)
+    except (issuer.AdmissionError, oidc.IdentityError, KeyError, TypeError, ValueError):
+        return _fail(403)
+    request.session.update({"s03_digest": digest, "sealed_tokens": sealed,
+        "oauth_deadline": deadline, "age_choice": "guardian",
+        "last_seen": int(time.time())})
+    request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
+    if not _persist_issued_session(request, digest):
+        return _unpaired_session_response()
+    rotate_token(request)
+    return _product_cookie(JsonResponse({"authenticated": True,
+        "productAuthorized": "check-S03", "csrfResetRequired": True}), cookie)
+
+
+@never_cache
+@require_POST
+def refresh(request):
+    principal = _active(request)
+    if not principal:
+        # A stale Django identity must not leave the browser holding a
+        # still-admitted S03 learner cookie. Revoke before local cleanup.
+        try:
+            _revoke_existing(request)
+        except issuer.AdmissionError:
+            # Preserve the server-side digest for a future retry.
+            return _fail(503)
+        request.session.flush()
+        return _clear_product_cookie(_fail(401))
+    try:
+        old = oidc.unseal(request.session["sealed_tokens"])
+        new = oidc.refresh(old["refresh_token"])
+        if not new.get("refresh_token"):
+            new["refresh_token"] = old["refresh_token"]
+        verified = oidc.verify_id(new["id_token"], new["access_token"],
+                                  previous_sub=principal["sub"])
+        if verified != principal:
+            raise oidc.IdentityError("changed identity")
+        sealed = oidc.seal(new)
+        deadline = oidc.deadline(new)
+        # Revoke before minting to avoid leaving two concurrently active cookies.
+        _revoke_existing(request)
+        product_cookie, digest = issuer.issue(principal)
+    except (issuer.AdmissionError, oidc.IdentityError, KeyError, TypeError, ValueError):
+        try:
+            _revoke_existing(request)
+        except issuer.AdmissionError:
+            return _fail(503)
+        request.session.flush()
+        return _clear_product_cookie(_fail(401))
+    request.session["s03_digest"] = digest
+    request.session["sealed_tokens"] = sealed
+    request.session["oauth_deadline"] = deadline
+    request.session["last_seen"] = int(time.time())
+    request.session.set_expiry(settings.IDENTITY_IDLE_SECONDS)
+    if not _persist_issued_session(request, digest):
+        return _unpaired_session_response()
+    # Refresh rotates the Native cookie and CSRF secret together.
+    rotate_token(request)
+    return _product_cookie(JsonResponse({"authenticated": True, "refreshed": True,
+        "csrfResetRequired": True}), product_cookie)
+
+
+@never_cache
+@require_POST
+def logout(request):
+    try:
+        _revoke_existing(request)
+    except issuer.AdmissionError:
+        # Never report successful logout while the S03 cookie is still valid.
+        return _fail(503)
+    try:
+        old = oidc.unseal(request.session["sealed_tokens"])
+        provider_revoked = oidc.revoke_provider(old.get("refresh_token"))
+    except (oidc.IdentityError, KeyError, TypeError):
+        provider_revoked = False
+    request.session.flush()
+    return _clear_product_cookie(JsonResponse({
+        "authenticated": False, "providerTokenRevoked": provider_revoked,
+    }))
