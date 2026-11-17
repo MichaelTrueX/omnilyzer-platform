@@ -123,9 +123,10 @@ class FinalDevWorkflowTests(unittest.TestCase):
         self.assertEqual(self.workflow["permissions"], {})
         self.assertEqual(set(self.workflow["jobs"]), {
             "gate", "deploy_dev", "private_zot_readonly_probe",
+            "prod_analytics_registry_credential",
         })
         diagnostic = self.workflow["jobs"]["private_zot_readonly_probe"]
-        self.assertEqual(diagnostic["if"], "${{ inputs.auth_probe == true }}")
+        self.assertEqual(diagnostic["if"], "${{ inputs.auth_probe == true && inputs.target_stage == 'dev' }}")
         self.assertEqual(diagnostic["environment"], "task014-dev")
         self.assertEqual(diagnostic["permissions"], {
             "contents": "read", "id-token": "write",
@@ -274,7 +275,30 @@ class FinalDevWorkflowTests(unittest.TestCase):
                          "${{ inputs.product_id }}")
         self.assertIn("python3 -m deployment.analytics_ci_request --preflight",
                       self.gate["steps"][1]["run"])
-        self.assertNotIn("upload-artifact", self.raw)
+        # Original DEV promotion remains artifact-free. One separately
+        # guarded PROD *credential-only* job publishes encrypted bytes.
+        original = (
+            self.workflow["jobs"]["gate"],
+            self.workflow["jobs"]["deploy_dev"],
+            self.workflow["jobs"]["private_zot_readonly_probe"],
+        )
+        self.assertNotIn("upload-artifact", str(original))
+        prod = self.workflow["jobs"]["prod_analytics_registry_credential"]
+        self.assertEqual(prod["if"],
+                         "${{ inputs.auth_probe == true && inputs.target_stage == 'prod' && inputs.product_id == 'analytics' && github.actor == 'MichaelTrueX' }}")
+        self.assertEqual(prod["environment"], "task014-dev")
+        self.assertEqual(prod["permissions"], {
+            "contents": "read", "id-token": "write",
+        })
+        self.assertEqual(len(prod["steps"]), 4)
+        self.assertIn("release.analytics_prod_credential_handoff",
+                      prod["steps"][2]["run"])
+        self.assertEqual(prod["steps"][3]["uses"],
+                         "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
+        self.assertEqual(prod["steps"][3]["with"]["retention-days"], "1")
+        self.assertEqual(prod["steps"][3]["with"]["compression-level"], "0")
+        self.assertNotIn("docker", str(prod).lower())
+        self.assertNotIn("task014/dev/promote", str(prod))
         self.assertEqual(self.raw.count("secrets."), 2)
         self.assertNotIn("set -x", self.raw)
         self.assertNotIn("docker ", str((self.gate, self.dev)).lower())

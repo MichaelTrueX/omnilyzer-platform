@@ -83,10 +83,11 @@ class WorkflowPolicyTests(unittest.TestCase):
 
     def test_gate_remains_non_oidc_and_dev_job_is_only_deployment_job(self) -> None:
         self.assertEqual(set(self.workflow["jobs"]), {
-            "private_zot_readonly_probe", "gate", "deploy_dev",
+            "private_zot_readonly_probe", "prod_analytics_registry_credential",
+            "gate", "deploy_dev",
         })
         probe = self.workflow["jobs"]["private_zot_readonly_probe"]
-        self.assertEqual(probe["if"], "${{ inputs.auth_probe == true }}")
+        self.assertEqual(probe["if"], "${{ inputs.auth_probe == true && inputs.target_stage == 'dev' }}")
         self.assertEqual(probe["environment"], "task014-dev")
         self.assertEqual(probe["permissions"], {
             "contents": "read", "id-token": "write",
@@ -120,11 +121,13 @@ class WorkflowPolicyTests(unittest.TestCase):
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
             "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         ])
         for value in uses:
             self.assertRegex(value, r"^[^@]+@[0-9a-f]{40}$")
-        self.assertEqual(self.raw.count("persist-credentials: false"), 3)
+        self.assertEqual(self.raw.count("persist-credentials: false"), 4)
 
     def test_workflow_has_no_other_deployment_authority(self) -> None:
         forbidden = (
@@ -132,10 +135,24 @@ class WorkflowPolicyTests(unittest.TestCase):
             "curl ", "wget ", "upload-artifact", "auth-key", "oauth-secret",
             "funnel",
         )
-        lowered = self.raw.lower()
+        # Preserve the strict original prohibition across ALL THREE original
+        # Task014 jobs. Only the separate PROD encrypted-token job can upload.
+        old_jobs = (
+            self.workflow["jobs"]["private_zot_readonly_probe"],
+            self.workflow["jobs"]["gate"],
+            self.workflow["jobs"]["deploy_dev"],
+        )
+        lowered = str(old_jobs).lower()
         for token in forbidden:
             with self.subTest(token=token):
                 self.assertNotIn(token, lowered)
+        prod = self.workflow["jobs"]["prod_analytics_registry_credential"]
+        self.assertEqual(prod["if"],
+                         "${{ inputs.auth_probe == true && inputs.target_stage == 'prod' && inputs.product_id == 'analytics' && github.actor == 'MichaelTrueX' }}")
+        self.assertEqual(prod["steps"][3]["uses"],
+                         "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
+        self.assertNotIn("docker", str(prod).lower())
+        self.assertNotIn("task014/dev/promote", str(prod))
         self.assertEqual(self.raw.count("secrets."), 2)
         self.assertNotIn("tailscale/github-action", self.raw)
         self.assertNotIn("retry:", self.raw)
