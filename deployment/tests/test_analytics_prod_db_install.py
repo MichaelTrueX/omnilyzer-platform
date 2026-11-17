@@ -41,6 +41,14 @@ class TestFirstInstall(unittest.TestCase):
             with self.assertRaisesRegex(m.InstallHold, "prior DB installation"):
                 m.preflight()
 
+    def test_dev_checkout_cannot_run_privileged_installer(self):
+        """A copied installer outside the fixed root-owned v4 path is denied."""
+        with mock.patch.object(m, "__file__", "/home/omnigpt/repos/omnilyzer-platform/deployment/analytics_prod_db_install.py"), \
+             mock.patch.object(m.os, "getuid", return_value=0), \
+             mock.patch.object(m.os, "geteuid", return_value=0):
+            with self.assertRaisesRegex(m.InstallHold, "fixed PROD install path"):
+                m.check_context()
+
     def test_context_refuses_nonroot(self):
         """No direct unprivileged install."""
         with mock.patch.object(m.os, "getuid", return_value=1000), \
