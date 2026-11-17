@@ -221,6 +221,7 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
         verified_successor_preflight_only: bool = False,
         full_signed_successor_review_only: bool = False,
         owner_authorized_first_successor: bool = False,
+        owner_authorized_ordinary_successor: bool = False,
         candidate_operation: object | None = None,
         route_journal: object | None = None,
         expected_workflow_sha: str | None = None,
@@ -241,11 +242,13 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
             or type(verified_successor_preflight_only) is not bool
             or type(full_signed_successor_review_only) is not bool
             or type(owner_authorized_first_successor) is not bool
+            or type(owner_authorized_ordinary_successor) is not bool
             or sum((
                 structural_successor_receive_only,
                 verified_successor_preflight_only,
                 full_signed_successor_review_only,
                 owner_authorized_first_successor,
+                owner_authorized_ordinary_successor,
             )) > 1
         ):
             raise TypeError("invalid successor receive boundary")
@@ -260,6 +263,7 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
                     verified_successor_preflight_only
                     or full_signed_successor_review_only
                     or owner_authorized_first_successor
+                    or owner_authorized_ordinary_successor
                 )
             ):
                 raise TypeError("unreviewed successor workflow input")
@@ -272,7 +276,11 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
         # An installation must not construct an inert V2-like handler with a
         # missing root-reviewed immutable workflow identity. Fail at startup,
         # not after accepting a privileged Unix FD.
-        if (full_signed_successor_review_only or owner_authorized_first_successor) and reviewed_workflow is None:
+        if (
+            full_signed_successor_review_only
+            or owner_authorized_first_successor
+            or owner_authorized_ordinary_successor
+        ) and reviewed_workflow is None:
             raise TypeError("missing root-reviewed successor workflow")
         if type(executor) is not AnalyticsPrivilegedExecutor:
             raise TypeError("Analytics receiver must have exact executor type")
@@ -395,7 +403,26 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
                 journal=route_journal,
             )
 
-        if owner_authorized_first_successor:
+        def execute_owner_authorized_ordinary(
+            canonical_request: bytes, *, credential_fd: int,
+        ) -> bytes:
+            """Use original peer-checked sealed FD for signed ordinary cutover.
+
+            Root-reviewed generation4 is an exclusive source authority. The
+            UID991 executor independently verifies both owner signatures,
+            active OCI and precise retired slot before any Docker mutation.
+            """
+            from .analytics_executor import (
+                _execute_reviewed_ordinary_successor_transaction,
+            )
+            return _execute_reviewed_ordinary_successor_transaction(
+                canonical_request, credential_fd=credential_fd,
+                expected_workflow_sha=reviewed_workflow,
+                executor=executor, candidate_operation=candidate_operation,
+                journal=route_journal,
+            )
+
+        if owner_authorized_first_successor or owner_authorized_ordinary_successor:
             from .analytics_first_install import AnalyticsSuccessorCandidateOperation
             from .analytics_route_journal import AnalyticsRouteJournal
             if (
@@ -408,7 +435,11 @@ class AnalyticsUnixExecutorConnectionHandler(UnixExecutorConnectionHandler):
             raise TypeError("candidate resources require root-approved mode")
 
         settings[13] = MAX_ANALYTICS_REQUEST_BYTES
-        if owner_authorized_first_successor:
+        if owner_authorized_ordinary_successor:
+            settings[0] = execute_owner_authorized_ordinary
+            settings[30] = read_successor
+            settings[31] = parse_successor
+        elif owner_authorized_first_successor:
             settings[0] = execute_owner_authorized_successor
             settings[30] = read_successor
             settings[31] = parse_successor
