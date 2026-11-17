@@ -97,6 +97,42 @@ class AnalyticsExecutorCompositionTests(unittest.TestCase):
             PRODUCTION_REPLAY_DATABASE,
         )
 
+    def test_root_four_uses_only_authenticated_ordinary_unix_callback(self):
+        """Existing socket/UID contract is unchanged; V1/V3 stay distinct."""
+        from deployment.tests.test_identity import WORKFLOW_SHA
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(listener.close)
+        with patch("deployment.replay_sqlite.sqlite3.connect",
+                   side_effect=AssertionError("SQLite cannot be opened by constructor")):
+            ordinary = AnalyticsExecutorComposition(
+                listener=listener, reviewed_installed_source=EXPECTED,
+                expected_replay_directory_uid=991, expected_replay_directory_gid=991,
+                expected_broker_uid=990, expected_broker_gid=990,
+                expected_executor_uid=991, expected_executor_gid=991,
+                expected_socket_owner_uid=991, expected_socket_group_gid=993,
+                expected_workflow_sha=WORKFLOW_SHA,
+                owner_authorized_ordinary_successor=True,
+            )
+        serve = object.__getattribute__(ordinary, "_serve_once")
+        handler = object.__getattribute__(serve.__self__, "_configuration")[1].__self__
+        self.assertEqual(
+            object.__getattribute__(handler, "_configuration")[0].__name__,
+            "execute_owner_authorized_ordinary",
+        )
+        second = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(second.close)
+        with self.assertRaises(TypeError):
+            AnalyticsExecutorComposition(
+                listener=second, reviewed_installed_source=EXPECTED,
+                expected_replay_directory_uid=991, expected_replay_directory_gid=991,
+                expected_broker_uid=990, expected_broker_gid=990,
+                expected_executor_uid=991, expected_executor_gid=991,
+                expected_socket_owner_uid=991, expected_socket_group_gid=993,
+                expected_workflow_sha=WORKFLOW_SHA,
+                owner_authorized_first_successor=True,
+                owner_authorized_ordinary_successor=True,
+            )
+
     def test_root_pinned_v2_selects_only_full_signed_readonly_receiver(self):
         """One V2 installed workflow pin connects complete review, NEVER replay.
 
