@@ -17,7 +17,8 @@ Sections: root-reviewed input capture, original FD+request execution, separate
           first-successor read-only live OCI/manifest proof and independent
          three-JWT successor identity verification, original replay
           transitions, protected product-only operation and source-only
-          end-to-end first-successor staging/cutover/rollback coordinator.
+          end-to-end first-successor staging/cutover/rollback coordinator;
+          isolated ordinary signed prior/new release and live-route preflight.
 
 NOT A DEPLOYMENT: This class is not installed in the Task014 application
 source set; no host listener, rootless runtime, secret, DB, Docker or release
@@ -493,6 +494,178 @@ def _review_executor_successor_signed_release(
             _emit_uid991_successor_failure_phase(phase)
         # No original JWT, GitHub claim, registry data, verifier argv, owner
         # signature, host/container state or exception detail crosses UID991.
+        raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+
+
+# Section: independent ordinary successor signed predecessor + live route review.
+def _review_executor_ordinary_signed_release(
+    canonical_request: bytes, credential_fd: int, *,
+    expected_workflow_sha: str, reviewed_installed_source: dict[str, str],
+    received_at: int | None = None, jwks_cache: object | None = None,
+):
+    """Independently establish both signed releases and real UID991 active slot.
+
+    This is a read-only ordinary-successor preflight, not a public endpoint,
+    replay authority, or installed executor rollout. The prior signed release
+    comes exclusively from root-owned approval files, never caller hints.
+    OIDC, Zot, Forgejo and Sigstore verification follow the unchanged Task014
+    implementation. The actual active Docker/RootlessKit route must match.
+    """
+    try:
+        import json
+        from .analytics_active_state_review import (
+            AnalyticsActiveState, inspect_analytics_active_state,
+        )
+        from .analytics_execution import (
+            AnalyticsSuccessorRequest, review_analytics_successor_with_live_active,
+        )
+        from .analytics_signed_release_consumer import (
+            AnalyticsSignedEvidenceReview,
+            acquire_and_review_owner_approved_analytics_release,
+        )
+        from .analytics_unix_boundary import _root_reviewed_source
+        from .blob_verifier import CosignReleaseBlobVerifier
+        from .oci_verifier import CosignOCISignatureVerifier
+        from .policy import canonical_bytes
+        from .sigstore_authority_provenance import DevSigstoreVerificationProvenance
+        from release.analytics_owner_source_selection import (
+            AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
+            load_and_verify_owner_signed_source,
+            verify_owner_signed_source_proof, expected_owner_approval_bytes,
+        )
+        if (
+            (os.getuid(), os.geteuid(), os.getgid(), os.getegid())
+                != (991, 991, 991, 991)
+            or type(canonical_request) is not bytes
+            or not 0 < len(canonical_request) <= 16 * 1024
+            or type(credential_fd) is not int or credential_fd < 0
+            or type(expected_workflow_sha) is not str
+            or received_at is not None and (
+                type(received_at) is not int or received_at < 0
+            )
+        ):
+            raise ValueError("invalid ordinary signed executor principal")
+        source = dict(_root_reviewed_source(reviewed_installed_source))
+
+        def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            """Reject duplicate signed request keys at every level."""
+            result: dict[str, object] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate signed request field")
+                result[key] = value
+            return result
+
+        request = json.loads(
+            canonical_request.decode("ascii"), object_pairs_hook=unique,
+            parse_constant=lambda _: (_ for _ in ()).throw(ValueError),
+        )
+        if (
+            type(request) is not dict or canonical_bytes(request) != canonical_request
+            or type(request.get("owner_source_proof")) is not str
+            or not 0 < len(request["owner_source_proof"]) <= 2048
+        ):
+            raise ValueError("invalid signed ordinary request")
+        _successor_request_image(canonical_request)
+        _verify_executor_owner_source(request)
+        live = inspect_analytics_active_state()
+        if (
+            type(live) is not AnalyticsActiveState
+            or live.read_only is not True
+            or live.deployment_authorized is not False
+            or live.active_slot not in ("blue", "green")
+            or live.candidate_slot == live.active_slot
+            or live.candidate_probe_present
+            or live.private_ingress_port != 3141
+            or live.candidate_port != ANALYTICS_SUCCESSOR_CANDIDATE_PORT
+        ):
+            raise ValueError("unreviewed current active writer")
+
+        now = int(time.time()) if received_at is None else received_at
+        identity, registry = _verified_executor_successor_identity_and_credentials(
+            canonical_request, credential_fd,
+            expected_workflow_sha=expected_workflow_sha,
+            jwks_cache=jwks_cache, received_at=now,
+        )
+        toolchain = dict(
+            DevSigstoreVerificationProvenance().broker_service_configuration_kwargs()
+        )
+        if set(toolchain) != {
+            "cosign_version", "cosign_binary_sha256",
+            "sigstore_trusted_root_sha256",
+        }:
+            raise ValueError("unreviewed signature tools")
+        verifier = dict(
+            expected_cosign_version=toolchain["cosign_version"],
+            expected_binary_sha256=toolchain["cosign_binary_sha256"],
+            expected_trusted_root_sha256=toolchain["sigstore_trusted_root_sha256"],
+            broker_uid=991, broker_gid=991,
+        )
+        blob = CosignReleaseBlobVerifier(**verifier)
+        oci = CosignOCISignatureVerifier(
+            **verifier, zot_credential_provider=registry, product_id="analytics",
+        )
+        previous_selected, previous_owner = load_and_verify_owner_signed_source(
+            _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
+        )
+        previous_signed = acquire_and_review_owner_approved_analytics_release(
+            registry, registry, blob, oci, received_at=now,
+            approval_file=_OWNER_APPROVAL_FILE,
+            signature_file=_OWNER_SIGNATURE_FILE,
+        )
+        new_selected, new_owner = verify_owner_signed_source_proof(
+            request["owner_source_proof"],
+        )
+        new_signed = acquire_and_review_owner_approved_analytics_release(
+            registry, registry, blob, oci, received_at=now,
+            approval_file=None, signature_file=None,
+            owner_source_proof=request["owner_source_proof"],
+        )
+        for signed, selected, owner in (
+            (previous_signed, previous_selected, previous_owner),
+            (new_signed, new_selected, new_owner),
+        ):
+            if (
+                type(signed) is not AnalyticsSignedEvidenceReview
+                or type(selected) is not AnalyticsOwnerSourceSelection
+                or type(owner) is not AnalyticsOwnerSignatureReceipt
+                or owner.owner_signature_verified is not True
+                or signed.release_version != selected.release_version
+                or selected.release_version != owner.release_version
+                or signed.source.source_commit != selected.source_commit
+                or signed.source.source_tree != selected.source_tree
+                or selected.source_commit != owner.source_commit
+                or selected.source_tree != owner.source_tree
+                or owner.approval_sha256 != hashlib.sha256(
+                    expected_owner_approval_bytes(selected)
+                ).hexdigest()
+                or signed.deployment_authorized is not False
+            ):
+                raise ValueError("previous/new signed source mismatch")
+        if (
+            previous_signed.image == new_signed.image
+            or tuple(map(int, previous_signed.release_version.split("."))) >=
+               tuple(map(int, new_signed.release_version.split(".")))
+            or previous_signed.image != live.active_image
+            or previous_signed.source.oci_manifest_digest != live.active_digest
+        ):
+            raise ValueError("signed prior image differs from actual writer")
+        reviewed = review_analytics_successor_with_live_active(
+            canonical_request, signed_previous=previous_signed,
+            signed_release=new_signed, selected=new_selected,
+            owner_approval=new_owner, identity=identity,
+            require_empty_candidate=True, **source,
+        )
+        if (
+            type(reviewed) is not AnalyticsSuccessorRequest
+            or reviewed.canonical_bytes() != canonical_request
+            or inspect_analytics_active_state() != live
+        ):
+            raise ValueError("ordinary source or active route changed")
+        return reviewed
+    except _CONTROL:
+        raise
+    except Exception:
         raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
 
 
