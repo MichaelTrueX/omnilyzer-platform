@@ -1357,6 +1357,185 @@ class DurableCompletedRestartTests(ReplayTestCase):
             {Path(self.journal._directory) / 'transaction.json'})
 
 
+# Section: accepted ordinary blue restart reuses durable signed execution
+# receipts and the ORIGINAL SQLite replay without trying a new deployment.
+class OrdinaryCommittedRestartTests(ReplayTestCase):
+    """A completed second signed release survives restart without new OIDC."""
+
+    def setUp(self):
+        """Persist two real journal generations and one finished replay."""
+        super().setUp()
+        from deployment.tests.test_analytics_route_journal import approval, NEXT
+        from deployment.tests.test_analytics_promotion_broker import (
+            OrdinarySignedPredecessorTests,
+        )
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        from release.analytics_owner_source_selection import expected_owner_approval_bytes
+        data, context = AnalyticsSuccessorRequestTests().candidate()
+        self.previous_image = NEXT
+        self.previous_digest = NEXT.rsplit("@", 1)[-1]
+        self.next_image = context["signed_release"].image
+        data["owner_source_proof"] = "synthetic-owner-approved-next-release"
+        data["ingress_reference"] = {
+            **data["ingress_reference"], "active_slot": "green", "slot": "blue",
+        }
+        data["rollback_reference"] = {
+            **data["rollback_reference"],
+            "previous_digest": self.previous_digest,
+            "previous_slot": "green",
+        }
+        selected, owner, signed, identity = (
+            context["selected"], context["owner_approval"],
+            context["signed_release"], context["identity"],
+        )
+        promotion = canonical_bytes({
+            "product_id": "analytics", "release_version": selected.release_version,
+            "source_sha": selected.platform_workflow_commit, "image": signed.image,
+            "run_id": identity.run_id, "run_attempt": identity.run_attempt,
+            "release_manifest_sha256": signed.manifest_sha256,
+            "provenance_sha256": signed.provenance_sha256,
+            "source_claim_sha256": signed.source.claim_sha256,
+            "owner_approval_sha256": owner.approval_sha256,
+            "previous_digest": self.previous_digest,
+        })
+        data["promotion_request_sha256"] = hashlib.sha256(promotion).hexdigest()
+        self.raw = canonical_bytes(data)
+        self.request_hash = hashlib.sha256(self.raw).hexdigest()
+        self.prior_owner, self.next_owner = OrdinarySignedPredecessorTests.pair()
+        self.initialize()
+        self.binding = dict(request_hash=self.request_hash, run_id=7, run_attempt=1)
+        self.consume(**self.binding)
+        self.guard.begin_execution("jti-1", **self.binding)
+        self.temp = tempfile.TemporaryDirectory(prefix="m05-ordinary-restart-")
+        self.addCleanup(self.temp.cleanup)
+        Path(self.temp.name).chmod(0o700)
+        self.journal = AnalyticsRouteJournal(
+            self.temp.name, expected_uid=os.getuid(), expected_gid=os.getgid(),
+        )
+        first = self.journal.begin(**approval(
+            request_sha256="a" * 64,
+            previous_image=PINNED_IMAGE,
+            next_image=self.previous_image,
+        ))
+        self.journal.finish(
+            self.journal.finish(first, phase="candidate_ready"),
+            phase="switched",
+        )
+        ordinary = self.journal.begin(**approval(
+            request_sha256=self.request_hash,
+            previous_slot="green", previous_image=self.previous_image,
+            previous_container_id="e" * 64, previous_ip="172.20.0.4",
+            next_slot="blue", next_image=self.next_image,
+            next_container_id="b" * 64, next_ip="172.20.0.3",
+        ))
+        self.switched = self.journal.finish(
+            self.journal.finish(ordinary, phase="candidate_ready"),
+            phase="switched",
+        )
+
+    def finish(self):
+        """Record exact immutable request/container before marking replay done."""
+        self.journal.record_execution(self.raw, "b" * 64)
+        self.guard.finish_execution("jti-1", **self.binding)
+
+    def attempt(self, *, signed_owner=None, active_image=None):
+        """Review a prior and next root signature and live route without writes."""
+        from deployment.analytics_executor import (
+            _reconcile_interrupted_first_successor_before_receive,
+        )
+        former = self.prior_owner[1:]
+        signed = self.next_owner[1:] if signed_owner is None else signed_owner
+        identities = {
+            "expected_executor_uid": 991, "expected_executor_gid": 991,
+            "expected_replay_directory_uid": os.getuid(),
+            "expected_replay_directory_gid": os.getgid(),
+            "expected_broker_uid": 990,
+            "owner_authorized_first_successor": True,
+        }
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(
+                os.environ, {"ANALYTICS_REVIEWED_SUPERVISOR_V2": "1"},
+            ))
+            stack.enter_context(patch(
+                "deployment.analytics_executor_service_config.load_analytics_executor_service_config",
+                return_value=(EXPECTED, identities),
+            ))
+            # The *real* journal class remains the exact UID991 type. Only
+            # its synthetic test-time constructor binds the already fsynced
+            # isolated directory, avoiding a MagicMock as source authority.
+            stack.enter_context(patch(
+                "deployment.analytics_route_journal.ROUTE_JOURNAL_DIRECTORY",
+                self.temp.name,
+            ))
+            def bind_existing_directory(target, *args, **kwargs):
+                """Retain original class with the disposable exact journal FDs."""
+                for key in ("_directory", "_uid", "_gid", "_locked_fd", "_locked_thread"):
+                    object.__setattr__(target, key,
+                        object.__getattribute__(self.journal, key))
+            stack.enter_context(patch.object(
+                AnalyticsRouteJournal, "__init__", bind_existing_directory,
+            ))
+            stack.enter_context(patch(
+                "deployment.replay_sqlite.PRODUCTION_REPLAY_DATABASE", self.path,
+            ))
+            stack.enter_context(patch(
+                "release.analytics_owner_source_selection.load_and_verify_owner_signed_source",
+                return_value=former,
+            ))
+            stack.enter_context(patch(
+                "release.analytics_owner_source_selection.verify_owner_signed_source_proof",
+                return_value=signed,
+            ))
+            route = stack.enter_context(patch(
+                "deployment.analytics_active_state_review.inspect_committed_analytics_route",
+                return_value=SimpleNamespace(
+                    active_slot="blue",
+                    active_image=self.next_image if active_image is None else active_image,
+                    active_container_id="b" * 64,
+                ),
+            ))
+            recovery = stack.enter_context(patch(
+                "deployment.analytics_loopback_guard._recover_reviewed_private_route",
+            ))
+            for field in ("getuid", "geteuid", "getgid", "getegid"):
+                stack.enter_context(patch(
+                    "deployment.analytics_executor.os." + field, return_value=991,
+                ))
+            try:
+                return _reconcile_interrupted_first_successor_before_receive()
+            finally:
+                recovery.assert_not_called()
+
+    def test_signed_finished_ordinary_restarts_without_writing_storage(self):
+        """Second release remains bound to its real UID991 route after boot."""
+        self.finish()
+        def storage():
+            """Hash all existing SQLite and journal source-of-truth bytes."""
+            return {str(path): path.read_bytes() for root in (
+                self.directory, Path(self.journal._directory),
+            ) for path in root.rglob("*") if path.is_file()}
+        before = storage()
+        self.assertIsNone(self.attempt())
+        self.assertIsNone(self.attempt())
+        self.assertEqual(storage(), before)
+
+    def test_ordinary_restart_requires_both_owner_and_finished_replay(self):
+        """Forged source and uncommitted replay can never signal healthy GO."""
+        from dataclasses import replace
+        self.journal.record_execution(self.raw, "b" * 64)
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        self.guard.finish_execution("jti-1", **self.binding)
+        invalid = (
+            replace(self.next_owner[2], owner_signature_verified=False),
+            replace(self.next_owner[2], approval_sha256="f" * 64),
+        )
+        for signed in invalid:
+            with self.subTest(signed=signed), self.assertRaises(ExecutorUnavailableError):
+                self.attempt(signed_owner=(self.next_owner[1], signed))
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt(active_image=self.previous_image)
+
 class AnalyticsExecutionStatusReadOnlyTests(ReplayTestCase):
     def test_observes_each_state_without_changing_bytes_clock_or_rows(self):
         self.initialize()
