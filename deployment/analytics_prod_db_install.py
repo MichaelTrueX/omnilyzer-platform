@@ -45,7 +45,11 @@ STATE = PRIVATE / "database-install-started-v1.json"
 HBA = Path("/etc/postgresql/16/main/pg_hba.conf")
 HBA_ORIGINAL = PRIVATE / "pg-hba-original-v1"
 HBA_EXPECTED = "0709ada1b9a61908ceb70255346b83da131f37a5758b39820ced1f2b23b8f01c"
-GATE = Path(__file__).with_name("analytics_prod_sql_admission.py")
+# A PROD operator may execute ONLY this immutable, root-owned installed path.
+# Moving an otherwise correct script to an owner-writable tree must fail closed.
+INSTALL_PATH = Path("/usr/local/libexec/analytics_prod_db_install_20261117_v4.py")
+INSTALL_PARENT = Path("/usr/local/libexec")
+GATE = INSTALL_PARENT / "analytics_prod_sql_admission.py"
 # SHA must be updated to exactly the independently reviewed, installed
 # admission source at the final release boundary, not an editable file.
 GATE_SHA256 = "883b8a7eb029abe2c7ca6f768ff0ef6955633c3ee88e2a487e1e368f5a2d5504"
@@ -142,8 +146,31 @@ def psql(database: str, sql: bytes, *, timeout: int = 90) -> bytes:
     return run((*PSQL, "-d", database), input_data=sql, timeout=timeout)
 
 
+def check_installed_source() -> None:
+    """Require the fixed immutable root-owned operator and trusted parent.
+
+    This is checked before preflight/apply/inspection or any state mutation.
+    Do not resolve the script path, which would conceal a symlink.
+    """
+    if Path(__file__) != INSTALL_PATH:
+        raise InstallHold("operator was not invoked from fixed PROD install path")
+    try:
+        parent = os.lstat(INSTALL_PARENT)
+        source = os.lstat(INSTALL_PATH)
+    except OSError:
+        raise InstallHold("installed operator custody unavailable") from None
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0
+            or parent.st_gid != 0 or stat.S_IMODE(parent.st_mode) != 0o755):
+        raise InstallHold("installed operator parent custody differs")
+    if (not stat.S_ISREG(source.st_mode) or source.st_nlink != 1
+            or source.st_uid != 0 or source.st_gid != 0
+            or stat.S_IMODE(source.st_mode) != 0o500):
+        raise InstallHold("installed operator source custody differs")
+
+
 def check_context() -> None:
-    """Refuse installation outside the one actual PROD host and OS identity."""
+    """Refuse execution outside the fixed root-owned PROD source and host."""
+    check_installed_source()
     if (os.getuid() != 0 or os.geteuid() != 0
             or socket.gethostname().split(".")[0] != HOST
             or platform.machine() != "x86_64"):
