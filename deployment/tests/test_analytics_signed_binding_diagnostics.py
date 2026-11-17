@@ -337,6 +337,51 @@ class OrdinaryExecutorSignedPredecessorTests(unittest.TestCase):
         self.assertEqual(self.signed.call_count, 2)
         self.assertEqual(self.inspector.call_count, 4)
 
+    def test_signed_active_green_to_candidate_blue_is_supported(self):
+        """The ordinary request binds the actual signed green, not old blue."""
+        import hashlib
+        from deployment.policy import canonical_bytes
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        data, _ = AnalyticsSuccessorRequestTests().candidate()
+        data["owner_source_proof"] = "synthetic-public-proof"
+        prior_digest = "sha256:" + "a" * 64
+        prior_image = "oci-dev.omnilyzer.ai/omnilyzer/analytics@" + prior_digest
+        old = replace(self.predecessor[0], image=prior_image,
+                      source=replace(self.predecessor[0].source,
+                                     oci_manifest_digest=prior_digest))
+        self.signed.side_effect = [old, self.next_release[0]]
+        self.live = replace(
+            self.live, active_slot="green", active_digest=prior_digest,
+            active_image=prior_image, candidate_slot="blue",
+            active_child_ip="172.20.0.4", active_container_id="b" * 64,
+        )
+        self.inspector.return_value = self.live
+        data["ingress_reference"] = {
+            **data["ingress_reference"], "slot": "blue", "active_slot": "green",
+        }
+        data["rollback_reference"] = {
+            **data["rollback_reference"], "previous_digest": prior_digest,
+            "previous_slot": "green",
+        }
+        signed, selected, owner = self.next_release
+        identity = self.context["identity"]
+        intent = canonical_bytes({
+            "product_id": "analytics", "release_version": selected.release_version,
+            "source_sha": selected.platform_workflow_commit, "image": signed.image,
+            "run_id": identity.run_id, "run_attempt": identity.run_attempt,
+            "release_manifest_sha256": signed.manifest_sha256,
+            "provenance_sha256": signed.provenance_sha256,
+            "source_claim_sha256": signed.source.claim_sha256,
+            "owner_approval_sha256": owner.approval_sha256,
+            "previous_digest": prior_digest,
+        })
+        data["promotion_request_sha256"] = hashlib.sha256(intent).hexdigest()
+        self.raw = canonical_bytes(data)
+        checked = self.review()
+        self.assertEqual(checked.ingress_reference["slot"], "blue")
+        self.assertEqual(checked.rollback_reference["previous_slot"], "green")
+        self.assertEqual(checked.rollback_reference["previous_digest"], prior_digest)
+
     def test_foreign_uid_blocks_before_signed_proof_and_docker(self):
         """A non-executor caller cannot cause even a registry read."""
         with patch("deployment.analytics_executor.os.getuid", return_value=1005):
