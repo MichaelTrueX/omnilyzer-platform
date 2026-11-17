@@ -642,10 +642,11 @@ class AnalyticsSuccessorCandidateOperation:
             candidate_slot=candidate_slot,
         )
 
-    def _stop_green_if_owned(
+    def _stop_candidate_if_owned(
         self, image: str, *, expected_id: str | None = None,
+        previous_image: str = PINNED_IMAGE, candidate_slot: str = "green",
     ) -> bool:
-        """Stop only the exact-digest green, binding a completed rollout to its ID.
+        """Stop only the exact-digest candidate in the verified opposite slot.
 
         During failed startup the ID may not yet be known, so only the original
         restricted Compose service and image are available for cleanup. Once
@@ -654,8 +655,13 @@ class AnalyticsSuccessorCandidateOperation:
         networks, volumes and database writes.
         """
         try:
+            _env, service = _review_successor_compose_images(
+                previous_image=previous_image, candidate_image=image,
+                candidate_slot=candidate_slot,
+            )
             candidate = self._compose(
-                image, "ps", "--all", "-q", "analytics-green",
+                image, "ps", "--all", "-q", service,
+                previous_image=previous_image, candidate_slot=candidate_slot,
             ).stdout.strip()
             if expected_id is not None and (
                 type(expected_id) is not str
@@ -670,6 +676,7 @@ class AnalyticsSuccessorCandidateOperation:
             actual = _strict_json(self._docker(
                 image, "container", "inspect", "--format",
                 "{{json .Config.Image}}", candidate,
+                previous_image=previous_image, candidate_slot=candidate_slot,
             ).stdout.strip())
             if actual != image:
                 return False
@@ -679,26 +686,39 @@ class AnalyticsSuccessorCandidateOperation:
                 # The completed rollout instead stops only its exact ID.
                 stopped = self._docker(
                     image, "container", "stop", "--time", "15", expected_id,
+                    previous_image=previous_image, candidate_slot=candidate_slot,
                 ).stdout.strip()
                 if stopped != expected_id:
                     return False
                 running = _strict_json(self._docker(
                     image, "container", "inspect", "--format",
                     "{{json .State.Running}}", expected_id,
+                    previous_image=previous_image, candidate_slot=candidate_slot,
                 ).stdout.strip())
                 return running is False
             self._compose(
-                image, "stop", "--timeout", "15", "analytics-green",
+                image, "stop", "--timeout", "15", service,
+                previous_image=previous_image, candidate_slot=candidate_slot,
             )
             running = self._compose(
                 image, "ps", "--status", "running", "--format",
-                "json", "analytics-green",
+                "json", service,
+                previous_image=previous_image, candidate_slot=candidate_slot,
             ).stdout.strip()
             return running in ("", "[]")
         except _CONTROL:
             raise
         except Exception:
             return False
+
+    def _stop_green_if_owned(
+        self, image: str, *, expected_id: str | None = None,
+    ) -> bool:
+        """Retain the original first-successor green-only cleanup contract."""
+        return self._stop_candidate_if_owned(
+            image, expected_id=expected_id,
+            previous_image=PINNED_IMAGE, candidate_slot="green",
+        )
 
     def stage_first_successor_green(
         self, request: AnalyticsSuccessorRequest,
