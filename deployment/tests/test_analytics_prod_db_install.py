@@ -114,12 +114,18 @@ class TestFirstInstall(unittest.TestCase):
         hba.assert_not_called()
 
     def test_hba_insertion_only_target_db(self):
-        """Do not insert broad or different-DB authentication rules."""
-        self.assertEqual(m.HBA_INSERT.count(b"\n"), 2)
-        for line in m.HBA_INSERT.splitlines():
-            self.assertIn(b"local   omnilyzer_analytics_prod ", line)
+        """Allow only the target DB; reject these roles in sibling databases."""
+        lines = m.HBA_INSERT.splitlines()
+        self.assertEqual(len(lines), 12)
+        self.assertEqual(sum(b" scram-sha-256" in x for x in lines), 2)
+        for line in lines[:2]:
+            self.assertIn(b"local omnilyzer_analytics_prod ", line)
             self.assertIn(b" scram-sha-256", line)
-            self.assertNotIn(b"trust", line)
+        for line in lines[2:]:
+            self.assertIn(b" reject", line)
+            self.assertTrue(line.startswith((b"local all ", b"host all ")))
+        self.assertEqual(sum(b" 127.0.0.1/32 " in x for x in lines), 3)
+        self.assertEqual(sum(b" ::1/128 " in x for x in lines), 3)
 
     def test_hba_preserve_existing_peer(self):
         """The original peer rule is retained after the new narrow entries."""
