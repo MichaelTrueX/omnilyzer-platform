@@ -61,16 +61,34 @@ def _forward_native(path, content, cookie, validated_csrf):
     """Forward one bounded JSON POST to the fixed loopback Native runtime.
 
     Do not proxy Django cookies, Keycloak secrets or inbound browser headers.
-    Native independently authorizes the existing product session and course.
+    Django already validated its own session CSRF. Native independently
+    requires its cookie-bound challenge, fetched only for this paired cookie.
+    Neither protection is substituted for the other or exposed cross-origin.
     """
+    if not isinstance(validated_csrf, str) or not validated_csrf:
+        return None
+    challenge = _forward_native_get("/api/auth/csrf", cookie)
+    if challenge is None:
+        return None
+    status, payload, media_type = challenge
+    if status != 200:
+        return status, payload
+    if (media_type != "application/json" or not isinstance(payload, dict)
+            or set(payload) != {"csrfToken"}
+            or not isinstance(payload["csrfToken"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", payload["csrfToken"])):
+        return None
     headers = {
         "Host": "app.sumlaude.com",
+        # Fixed TLS termination assertion on our loopback hop; never copy
+        # this value from an inbound browser/proxy header.
+        "X-Forwarded-Proto": "https",
         "Accept": "application/json",
         "Content-Type": "application/json",
         "Cookie": "__Host-sumlaude_session=" + cookie,
         "Origin": settings.PRODUCT_ORIGIN,
         "Sec-Fetch-Site": "same-origin",
-        "X-CSRF-Token": validated_csrf,
+        "X-CSRF-Token": payload["csrfToken"],
     }
     connection = http.client.HTTPConnection(_NATIVE_HOST, _NATIVE_PORT, timeout=6)
     try:
@@ -136,6 +154,7 @@ def _forward_native_get(path, cookie, *, asset=False):
     """
     headers = {
         "Host": "app.sumlaude.com",
+        "X-Forwarded-Proto": "https",
         "Cookie": "__Host-sumlaude_session=" + cookie,
         "Accept": ("image/png, image/webp, text/plain, application/json"
                    if asset else "application/json"),
@@ -285,3 +304,27 @@ def formative_help(request, course_id, lesson_id, stage_id):
     path = ("/api/valoria/learning/courses/" + str(course_id)
             + "/formative/" + lesson_id + "/help/" + stage_id)
     return _private_get_response(_forward_native_get(path, cookie))
+
+
+# Section: A canonical public reading page may request only its own signed
+# learner context, via the existing native API and the paired server session.
+# The private app origin keeps its original direct Native context route.
+@never_cache
+def canonical_context(request):
+    """Pass one authorized private context GET, never an anonymous fallback."""
+    if request.method != "GET":
+        return _private_get_response((405, {"error": "method unavailable"},
+                                      "application/json"))
+    if (not settings.CANONICAL_AUTH_ENABLED
+            or getattr(request, "sumlaude_origin", "") != settings.CANONICAL_ORIGIN):
+        return _private_get_response((404, {"error": "route unavailable"},
+                                      "application/json"))
+    if request.META.get("QUERY_STRING", ""):
+        return _private_get_response((400, {"error": "query unavailable"},
+                                      "application/json"))
+    cookie = _paired_product_cookie(request)
+    if cookie is None:
+        return _private_get_response((401, {"error": "learner session unavailable"},
+                                      "application/json"))
+    return _private_get_response(
+        _forward_native_get("/api/valoria/context", cookie))

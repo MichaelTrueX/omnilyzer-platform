@@ -122,20 +122,32 @@ def pkce():
     return verifier, challenge
 
 
-def authorize(state, nonce, challenge):
+def _exact_callback(redirect_uri):
+    """Accept only a reviewed callback on an enabled same-product host."""
+    expected = {settings.OIDC_REDIRECT_URI}
+    if settings.CANONICAL_AUTH_ENABLED:
+        expected.add(settings.CANONICAL_ORIGIN + "/auth/callback")
+    if redirect_uri not in expected:
+        raise IdentityError("unapproved OIDC redirect URI")
+    return redirect_uri
+
+
+def authorize(state, nonce, challenge, *, redirect_uri=None):
+    callback = _exact_callback(redirect_uri or settings.OIDC_REDIRECT_URI)
     query = parse.urlencode({
         "response_type": "code", "client_id": settings.OIDC_CLIENT_ID,
-        "redirect_uri": settings.OIDC_REDIRECT_URI, "scope": "openid profile email",
+        "redirect_uri": callback, "scope": "openid profile email",
         "state": state, "nonce": nonce, "code_challenge": challenge,
         "code_challenge_method": "S256",
     })
     return metadata()["authorization_endpoint"] + "?" + query
 
 
-def exchange(code, verifier):
+def exchange(code, verifier, *, redirect_uri=None):
+    callback = _exact_callback(redirect_uri or settings.OIDC_REDIRECT_URI)
     return _provider(metadata()["token_endpoint"], form={
         "grant_type": "authorization_code", "code": code,
-        "code_verifier": verifier, "redirect_uri": settings.OIDC_REDIRECT_URI,
+        "code_verifier": verifier, "redirect_uri": callback,
     }, authenticated=True)
 
 

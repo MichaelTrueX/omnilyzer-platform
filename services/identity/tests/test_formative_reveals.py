@@ -288,6 +288,7 @@ class MediaTransportTests(SimpleTestCase):
             headers = connection.request.call_args.kwargs["headers"]
             self.assertEqual(headers["Cookie"], "__Host-sumlaude_session=" + COOKIE)
             self.assertEqual(headers["Host"], "app.sumlaude.com")
+            self.assertEqual(headers["X-Forwarded-Proto"], "https")
             self.assertNotIn("Authorization", headers)
             self.assertNotIn("X-CSRF-Token", headers)
             self.assertNotIn("X-Forwarded-For", headers)

@@ -6,7 +6,7 @@ Related: services/identity/identity_bff/{views,formative}.py,
     Sumlaude S03 PR #366 source-pinned student reveals.
 """
 from django.urls import path
-from identity_bff import views, formative
+from identity_bff import views, formative, guardian
 
 urlpatterns = [
     path("auth/login", views.login),
@@ -14,8 +14,16 @@ urlpatterns = [
     path("auth/session", views.session_state),
     path("auth/csrf", views.csrf),
     path("auth/age-choice", views.age_choice),
+    path("auth/guardian", guardian.page),
+    path("auth/guardian-script", guardian.script),
+    path("auth/guardian-request", guardian.request_email),
+    path("auth/guardian-confirm", guardian.confirm_email),
+    path("auth/guardian-continue", views.guardian_continue),
     path("auth/refresh", views.refresh),
     path("auth/logout", views.logout),
+    # Canonical same-page public lesson gate requires a signed, paired Native
+    # context. The old app-host /api/valoria/context path remains unchanged.
+    path("api/valoria/context", formative.canonical_context),
     # Math/Science progress is routed here by the exact NGINX override, never directly to Native.
     path("api/valoria/learning/courses/<uuid:course_id>/formative/<slug:lesson_id>/progress",
          formative.formative_progress),
