@@ -210,6 +210,100 @@ class AnalyticsRouteJournalTests(unittest.TestCase):
                 self.path.write_bytes(prior_bytes)
         self.assertEqual(self.journal.read_slot_retirement()["active_image"], NEXT)
 
+    def slot_retirement_fixture(self):
+        """Construct exact switched green, historical dormant blue and intent."""
+        from dataclasses import replace
+        from deployment.tests.test_analytics_active_state_review import observed, _active_state
+        prior = self.journal.begin(**approval())
+        ready = self.journal.finish(prior, phase="candidate_ready")
+        self.journal.finish(ready, phase="switched")
+        pending = self.journal.prepare_slot_retirement(
+            request_sha256="f" * 64, active_slot="green", active_image=NEXT,
+            active_container_id="e" * 64, dormant_slot="blue",
+            dormant_image=OLD, dormant_container_id="d" * 64,
+            next_image=LATER,
+        )
+        measured = replace(
+            _active_state(**observed(active_slot="green")),
+            active_image=NEXT, active_digest="sha256:" + "a" * 64,
+            active_container_id="e" * 64,
+        )
+        return pending, measured
+
+    def test_confirm_retirement_only_after_verified_empty_slot_and_active_writer(self):
+        """Persist slot_empty only after two stable live reads and one absence."""
+        pending, live = self.slot_retirement_fixture()
+        with patch("deployment.analytics_route_journal.os.geteuid", return_value=991), patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            return_value=live,
+        ) as inspector, patch(
+            "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+            return_value=None,
+        ) as absent:
+            done = self.journal.confirm_slot_retired(pending=pending)
+        self.assertEqual(done["phase"], "slot_empty")
+        self.assertEqual(inspector.call_count, 2)
+        absent.assert_called_once_with("blue")
+        self.assertEqual(self.journal.read_slot_retirement(), done)
+        self.denied(self.journal.read)
+        self.denied(lambda: self.journal.confirm_slot_retired(pending=pending))
+        self.assertEqual(self.journal.read_slot_retirement(), done)
+
+    def test_confirm_retirement_wrong_principal_or_active_route_stays_pending(self):
+        """Foreign UID or changed active route cannot mark a slot empty."""
+        from dataclasses import replace
+        pending, live = self.slot_retirement_fixture()
+        with patch("deployment.analytics_route_journal.os.geteuid", return_value=1005), self.assertRaises(AnalyticsRouteJournalUnavailable):
+            self.journal.confirm_slot_retired(pending=pending)
+        with patch("deployment.analytics_route_journal.os.geteuid", return_value=991), patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            return_value=replace(live, active_container_id="c" * 64),
+        ), patch(
+            "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+        ) as absent, self.assertRaises(AnalyticsRouteJournalUnavailable):
+            self.journal.confirm_slot_retired(pending=pending)
+        absent.assert_not_called()
+        self.assertEqual(self.journal.read_slot_retirement(), pending)
+
+    def test_confirm_retirement_requires_absence_and_stable_second_snapshot(self):
+        """A stale Docker container or reconfigured route keeps retirement HOLD."""
+        from dataclasses import replace
+        from deployment.analytics_active_state_review import AnalyticsActiveStateDenied
+        pending, live = self.slot_retirement_fixture()
+        with patch("deployment.analytics_route_journal.os.geteuid", return_value=991), patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            return_value=live,
+        ), patch(
+            "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+            side_effect=AnalyticsActiveStateDenied("stopped slot remains"),
+        ), self.assertRaises(AnalyticsRouteJournalUnavailable):
+            self.journal.confirm_slot_retired(pending=pending)
+        self.assertEqual(self.journal.read_slot_retirement(), pending)
+        with patch("deployment.analytics_route_journal.os.geteuid", return_value=991), patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            side_effect=[live, replace(live, active_child_ip="172.20.0.7")],
+        ), patch(
+            "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+            return_value=None,
+        ), self.assertRaises(AnalyticsRouteJournalUnavailable):
+            self.journal.confirm_slot_retired(pending=pending)
+        self.assertEqual(self.journal.read_slot_retirement(), pending)
+
+    def test_retirement_confirmation_interrupted_fsync_never_grants_go(self):
+        """Partial replace cannot be interpreted as permission to stage."""
+        pending, live = self.slot_retirement_fixture()
+        with patch("deployment.analytics_route_journal.os.geteuid", return_value=991), patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            return_value=live,
+        ), patch(
+            "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+        ), patch(
+            "deployment.analytics_route_journal.os.fsync", side_effect=OSError,
+        ), self.assertRaises(AnalyticsRouteJournalUnavailable):
+            self.journal.confirm_slot_retired(pending=pending)
+        self.denied(self.journal.read_slot_retirement)
+        self.denied(self.journal.read)
+
     def test_retirement_intent_partial_write_fails_closed(self):
         """A crash at fsync cannot create a false durable retirement success."""
         self.journal.begin(**approval())
