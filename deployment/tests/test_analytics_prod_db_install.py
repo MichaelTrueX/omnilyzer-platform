@@ -55,8 +55,11 @@ class TestFirstInstall(unittest.TestCase):
         with mock.patch.object(m, "run") as run, mock.patch.object(m, "psql") as psql:
             m.execute_sql(gate)
         self.assertEqual(run.call_count, 1)
-        self.assertEqual(psql.call_count, 5)
-        self.assertEqual([x.args[1] for x in psql.call_args_list],
+        self.assertEqual(psql.call_count, 6)
+        self.assertEqual(psql.call_args_list[0].args[0], "postgres")
+        self.assertIn(b"REVOKE ALL ON DATABASE omnilyzer_analytics_prod FROM PUBLIC",
+                      psql.call_args_list[0].args[1])
+        self.assertEqual([x.args[1] for x in psql.call_args_list[1:]],
                          [x.encode() for x in m.SQL_NAMES])
 
     def test_migration_failure_stops_sequence(self):
@@ -67,7 +70,7 @@ class TestFirstInstall(unittest.TestCase):
                 m, "psql", side_effect=m.InstallHold("stop")) as sql:
             with self.assertRaises(m.InstallHold):
                 m.execute_sql(gate)
-        self.assertEqual(sql.call_count, 1)
+        self.assertEqual(sql.call_count, 2)
 
     def test_no_public_connect_on_shared_cluster(self):
         """Restrict the new database before app credentials are provisioned."""
