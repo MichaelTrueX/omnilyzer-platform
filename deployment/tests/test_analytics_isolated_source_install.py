@@ -220,6 +220,94 @@ class IsolatedSourceGenerationTests(unittest.TestCase):
         self.assertIn("ISOLATED_BROKER_EXECUTOR_IMPORT_OK", result.stdout)
         self.assertFalse((new_root / "deployment/__pycache__").exists())
 
+    # Section: ordinary generation4 immutable SHA-named source installation.
+    def test_ordinary_sha_source_never_reuses_existing_candidate(self):
+        """Retain V1, V2 candidate, and old rollback contents exactly."""
+        self.stage()
+        original = self.parent / install._DESTINATION
+        baseline = {str(x.relative_to(original)): x.read_bytes()
+                    for x in original.rglob("*") if x.is_file()}
+        with patch.object(install, "_open_checked_root",
+                          side_effect=self._test_fd_open):
+            old = install._publish_isolated_generation(
+                parent_root=str(self.parent), original_root=str(self.old_root),
+                archive=self.successor_archive, manifest_sha=self.successor_sha,
+                reviewed_commit=self.sha, uid=os.getuid(), gid=os.getgid(),
+                successor_source=True, candidate_only=True,
+            )
+        candidate = Path(old)
+        previous_bytes = {str(x.relative_to(candidate)): x.read_bytes()
+                          for x in candidate.rglob("*") if x.is_file()}
+        with patch.object(install, "_open_checked_root",
+                          side_effect=self._test_fd_open):
+            newly_installed = install._publish_isolated_generation(
+                parent_root=str(self.parent), original_root=str(self.old_root),
+                archive=self.successor_archive, manifest_sha=self.successor_sha,
+                reviewed_commit=self.sha, uid=os.getuid(), gid=os.getgid(),
+                successor_source=True, ordinary_source=True,
+            )
+        self.assertEqual(newly_installed,
+                         str(self.parent / (install._ORDINARY_PREFIX + self.sha)))
+        self.assertEqual(len([x for x in Path(newly_installed).rglob("*")
+                              if x.is_file()]), 76)
+        self.assertEqual(baseline, {str(x.relative_to(original)): x.read_bytes()
+                                   for x in original.rglob("*") if x.is_file()})
+        self.assertEqual(previous_bytes, {
+            str(x.relative_to(candidate)): x.read_bytes()
+            for x in candidate.rglob("*") if x.is_file()
+        })
+        with patch.object(install, "_open_checked_root",
+                          side_effect=self._test_fd_open), self.assertRaises(OSError):
+            install._publish_isolated_generation(
+                parent_root=str(self.parent), original_root=str(self.old_root),
+                archive=self.successor_archive, manifest_sha=self.successor_sha,
+                reviewed_commit=self.sha, uid=os.getuid(), gid=os.getgid(),
+                successor_source=True, ordinary_source=True,
+            )
+        self.assertFalse((self.parent / install._STAGING).exists())
+
+    def test_ordinary_root_approval_denies_forged_path_and_unprivileged_run(self):
+        """Only canonical schema3 and exact matching SHA-derived path pass."""
+        from deployment.analytics_executor_service_config import ordinary_analytics_source_root
+        source = self.sha
+        value = {
+            "schema_version": 3, "product_id": "analytics", "stage": "dev",
+            "reviewed_commit": source,
+            "destination": ordinary_analytics_source_root(source),
+            "manifest_sha256": self.successor_sha,
+            "archive_sha256": hashlib.sha256(self.successor_archive).hexdigest(),
+        }
+        self.assertEqual(install._ordinary_approval(canonical_bytes(value)), value)
+        for wrong in (
+            {**value, "destination": "/opt/omnilyzer/deployment/analytics-app-candidate"},
+            {**value, "destination": ordinary_analytics_source_root("a" * 40)},
+            {**value, "schema_version": 2},
+            {**value, "schema_version": True},
+            {**value, "unexpected": "file"},
+        ):
+            with self.subTest(wrong=wrong), self.assertRaises(
+                install.AnalyticsIsolatedSourceInstallError,
+            ):
+                install._ordinary_approval(canonical_bytes(wrong))
+        for malicious_sha in ("../legacy", "1" * 39 + "/", "A" * 40):
+            with self.subTest(malicious_sha=malicious_sha), patch.object(
+                install, "_read_legacy_sources",
+            ) as legacy, self.assertRaises(ValueError):
+                install._publish_isolated_generation(
+                    parent_root=str(self.parent), original_root=str(self.old_root),
+                    archive=self.successor_archive, manifest_sha=self.successor_sha,
+                    reviewed_commit=malicious_sha, uid=os.getuid(), gid=os.getgid(),
+                    successor_source=True, ordinary_source=True,
+                )
+            legacy.assert_not_called()
+        for wrong in ("../evil", "A" * 40, "0" * 40, "1" * 39):
+            with self.subTest(wrong=wrong), self.assertRaises(ValueError):
+                ordinary_analytics_source_root(wrong)
+        with patch.object(install.os, "getuid", return_value=1005), self.assertRaises(
+            install.AnalyticsIsolatedSourceInstallError,
+        ):
+            install.stage_approved_analytics_ordinary_source_generation()
+
     def test_exact_root_approved_v2_candidate_source_is_never_live(self):
         """Original 70-file active source remains intact while V2 is staged."""
         self.stage()  # Install only disposable V1 fixture, not a live system.
