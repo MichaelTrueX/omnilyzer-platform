@@ -63,8 +63,10 @@ class HistoricalRootOATLineageTests(unittest.TestCase):
                 self.accept(changed)
 
     def test_non_root_migration_is_denied_without_existing_file_access(self):
-        # Explicitly never obtain root through this test nor touch real paths.
-        self.assertNotEqual(main_root_uid(),0)
+        # Works under both GitHub native-root QA and unprivileged DEV QA.
+        with patch("deployment.analytics_legacy_0160_migration.os.getuid",return_value=1005):
+            with self.assertRaises(ValueError):
+                _preflight()
 
     def test_no_source_only_apply_can_write_real_root_journal(self):
         # Reading or calling the operator through the connected UID1005 is

@@ -1447,9 +1447,12 @@ class OrdinaryCommittedRestartTests(ReplayTestCase):
         )
 
     def finish(self):
-        """Record exact immutable request/container before marking replay done."""
+        """Durable success is replay FINISHED plus fsynced completion."""
         self.journal.record_execution(self.raw, "b" * 64)
         self.guard.finish_execution("jti-1", **self.binding)
+        self.journal.record_completed_release(
+            self.raw, "b" * 64, replay_guard=self.guard,
+        )
 
     def attempt(self, *, signed_owner=None, active_image=None):
         """Review a prior and next root signature and live route without writes."""
@@ -1535,9 +1538,6 @@ class OrdinaryCommittedRestartTests(ReplayTestCase):
     def test_completed_certificate_survives_legitimate_replay_expiry(self):
         """Fresh signed GitHub JTI may prune an old success without breaking boot."""
         self.finish()
-        self.journal.record_completed_release(
-            self.raw, "b" * 64, replay_guard=self.guard,
-        )
         completed = self.journal.read_completed_release(self.request_hash)
         self.assertEqual(completed["request_sha256"], self.request_hash)
         self.assertIsNone(self.attempt())
@@ -1553,8 +1553,11 @@ class OrdinaryCommittedRestartTests(ReplayTestCase):
         self.assertEqual((self.path.read_bytes(), self.journal.read()), before)
 
     def test_missing_certificate_with_pruned_replay_is_hold(self):
-        """Old proof alone cannot prove success after replay has expired."""
-        self.finish()
+        """A crashed post-FINISHED pre-certificate path is always HOLD."""
+        self.journal.record_execution(self.raw, "b" * 64)
+        self.guard.finish_execution("jti-1", **self.binding)
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
         self.now = NOW + 1000
         self.guard.consume(
             "next-unique-jti", expires_at=self.now + 100,
@@ -1574,9 +1577,6 @@ class OrdinaryCommittedRestartTests(ReplayTestCase):
 
     def test_completion_certificate_tamper_and_symlink_are_hold(self):
         self.finish()
-        self.journal.record_completed_release(
-            self.raw, "b" * 64, replay_guard=self.guard,
-        )
         certificate = (Path(self.journal._directory) / "executions"
                        / ("completion-" + self.request_hash + ".json"))
         original = certificate.read_bytes()
@@ -1602,6 +1602,9 @@ class OrdinaryCommittedRestartTests(ReplayTestCase):
         with self.assertRaises(ExecutorUnavailableError):
             self.attempt()
         self.guard.finish_execution("jti-1", **self.binding)
+        self.journal.record_completed_release(
+            self.raw, "b" * 64, replay_guard=self.guard,
+        )
         invalid = (
             replace(self.next_owner[2], owner_signature_verified=False),
             replace(self.next_owner[2], approval_sha256="f" * 64),

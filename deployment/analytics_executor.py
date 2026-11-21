@@ -1269,8 +1269,10 @@ def _review_completed_ordinary_successor_restart(
     # A pruned historical FINISHED replay is NOT a live authorization; only
     # a prior immutable post-FINISHED certificate, with the full original
     # owner/source/live-route review below, can prove this old completion.
-    if (status not in (None, "finished")
-            or (status is None and completed is None)):
+    if status not in (None, "finished") or type(completed) is not dict:
+        # Even a still-retained FINISHED row is not sufficient alone for a
+        # future ordinary release. A crash between replay.finish and fsynced
+        # completion must HOLD now, not work once then fail after TTL pruning.
         raise ValueError("no durable ordinary signed completion")
     proof = journal.read_execution(request_hash)
     if (
@@ -1363,15 +1365,11 @@ def _review_completed_ordinary_successor_restart(
         or journal.read_execution(request_hash) != proof
         or _read_analytics_execution_status(replay, request_hash)
             not in (None, "finished")
-        or (completed is not None and (
-            completed.get("request_sha256") != request_hash
-            or completed.get("image") != intent["next_image"]
-            or completed.get("container_id") != intent["next_container_id"]
-            or completed.get("canonical_request_sha256") != request_hash
-            or journal.read_completed_release(request_hash) != completed
-        ))
-        or (_read_analytics_execution_status(replay, request_hash) is None
-            and completed is None)
+        or completed.get("request_sha256") != request_hash
+        or completed.get("image") != intent["next_image"]
+        or completed.get("container_id") != intent["next_container_id"]
+        or completed.get("canonical_request_sha256") != request_hash
+        or journal.read_completed_release(request_hash) != completed
     ):
         raise ValueError("ordinary signed active route changed during restart")
     return None
