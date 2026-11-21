@@ -8,7 +8,6 @@ No privileged operations, actual service restart, socket, JWT, or deployment.
 """
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 import json
 import unittest
@@ -111,7 +110,6 @@ class BrokerWorkflowRebindTests(unittest.TestCase):
         """Patch only root I/O boundaries; no privileged fixture is touched."""
         from contextlib import ExitStack
         from types import SimpleNamespace
-        from unittest.mock import Mock
         stack = ExitStack()
         state = {"target": initial}
         directory = SimpleNamespace(stat=lambda: SimpleNamespace(st_gid=990))
