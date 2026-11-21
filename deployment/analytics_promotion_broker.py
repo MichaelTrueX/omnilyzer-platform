@@ -131,6 +131,30 @@ def _ordinary_signed_previous_digest(previous: object, next_release: object) -> 
     return old.source.oci_manifest_digest
 
 
+# Section: fixed diagnostic classification for the *existing* OIDC denials.
+# Only these hard-coded source-owned messages are compared. No exception text,
+# token, claim, signing key, actor, URL or dynamic content is ever emitted.
+# Unknown/new OIDC failures retain the previous generic closed marker.
+def _ordinary_oidc_rejection_phase(error: BaseException) -> str:
+    """Return a static allowlisted reason without changing the denial."""
+    if type(error) is OIDCAuthorizationError:
+        return "broker_oidc_identity"
+    if type(error) is not OIDCVerificationError:
+        return "broker_verify_oidc"
+    if len(error.args) != 1 or type(error.args[0]) is not str:
+        return "broker_verify_oidc"
+    return {
+        "OIDC token structure is invalid": "broker_oidc_structure",
+        "OIDC JSON is invalid": "broker_oidc_structure",
+        "OIDC token header is invalid": "broker_oidc_header",
+        "OIDC key identifier is invalid": "broker_oidc_header",
+        "OIDC signing key is not accepted": "broker_oidc_signing_key",
+        "OIDC token verification failed": "broker_oidc_signature",
+        "OIDC verified claims are inconsistent": "broker_oidc_claims",
+        "OIDC identity is not authorized": "broker_oidc_identity",
+    }.get(error.args[0], "broker_verify_oidc")
+
+
 class AnalyticsPrivatePromotionBroker:
     """Exact Analytics-only Task014-style broker, not registered in any service."""
 
@@ -444,8 +468,10 @@ class AnalyticsPrivatePromotionBroker:
         except OIDCVerificationUnavailable:
             _emit_analytics_release_boundary("broker_verify_oidc", "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
-        except (OIDCVerificationError, OIDCAuthorizationError):
-            _emit_analytics_release_boundary("broker_verify_oidc", "rejected")
+        except (OIDCVerificationError, OIDCAuthorizationError) as error:
+            _emit_analytics_release_boundary(
+                _ordinary_oidc_rejection_phase(error), "rejected",
+            )
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except _CONTROL:
             raise
