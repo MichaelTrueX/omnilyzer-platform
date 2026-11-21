@@ -727,7 +727,7 @@ class AnalyticsSuccessorCandidateOperation:
     def retire_dormant_rollback_container(
         self, *, request: AnalyticsSuccessorRequest, journal: object,
     ) -> None:
-        """Remove only an authenticated stopped container with durable HOLD.
+        """Stop then remove only an authenticated old standby under durable HOLD.
 
         This MUST be invoked only by the independently signed, UID991
         source-reviewed ordinary coordinator while holding the original
@@ -782,11 +782,44 @@ class AnalyticsSuccessorCandidateOperation:
                 active=prior, expected_slot=pending["dormant_slot"],
                 expected_image=pending["dormant_image"],
                 expected_container_id=pending["dormant_container_id"],
+                allow_running_standby=True,
             )
-            # Re-check active writer right before an exact-ID Docker remove.
-            # No --force, --volumes, Compose down, rm image, or database call.
+            # The signed historical blue may remain RUNNING as a rollback
+            # standby. Never use --force or a name-based Compose stop. This
+            # phase occurs only AFTER the exact signed predecessor/candidate
+            # and a durable retirement_pending journal were verified.
             if inspect_analytics_active_state() != prior:
                 raise ValueError("active writer drift before retirement")
+            running = _strict_json(self._docker(
+                request.exact_image_reference,
+                "container", "inspect", "--format",
+                "{{json .State.Running}}", pending["dormant_container_id"],
+                previous_image=pending["active_image"],
+                candidate_slot=pending["dormant_slot"],
+            ).stdout.strip())
+            if type(running) is not bool:
+                raise ValueError("unknown historical rollback runtime state")
+            if running:
+                stopped = self._docker(
+                    request.exact_image_reference,
+                    "container", "stop", "--time", "15",
+                    pending["dormant_container_id"],
+                    previous_image=pending["active_image"],
+                    candidate_slot=pending["dormant_slot"],
+                ).stdout.strip()
+                if stopped != pending["dormant_container_id"]:
+                    raise ValueError("wrong historical rollback stop result")
+            # Independently confirm the exact old container is now STOPPED,
+            # hardened and unrouted. A failed check preserves pending intent;
+            # the active current writer must remain unchanged.
+            inspect_dormant_analytics_candidate(
+                active=prior, expected_slot=pending["dormant_slot"],
+                expected_image=pending["dormant_image"],
+                expected_container_id=pending["dormant_container_id"],
+            )
+            if inspect_analytics_active_state() != prior:
+                raise ValueError("active writer drift after standby stop")
+            # No --force, --volumes, Compose down, rm image or DB operation.
             removed = self._docker(
                 request.exact_image_reference,
                 "container", "rm", pending["dormant_container_id"],
