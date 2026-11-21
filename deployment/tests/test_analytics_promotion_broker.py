@@ -531,6 +531,76 @@ class OrdinarySignedPredecessorTests(unittest.TestCase):
                 self.assertEqual(replay.calls, [])
                 self.assertEqual(transport.requests, [])
 
+    def test_ordinary_oidc_closed_reason_classification_and_no_replay(self):
+        """Distinguish known verifier failures without leaking their messages."""
+        from deployment.identity import OIDCAuthorizationError
+        from deployment.jwks import OIDCVerificationError
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+
+        request, _ = AnalyticsSuccessorRequestTests().candidate()
+        request["owner_source_proof"] = "synthetic-public-proof"
+        raw = canonical_bytes(request)
+        cases = (
+            ("structure", OIDCVerificationError("OIDC token structure is invalid"),
+             "broker_oidc_structure"),
+            ("header", OIDCVerificationError("OIDC token header is invalid"),
+             "broker_oidc_header"),
+            ("kid", OIDCVerificationError("OIDC signing key is not accepted"),
+             "broker_oidc_signing_key"),
+            ("signature", OIDCVerificationError("OIDC token verification failed"),
+             "broker_oidc_signature"),
+            ("integrity", OIDCVerificationError("OIDC verified claims are inconsistent"),
+             "broker_oidc_claims"),
+            ("policy", OIDCVerificationError("OIDC identity is not authorized"),
+             "broker_oidc_identity"),
+            ("reauthorize", OIDCAuthorizationError("private synthetic details"),
+             "broker_oidc_identity"),
+            ("unknown", OIDCVerificationError("sensitive synthetic value"),
+             "broker_verify_oidc"),
+        )
+        for name, reason, expected_phase in cases:
+            with self.subTest(name=name):
+                broker, replay, transport = make_broker(
+                    verifier=Verifier(error=reason),
+                )
+                with patch(
+                    "deployment.analytics_promotion_broker._emit_analytics_release_boundary"
+                ) as marker, self.assertRaises(BrokerRejectedError):
+                    broker.review_ordinary_successor_without_forwarding(
+                        compact_token=TOKEN, zot_token=ZOT_TOKEN,
+                        forgejo_token=FORGEJO_TOKEN,
+                        canonical_request=raw, received_at=NOW,
+                    )
+                marker.assert_called_once_with(expected_phase, "rejected")
+                self.assertEqual(replay.calls, [])
+                self.assertEqual(transport.requests, [])
+
+    def test_oidc_phase_markers_are_exact_allowlisted_public_constants(self):
+        """The original redacted emitter writes no untrusted exception contents."""
+        from deployment.analytics_registry_review_composition import (
+            _emit_analytics_release_boundary,
+        )
+
+        for phase in (
+            "broker_oidc_structure", "broker_oidc_header",
+            "broker_oidc_signing_key", "broker_oidc_signature",
+            "broker_oidc_claims", "broker_oidc_identity",
+        ):
+            with self.subTest(phase=phase), patch(
+                "deployment.analytics_registry_review_composition.os.write"
+            ) as written:
+                _emit_analytics_release_boundary(phase, "rejected")
+                written.assert_called_once_with(
+                    2,
+                    ("TASK014_ANALYTICS_BROKER_BOUNDARY phase=" + phase
+                     + " outcome=rejected\\n").encode("ascii"),
+                )
+        with patch(
+            "deployment.analytics_registry_review_composition.os.write"
+        ) as written:
+            _emit_analytics_release_boundary("sensitive synthetic value", "rejected")
+            written.assert_not_called()
+
     def test_ordinary_signed_broker_reuses_sealed_fd_replay_and_receipt(self):
         """Two signed releases, three JWTs, one replay before exact Unix send."""
         from deployment.analytics_signed_release_consumer import PINNED_DIGEST
