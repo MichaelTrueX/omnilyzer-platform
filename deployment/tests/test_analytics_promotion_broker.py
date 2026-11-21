@@ -496,6 +496,41 @@ class OrdinarySignedPredecessorTests(unittest.TestCase):
         self.assertEqual(replay.calls, [])
         self.assertEqual(transport.requests, [])
 
+    def test_ordinary_early_denials_have_exact_static_phases_without_replay(self):
+        """Identify only the actual early boundary; no token or request is logged."""
+        from deployment.jwks import OIDCVerificationError, OIDCVerificationUnavailable
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+
+        request, _context = AnalyticsSuccessorRequestTests().candidate()
+        request["owner_source_proof"] = "synthetic-public-proof"
+        valid = canonical_bytes(request)
+        bad_shape = {**request, "owner_source_proof": ""}
+        cases = (
+            ("invalid_request", canonical_bytes(bad_shape), Verifier(),
+             BrokerRejectedError, "broker_request_shape", "rejected"),
+            ("invalid_oidc", valid,
+             Verifier(error=OIDCVerificationError("private synthetic details")),
+             BrokerRejectedError, "broker_verify_oidc", "rejected"),
+            ("oidc_unavailable", valid,
+             Verifier(error=OIDCVerificationUnavailable("private synthetic details")),
+             BrokerUnavailableError, "broker_verify_oidc", "unavailable"),
+        )
+        for name, raw, verifier, failure, phase, outcome in cases:
+            with self.subTest(name=name):
+                broker, replay, transport = make_broker(verifier=verifier)
+                with patch(
+                    "deployment.analytics_promotion_broker._emit_analytics_release_boundary"
+                ) as marker:
+                    with self.assertRaises(failure):
+                        broker.review_ordinary_successor_without_forwarding(
+                            compact_token=TOKEN, zot_token=ZOT_TOKEN,
+                            forgejo_token=FORGEJO_TOKEN,
+                            canonical_request=raw, received_at=NOW,
+                        )
+                marker.assert_called_once_with(phase, outcome)
+                self.assertEqual(replay.calls, [])
+                self.assertEqual(transport.requests, [])
+
     def test_ordinary_signed_broker_reuses_sealed_fd_replay_and_receipt(self):
         """Two signed releases, three JWTs, one replay before exact Unix send."""
         from deployment.analytics_signed_release_consumer import PINNED_DIGEST
