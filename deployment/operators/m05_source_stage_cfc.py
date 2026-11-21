@@ -30,6 +30,10 @@ SCRATCH = PARENT / ".m05-ordinary-reviewed-source-f4a69fc9a3afa361255365ed6d1941
 HANDOFF = Path("/home/omnigpt/repos/omnilyzer-platform/.delivery/m05-pr316-source-stage-cfc-20261121")
 MANIFEST = HANDOFF / "manifest.json"
 MANIFEST_SHA = "f931fcd93d0a36245a3b7c66482040e0b27483c4254764cd95299a9d6be13f32"
+# Owner-root verified after the broker SHA rebinding; this root-installed
+# importer must remain bit-for-bit identical, not merely root-owned.
+INSTALLER_SHA = "cc7dfd7fb022a01772bb2f18fd1705f6e4f15e706903e4b47c8833b7d7f9ac5b"
+INSTALLER = SCRATCH / "deployment/analytics_isolated_source_install.py"
 REPLACEMENTS_SHA = {
     "deployment/analytics_executor.py":
         "34de557ca2d5e63adb6cc5c18c827dd5f266040e699525670d21c9667b84f5ff",
@@ -164,11 +168,25 @@ def reviewed_source() -> tuple[object, tuple[tuple[str, bytes], ...]]:
             raise ValueError("baseline source mutated")
         combined.append((relative, replacements.get(relative, old)))
 
-    # Reuse the *existing root-owned and previously reviewed* source publisher,
-    # not a new serializer, staging framework, source trust or permission model.
+    # The source installer is not in the 76-file application runtime.
+    # Owner-root SHA256 evidence binds this exact pre-existing private
+    # importer. Checking only root ownership would execute changed code
+    # with root privileges if a prior installer was silently replaced.
+    importer_bytes = trusted_root_file(INSTALLER, 0o500)
+    if hashlib.sha256(importer_bytes).hexdigest() != INSTALLER_SHA:
+        raise ValueError("root-only source installer SHA is not approved")
+    # A previously imported deployment package could shadow the pinned
+    # SCRATCH modules even after sys.path insertion. Deny instead of
+    # borrowing an unverified module from an unrelated Python environment.
+    if any(k == "deployment" or k.startswith("deployment.")
+           for k in sys.modules):
+        raise ValueError("deployment Python modules already loaded")
     sys.path.insert(0, str(SCRATCH))
     sys.dont_write_bytecode = True
     from deployment import analytics_isolated_source_install as installer
+    if (not isinstance(getattr(installer, "__file__", None), str)
+            or os.path.abspath(installer.__file__) != str(INSTALLER)):
+        raise ValueError("pinned root source installer import origin changed")
     if len(combined) != 76:
         raise ValueError("invalid successor file count")
     return installer, tuple(combined)
