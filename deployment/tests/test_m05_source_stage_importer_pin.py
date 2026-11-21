@@ -65,7 +65,7 @@ def simulated_root_reader(module):
 
     def read(path: Path, mode: int | None) -> bytes:
         path = Path(path)
-        if path == module.INSTALLER and mode == 0o500:
+        if path == module.INSTALLER and mode == 0o400:
             return ORIGINAL
         try:
             relative = path.relative_to(SOURCE).as_posix()
@@ -135,7 +135,7 @@ class RootSourcePinReviewTests(unittest.TestCase):
 
         def read(path, mode):
             if Path(path) == module.INSTALLER:
-                self.assertEqual(mode, 0o500)
+                self.assertEqual(mode, 0o400)
                 return ORIGINAL + b"\n# tampered\n"
             return normal(path, mode)
 
