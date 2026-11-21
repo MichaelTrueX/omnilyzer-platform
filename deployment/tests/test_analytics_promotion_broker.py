@@ -593,7 +593,7 @@ class OrdinarySignedPredecessorTests(unittest.TestCase):
                 written.assert_called_once_with(
                     2,
                     ("TASK014_ANALYTICS_BROKER_BOUNDARY phase=" + phase
-                     + " outcome=rejected\\n").encode("ascii"),
+                     + " outcome=rejected\n").encode("ascii"),
                 )
         with patch(
             "deployment.analytics_registry_review_composition.os.write"
