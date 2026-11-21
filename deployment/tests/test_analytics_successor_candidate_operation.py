@@ -909,13 +909,23 @@ class DormantRollbackRetirementOperationTests(unittest.TestCase):
         self.operation = object.__new__(AnalyticsSuccessorCandidateOperation)
 
     def run_retirement(self, *, changes=None, replacement=None, stop_result=None,
-                       occupied=False, uid=991, locked=True):
-        """Capture exactly one narrow Docker removal and closed journal state."""
+                       occupied=False, uid=991, locked=True, running=False,
+                       stop_ack=None, inspect_result=None):
+        """Model signed predecessor, durable intent and each scoped Docker command."""
         from deployment.analytics_route_journal import AnalyticsRouteJournal
         from unittest.mock import patch
-        from dataclasses import replace
         pending = self.pending if changes is None else {**self.pending, **changes}
         snapshot = self.live if replacement is None else replacement
+        responses = [CommandResult(0,
+            ("true" if running else "false") if inspect_result is None else inspect_result,
+            "")]
+        if running:
+            responses.append(CommandResult(0,
+                self.pending["dormant_container_id"] if stop_ack is None else stop_ack,
+                ""))
+        responses.append(CommandResult(0,
+            self.pending["dormant_container_id"] if stop_result is None else stop_result,
+            ""))
         with patch("deployment.analytics_first_install.os.getuid", return_value=uid), patch(
             "deployment.analytics_first_install.os.geteuid", return_value=uid,
         ), patch("deployment.analytics_first_install.os.getgid", return_value=uid), patch(
@@ -931,10 +941,7 @@ class DormantRollbackRetirementOperationTests(unittest.TestCase):
             "deployment.analytics_active_state_review.inspect_dormant_analytics_candidate",
             side_effect=ValueError("occupied") if occupied else None,
         ) as dormant, patch.object(
-            AnalyticsSuccessorCandidateOperation, "_docker",
-            return_value=CommandResult(0,
-                self.pending["dormant_container_id"] if stop_result is None else stop_result,
-                ""),
+            AnalyticsSuccessorCandidateOperation, "_docker", side_effect=responses,
         ) as docker:
             self.operation.retire_dormant_rollback_container(
                 request=self.request, journal=self.journal,
@@ -942,20 +949,51 @@ class DormantRollbackRetirementOperationTests(unittest.TestCase):
             return docker, confirmed, live, dormant
 
     def test_exact_stopped_id_only_no_data_or_image_mutation(self):
-        """A verified stale blue can be removed only by ID without --volumes."""
+        """A verified stopped blue is removed only by ID, without volumes."""
+        from unittest.mock import call
         docker, confirmed, live, dormant = self.run_retirement()
-        docker.assert_called_once_with(
-            self.request.exact_image_reference, "container", "rm", "d" * 64,
-            previous_image=self.pending["active_image"], candidate_slot="blue",
-        )
+        image = self.request.exact_image_reference
+        suffix = dict(previous_image=self.pending["active_image"], candidate_slot="blue")
+        self.assertEqual(docker.call_args_list, [
+            call(image, "container", "inspect", "--format",
+                 "{{json .State.Running}}", "d" * 64, **suffix),
+            call(image, "container", "rm", "d" * 64, **suffix),
+        ])
         confirmed.assert_called_once_with(pending=self.pending)
-        dormant.assert_called_once()
-        self.assertEqual(live.call_count, 2)
+        self.assertEqual(dormant.call_count, 2)
+        self.assertEqual(live.call_count, 3)
         self.assertFalse(any(
-            word in repr(docker.call_args) for word in (
+            word in repr(docker.call_args_list) for word in (
                 "--volumes", "--force", "down", "image rm", "prune", "compose",
             )
         ))
+
+    def test_running_signed_standby_is_stopped_by_exact_id_before_removal(self):
+        """Never stop active green; blue stop occurs only after journal custody."""
+        from unittest.mock import call
+        docker, confirmed, live, dormant = self.run_retirement(running=True)
+        image = self.request.exact_image_reference
+        suffix = dict(previous_image=self.pending["active_image"], candidate_slot="blue")
+        self.assertEqual(docker.call_args_list, [
+            call(image, "container", "inspect", "--format",
+                 "{{json .State.Running}}", "d" * 64, **suffix),
+            call(image, "container", "stop", "--time", "15", "d" * 64, **suffix),
+            call(image, "container", "rm", "d" * 64, **suffix),
+        ])
+        self.assertEqual(dormant.call_count, 2)
+        self.assertIs(dormant.call_args_list[0].kwargs["allow_running_standby"], True)
+        self.assertNotIn("allow_running_standby", dormant.call_args_list[1].kwargs)
+        self.assertEqual(live.call_count, 3)
+        confirmed.assert_called_once_with(pending=self.pending)
+
+    def test_wrong_stop_id_and_unknown_runtime_leave_retirement_hold(self):
+        """A malformed inspection or wrong stop acknowledgement must deny."""
+        for case in (
+            {"running": True, "stop_ack": "c" * 64},
+            {"inspect_result": "unknown"},
+        ):
+            with self.subTest(case=case), self.assertRaises(AnalyticsFirstInstallError):
+                self.run_retirement(**case)
 
     def test_wrong_uid_journal_lock_old_id_and_route_never_remove(self):
         """Do not remove anything unless every trusted boundary matches."""
