@@ -388,8 +388,8 @@ class OrdinaryExecutorSignedPredecessorTests(unittest.TestCase):
         self.assertEqual(checked.rollback_reference["previous_slot"], "green")
         self.assertEqual(checked.rollback_reference["previous_digest"], prior_digest)
 
-    def test_signed_current_green_reviews_exact_stopped_original_blue(self):
-        """A historical 0.15 rollback can be present BEFORE signed retirement."""
+    def test_signed_current_green_reviews_exact_original_blue_standby(self):
+        """Accept exact signed historical rollback whether running until retirement."""
         from deployment.analytics_route_journal import AnalyticsRouteJournal
         from deployment.analytics_signed_release_consumer import PINNED_IMAGE
         self.configure_green_candidate()
@@ -416,6 +416,7 @@ class OrdinaryExecutorSignedPredecessorTests(unittest.TestCase):
             active=self.live, expected_slot="blue",
             expected_image=PINNED_IMAGE,
             expected_container_id="a" * 64,
+            allow_running_standby=True,
         )
         self.assertEqual(journal_reads.call_count, 3)
         self.empty.assert_not_called()
