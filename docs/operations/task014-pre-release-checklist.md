@@ -338,10 +338,10 @@ failed HTTP403 at `broker_oidc_identity`. Owner-root evidence proved the
 original C32H broker pinned `c6d6b067...` while the Analytics broker,
 executor and protected GitHub main used `630db1ae...`.
 The one-field correction is still **uninstalled, draft PR315** at HEAD
-`8255193bae78187ec0dfa3cf0146ed5fb8c4075b` (source SHA256
-`1c08877d859e1d8ffa09400cda93dd16f36824d21fc9d31fd8f369410a818fec`).
+`50a3b3415209a9d5d1ca8fae6055c41cd6c885c4` (source SHA256
+`70becf364ba1cbc29cff9df4971d0db4ad7d9914ec24606f1948ca6ea7e73afc`).
 M04 technical review found and corrected an interrupted-rollback defect;
-61/61 focused source tests and separate fault injections PASS. This is NOT a
+62/62 focused source tests, including trusted ancestor checks, and separate fault injections PASS. This is NOT a
 formal independent M04 approval, actual root rebind or triple-config preflight.
 All three historical Task014 attempts are closed failed events.
 **Analytics 0.16.1 remains NO-GO on DEV; signed0.16.0 remains serving.**
