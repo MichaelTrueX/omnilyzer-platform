@@ -337,6 +337,22 @@ verify the original broker restarted with a new PID and the fixed canonical
 SHA, preserve the signed Analytics image, route, replay and recovery custody,
 and then record a fresh full four-part gate before considering a new signed
 dispatch.
+**Enforced pre-dispatch implementation, not just documentation:** The
+current, immutable-630-bound source-only operator in draft
+[PR #315](https://github.com/MichaelTrueX/omnilyzer-platform/pull/315)
+provides a root-only, read-only `--release-preflight`. After independent
+M04 acceptance and authorized installation, it verifies all three canonical
+protected config files, broker process start after the original config
+mtime, exact generation-4 source/permissions and signed active-image/route.
+It exits nonzero on mismatch. The release owner must actually run and
+verify this tool before the *separately approved* next signed Task014
+request and must recheck protected GitHub main SHA immediately before
+dispatch. **This fixed tool is not automatically invoked by GitHub CI**,
+which cannot read DEV root-protected files. A later GitHub main/source
+generation requires an independently reviewed replacement binding, not
+reuse of a stale fixed-SHA PASS. Neither PR315 source nor this draft
+instruction is a live install or authorization to run Task014.
+
 The verified 21 November 2026 incident #44876028251 demonstrated why this
 is mandatory: original C32H broker still pinned prior `c6d6b067...`,
 while Analytics broker/executor and GitHub used `630db1ae...`, producing
