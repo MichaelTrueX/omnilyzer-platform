@@ -7,7 +7,8 @@ Related: deployment/analytics_executor.py (UID991 stage boundary),
          deployment/tests/test_analytics_execution.py (closed signed fixture).
 
 Sections: synthetic authorized setup; binding denial; live drift denial;
-          silent legacy/foreign principal and successful read-only review.
+          silent legacy/foreign principal and successful read-only review;
+          ordinary signed predecessor/next and opposite-slot executor checks.
 No real OIDC credentials, registry calls, Docker, replay writes or routing.
 """
 from __future__ import annotations
@@ -226,6 +227,260 @@ class SignedBindingDiagnosticTests(unittest.TestCase):
         self.signed.assert_not_called()
         self.parser.assert_not_called()
 
+
+# Section 5: independently signed ordinary predecessor and real opposite slot.
+class OrdinaryExecutorSignedPredecessorTests(unittest.TestCase):
+    """Exercise source-only UID991 predecessor/next review with synthetic I/O."""
+
+    def setUp(self):
+        """Use the genuine request parser and two synthetic signed versions."""
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE, PINNED_DIGEST
+        from deployment.tests.test_analytics_promotion_broker import (
+            OrdinarySignedPredecessorTests,
+        )
+        data, self.context = AnalyticsSuccessorRequestTests().candidate()
+        data["owner_source_proof"] = "synthetic-public-proof"
+        self.raw = canonical_bytes(data)
+        predecessor, next_release = OrdinarySignedPredecessorTests.pair()
+        self.predecessor = (
+            replace(predecessor[0], image=PINNED_IMAGE,
+                source=replace(predecessor[0].source,
+                    oci_manifest_digest=PINNED_DIGEST)),
+            predecessor[1], predecessor[2],
+        )
+        self.next_release = next_release
+        self.live = first_successor_empty_active_state()
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        for name in ("getuid", "geteuid", "getgid", "getegid"):
+            self.stack.enter_context(patch(
+                "deployment.analytics_executor.os." + name, return_value=991,
+            ))
+        self.stack.enter_context(patch(
+            "deployment.analytics_unix_boundary._root_reviewed_source",
+            return_value=EXPECTED,
+        ))
+        self.stack.enter_context(patch(
+            "deployment.analytics_executor._verify_executor_owner_source",
+            return_value=None,
+        ))
+        self.inspector = self.stack.enter_context(patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            return_value=self.live,
+        ))
+        self.empty = self.stack.enter_context(patch(
+            "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+            return_value=None,
+        ))
+        self.identity = self.stack.enter_context(patch(
+            "deployment.analytics_executor._verified_executor_successor_identity_and_credentials",
+            return_value=(self.context["identity"], object()),
+        ))
+        provenance = self.stack.enter_context(patch(
+            "deployment.sigstore_authority_provenance.DevSigstoreVerificationProvenance",
+        ))
+        provenance.return_value.broker_service_configuration_kwargs.return_value = {
+            "cosign_version": "synthetic",
+            "cosign_binary_sha256": "a" * 64,
+            "sigstore_trusted_root_sha256": "b" * 64,
+        }
+        self.stack.enter_context(patch("deployment.blob_verifier.CosignReleaseBlobVerifier"))
+        self.stack.enter_context(patch("deployment.oci_verifier.CosignOCISignatureVerifier"))
+        self.signed = self.stack.enter_context(patch(
+            "deployment.analytics_signed_release_consumer.acquire_and_review_owner_approved_analytics_release",
+            side_effect=[self.predecessor[0], self.next_release[0]],
+        ))
+        self.stack.enter_context(patch(
+            "release.analytics_owner_source_selection.load_and_verify_owner_signed_source",
+            return_value=self.predecessor[1:],
+        ))
+        self.stack.enter_context(patch(
+            "release.analytics_owner_source_selection.verify_owner_signed_source_proof",
+            return_value=self.next_release[1:],
+        ))
+
+    def review(self, *, retirement_journal=None):
+        """Invoke the new read-only ordinary executor boundary."""
+        from deployment.analytics_executor import _review_executor_ordinary_signed_release
+        return _review_executor_ordinary_signed_release(
+            self.raw, 21, expected_workflow_sha=WORKFLOW_SHA,
+            reviewed_installed_source=EXPECTED, received_at=NOW,
+            retirement_journal=retirement_journal,
+        )
+
+    def test_read_only_signed_predecessor_and_opposite_slot(self):
+        """Bind actual observed OCI, both signatures and exact request parser."""
+        checked = self.review()
+        self.assertEqual(checked.canonical_bytes(), self.raw)
+        self.assertEqual(checked.rollback_reference["previous_digest"],
+                         self.live.active_digest)
+        self.assertEqual(self.signed.call_count, 2)
+        self.identity.assert_called_once()
+        self.assertGreaterEqual(self.inspector.call_count, 3)
+
+    def test_wrong_prior_signer_or_live_oci_cannot_become_authority(self):
+        """Never accept a previous release that does not match the real route."""
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        bad = replace(self.predecessor[0], image=PINNED_IMAGE.replace("sha256:", "sha256:0"))
+        self.signed.side_effect = [bad, self.next_release[0]]
+        with self.assertRaises(ExecutorUnavailableError):
+            self.review()
+        self.assertEqual(self.signed.call_count, 2)
+
+    def test_changed_route_after_signed_review_is_denied(self):
+        """No stale measured writer may survive a four-read identity check."""
+        self.inspector.side_effect = [
+            self.live, self.live, self.live,
+            replace(self.live, active_container_id="d" * 64),
+        ]
+        with self.assertRaises(ExecutorUnavailableError):
+            self.review()
+        self.assertEqual(self.signed.call_count, 2)
+        self.assertEqual(self.inspector.call_count, 4)
+
+    def configure_green_candidate(self):
+        """Build a signed current green with an unpublished blue candidate."""
+        import hashlib
+        from deployment.policy import canonical_bytes
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        data, _ = AnalyticsSuccessorRequestTests().candidate()
+        data["owner_source_proof"] = "synthetic-public-proof"
+        prior_digest = "sha256:" + "a" * 64
+        prior_image = "oci-dev.omnilyzer.ai/omnilyzer/analytics@" + prior_digest
+        old = replace(self.predecessor[0], image=prior_image,
+                      source=replace(self.predecessor[0].source,
+                                     oci_manifest_digest=prior_digest))
+        self.signed.side_effect = [old, self.next_release[0]]
+        self.live = replace(
+            self.live, active_slot="green", active_digest=prior_digest,
+            active_image=prior_image, candidate_slot="blue",
+            active_child_ip="172.20.0.4", active_container_id="b" * 64,
+        )
+        self.inspector.return_value = self.live
+        data["ingress_reference"] = {
+            **data["ingress_reference"], "slot": "blue", "active_slot": "green",
+        }
+        data["rollback_reference"] = {
+            **data["rollback_reference"], "previous_digest": prior_digest,
+            "previous_slot": "green",
+        }
+        signed, selected, owner = self.next_release
+        identity = self.context["identity"]
+        intent = canonical_bytes({
+            "product_id": "analytics", "release_version": selected.release_version,
+            "source_sha": selected.platform_workflow_commit, "image": signed.image,
+            "run_id": identity.run_id, "run_attempt": identity.run_attempt,
+            "release_manifest_sha256": signed.manifest_sha256,
+            "provenance_sha256": signed.provenance_sha256,
+            "source_claim_sha256": signed.source.claim_sha256,
+            "owner_approval_sha256": owner.approval_sha256,
+            "previous_digest": prior_digest,
+        })
+        data["promotion_request_sha256"] = hashlib.sha256(intent).hexdigest()
+        self.raw = canonical_bytes(data)
+
+    def test_signed_active_green_to_candidate_blue_is_supported(self):
+        """The ordinary request binds the actual signed green, not old blue."""
+        self.configure_green_candidate()
+        prior_digest = self.live.active_digest
+        checked = self.review()
+        self.assertEqual(checked.ingress_reference["slot"], "blue")
+        self.assertEqual(checked.rollback_reference["previous_slot"], "green")
+        self.assertEqual(checked.rollback_reference["previous_digest"], prior_digest)
+
+    def test_signed_current_green_reviews_exact_original_blue_standby(self):
+        """Accept exact signed historical rollback whether running until retirement."""
+        from deployment.analytics_route_journal import AnalyticsRouteJournal
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        self.configure_green_candidate()
+        journal = object.__new__(AnalyticsRouteJournal)
+        recorded = {
+            "phase": "switched", "next_slot": "green",
+            "next_image": self.live.active_image,
+            "next_container_id": self.live.active_container_id,
+            "previous_slot": "blue", "previous_image": PINNED_IMAGE,
+            "previous_container_id": "a" * 64,
+        }
+        with patch.object(
+            AnalyticsRouteJournal, "exclusive_active", return_value=True,
+        ), patch.object(
+            AnalyticsRouteJournal, "read", return_value=recorded,
+        ) as journal_reads, patch(
+            "deployment.analytics_active_state_review.inspect_dormant_analytics_candidate",
+            return_value=None,
+        ) as dormant:
+            verified = self.review(retirement_journal=journal)
+        self.assertEqual(verified.ingress_reference["slot"], "blue")
+        self.assertEqual(verified.rollback_reference["previous_slot"], "green")
+        dormant.assert_called_once_with(
+            active=self.live, expected_slot="blue",
+            expected_image=PINNED_IMAGE,
+            expected_container_id="a" * 64,
+            allow_running_standby=True,
+        )
+        self.assertEqual(journal_reads.call_count, 3)
+        self.empty.assert_not_called()
+        self.assertEqual(self.signed.call_count, 2)
+
+    def test_unknown_historical_image_or_unlocked_journal_denies_pre_retirement(self):
+        """No caller-invented dormant OCI can substitute for signed history."""
+        from deployment.analytics_route_journal import AnalyticsRouteJournal
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        self.configure_green_candidate()
+        journal = object.__new__(AnalyticsRouteJournal)
+        recorded = {
+            "phase": "switched", "next_slot": "green",
+            "next_image": self.live.active_image,
+            "next_container_id": self.live.active_container_id,
+            "previous_slot": "blue", "previous_image": PINNED_IMAGE,
+            "previous_container_id": "a" * 64,
+        }
+        with patch.object(
+            AnalyticsRouteJournal, "exclusive_active", return_value=False,
+        ), patch.object(
+            AnalyticsRouteJournal, "read", return_value=recorded,
+        ) as read, self.assertRaises(ExecutorUnavailableError):
+            self.review(retirement_journal=journal)
+        read.assert_not_called()
+        # Reuse fresh signed fixture side effects for each independent deny.
+        for malformed in (
+            {**recorded, "previous_image": self.live.active_image},
+            {**recorded, "phase": "prepared"},
+            {**recorded, "next_container_id": "d" * 64},
+        ):
+            self.signed.side_effect = [
+                replace(self.predecessor[0],
+                    image=self.live.active_image,
+                    source=replace(self.predecessor[0].source,
+                        oci_manifest_digest=self.live.active_digest)),
+                self.next_release[0],
+            ]
+            with self.subTest(malformed=malformed), patch.object(
+                AnalyticsRouteJournal, "exclusive_active", return_value=True,
+            ), patch.object(
+                AnalyticsRouteJournal, "read", return_value=malformed,
+            ), patch(
+                "deployment.analytics_active_state_review.inspect_dormant_analytics_candidate",
+            ) as dormant, self.assertRaises(ExecutorUnavailableError):
+                self.review(retirement_journal=journal)
+            dormant.assert_not_called()
+
+    def test_foreign_uid_blocks_before_signed_proof_and_docker(self):
+        """A non-executor caller cannot cause even a registry read."""
+        with patch("deployment.analytics_executor.os.getuid", return_value=1005):
+            with self.assertRaises(ExecutorUnavailableError):
+                self.review()
+        self.signed.assert_not_called()
+        self.identity.assert_not_called()
+        self.inspector.assert_not_called()
+
+    def test_occupied_or_unstable_route_fails_before_authorization(self):
+        """No upgrade when a private candidate already exists or route drifts."""
+        self.inspector.return_value = replace(self.live, candidate_probe_present=True)
+        with self.assertRaises(ExecutorUnavailableError):
+            self.review()
+        self.identity.assert_not_called()
+        self.signed.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

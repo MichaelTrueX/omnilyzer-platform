@@ -3,7 +3,9 @@
 Purpose: Durable, product-only Task14B Analytics private route-switch intent.
          Persist exact signed-release *references* before any 3141 mutation,
          and distinguish prepared, candidate_ready, switched, rollback_pending
-         and restored outcomes on restart without trusting a partial stage
+         and restored outcomes on restart. Prepare an independent fsynced
+         dormant-slot retirement HOLD before any later authorized deletion,
+         without trusting a partial stage
          or post-commit rollback attempt as a completed promotion.
 Related: deployment/analytics_loopback_guard.py (same RootlessKit supervisor),
          deployment/analytics_active_state_review.py (live OCI observation),
@@ -37,6 +39,8 @@ from .policy import canonical_bytes
 ROUTE_JOURNAL_DIRECTORY = "/var/lib/omnilyzer/deployment/analytics-route"
 _FILENAME = "transaction.json"
 _TEMP = ".transaction.json.next"
+_RETIREMENT = "slot-retirement.json"
+_RETIREMENT_TEMP = ".slot-retirement.json.next"
 _EXECUTIONS = "executions"
 _IMAGE_PREFIX = "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:"
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -193,6 +197,53 @@ def _execution_proof(payload: bytes, request_hash: str) -> dict[str, object]:
         _reject()
 
 
+# Section 2b: separate, root-reviewed prospective retirement intent.
+# It is deliberately NOT an ordinary route phase: its mere presence blocks
+# existing first-successor read/transition methods until a future independently
+# reviewed recovery coordinator resolves it. No Docker operation occurs here.
+_RETIREMENT_KEYS = frozenset({
+    "schema_version", "phase", "request_sha256", "prior_generation",
+    "active_slot", "active_image", "active_container_id",
+    "dormant_slot", "dormant_image", "dormant_container_id",
+    "next_image",
+})
+
+
+def _retirement_record(raw: object) -> dict[str, object]:
+    """Require one exact immutable, unrelated-to-secrets retired-slot intent."""
+    if type(raw) is not dict or set(raw) != _RETIREMENT_KEYS:
+        _reject()
+    record = dict(raw)
+    if (
+        type(record["schema_version"]) is not int
+        or record["schema_version"] != 1
+        or record["phase"] not in ("retirement_pending", "slot_empty")
+        or type(record["prior_generation"]) is not int
+        or record["prior_generation"] < 1
+        or record["prior_generation"] > _MAX_GENERATION
+        or record["active_slot"] not in ("blue", "green")
+        or record["dormant_slot"] not in ("blue", "green")
+        or record["active_slot"] == record["dormant_slot"]
+    ):
+        _reject()
+    for key in ("request_sha256", "active_container_id", "dormant_container_id"):
+        if type(record[key]) is not str or _SHA.fullmatch(record[key]) is None:
+            _reject()
+    if record["request_sha256"] == "0" * 64 or record["active_container_id"] == record["dormant_container_id"]:
+        _reject()
+    for key in ("active_image", "dormant_image", "next_image"):
+        value = record[key]
+        if (type(value) is not str or not value.startswith(_IMAGE_PREFIX)
+                or _SHA.fullmatch(value[len(_IMAGE_PREFIX):]) is None
+                or value == _IMAGE_PREFIX + "0" * 64):
+            _reject()
+    if len({record["active_image"], record["dormant_image"], record["next_image"]}) != 3:
+        _reject()
+    if len(canonical_bytes(record)) > _MAX_BYTES:
+        _reject()
+    return record
+
+
 # Section 3: exact directory/file identities and atomic file publication.
 class AnalyticsRouteJournal:
     """One exclusively owned UID991 route journal; no application secrets."""
@@ -291,12 +342,27 @@ class AnalyticsRouteJournal:
             os.close(descriptor)
             raise
 
-    def _read_at(self, directory_fd: int) -> dict[str, object] | None:
-        """Read only a regular, single-link 0600 journal, refusing residue."""
+    def _read_at(
+        self, directory_fd: int, *, allow_retirement: bool = False,
+    ) -> dict[str, object] | None:
+        """Read exact 0600 journal; only recovery may inspect pending retirement.
+
+        The default route/replay path MUST reject the retirement intent.
+        Recovery is read-only and still requires exact signed predecessor,
+        Docker identity, and journal generation agreement before proceeding.
+        """
         entries = set(os.listdir(directory_fd))
         if not entries:
             return None
-        if entries not in ({_FILENAME}, {_FILENAME, _EXECUTIONS}):
+        permitted = ({_FILENAME}, {_FILENAME, _EXECUTIONS})
+        if allow_retirement is True:
+            permitted += (
+                {_FILENAME, _RETIREMENT},
+                {_FILENAME, _EXECUTIONS, _RETIREMENT},
+            )
+        elif allow_retirement is not False:
+            _reject()
+        if entries not in permitted:
             _reject()
         if _EXECUTIONS in entries:
             # Execution evidence has its own fixed, private namespace. It
@@ -470,8 +536,15 @@ class AnalyticsRouteJournal:
             if directory is not None:
                 os.close(directory)
 
-    def _replace_at(self, directory_fd: int, new: dict[str, object]) -> None:
-        """Write/fsync private temp, atomic rename and fsync enclosing dir."""
+    def _replace_at(
+        self, directory_fd: int, new: dict[str, object], *,
+        allow_retirement: bool = False,
+    ) -> None:
+        """Write/fsync private temp, atomic rename and fsync enclosing dir.
+
+        Only the ordinary signed post-retirement transition may read back a
+        transaction while a verified slot_empty intent remains present.
+        """
         encoded = canonical_bytes(_route_record(new))
         if _TEMP in os.listdir(directory_fd):
             _reject()
@@ -494,7 +567,339 @@ class AnalyticsRouteJournal:
             os.fsync(directory_fd)
         finally:
             os.close(descriptor)
-        if self._read_at(directory_fd) != new:
+        if self._read_at(directory_fd, allow_retirement=allow_retirement) != new:
+            _reject()
+
+    # Section: durable pre-retirement preparation, deliberately NO deletion.
+    def prepare_slot_retirement(
+        self, *, request_sha256: str,
+        active_slot: str, active_image: str, active_container_id: str,
+        dormant_slot: str, dormant_image: str, dormant_container_id: str,
+        next_image: str,
+    ) -> dict[str, object]:
+        """fsync exact dormant-slot intent before any external Docker mutation.
+
+        Caller MUST previously authenticate both Task013 signed images and
+        measure the exact dormant slot using the UID991 read-only inspector.
+        This journal cannot establish such proof. A pending intent is never
+        cleared by this method, so restart/read/begin fail CLOSED until the
+        separately authorized recovery coordinator resolves it. The active
+        3141 writer and all volumes, data and OCI images remain untouched.
+        """
+        try:
+            directory, borrowed = self._write_handle()
+            try:
+                previous = self._read_at(directory)
+                if (
+                    type(previous) is not dict
+                    or previous["phase"] != "switched"
+                    or previous["next_slot"] != active_slot
+                    or previous["next_image"] != active_image
+                    or previous["next_container_id"] != active_container_id
+                    or previous["previous_slot"] != dormant_slot
+                    or previous["previous_image"] != dormant_image
+                    or previous["previous_container_id"] != dormant_container_id
+                    or _RETIREMENT in os.listdir(directory)
+                    or previous["generation"] >= _MAX_GENERATION
+                    or previous["request_sha256"] == request_sha256
+                ):
+                    _reject()
+                record = _retirement_record({
+                    "schema_version": 1, "phase": "retirement_pending",
+                    "request_sha256": request_sha256,
+                    "prior_generation": previous["generation"],
+                    "active_slot": active_slot, "active_image": active_image,
+                    "active_container_id": active_container_id,
+                    "dormant_slot": dormant_slot, "dormant_image": dormant_image,
+                    "dormant_container_id": dormant_container_id,
+                    "next_image": next_image,
+                })
+                payload = canonical_bytes(record)
+                # Single create-only intent: no overwrite, rename or cleanup
+                # on ambiguous partial fsync. Operators must reconcile any
+                # preexisting file before attempting a subsequent release.
+                descriptor = os.open(
+                    _RETIREMENT, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                    | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600,
+                    dir_fd=directory,
+                )
+                try:
+                    info = os.fstat(descriptor)
+                    if (
+                        info.st_uid != object.__getattribute__(self, "_uid")
+                        or info.st_gid != object.__getattribute__(self, "_gid")
+                        or info.st_nlink != 1
+                        or stat.S_IMODE(info.st_mode) != 0o600
+                    ):
+                        _reject()
+                    with os.fdopen(os.dup(descriptor), "wb") as output:
+                        output.write(payload)
+                        output.flush()
+                    os.fsync(descriptor)
+                    os.fsync(directory)
+                finally:
+                    os.close(descriptor)
+                if self._read_retirement_at(directory) != record:
+                    _reject()
+                return record
+            finally:
+                if borrowed:
+                    os.close(directory)
+        except _CONTROL:
+            raise
+        except Exception:
+            _reject()
+
+    # Section: mark observed vacancy only after an independent UID991 read.
+    def confirm_slot_retired(self, *, pending: dict[str, object]) -> dict[str, object]:
+        """Persist exact empty-slot observation, never remove Docker assets.
+
+        This method MUST follow an independently approved stopped-container
+        retirement operation. It reads live Docker/RootlessKit under UID991,
+        validates the still-active signed writer and requires the named prior
+        slot to be absent. A failed/crashed confirmation leaves the existing
+        retirement intent and prevents ordinary promotion until recovery.
+        This is not by itself permission to stage, switch routes, or delete.
+        """
+        from .analytics_active_state_review import (
+            AnalyticsActiveState, inspect_analytics_active_state,
+            verify_empty_analytics_candidate_slot,
+        )
+        try:
+            if os.geteuid() != 991 or type(pending) is not dict:
+                _reject()
+            if _retirement_record(pending) != pending or pending["phase"] != "retirement_pending":
+                _reject()
+            directory, borrowed = self._write_handle()
+            try:
+                entries = set(os.listdir(directory))
+                if entries not in (
+                    {_FILENAME, _RETIREMENT},
+                    {_FILENAME, _RETIREMENT, _EXECUTIONS},
+                ):
+                    _reject()
+                recorded = self._read_retirement_at(directory)
+                prior = self._read_at(directory, allow_retirement=True)
+                if (
+                    recorded != pending or prior is None
+                    or prior["phase"] != "switched"
+                    or prior["generation"] != pending["prior_generation"]
+                    or prior["next_slot"] != pending["active_slot"]
+                    or prior["next_image"] != pending["active_image"]
+                    or prior["next_container_id"] != pending["active_container_id"]
+                    or prior["previous_slot"] != pending["dormant_slot"]
+                    or prior["previous_image"] != pending["dormant_image"]
+                    or prior["previous_container_id"] != pending["dormant_container_id"]
+                ):
+                    _reject()
+                live = inspect_analytics_active_state()
+                if (
+                    type(live) is not AnalyticsActiveState
+                    or live.read_only is not True
+                    or live.deployment_authorized is not False
+                    or live.active_slot != pending["active_slot"]
+                    or live.active_image != pending["active_image"]
+                    or live.active_container_id != pending["active_container_id"]
+                    or live.candidate_slot != pending["dormant_slot"]
+                    or live.candidate_probe_present is not False
+                    or live.private_ingress_port != 3141
+                ):
+                    _reject()
+                verify_empty_analytics_candidate_slot(pending["dormant_slot"])
+                if inspect_analytics_active_state() != live:
+                    _reject()
+                done = _retirement_record({**pending, "phase": "slot_empty"})
+                if _RETIREMENT_TEMP in os.listdir(directory):
+                    _reject()
+                descriptor = os.open(
+                    _RETIREMENT_TEMP, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                    | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=directory,
+                )
+                try:
+                    metadata = os.fstat(descriptor)
+                    if (
+                        metadata.st_uid != object.__getattribute__(self, "_uid")
+                        or metadata.st_gid != object.__getattribute__(self, "_gid")
+                        or metadata.st_nlink != 1
+                        or stat.S_IMODE(metadata.st_mode) != 0o600
+                    ):
+                        _reject()
+                    with os.fdopen(os.dup(descriptor), "wb") as output:
+                        output.write(canonical_bytes(done))
+                        output.flush()
+                    os.fsync(descriptor)
+                    os.replace(
+                        _RETIREMENT_TEMP, _RETIREMENT,
+                        src_dir_fd=directory, dst_dir_fd=directory,
+                    )
+                    os.fsync(directory)
+                finally:
+                    os.close(descriptor)
+                if self._read_retirement_at(directory) != done:
+                    _reject()
+                return done
+            finally:
+                if borrowed:
+                    os.close(directory)
+        except _CONTROL:
+            raise
+        except Exception:
+            _reject()
+
+    def _read_retirement_at(self, directory: int) -> dict[str, object]:
+        """Read exact fsynced 0600 intent; refuse symlink/hardlink or drift."""
+        fd = os.open(
+            _RETIREMENT, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=directory,
+        )
+        try:
+            before = os.fstat(fd)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != object.__getattribute__(self, "_uid")
+                or before.st_gid != object.__getattribute__(self, "_gid")
+                or before.st_nlink != 1
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or not 0 < before.st_size <= _MAX_BYTES
+            ):
+                _reject()
+            data = os.read(fd, _MAX_BYTES + 1)
+            if len(data) != before.st_size:
+                _reject()
+            def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+                """Reject duplicate keys, never last-write-wins authority."""
+                parsed: dict[str, object] = {}
+                for key, value in pairs:
+                    if key in parsed:
+                        _reject()
+                    parsed[key] = value
+                return parsed
+            obj = json.loads(
+                data.decode("ascii"), object_pairs_hook=unique,
+                parse_constant=lambda _: (_ for _ in ()).throw(ValueError),
+            )
+            result = _retirement_record(obj)
+            after = os.fstat(fd)
+            if (
+                data != canonical_bytes(result)
+                or (before.st_dev, before.st_ino, before.st_mtime_ns,
+                    before.st_ctime_ns, before.st_size) !=
+                   (after.st_dev, after.st_ino, after.st_mtime_ns,
+                    after.st_ctime_ns, after.st_size)
+            ):
+                _reject()
+            return result
+        finally:
+            os.close(fd)
+
+    def read_slot_retirement(self) -> dict[str, object] | None:
+        """Return the pending intent after restart without clearing a HOLD."""
+        try:
+            directory = self._open_dir()
+            try:
+                entries = set(os.listdir(directory))
+                if _RETIREMENT not in entries:
+                    # Refuse to hide unknown files behind a "no intent" claim.
+                    self._read_at(directory)
+                    return None
+                if entries not in (
+                    {_FILENAME, _RETIREMENT},
+                    {_FILENAME, _RETIREMENT, _EXECUTIONS},
+                ):
+                    _reject()
+                record = self._read_retirement_at(directory)
+                # The original durable route identity must corroborate the
+                # intent even after a process restart. It remains a HOLD,
+                # never self-authorizing deletion or route mutation.
+                prior = self._read_at(directory, allow_retirement=True)
+                if (
+                    type(prior) is not dict or prior["phase"] != "switched"
+                    or prior["generation"] != record["prior_generation"]
+                    or prior["next_slot"] != record["active_slot"]
+                    or prior["next_image"] != record["active_image"]
+                    or prior["next_container_id"] != record["active_container_id"]
+                    or prior["previous_slot"] != record["dormant_slot"]
+                    or prior["previous_image"] != record["dormant_image"]
+                    or prior["previous_container_id"] != record["dormant_container_id"]
+                ):
+                    _reject()
+                return record
+            finally:
+                os.close(directory)
+        except _CONTROL:
+            raise
+        except Exception:
+            _reject()
+
+    # Section: bind staged next container to an already fsynced retired slot.
+    def begin_after_retirement(
+        self, *, request_sha256: str,
+        next_container_id: str, next_ip: str,
+    ) -> dict[str, object]:
+        """Atomically adopt a staged signed candidate after slot_empty proof.
+
+        The independently authorized UID991 executor must have already
+        verified the staged immutable OCI, private network and signed next
+        release before providing its exact container ID and private IP.
+        This journal cannot independently authenticate those external inputs.
+        It never stages Docker, changes ports, consumes replay or selects an
+        image from a caller-provided version. An interrupted file transition
+        remains a hard HOLD until protected recovery reconciles it.
+        """
+        try:
+            if os.geteuid() != 991:
+                _reject()
+            directory, borrowed = self._write_handle()
+            try:
+                entries = set(os.listdir(directory))
+                if entries not in (
+                    {_FILENAME, _RETIREMENT},
+                    {_FILENAME, _RETIREMENT, _EXECUTIONS},
+                ):
+                    _reject()
+                intent = self._read_retirement_at(directory)
+                prior = self._read_at(directory, allow_retirement=True)
+                if (
+                    intent["phase"] != "slot_empty"
+                    or prior is None or prior["phase"] != "switched"
+                    or prior["generation"] != intent["prior_generation"]
+                    or prior["generation"] >= _MAX_GENERATION
+                    or intent["request_sha256"] != request_sha256
+                    or prior["next_slot"] != intent["active_slot"]
+                    or prior["next_image"] != intent["active_image"]
+                    or prior["next_container_id"] != intent["active_container_id"]
+                    or prior["previous_slot"] != intent["dormant_slot"]
+                    or prior["previous_image"] != intent["dormant_image"]
+                    or prior["previous_container_id"] != intent["dormant_container_id"]
+                ):
+                    _reject()
+                next_record = _route_record({
+                    "schema_version": 1, "phase": "prepared",
+                    "generation": prior["generation"] + 1,
+                    "request_sha256": request_sha256,
+                    "previous_slot": intent["active_slot"],
+                    "previous_image": intent["active_image"],
+                    "previous_container_id": intent["active_container_id"],
+                    "previous_ip": prior["next_ip"],
+                    "next_slot": intent["dormant_slot"],
+                    "next_image": intent["next_image"],
+                    "next_container_id": next_container_id,
+                    "next_ip": next_ip,
+                })
+                self._replace_at(directory, next_record, allow_retirement=True)
+                # Replacement journal is now fully fsynced; remove only this
+                # exact marker. If unlink/fsync fails, normal read() DENIES.
+                os.unlink(_RETIREMENT, dir_fd=directory)
+                os.fsync(directory)
+                if self._read_at(directory) != next_record:
+                    _reject()
+                return next_record
+            finally:
+                if borrowed:
+                    os.close(directory)
+        except _CONTROL:
+            raise
+        except Exception:
             _reject()
 
     def begin(

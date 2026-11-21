@@ -160,6 +160,41 @@ class ExactUnsignedActivationInputsTests(unittest.TestCase):
             successor[activation.EXECUTOR_CONFIG],
         )
 
+    def test_generation_four_review_targets_immutable_sha_source(self):
+        """Approval and both systemd source paths bind exact reviewed SHA."""
+        from deployment.analytics_executor_service_config import ordinary_analytics_source_root
+        from deployment.analytics_isolated_source_install import _ordinary_approval
+        review = activation.build_unsigned_analytics_activation_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_ordinary_successor=True,
+        )
+        approval = _ordinary_approval(review[activation.ORDINARY_SOURCE_APPROVAL])
+        target = ordinary_analytics_source_root(self.sha)
+        self.assertEqual(set(review), {
+            activation.ORDINARY_SOURCE_APPROVAL,
+            activation.ORDINARY_SOURCE_ARCHIVE,
+            activation.EXECUTOR_CONFIG, activation.BROKER_CONFIG,
+        })
+        self.assertNotIn(activation.SOURCE_ARCHIVE, review)
+        self.assertNotIn(activation.SOURCE_APPROVAL, review)
+        self.assertEqual(approval["schema_version"], 3)
+        self.assertEqual(approval["destination"], target)
+        self.assertEqual(hashlib.sha256(review[activation.ORDINARY_SOURCE_ARCHIVE]).hexdigest(),
+                         approval["archive_sha256"])
+        config = activation.parse_analytics_executor_service_config(
+            review[activation.EXECUTOR_CONFIG],
+        )
+        self.assertEqual(config["source_generation"], 4)
+        self.assertIs(config["owner_authorized_ordinary_successor"], True)
+        paths = activation.build_unsigned_analytics_service_inputs(
+            repository_root=str(ROOT), reviewed_commit=self.sha,
+            successor_source=True, owner_authorized_ordinary_successor=True,
+        )
+        for path in (activation._SUCCESSOR_BROKER_DROPIN,
+                     activation._SUCCESSOR_EXECUTOR_DROPIN):
+            self.assertIn(("WorkingDirectory=" + target).encode("ascii"), paths[path])
+            self.assertNotIn(b"WorkingDirectory=/opt/omnilyzer/deployment/analytics-app-candidate", paths[path])
+
     def test_generation_three_unsigned_source_is_separate_and_never_installs(self):
         """Only an explicit root-controlled generation3 may gain a positive path.
 

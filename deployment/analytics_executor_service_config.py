@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import stat
 
@@ -113,6 +114,20 @@ _INSTALLED_ROOT = Path("/opt/omnilyzer/deployment/analytics-app")
 # A separately owner-installed schema-2 source is verified only beside V1.
 # This is NOT a generic source root or permission to alter active service.
 _SUCCESSOR_INSTALLED_ROOT = Path("/opt/omnilyzer/deployment/analytics-app-candidate")
+# Section: pure SHA-named source selection; no I/O and no installer import.
+def ordinary_analytics_source_root(reviewed_commit: str) -> str:
+    """Derive one fixed root-owned immutable source path from an exact Git SHA.
+
+    This pure function is NOT install permission. No caller-supplied path or
+    mutable label is accepted. The protected schema4 service config must pin
+    the exact same SHA and independently rehash every installed source file.
+    """
+    if (type(reviewed_commit) is not str
+            or re.fullmatch(r"[0-9a-f]{40}", reviewed_commit) is None
+            or reviewed_commit == "0" * 40):
+        raise ValueError("untrusted ordinary source revision")
+    return str(_SUCCESSOR_INSTALLED_ROOT.parent / ("analytics-app-release-" + reviewed_commit))
+
 _CONFIGURATION_NAME = "analytics-executor.json"
 _FIELDS = frozenset({
     "schema_version", "product_id", "stage", "reviewed_installed_commit",
@@ -124,6 +139,7 @@ _FIELDS = frozenset({
 # Historical V1 schema/bytes and source allowlist remain exactly unchanged.
 _SUCCESSOR_FIELDS = _FIELDS | frozenset({"expected_workflow_sha"})
 _EXECUTION_FIELDS = _SUCCESSOR_FIELDS | frozenset({"owner_authorized_first_successor"})
+_ORDINARY_FIELDS = _SUCCESSOR_FIELDS | frozenset({"owner_authorized_ordinary_successor"})
 _MAX_BYTES = 4096
 _FILE_BOUND = 1024 * 1024
 _TOTAL_BOUND = 12 * 1024 * 1024
@@ -160,14 +176,15 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
         # SHA can never make historical schema-1 bytes newly acceptable.
         generation = value.get("schema_version")
         if (
-            type(generation) is not int or generation not in (1, 2, 3)
+            type(generation) is not int or generation not in (1, 2, 3, 4)
             or set(value) != (
                 _FIELDS if generation == 1 else
-                _SUCCESSOR_FIELDS if generation == 2 else _EXECUTION_FIELDS
+                _SUCCESSOR_FIELDS if generation == 2 else
+                _EXECUTION_FIELDS if generation == 3 else _ORDINARY_FIELDS
             )
         ):
             raise ValueError
-        if (type(generation) is not int or generation not in (1, 2, 3)
+        if (type(generation) is not int or generation not in (1, 2, 3, 4)
                 or value["product_id"] != "analytics"
                 or type(value["product_id"]) is not str
                 or type(value["stage"]) is not str or value["stage"] != "dev"):
@@ -191,7 +208,7 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
         ):
             raise ValueError
         workflow = None
-        if generation in (2, 3):
+        if generation in (2, 3, 4):
             workflow = validate_expected_workflow_sha(
                 value["expected_workflow_sha"],
             )
@@ -201,7 +218,12 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
             type(value["owner_authorized_first_successor"]) is not bool
             or value["owner_authorized_first_successor"] is not True
         ):
-            raise ValueError("unsigned positive successor mode")
+            raise ValueError("unsigned positive first successor mode")
+        if generation == 4 and (
+            type(value["owner_authorized_ordinary_successor"]) is not bool
+            or value["owner_authorized_ordinary_successor"] is not True
+        ):
+            raise ValueError("unsigned ordinary successor mode")
         reviewed = _root_reviewed_source({
             key: value[key] for key in (
                 "reviewed_installed_commit",
@@ -218,9 +240,11 @@ def parse_analytics_executor_service_config(raw: bytes) -> dict[str, object]:
             **dict(reviewed),
             "source_generation": generation,
             **({"expected_workflow_sha": workflow}
-               if generation in (2, 3) else {}),
+               if generation in (2, 3, 4) else {}),
             **({"owner_authorized_first_successor": True}
                if generation == 3 else {}),
+            **({"owner_authorized_ordinary_successor": True}
+               if generation == 4 else {}),
             "source_sha256": tuple((p, source[p]) for p in paths),
         }
     except _CONTROL:
@@ -236,13 +260,28 @@ def _verify_source_bytes(
     """Read exact generation-specific source via fd-relative O_NOFOLLOW.
 
     Root-owned schema 1 accepts only the original 20-file live directory;
-    schema2/3 accept only the exact 26-file inactive candidate directory.
+    schema2/3 accept only the exact 26-file inactive candidate directory;
+    schema4 accepts only the SHA-named root-controlled immutable source.
     The real installed root and all ancestors must be root-owned and not
     writable by any unprivileged role. Files must be single-link, mode0644,
     bounded, regular and byte-hash identical to root-owned installed policy.
     """
-    if type(expected) is not tuple or root not in (
-        _INSTALLED_ROOT, _SUCCESSOR_INSTALLED_ROOT,
+    # Root-controlled schema4 may read an immutable per-commit ordinary path;
+    # no generic arbitrary root or symbolic link can be introduced by config.
+    ordinary_root = False
+    if isinstance(root, Path):
+        try:
+            ordinary_root = (
+                str(root) == ordinary_analytics_source_root(root.name.removeprefix(
+                    "analytics-app-release-"
+                ))
+                and root.name.startswith("analytics-app-release-")
+            )
+        except ValueError:
+            ordinary_root = False
+    if type(expected) is not tuple or (
+        root not in (_INSTALLED_ROOT, _SUCCESSOR_INSTALLED_ROOT)
+        and not ordinary_root
     ):
         raise AnalyticsInstalledAuthorityError(_ERROR)
     # Check generation/root pairing before opening even one host descriptor.
@@ -253,6 +292,7 @@ def _verify_source_bytes(
     if (
         (root == _INSTALLED_ROOT and names != v1_names)
         or (root == _SUCCESSOR_INSTALLED_ROOT and names != v2_names)
+        or (ordinary_root and names != v2_names)
     ):
         raise AnalyticsInstalledAuthorityError(_ERROR)
     descriptors: list[int] = []
@@ -393,7 +433,7 @@ def load_analytics_executor_service_config(
         # The original V1 service may keep its unchanged default, but a
         # successor Docker operation must never run against a V1-only root
         # source manifest that did not attest the port-reset overlay.
-        if require_successor and product["source_generation"] not in (2, 3):
+        if require_successor and product["source_generation"] not in (2, 3, 4):
             raise ValueError("candidate requires protected generation two")
         if (
             _configuration_file(os.fstat(desc)) != opened
@@ -411,6 +451,8 @@ def load_analytics_executor_service_config(
         ):
             raise ValueError
         source_root = (
+            Path(ordinary_analytics_source_root(product["reviewed_installed_commit"]))
+            if product["source_generation"] == 4 else
             _SUCCESSOR_INSTALLED_ROOT if product["source_generation"] in (2, 3)
             else _INSTALLED_ROOT
         )
@@ -438,9 +480,11 @@ def load_analytics_executor_service_config(
                 "expected_executor_uid": base.executor_uid,
                 "expected_executor_gid": base.executor_gid,
                 **({"expected_workflow_sha": product["expected_workflow_sha"]}
-                   if product["source_generation"] in (2, 3) else {}),
+                   if product["source_generation"] in (2, 3, 4) else {}),
                 **({"owner_authorized_first_successor": True}
                    if product["source_generation"] == 3 else {}),
+                **({"owner_authorized_ordinary_successor": True}
+                   if product["source_generation"] == 4 else {}),
             },
         )
     except _CONTROL:

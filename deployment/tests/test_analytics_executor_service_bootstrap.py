@@ -202,6 +202,43 @@ class InstalledSourceConfigTests(unittest.TestCase):
                     canonical_bytes(wrong),
                 )
 
+    def test_root_generation_four_requires_distinct_ordinary_approval(self):
+        """A first-successor V3 flag cannot authorize subsequent releases."""
+        v1 = sample_config()
+        v4 = {
+            **v1, "schema_version": 4,
+            "expected_workflow_sha": "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
+            "source_sha256": {
+                name: "b" * 64 for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+            },
+            "owner_authorized_ordinary_successor": True,
+        }
+        parsed = parse_analytics_executor_service_config(canonical_bytes(v4))
+        self.assertEqual(parsed["source_generation"], 4)
+        self.assertIs(parsed["owner_authorized_ordinary_successor"], True)
+        self.assertNotIn("owner_authorized_first_successor", parsed)
+        self.assertEqual(len(parsed["source_sha256"]), 26)
+        for invalid in (
+            {**v4, "owner_authorized_ordinary_successor": False},
+            {**v4, "owner_authorized_ordinary_successor": 1},
+            {**v4, "owner_authorized_ordinary_successor": "true"},
+            {k: v for k, v in v4.items()
+             if k != "owner_authorized_ordinary_successor"},
+            {**v4, "owner_authorized_first_successor": True},
+            {**v4, "schema_version": 3},
+            {**v4, "expected_workflow_sha": "0" * 40},
+            {**v4, "source_sha256": {**v4["source_sha256"],
+                "deployment/unreviewed.py": "f" * 64}},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(
+                AnalyticsInstalledAuthorityError,
+            ):
+                parse_analytics_executor_service_config(canonical_bytes(invalid))
+        self.assertEqual(
+            parse_analytics_executor_service_config(canonical_bytes(v1))["source_generation"],
+            1,
+        )
+
     def test_privileged_analytics_import_closure_exactly_attested(self):
         """Mirror the original Task014 AST closure, without changing canary.
 
@@ -555,6 +592,37 @@ class InstalledSourceConfigTests(unittest.TestCase):
         verified.assert_called_once()
         self.assertEqual(verified.call_args.args[0][0][0], ANALYTICS_INSTALLED_FILES[0])
         self.assertEqual(verified.call_args.kwargs["root"], config._INSTALLED_ROOT)
+
+    def test_generation_four_verifies_only_sha_named_source_root(self):
+        """Config-pinned source SHA chooses immutable root, not old candidate."""
+        from deployment.analytics_executor_service_config import ordinary_analytics_source_root
+        selected_commit = "f" * 40
+        stack, _base, verified = self.installed_source_preflight(
+            product_commit=selected_commit, successor=True,
+        )
+        raw = {
+            **sample_config(), "schema_version": 4,
+            "reviewed_installed_commit": selected_commit,
+            "expected_workflow_sha": "9d29fa1a4010e6e72676580c36a94c1e97e8794b",
+            "owner_authorized_ordinary_successor": True,
+            "source_sha256": {name: "b" * 64
+                              for name in ANALYTICS_SUCCESSOR_INSTALLED_FILES},
+        }
+        with stack, patch.object(config, "_bounded_read",
+                                 return_value=canonical_bytes(raw)):
+            result, identities = load_analytics_executor_service_config(
+                require_successor=True,
+            )
+        self.assertEqual(result["reviewed_installed_commit"], selected_commit)
+        self.assertIs(identities["owner_authorized_ordinary_successor"], True)
+        verified.assert_called_once()
+        self.assertEqual(verified.call_args.kwargs["root"],
+                         Path(ordinary_analytics_source_root(selected_commit)))
+        self.assertNotEqual(verified.call_args.kwargs["root"],
+                            config._SUCCESSOR_INSTALLED_ROOT)
+        for bad in ("../evil", "0" * 40, "f" * 39, "A" * 40):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                ordinary_analytics_source_root(bad)
 
     def test_v2_root_config_verifies_only_fixed_inactive_candidate_path(self):
         """Original executor identities are retained with 26-object V2 pin."""

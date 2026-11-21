@@ -16,7 +16,8 @@ Related: deployment/analytics_registry_review_composition.py,
 Sections: root-controlled authority capture; canonical successor and
           signed-original/owner/GitHub/registry read-only review;
           original sealed Zot handoff, replay and bounded private transport;
-          future independently signed schema3 broker replay/FD handoff.
+          future independently signed schema3 broker replay/FD handoff;
+          ordinary previous/next signing and same protected replay/FD handoff.
 
 NOT ACTIVATED FOR SUCCESSORS: The original Analytics executor systemd
 socket is installed and listens, but its signed 0.15.0 receiver cannot admit
@@ -73,6 +74,85 @@ _REVIEWED_FIELDS = frozenset({
     "reviewed_product_profile_sha256", "reviewed_runtime_profile_sha256",
 })
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
+
+
+# Section: signed ordinary predecessor verification, not installed authority.
+def _ordinary_signed_previous_digest(previous: object, next_release: object) -> str:
+    """Bind two independently signed review receipts without trusting hints.
+
+    The broker cannot inspect Docker. This helper verifies only the immutable
+    signatures/source relationships that the existing release reviewer has
+    already independently established. UID991 must reverify both signatures,
+    the live route and the old image before a deployment or replay.
+    """
+    from .analytics_signed_release_consumer import AnalyticsSignedEvidenceReview
+    from release.analytics_owner_source_selection import (
+        AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
+        expected_owner_approval_bytes,
+    )
+    for item in (previous, next_release):
+        if type(item) is not tuple or len(item) != 3:
+            raise ValueError("missing signed release proof")
+        signed, selected, owner = item
+        if (
+            type(signed) is not AnalyticsSignedEvidenceReview
+            or type(selected) is not AnalyticsOwnerSourceSelection
+            or type(owner) is not AnalyticsOwnerSignatureReceipt
+            or owner.owner_signature_verified is not True
+            or signed.release_version != selected.release_version
+            or owner.release_version != selected.release_version
+            or owner.source_commit != selected.source_commit
+            or owner.source_tree != selected.source_tree
+            or signed.source.source_commit != selected.source_commit
+            or signed.source.source_tree != selected.source_tree
+            or owner.approval_sha256 != hashlib.sha256(
+                expected_owner_approval_bytes(selected)
+            ).hexdigest()
+            or signed.image != (
+                "oci-dev.omnilyzer.ai/omnilyzer/analytics@"
+                + signed.source.oci_manifest_digest
+            )
+            or signed.deployment_authorized is not False
+            or signed.source.release_authorized is not False
+            or signed.source.deployment_authorized is not False
+            or selected.release_authorized is not False
+            or selected.deployment_authorized is not False
+            or owner.release_authorized is not False
+            or owner.deployment_authorized is not False
+        ):
+            raise ValueError("signed release pair mismatch")
+    old, future = previous[0], next_release[0]
+    if (
+        old.image == future.image
+        or tuple(map(int, old.release_version.split("."))) >=
+           tuple(map(int, future.release_version.split(".")))
+    ):
+        raise ValueError("ordinary upgrade cannot reuse or downgrade release")
+    return old.source.oci_manifest_digest
+
+
+# Section: fixed diagnostic classification for the *existing* OIDC denials.
+# Only these hard-coded source-owned messages are compared. No exception text,
+# token, claim, signing key, actor, URL or dynamic content is ever emitted.
+# Unknown/new OIDC failures retain the previous generic closed marker.
+def _ordinary_oidc_rejection_phase(error: BaseException) -> str:
+    """Return a static allowlisted reason without changing the denial."""
+    if type(error) is OIDCAuthorizationError:
+        return "broker_oidc_identity"
+    if type(error) is not OIDCVerificationError:
+        return "broker_verify_oidc"
+    if len(error.args) != 1 or type(error.args[0]) is not str:
+        return "broker_verify_oidc"
+    return {
+        "OIDC token structure is invalid": "broker_oidc_structure",
+        "OIDC JSON is invalid": "broker_oidc_structure",
+        "OIDC token header is invalid": "broker_oidc_header",
+        "OIDC key identifier is invalid": "broker_oidc_header",
+        "OIDC signing key is not accepted": "broker_oidc_signing_key",
+        "OIDC token verification failed": "broker_oidc_signature",
+        "OIDC verified claims are inconsistent": "broker_oidc_claims",
+        "OIDC identity is not authorized": "broker_oidc_identity",
+    }.get(error.args[0], "broker_verify_oidc")
 
 
 class AnalyticsPrivatePromotionBroker:
@@ -317,6 +397,145 @@ class AnalyticsPrivatePromotionBroker:
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
 
+    # Section: ordinary upgrade read-only predecessor, NOT a dispatch path.
+    def review_ordinary_successor_without_forwarding(
+        self, *, compact_token: str, zot_token: str, forgejo_token: str,
+        canonical_request: bytes, received_at: int,
+    ) -> AnalyticsSuccessorRequest:
+        """Verify independently signed previous and next, without live Docker.
+
+        The first reviewer reads only the root-pinned predecessor approval;
+        the second independently verifies the next request's signed proof.
+        Caller-provided rollback hints never select the prior signer. The
+        separate UID991 executor MUST repeat signatures and rebind the real
+        active image, opposite slot and routing before any deployment.
+        No FD, replay consume, executor call or route mutation occurs here.
+        """
+        try:
+            if (
+                type(received_at) is not int or received_at < 0
+                or type(canonical_request) is not bytes
+                or not 0 < len(canonical_request) <= MAX_ANALYTICS_REQUEST_BYTES
+                or any(type(token) is not str or not token.isascii()
+                    or not 1 <= len(token) <= MAX_COMPACT_TOKEN_BYTES
+                    for token in (compact_token, zot_token, forgejo_token))
+            ):
+                raise ValueError("invalid signed request envelope")
+
+            def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+                """Reject duplicate JSON members at every nesting level."""
+                fields: dict[str, object] = {}
+                for key, value in pairs:
+                    if key in fields:
+                        raise ValueError("ambiguous signed request")
+                    fields[key] = value
+                return fields
+
+            request = json.loads(
+                canonical_request.decode("ascii"), object_pairs_hook=unique,
+                parse_constant=lambda _: (_ for _ in ()).throw(ValueError),
+            )
+            if (
+                type(request) is not dict or canonical_bytes(request) != canonical_request
+                or type(request.get("schema_version")) is not int
+                or request["schema_version"] != 3
+                or request.get("product_id") != "analytics"
+                or request.get("stage") != "dev"
+                or type(request.get("owner_source_proof")) is not str
+                or not request["owner_source_proof"].isascii()
+                or not 0 < len(request["owner_source_proof"]) <= 2048
+            ):
+                raise ValueError("untrusted ordinary successor")
+        except _CONTROL:
+            raise
+        except Exception:
+            # Existing closed, secret-free marker; no caller-derived text.
+            _emit_analytics_release_boundary("broker_request_shape", "rejected")
+            raise BrokerRejectedError(REJECTED_MESSAGE) from None
+
+        try:
+            identity = _normalize_identity(
+                object.__getattribute__(self, "_verify")(
+                    compact_token, received_at=received_at,
+                ),
+                received_at=received_at,
+                expected_workflow_sha=object.__getattribute__(
+                    self, "_expected_workflow_sha",
+                ),
+                authorization=authorize_verified_github_oidc,
+                expected_fields=IDENTITY_FIELDS,
+            )
+        except OIDCVerificationUnavailable:
+            _emit_analytics_release_boundary("broker_verify_oidc", "unavailable")
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+        except (OIDCVerificationError, OIDCAuthorizationError) as error:
+            _emit_analytics_release_boundary(
+                _ordinary_oidc_rejection_phase(error), "rejected",
+            )
+            raise BrokerRejectedError(REJECTED_MESSAGE) from None
+        except _CONTROL:
+            raise
+        except Exception:
+            _emit_analytics_release_boundary("broker_verify_oidc", "unavailable")
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+
+        # Reuse the original allowlisted phase labels for both release paths.
+        phase = "broker_original_evidence"
+        try:
+            reviewer = object.__getattribute__(self, "_review_successor")
+            tokens = dict(
+                compact_token=compact_token, zot_token=zot_token,
+                forgejo_token=forgejo_token, received_at=received_at,
+            )
+            # ROOT-OWNED predecessor selection; never derive it from caller.
+            previous = reviewer(**tokens)
+            phase = "broker_successor_evidence"
+            next_release = reviewer(
+                **tokens, owner_source_proof=request["owner_source_proof"],
+            )
+            phase = "broker_signed_shape"
+            previous_digest = _ordinary_signed_previous_digest(
+                previous, next_release,
+            )
+            phase = "broker_registry_audiences"
+            registry = object.__getattribute__(self, "_registry")(
+                identity, zot_token=zot_token, forgejo_token=forgejo_token,
+                received_at=received_at,
+            )
+            if type(registry) is not VerifiedRegistryCredentials:
+                raise ValueError("unverified registry JWT audiences")
+            phase = "broker_rollback_hint"
+            rollback = request.get("rollback_reference")
+            ingress = request.get("ingress_reference")
+            if (
+                type(rollback) is not dict
+                or rollback.get("previous_digest") != previous_digest
+                or rollback.get("previous_slot") not in ("blue", "green")
+                or type(ingress) is not dict
+                or ingress.get("active_slot") != rollback["previous_slot"]
+            ):
+                raise ValueError("untrusted predecessor hint")
+            # Even when this read-only review succeeds, prior slot is only a
+            # request HINT. The UID991 route check must establish it afresh.
+            phase = "broker_signed_request_binding"
+            result = parse_analytics_successor_request(
+                canonical_request,
+                **dict(object.__getattribute__(self, "_reviewed_source")),
+                signed_release=next_release[0], selected=next_release[1],
+                owner_approval=next_release[2], identity=identity,
+                observed_active_digest=previous_digest,
+                observed_active_slot=rollback["previous_slot"],
+            )
+            if type(result) is not AnalyticsSuccessorRequest:
+                raise ValueError("invalid ordinary signed request")
+            _emit_analytics_release_boundary("broker_signed_request_binding", "passed")
+            return result
+        except _CONTROL:
+            raise
+        except Exception:
+            _emit_analytics_release_boundary(phase, "unavailable")
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
+
     def forward_verified_first_successor_probe_without_deployment(
         self, *, compact_token: str, zot_token: str, forgejo_token: str,
         canonical_request: bytes, received_at: int,
@@ -431,9 +650,29 @@ class AnalyticsPrivatePromotionBroker:
     # Section: future source-only original broker replay/FD/Unix handoff
     # for the independently reviewed first successor. NOT installed in
     # HTTPS routing; the original active receiver remains DENY-only.
+    def authorize_and_forward_ordinary_successor(
+        self, *, compact_token: str, zot_token: str, forgejo_token: str,
+        canonical_request: bytes, received_at: int,
+    ) -> bytes:
+        """Reuse protected first-successor OIDC, sealed FD and SQLite replay.
+
+        Previous signed release and new signed image are independently verified
+        by the ordinary read-only reviewer before consuming replay or sending
+        to the existing exact Analytics-only Unix successor transport. The
+        installed HTTPS router does not select this new method until a root-
+        reviewed ordinary executor and safe restart are independently accepted.
+        """
+        return self.authorize_and_forward_first_successor(
+            compact_token=compact_token, zot_token=zot_token,
+            forgejo_token=forgejo_token,
+            canonical_request=canonical_request, received_at=received_at,
+            _ordinary=True,
+        )
+
     def authorize_and_forward_first_successor(
         self, *, compact_token: str, zot_token: str, forgejo_token: str,
         canonical_request: bytes, received_at: int,
+        _ordinary: bool = False,
     ) -> bytes:
         """Consume the ORIGINAL broker JTI only after signed review and FD.
 
@@ -452,14 +691,18 @@ class AnalyticsPrivatePromotionBroker:
         """
         from .executor import parse_canonical_response
         sender = object.__getattribute__(self, "_successor_transport")
-        if sender is None:
+        if type(_ordinary) is not bool or sender is None:
             _emit_analytics_release_boundary("broker_sender", "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
         # Section: mandatory complete original broker signing admission.
         # This performs original owner Ed25519, OIDC, Cosign, provenance, OCI
         # SBOM, zero-High and exact original 0.15.0 rollback source binding.
-        selected = self.review_first_successor_without_forwarding(
+        reviewer = (
+            self.review_ordinary_successor_without_forwarding
+            if _ordinary else self.review_first_successor_without_forwarding
+        )
+        selected = reviewer(
             compact_token=compact_token, zot_token=zot_token,
             forgejo_token=forgejo_token,
             canonical_request=canonical_request, received_at=received_at,

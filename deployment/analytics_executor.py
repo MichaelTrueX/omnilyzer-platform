@@ -17,7 +17,9 @@ Sections: root-reviewed input capture, original FD+request execution, separate
           first-successor read-only live OCI/manifest proof and independent
          three-JWT successor identity verification, original replay
           transitions, protected product-only operation and source-only
-          end-to-end first-successor staging/cutover/rollback coordinator.
+          end-to-end first-successor staging/cutover/rollback coordinator;
+          isolated ordinary signed prior/new release and live-route preflight;
+          read-only gen2+ completed-replay restart reconciliation.
 
 NOT A DEPLOYMENT: This class is not installed in the Task014 application
 source set; no host listener, rootless runtime, secret, DB, Docker or release
@@ -496,6 +498,215 @@ def _review_executor_successor_signed_release(
         raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
 
 
+# Section: independent ordinary successor signed predecessor + live route review.
+def _review_executor_ordinary_signed_release(
+    canonical_request: bytes, credential_fd: int, *,
+    expected_workflow_sha: str, reviewed_installed_source: dict[str, str],
+    received_at: int | None = None, jwks_cache: object | None = None,
+    retirement_journal: object | None = None,
+):
+    """Independently establish both signed releases and real UID991 active slot.
+
+    This is a read-only ordinary-successor preflight, not a public endpoint,
+    replay authority, or installed executor rollout. The prior signed release
+    comes exclusively from root-owned approval files, never caller hints.
+    OIDC, Zot, Forgejo and Sigstore verification follow the unchanged Task014
+    implementation. The actual active Docker/RootlessKit route must match.
+    """
+    try:
+        import json
+        from .analytics_active_state_review import (
+            AnalyticsActiveState, inspect_analytics_active_state,
+            inspect_dormant_analytics_candidate,
+        )
+        from .analytics_execution import (
+            AnalyticsSuccessorRequest, review_analytics_successor_with_live_active,
+        )
+        from .analytics_signed_release_consumer import (
+            AnalyticsSignedEvidenceReview,
+            acquire_and_review_owner_approved_analytics_release,
+        )
+        from .analytics_route_journal import AnalyticsRouteJournal
+        from .analytics_unix_boundary import _root_reviewed_source
+        from .blob_verifier import CosignReleaseBlobVerifier
+        from .oci_verifier import CosignOCISignatureVerifier
+        from .policy import canonical_bytes
+        from .sigstore_authority_provenance import DevSigstoreVerificationProvenance
+        from release.analytics_owner_source_selection import (
+            AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
+            load_and_verify_owner_signed_source,
+            verify_owner_signed_source_proof, expected_owner_approval_bytes,
+        )
+        if (
+            (os.getuid(), os.geteuid(), os.getgid(), os.getegid())
+                != (991, 991, 991, 991)
+            or type(canonical_request) is not bytes
+            or not 0 < len(canonical_request) <= 16 * 1024
+            or type(credential_fd) is not int or credential_fd < 0
+            or type(expected_workflow_sha) is not str
+            or received_at is not None and (
+                type(received_at) is not int or received_at < 0
+            )
+        ):
+            raise ValueError("invalid ordinary signed executor principal")
+        source = dict(_root_reviewed_source(reviewed_installed_source))
+
+        def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            """Reject duplicate signed request keys at every level."""
+            result: dict[str, object] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate signed request field")
+                result[key] = value
+            return result
+
+        request = json.loads(
+            canonical_request.decode("ascii"), object_pairs_hook=unique,
+            parse_constant=lambda _: (_ for _ in ()).throw(ValueError),
+        )
+        if (
+            type(request) is not dict or canonical_bytes(request) != canonical_request
+            or type(request.get("owner_source_proof")) is not str
+            or not 0 < len(request["owner_source_proof"]) <= 2048
+        ):
+            raise ValueError("invalid signed ordinary request")
+        _successor_request_image(canonical_request)
+        _verify_executor_owner_source(request)
+        live = inspect_analytics_active_state()
+        if (
+            type(live) is not AnalyticsActiveState
+            or live.read_only is not True
+            or live.deployment_authorized is not False
+            or live.active_slot not in ("blue", "green")
+            or live.candidate_slot == live.active_slot
+            or live.candidate_probe_present
+            or live.private_ingress_port != 3141
+            or live.candidate_port != ANALYTICS_SUCCESSOR_CANDIDATE_PORT
+        ):
+            raise ValueError("unreviewed current active writer")
+
+        now = int(time.time()) if received_at is None else received_at
+        identity, registry = _verified_executor_successor_identity_and_credentials(
+            canonical_request, credential_fd,
+            expected_workflow_sha=expected_workflow_sha,
+            jwks_cache=jwks_cache, received_at=now,
+        )
+        toolchain = dict(
+            DevSigstoreVerificationProvenance().broker_service_configuration_kwargs()
+        )
+        if set(toolchain) != {
+            "cosign_version", "cosign_binary_sha256",
+            "sigstore_trusted_root_sha256",
+        }:
+            raise ValueError("unreviewed signature tools")
+        verifier = dict(
+            expected_cosign_version=toolchain["cosign_version"],
+            expected_binary_sha256=toolchain["cosign_binary_sha256"],
+            expected_trusted_root_sha256=toolchain["sigstore_trusted_root_sha256"],
+            broker_uid=991, broker_gid=991,
+        )
+        blob = CosignReleaseBlobVerifier(**verifier)
+        oci = CosignOCISignatureVerifier(
+            **verifier, zot_credential_provider=registry, product_id="analytics",
+        )
+        previous_selected, previous_owner = load_and_verify_owner_signed_source(
+            _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
+        )
+        previous_signed = acquire_and_review_owner_approved_analytics_release(
+            registry, registry, blob, oci, received_at=now,
+            approval_file=_OWNER_APPROVAL_FILE,
+            signature_file=_OWNER_SIGNATURE_FILE,
+        )
+        new_selected, new_owner = verify_owner_signed_source_proof(
+            request["owner_source_proof"],
+        )
+        new_signed = acquire_and_review_owner_approved_analytics_release(
+            registry, registry, blob, oci, received_at=now,
+            approval_file=None, signature_file=None,
+            owner_source_proof=request["owner_source_proof"],
+        )
+        for signed, selected, owner in (
+            (previous_signed, previous_selected, previous_owner),
+            (new_signed, new_selected, new_owner),
+        ):
+            if (
+                type(signed) is not AnalyticsSignedEvidenceReview
+                or type(selected) is not AnalyticsOwnerSourceSelection
+                or type(owner) is not AnalyticsOwnerSignatureReceipt
+                or owner.owner_signature_verified is not True
+                or signed.release_version != selected.release_version
+                or selected.release_version != owner.release_version
+                or signed.source.source_commit != selected.source_commit
+                or signed.source.source_tree != selected.source_tree
+                or selected.source_commit != owner.source_commit
+                or selected.source_tree != owner.source_tree
+                or owner.approval_sha256 != hashlib.sha256(
+                    expected_owner_approval_bytes(selected)
+                ).hexdigest()
+                or signed.deployment_authorized is not False
+            ):
+                raise ValueError("previous/new signed source mismatch")
+        # Before the next blue slot can become empty, its exact stopped
+        # historical rollback container must be authenticated read-only.
+        # The default review still requires a genuinely EMPTY candidate.
+        original_route = None
+        if retirement_journal is not None:
+            if (
+                type(retirement_journal) is not AnalyticsRouteJournal
+                or retirement_journal.exclusive_active() is not True
+            ):
+                raise ValueError("no protected pre-retirement journal custody")
+            original_route = retirement_journal.read()
+            if (
+                type(original_route) is not dict
+                or original_route.get("phase") != "switched"
+                or original_route.get("next_slot") != live.active_slot
+                or original_route.get("next_image") != previous_signed.image
+                or original_route.get("next_container_id") != live.active_container_id
+                or original_route.get("previous_slot") != live.candidate_slot
+                # The ORIGINAL Task013 0.15 signed release is a concrete
+                # existing trust pin, not a caller-controlled prior image.
+                or original_route.get("previous_image") != PINNED_IMAGE
+                or original_route.get("previous_container_id") == live.active_container_id
+            ):
+                raise ValueError("unknown previously signed dormant writer")
+            inspect_dormant_analytics_candidate(
+                active=live, expected_slot=live.candidate_slot,
+                expected_image=PINNED_IMAGE,
+                expected_container_id=original_route["previous_container_id"],
+                allow_running_standby=True,
+            )
+            if retirement_journal.read() != original_route:
+                raise ValueError("historical signed rollback journal changed")
+        if (
+            previous_signed.image == new_signed.image
+            or tuple(map(int, previous_signed.release_version.split("."))) >=
+               tuple(map(int, new_signed.release_version.split(".")))
+            or previous_signed.image != live.active_image
+            or previous_signed.source.oci_manifest_digest != live.active_digest
+        ):
+            raise ValueError("signed prior image differs from actual writer")
+        reviewed = review_analytics_successor_with_live_active(
+            canonical_request, signed_previous=previous_signed,
+            signed_release=new_signed, selected=new_selected,
+            owner_approval=new_owner, identity=identity,
+            require_empty_candidate=(retirement_journal is None), **source,
+        )
+        if (
+            type(reviewed) is not AnalyticsSuccessorRequest
+            or reviewed.canonical_bytes() != canonical_request
+            or inspect_analytics_active_state() != live
+            or (retirement_journal is not None
+                and retirement_journal.read() != original_route)
+        ):
+            raise ValueError("ordinary source or active route changed")
+        return reviewed
+    except _CONTROL:
+        raise
+    except Exception:
+        raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+
+
 class AnalyticsPrivilegedExecutor:
     """Exact first-install receiver; no generic or canary deployment method."""
 
@@ -914,6 +1125,153 @@ def _read_analytics_execution_status(guard: object, request_hash: str) -> str | 
     return observed_status
 
 
+# Section: root-proven second-and-later successful private route restart.
+def _review_completed_ordinary_successor_restart(
+    *, journal: object, intent: dict[str, object], identities: dict[str, object],
+) -> None:
+    """Admit only fully finished, signed, exact-route ordinary deployment.
+
+    An offline restart has no fresh CI OIDC/registry JWT to re-fetch Task013.
+    Therefore it MUST reuse independently protected root owner signatures,
+    the exact original signed request persisted before replay.finish, the
+    original durable FINISHED SQLite replay, verified local OCI RepoDigests,
+    Canary and unchanged RootlessKit routing. A missing previous/next signer
+    or changed request/receipt fails closed; no Docker/route mutation or
+    replacement credential is minted. Incomplete gen2+ is hard HOLD until
+    separately authorized recovery, not an accidental promotion.
+    """
+    from .analytics_route_journal import AnalyticsRouteJournal
+    from .analytics_active_state_review import inspect_committed_analytics_route
+    from .replay_sqlite import PRODUCTION_REPLAY_DATABASE, SQLiteReplayGuard
+    from release.analytics_owner_source_selection import (
+        AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
+        load_and_verify_owner_signed_source,
+        verify_owner_signed_source_proof, expected_owner_approval_bytes,
+    )
+    from .policy import canonical_bytes
+    import json
+    if (
+        type(journal) is not AnalyticsRouteJournal
+        or type(intent) is not dict
+        or type(identities) is not dict
+        or (os.getuid(), os.geteuid(), os.getgid(), os.getegid())
+            != (991, 991, 991, 991)
+        or type(intent.get("generation")) is not int
+        or intent["generation"] < 2
+        or intent.get("phase") != "switched"
+        or intent.get("previous_slot") not in ("blue", "green")
+        or intent.get("next_slot") not in ("blue", "green")
+        or intent["previous_slot"] == intent["next_slot"]
+        or intent.get("request_sha256") == "0" * 64
+    ):
+        raise ValueError("ordinary restart not independently authorized")
+    # The exact UID991/UID990 shared replay database is the SAME one used
+    # in the original protected first successor; never a new success store.
+    replay = SQLiteReplayGuard(
+        PRODUCTION_REPLAY_DATABASE,
+        expected_directory_uid=identities["expected_replay_directory_uid"],
+        expected_directory_gid=identities["expected_replay_directory_gid"],
+        expected_broker_uid=identities["expected_broker_uid"],
+        expected_executor_uid=identities["expected_executor_uid"],
+    )
+    request_hash = intent["request_sha256"]
+    if _read_analytics_execution_status(replay, request_hash) != "finished":
+        raise ValueError("no finished ordinary signed replay")
+    proof = journal.read_execution(request_hash)
+    if (
+        type(proof) is not dict
+        or proof.get("image") != intent["next_image"]
+        or proof.get("container_id") != intent["next_container_id"]
+        or type(proof.get("canonical_request")) is not bytes
+        or hashlib.sha256(proof["canonical_request"]).hexdigest() != request_hash
+    ):
+        raise ValueError("ordinary journal differs from protected replay")
+
+    def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        """Reject all duplicate nested source/owner or rollback fields."""
+        seen: dict[str, object] = {}
+        for name, value in pairs:
+            if name in seen:
+                raise ValueError("ambiguous protected signed request")
+            seen[name] = value
+        return seen
+
+    raw = json.loads(
+        proof["canonical_request"].decode("ascii"),
+        object_pairs_hook=unique,
+        parse_constant=lambda _: (_ for _ in ()).throw(ValueError),
+    )
+    if (
+        type(raw) is not dict
+        or canonical_bytes(raw) != proof["canonical_request"]
+        or type(raw.get("schema_version")) is not int
+        or raw["schema_version"] != 3
+        or raw.get("stage") != "dev"
+        or raw.get("product_id") != "analytics"
+        or raw.get("exact_image_reference") != intent["next_image"]
+        or raw.get("manifest_digest") != intent["next_image"].rsplit("@", 1)[-1]
+        or type(raw.get("owner_source_proof")) is not str
+        or not 0 < len(raw["owner_source_proof"]) <= 2048
+        or type(raw.get("rollback_reference")) is not dict
+        or raw["rollback_reference"].get("previous_digest")
+            != intent["previous_image"].rsplit("@", 1)[-1]
+        or raw["rollback_reference"].get("previous_slot") != intent["previous_slot"]
+        or type(raw.get("ingress_reference")) is not dict
+        or raw["ingress_reference"].get("active_slot") != intent["previous_slot"]
+        or raw["ingress_reference"].get("slot") != intent["next_slot"]
+    ):
+        raise ValueError("ordinary executed request does not bind private route")
+    # Verify BOTH owner approvals using the same original protected root trust,
+    # never accept an unsigned durable request as source of release identity.
+    prior, prior_owner = load_and_verify_owner_signed_source(
+        _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
+    )
+    selected, owner = verify_owner_signed_source_proof(raw["owner_source_proof"])
+    for selection, receipt in ((prior, prior_owner), (selected, owner)):
+        if (
+            type(selection) is not AnalyticsOwnerSourceSelection
+            or type(receipt) is not AnalyticsOwnerSignatureReceipt
+            or receipt.owner_signature_verified is not True
+            or selection.release_authorized is not False
+            or selection.deployment_authorized is not False
+            or receipt.release_authorized is not False
+            or receipt.deployment_authorized is not False
+            or selection.source_commit != receipt.source_commit
+            or selection.source_tree != receipt.source_tree
+            or selection.release_version != receipt.release_version
+            or receipt.approval_sha256 != hashlib.sha256(
+                expected_owner_approval_bytes(selection)
+            ).hexdigest()
+        ):
+            raise ValueError("untrusted prior or next owner signature")
+    if (
+        tuple(map(int, prior.release_version.split("."))) >=
+            tuple(map(int, selected.release_version.split(".")))
+        or selected.release_version != raw.get("release_version")
+        or selected.source_commit != raw.get("product_source_sha")
+        or selected.platform_workflow_commit != raw.get("source_sha")
+        or owner.approval_sha256 != raw.get("owner_approval_sha256")
+        or raw.get("source_sha") == "0" * 40
+    ):
+        raise ValueError("signed release owner identity changed after commit")
+    observed = inspect_committed_analytics_route(
+        journal=journal, reviewed_image=proof["image"],
+        reviewed_slot=intent["next_slot"],
+        reviewed_container_id=proof["container_id"],
+        reviewed_request_sha256=request_hash,
+    )
+    if (
+        getattr(observed, "active_slot", None) != intent["next_slot"]
+        or getattr(observed, "active_image", None) != intent["next_image"]
+        or getattr(observed, "active_container_id", None) != intent["next_container_id"]
+        or journal.read() != intent
+        or journal.read_execution(request_hash) != proof
+        or _read_analytics_execution_status(replay, request_hash) != "finished"
+    ):
+        raise ValueError("ordinary signed active route changed during restart")
+    return None
+
+
 def _reconcile_interrupted_first_successor_before_receive() -> None:
     """Restore original signed blue0.15 from a provable incomplete journal.
 
@@ -957,7 +1315,14 @@ def _reconcile_interrupted_first_successor_before_receive() -> None:
         if (
             type(source) is not dict
             or type(identities) is not dict
-            or identities.get("owner_authorized_first_successor") is not True
+            or not (
+                identities.get("owner_authorized_first_successor") is True
+                or identities.get("owner_authorized_ordinary_successor") is True
+            )
+            or (
+                identities.get("owner_authorized_first_successor") is True
+                and identities.get("owner_authorized_ordinary_successor") is True
+            )
             or identities.get("expected_executor_uid") != 991
             or identities.get("expected_executor_gid") != 991
         ):
@@ -968,6 +1333,13 @@ def _reconcile_interrupted_first_successor_before_receive() -> None:
         intent = journal.read()
         if intent is None:
             return None
+        # Preserve the original generation1 blue0.15->green contract exactly.
+        # Later generations must prove signed prior/current source, durable
+        # FINISHED replay and actual immutable OCI+Canary private route.
+        if type(intent) is dict and type(intent.get("generation")) is int and intent["generation"] >= 2:
+            return _review_completed_ordinary_successor_restart(
+                journal=journal, intent=intent, identities=identities,
+            )
         if (
             type(intent) is not dict
             or intent.get("previous_slot") != "blue"
@@ -1375,4 +1747,283 @@ def _execute_reviewed_first_successor_transaction(
         _LEAVE_EXECUTION(executor)
 
 
+# Section 9: ordinary signed previous->next private DEV transaction.
+# This is a proposed, UNINSTALLED source-only coordinator. Its invocation
+# requires a distinct root-reviewed source generation and independent M04
+# authorization. The current schema-2 Unix receiver does NOT call it.
+def _execute_reviewed_ordinary_successor_transaction(
+    canonical_request: bytes, *, credential_fd: int,
+    expected_workflow_sha: str, executor: AnalyticsPrivilegedExecutor,
+    candidate_operation: object, journal: object,
+) -> bytes:
+    """Reuse original UID991 signed release, replay, private route and rollback.
+
+    Historical stopped rollback containers are only removed by exact ID AFTER
+    durable intent and independent dual-signed source verification. Never
+    delete images, volumes, databases or alter Canary3020. A crash or failed
+    rollback cannot return success. This function does not install itself.
+    """
+    from .analytics_active_state_review import (
+        AnalyticsActiveState, inspect_analytics_active_state,
+        inspect_committed_analytics_route,
+    )
+    from .analytics_executor_service_config import load_analytics_executor_service_config
+    from .analytics_first_install import AnalyticsSuccessorCandidateOperation
+    from .analytics_private_registry import AnalyticsPrivateZotPullAdapter
+    from .analytics_route_journal import AnalyticsRouteJournal, ROUTE_JOURNAL_DIRECTORY
+    from .analytics_loopback_guard import (
+        _SUCCESSOR_SCOPE, _verified_slot,
+        _stage_reviewed_private_candidate_probe,
+        _switch_reviewed_private_route,
+        _recover_reviewed_private_route,
+        _rollback_committed_private_successor,
+    )
+    from .identity import validate_expected_workflow_sha
+    from .private_registry_pull import scoped_private_zot_request
+    # Section: exact protected runtime, source and type boundary before I/O.
+    try:
+        if (
+            type(canonical_request) is not bytes
+            or not 0 < len(canonical_request) <= 16 * 1024
+            or type(credential_fd) is not int or credential_fd < 0
+            or (os.getuid(), os.geteuid(), os.getgid(), os.getegid())
+                != (991, 991, 991, 991)
+            or os.environ.get(_SUCCESSOR_SCOPE) != "1"
+            or type(executor) is not AnalyticsPrivilegedExecutor
+            or type(candidate_operation) is not AnalyticsSuccessorCandidateOperation
+            or type(journal) is not AnalyticsRouteJournal
+            or object.__getattribute__(journal, "_directory") != ROUTE_JOURNAL_DIRECTORY
+            or object.__getattribute__(journal, "_uid") != 991
+            or object.__getattribute__(journal, "_gid") != 991
+        ):
+            raise ValueError("unauthorized ordinary source principal")
+        workflow = validate_expected_workflow_sha(expected_workflow_sha)
+        source = dict(object.__getattribute__(executor, "_reviewed_source"))
+        preflight = object.__getattribute__(executor, "_preflight_successor")
+        pull = object.__getattribute__(candidate_operation, "_pull")
+        if (
+            object.__getattribute__(candidate_operation, "_source")
+                != tuple(sorted(source.items()))
+            or preflight is None
+            or type(preflight.__self__) is not AnalyticsPrivateZotPullAdapter
+            or type(pull.__self__) is not AnalyticsPrivateZotPullAdapter
+            or preflight.__self__ is not pull.__self__
+        ):
+            raise ValueError("unreviewed successor registry or source")
+        installed, identities = load_analytics_executor_service_config(
+            require_successor=True,
+        )
+        if (
+            type(installed) is not dict or installed != source
+            or type(identities) is not dict
+            or identities.get("expected_workflow_sha") != workflow
+            or identities.get("owner_authorized_ordinary_successor") is not True
+            or identities.get("owner_authorized_first_successor") is True
+            or identities.get("expected_executor_uid") != 991
+            or identities.get("expected_executor_gid") != 991
+        ):
+            raise ValueError("root-owned generation is not approved")
+    except _CONTROL:
+        raise
+    except Exception:
+        _emit_uid991_successor_failure_phase("installed_authority")
+        raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+
+    # Section: historical signed release, dormant image and active writer
+    # must be verified BEFORE the schema3 JTI begins and any Docker mutation.
+    try:
+        with journal.exclusive():
+            request = _review_executor_ordinary_signed_release(
+                canonical_request, credential_fd,
+                expected_workflow_sha=workflow,
+                reviewed_installed_source=source,
+                retirement_journal=journal,
+            )
+            if request.canonical_bytes() != canonical_request:
+                raise ValueError("changed reviewed signed request")
+            historical = journal.read()
+            old = inspect_analytics_active_state()
+            if (
+                type(old) is not AnalyticsActiveState
+                or historical.get("phase") != "switched"
+                or historical["next_image"] != old.active_image
+                or historical["next_container_id"] != old.active_container_id
+                or historical["next_slot"] != old.active_slot
+                or historical["previous_slot"] != old.candidate_slot
+                or old.active_digest != request.rollback_reference["previous_digest"]
+                or old.active_slot != request.rollback_reference["previous_slot"]
+                or old.candidate_slot != request.ingress_reference["slot"]
+            ):
+                raise ValueError("historical active release mismatch")
+            now = int(time.time())
+            credential = read_sealed_credential(
+                credential_fd, canonical_request=canonical_request,
+                image=request.exact_image_reference,
+                product_id="analytics-successor", now=now,
+            )
+            if credential.expires_at - now < MIN_POST_PREFLIGHT_VALIDITY_SECONDS:
+                raise ValueError("short registry credential lifetime")
+            if preflight(canonical_request, credential_fd) is not None:
+                raise ValueError("signed immutable registry preflight failed")
+            if inspect_analytics_active_state() != old or journal.read() != historical:
+                raise ValueError("active writer changed during registry proof")
+    except _CONTROL:
+        raise
+    except Exception:
+        _emit_uid991_successor_failure_phase("private_preflight")
+        raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+
+    request_hash = hashlib.sha256(canonical_request).hexdigest()
+    replay_begin, replay_finish = object.__getattribute__(executor, "_replay")
+    if not _ENTER_EXECUTION(executor):
+        _emit_uid991_successor_failure_phase("replay_begin")
+        raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+    candidate_id = None
+    route = None
+    phase = "replay_begin"
+    try:
+        try:
+            if replay_begin(
+                request.oidc_jti, request_hash=request_hash,
+                run_id=request.github_run_id, run_attempt=request.github_run_attempt,
+            ) is not None:
+                raise ValueError("invalid replay begin result")
+        except ReplayError:
+            raise ExecutorRejectedError(EXECUTOR_REJECTED_MESSAGE) from None
+        phase = "candidate_stage"
+        with journal.exclusive():
+            # Recheck the originally authenticated current signed writer.
+            if inspect_analytics_active_state() != old or journal.read() != historical:
+                raise ValueError("old writer drifted before durable retirement")
+            journal.prepare_slot_retirement(
+                request_sha256=request_hash,
+                active_slot=old.active_slot,
+                active_image=old.active_image,
+                active_container_id=old.active_container_id,
+                dormant_slot=historical["previous_slot"],
+                dormant_image=historical["previous_image"],
+                dormant_container_id=historical["previous_container_id"],
+                next_image=request.exact_image_reference,
+            )
+            candidate_operation.retire_dormant_rollback_container(
+                request=request, journal=journal,
+            )
+            with scoped_private_zot_request(credential_fd, canonical_request):
+                candidate_id = candidate_operation.stage_ordinary_successor(
+                    request, journal=journal,
+                )
+            if (
+                type(candidate_id) is not str or len(candidate_id) != 64
+                or any(ch not in "0123456789abcdef" for ch in candidate_id)
+            ):
+                raise ValueError("candidate ID is not exact")
+            phase = "candidate_identity"
+            next_slot = request.ingress_reference["slot"]
+            next_ip = _verified_slot(
+                next_slot, request.exact_image_reference, candidate_id,
+            )
+            journal.begin_after_retirement(
+                request_sha256=request_hash,
+                next_container_id=candidate_id, next_ip=next_ip,
+            )
+        route = dict(
+            previous_slot=old.active_slot, previous_image=old.active_image,
+            previous_id=old.active_container_id,
+            next_slot=request.ingress_reference["slot"],
+            next_image=request.exact_image_reference,
+            next_id=candidate_id, journal=journal,
+            request_sha256=request_hash,
+        )
+        # Section: existing 3142 health, durable 3141 cutover and replay proof.
+        phase = "candidate_probe"
+        if _stage_reviewed_private_candidate_probe(**route) is not None:
+            raise ValueError("private candidate probe was not recorded")
+        phase = "candidate_ready_preflight"
+        staged = inspect_analytics_active_state()
+        if (
+            type(staged) is not AnalyticsActiveState
+            or staged.active_slot != old.active_slot
+            or staged.active_image != old.active_image
+            or staged.active_container_id != old.active_container_id
+            or staged.candidate_slot != request.ingress_reference["slot"]
+            or staged.candidate_probe_present is not True
+            or staged.candidate_digest != request.manifest_digest
+            or staged.candidate_container_id != candidate_id
+            or journal.read().get("phase") != "candidate_ready"
+        ):
+            raise ValueError("staged candidate signed OCI mismatch")
+        phase = "private_route_switch"
+        if _switch_reviewed_private_route(**route) is not None:
+            raise ValueError("signed candidate private cutover failed")
+        phase = "private_route_verify"
+        actual = inspect_committed_analytics_route(
+            journal=journal, reviewed_image=request.exact_image_reference,
+            reviewed_slot=request.ingress_reference["slot"],
+            reviewed_container_id=candidate_id,
+            reviewed_request_sha256=request_hash,
+        )
+        if (
+            type(actual) is not AnalyticsActiveState
+            or actual.active_slot != request.ingress_reference["slot"]
+            or actual.active_container_id != candidate_id
+        ):
+            raise ValueError("committed writer does not match release")
+        phase = "execution_receipt"
+        journal.record_execution(canonical_request, candidate_id)
+        phase = "replay_finish"
+        if replay_finish(
+            request.oidc_jti, request_hash=request_hash,
+            run_id=request.github_run_id,
+            run_attempt=request.github_run_attempt,
+        ) is not None:
+            raise ValueError("replay did not commit")
+        return _build_success_response(request_hash)
+    except _CONTROL:
+        raise
+    except Exception:
+        _emit_uid991_successor_failure_phase(phase)
+        # Recovery is deliberately narrowly attempted only with a verified
+        # complete route and still-present signed writer. Earlier partial
+        # retirement intent remains durable and blocks further promotions.
+        if candidate_id is not None:
+            try:
+                if route is not None:
+                    record = journal.read()
+                    if (
+                        type(record) is not dict
+                        or record.get("request_sha256") != request_hash
+                        or record.get("previous_image") != old.active_image
+                        or record.get("previous_container_id") != old.active_container_id
+                        or record.get("next_container_id") != candidate_id
+                    ):
+                        raise ValueError("untrusted recovery journal")
+                    if record["phase"] == "switched":
+                        _rollback_committed_private_successor(**route)
+                    elif record["phase"] in ("prepared", "candidate_ready", "rollback_pending"):
+                        _recover_reviewed_private_route(**route)
+                    elif record["phase"] != "restored":
+                        raise ValueError("unconfirmed ordinary recovery")
+                    if journal.read().get("phase") != "restored":
+                        raise ValueError("writer not restored")
+                    inspect_committed_analytics_route(
+                        journal=journal, reviewed_image=old.active_image,
+                        reviewed_slot=old.active_slot,
+                        reviewed_container_id=old.active_container_id,
+                        reviewed_request_sha256=request_hash,
+                    )
+                elif inspect_analytics_active_state() != old:
+                    raise ValueError("ambiguous pre-route stage")
+                candidate_operation.rollback_staged_successor(request, candidate_id)
+            except _CONTROL:
+                raise
+            except Exception:
+                sys.stderr.write(
+                    "TASK014_ANALYTICS_SUCCESSOR_HOLD phase=recovery_unconfirmed\n"
+                )
+        raise ExecutorUnavailableError(EXECUTOR_UNAVAILABLE_MESSAGE) from None
+    finally:
+        _LEAVE_EXECUTION(executor)
+
+
+__all__ = ("AnalyticsPrivilegedExecutor",)
 __all__ = ("AnalyticsPrivilegedExecutor",)

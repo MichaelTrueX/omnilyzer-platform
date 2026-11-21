@@ -3,7 +3,8 @@
 Purpose: Construct exact UNSIGNED Task014 Analytics 0.15.0/V2 DEV review
          inputs from independently verified immutable Git source archives,
          including the original C32ZF rootless socket source contract and inert,
-         generation-specific broker/executor service override inputs.
+         generation-specific broker/executor service override inputs,
+         including root-selected ordinary generation4 using V3 mounts.
 Related: deployment/analytics_source_handoff.py (32 Git objects),
          deployment/analytics_source_archive.py (canonical USTAR),
          deployment/analytics_isolated_source_install.py (root approval),
@@ -14,7 +15,8 @@ Related: deployment/analytics_source_handoff.py (32 Git objects),
 
 Sections: fixed destinations, read-only source binding, independent root
           approval, exact broker/executor configs, immutable systemd source
-          selection and product-private mount-namespace isolation.
+          selection, SHA-named ordinary source directory and product-private
+          mount-namespace isolation.
 
 SECURITY: Review data is NOT root installation authority. No write, network,
 secret, Docker, systemd, session, OIDC, replay or database side effect.
@@ -53,7 +55,19 @@ DESTINATION = "/opt/omnilyzer/deployment/analytics-app"
 # V2 reviewed candidate must be independently installed *beside* V1.
 # The original V1 active service continues to refer to DESTINATION.
 SUCCESSOR_DESTINATION = "/opt/omnilyzer/deployment/analytics-app-candidate"
+# Generation4 is a SHA-named immutable source, not the older V2/V3 candidate.
+from .analytics_isolated_source_install import (
+    _ordinary_approval, _ORDINARY_APPROVAL_PATH, _ORDINARY_ARCHIVE_PATH,
+)
+from .analytics_executor_service_config import ordinary_analytics_source_root
 _CLOSED_PATHS = (SOURCE_ARCHIVE, SOURCE_APPROVAL, EXECUTOR_CONFIG, BROKER_CONFIG)
+# Do not overwrite the existing protected first-install inputs when publishing
+# the unsigned ordinary generation4 candidate for separate root approval.
+ORDINARY_SOURCE_ARCHIVE = _ORDINARY_ARCHIVE_PATH
+ORDINARY_SOURCE_APPROVAL = _ORDINARY_APPROVAL_PATH
+_ORDINARY_CLOSED_PATHS = (
+    ORDINARY_SOURCE_ARCHIVE, ORDINARY_SOURCE_APPROVAL, EXECUTOR_CONFIG, BROKER_CONFIG,
+)
 # These systemd objects remain inert until separately installed by root.
 # Exactly three are already bound in the canonical 32-object reviewed archive.
 _SERVICE_SOURCES = (
@@ -204,6 +218,7 @@ def build_unsigned_analytics_activation_inputs(
     *, repository_root: str, reviewed_commit: str,
     successor_source: bool = False,
     owner_authorized_first_successor: bool = False,
+    owner_authorized_ordinary_successor: bool = False,
     approved_workflow_sha: str | None = None,
 ) -> dict[str, bytes]:
     """Bind four review inputs to exactly one verified Git source generation.
@@ -219,9 +234,14 @@ def build_unsigned_analytics_activation_inputs(
         if (
             type(successor_source) is not bool
             or type(owner_authorized_first_successor) is not bool
-            or (owner_authorized_first_successor and not successor_source)
+            or type(owner_authorized_ordinary_successor) is not bool
+            or sum((owner_authorized_first_successor,
+                    owner_authorized_ordinary_successor)) > 1
+            or ((owner_authorized_first_successor
+                 or owner_authorized_ordinary_successor) and not successor_source)
             or (approved_workflow_sha is not None
-                and not owner_authorized_first_successor)
+                and not (owner_authorized_first_successor
+                         or owner_authorized_ordinary_successor))
         ):
             raise ValueError
         # Section: root-reviewed workflow rebind for unsigned V3 review data.
@@ -279,14 +299,47 @@ def build_unsigned_analytics_activation_inputs(
             or baseline["signed_release_authorized"] is not False
         ):
             raise ValueError
-        generation = (3 if owner_authorized_first_successor
-                      else 2 if successor_source else 1)
+        # A protected generation4 approval cannot be emitted from an older
+        # Git commit that only contained the first-successor operator. This
+        # checks exact immutable archive bytes, never a mutable local file.
+        if owner_authorized_ordinary_successor:
+            ordinary_contract = {
+                "deployment/analytics_executor.py": (
+                    b"def _execute_reviewed_ordinary_successor_transaction(",
+                    b"def _review_completed_ordinary_successor_restart(",
+                ),
+                "deployment/analytics_promotion_broker.py": (
+                    b"def authorize_and_forward_ordinary_successor(",
+                ),
+                "deployment/analytics_unix_boundary.py": (
+                    b"def execute_owner_authorized_ordinary(",
+                ),
+                "deployment/analytics_route_journal.py": (
+                    b"def prepare_slot_retirement(",
+                    b"def confirm_slot_retired(",
+                    b"def begin_after_retirement(",
+                ),
+                "deployment/analytics_broker_router.py": (
+                    b"owner_authorized_ordinary_successor",
+                ),
+            }
+            if any(
+                name not in contents
+                or any(marker not in contents[name] for marker in markers)
+                for name, markers in ordinary_contract.items()
+            ):
+                raise ValueError("ordinary signed source not in reviewed Git archive")
+        generation = (4 if owner_authorized_ordinary_successor else
+                      3 if owner_authorized_first_successor else
+                      2 if successor_source else 1)
         product_config = canonical_bytes({
             "schema_version": generation, "product_id": "analytics", "stage": "dev",
             **({"expected_workflow_sha": workflow_sha}
                if successor_source else {}),
             **({"owner_authorized_first_successor": True}
                if owner_authorized_first_successor else {}),
+            **({"owner_authorized_ordinary_successor": True}
+               if owner_authorized_ordinary_successor else {}),
             "reviewed_installed_commit": reviewed_commit,
             "reviewed_compose_sha256": baseline["reviewed_compose_sha256"],
             "reviewed_product_profile_sha256":
@@ -317,13 +370,19 @@ def build_unsigned_analytics_activation_inputs(
         # distinct root-owned *runtime execution* selection, not permission
         # to weaken or replace the immutable 38-entry source archive.
         approval = canonical_bytes({
-            "schema_version": 2 if successor_source else 1,
+            "schema_version": (
+                3 if owner_authorized_ordinary_successor else
+                2 if successor_source else 1
+            ),
             "product_id": "analytics", "stage": "dev",
             "reviewed_commit": reviewed_commit,
             "manifest_sha256": manifest_sha,
             "archive_sha256": hashlib.sha256(archive).hexdigest(),
-            "destination": (SUCCESSOR_DESTINATION if successor_source
-                            else DESTINATION),
+            "destination": (
+                ordinary_analytics_source_root(reviewed_commit)
+                if owner_authorized_ordinary_successor else
+                SUCCESSOR_DESTINATION if successor_source else DESTINATION
+            ),
         })
         # Original ROOT installer still accepts V1 ONLY: allowing V2 here
         # makes a reproducible reviewed input, not a usable root install.
@@ -332,12 +391,17 @@ def build_unsigned_analytics_activation_inputs(
         ):
             raise ValueError
         result = {
-            SOURCE_ARCHIVE: archive,
-            SOURCE_APPROVAL: approval,
+            (ORDINARY_SOURCE_ARCHIVE if owner_authorized_ordinary_successor
+             else SOURCE_ARCHIVE): archive,
+            (ORDINARY_SOURCE_APPROVAL if owner_authorized_ordinary_successor
+             else SOURCE_APPROVAL): approval,
             EXECUTOR_CONFIG: product_config,
             BROKER_CONFIG: product_config,
         }
-        if set(result) != set(_CLOSED_PATHS):
+        if set(result) != set(
+            _ORDINARY_CLOSED_PATHS if owner_authorized_ordinary_successor
+            else _CLOSED_PATHS
+        ):
             raise ValueError
         return result
     except _CONTROL:
@@ -350,6 +414,7 @@ def build_unsigned_analytics_service_inputs(
     *, repository_root: str, reviewed_commit: str,
     successor_source: bool = False,
     owner_authorized_first_successor: bool = False,
+    owner_authorized_ordinary_successor: bool = False,
     approved_workflow_sha: str | None = None,
 ) -> dict[str, bytes]:
     """Bind EXACT service review bytes to one Git generation and original C32ZF.
@@ -376,9 +441,14 @@ def build_unsigned_analytics_service_inputs(
         if (
             type(successor_source) is not bool
             or type(owner_authorized_first_successor) is not bool
-            or (owner_authorized_first_successor and not successor_source)
+            or type(owner_authorized_ordinary_successor) is not bool
+            or sum((owner_authorized_first_successor,
+                    owner_authorized_ordinary_successor)) > 1
+            or ((owner_authorized_first_successor
+                 or owner_authorized_ordinary_successor) and not successor_source)
             or (approved_workflow_sha is not None
-                and not owner_authorized_first_successor)
+                and not (owner_authorized_first_successor
+                         or owner_authorized_ordinary_successor))
         ):
             raise ValueError("invalid source generation")
         # Always preserve the historical 4 original service files byte-for-byte.
@@ -389,16 +459,25 @@ def build_unsigned_analytics_service_inputs(
                 repository_root=repository_root, reviewed_commit=reviewed_commit,
                 successor_source=True,
                 owner_authorized_first_successor=owner_authorized_first_successor,
+                owner_authorized_ordinary_successor=owner_authorized_ordinary_successor,
                 approved_workflow_sha=approved_workflow_sha,
             )
             from .analytics_isolated_source_install import _successor_approval
-            approved_candidate = _successor_approval(candidate[SOURCE_APPROVAL])
+            approved_candidate = (
+                _ordinary_approval(candidate[ORDINARY_SOURCE_APPROVAL])
+                if owner_authorized_ordinary_successor else
+                _successor_approval(candidate[SOURCE_APPROVAL])
+            )
             parsed_candidate = parse_analytics_executor_service_config(
                 candidate[EXECUTOR_CONFIG]
             )
             if (
-                approved_candidate["destination"] != SUCCESSOR_DESTINATION
+                approved_candidate["destination"] != (
+                    ordinary_analytics_source_root(reviewed_commit)
+                    if owner_authorized_ordinary_successor else SUCCESSOR_DESTINATION
+                )
                 or parsed_candidate["source_generation"] != (
+                    4 if owner_authorized_ordinary_successor else
                     3 if owner_authorized_first_successor else 2
                 )
                 or tuple(name for name, _ in parsed_candidate["source_sha256"])
@@ -489,8 +568,12 @@ def build_unsigned_analytics_service_inputs(
         # grant a service restart, source selection or signed release GO.
         # Neither overrides ExecStart, identity, secrets, sockets nor ports.
         if successor_source:
+            selected_source = (
+                ordinary_analytics_source_root(reviewed_commit)
+                if owner_authorized_ordinary_successor else SUCCESSOR_DESTINATION
+            )
             candidate_bytes = (
-                "[Service]\nWorkingDirectory=" + SUCCESSOR_DESTINATION + "\n"
+                "[Service]\nWorkingDirectory=" + selected_source + "\n"
             ).encode("ascii")
             result[_SUCCESSOR_BROKER_DROPIN] = candidate_bytes
             # The broker uses its own already-qualified UID990 signer assets.
@@ -503,12 +586,13 @@ def build_unsigned_analytics_service_inputs(
                 + ((b"Environment=ANALYTICS_REVIEWED_SUPERVISOR_V2=1\n"
                     + b"ProtectHome=tmpfs\n"
                     + (_SUCCESSOR_V3_USER_SOCKETS + "\n").encode("ascii"))
-                   if owner_authorized_first_successor else b"")
+                   if (owner_authorized_first_successor
+                       or owner_authorized_ordinary_successor) else b"")
             )
             # Only a root-selected V3 reviews these mount inputs. The root
             # installer must independently verify the three protected broker
             # mirrors against the UID991 signer/approval bytes and signature.
-            if owner_authorized_first_successor:
+            if owner_authorized_first_successor or owner_authorized_ordinary_successor:
                 result[_SUCCESSOR_BROKER_OWNER_DROPIN] = (
                     "[Service]\n"
                     + _SUCCESSOR_BROKER_OWNER_TMPFS + "\n"
@@ -548,7 +632,7 @@ def build_unsigned_analytics_service_inputs(
             expected_paths.update((
                 _SUCCESSOR_BROKER_DROPIN, _SUCCESSOR_EXECUTOR_DROPIN,
             ))
-            if owner_authorized_first_successor:
+            if owner_authorized_first_successor or owner_authorized_ordinary_successor:
                 expected_paths.update((
                     _SUCCESSOR_BROKER_OWNER_DROPIN,
                     _SUCCESSOR_SUPERVISOR_INSTALL,
@@ -568,7 +652,8 @@ def build_unsigned_analytics_service_inputs(
 
 __all__ = (
     "AnalyticsActivationInputsError", "build_unsigned_analytics_activation_inputs",
-    "SOURCE_ARCHIVE", "SOURCE_APPROVAL", "EXECUTOR_CONFIG", "BROKER_CONFIG",
+    "SOURCE_ARCHIVE", "SOURCE_APPROVAL", "ORDINARY_SOURCE_ARCHIVE",
+    "ORDINARY_SOURCE_APPROVAL", "EXECUTOR_CONFIG", "BROKER_CONFIG",
     "build_unsigned_analytics_service_inputs",
 )
 

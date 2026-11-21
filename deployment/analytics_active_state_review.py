@@ -2,7 +2,8 @@
 
 Purpose: Independently observe the actual private Analytics DEV active
          blue/green OCI image from rootless Docker AND RootlessKit forwarding.
-         Read-only groundwork for Task014 first and ordinary opposite-slot successors.
+         Read-only groundwork for Task014 first and ordinary opposite-slot successors,
+         including exact dormant rollback-container identity before retirement.
 Related: deployment/analytics_execution.py (inert schema-3 admission),
          deployment/analytics_dev_release_review.py (existing slot contract),
          deployment/runtime/dev/analytics.compose.review.yaml,
@@ -472,6 +473,101 @@ def verify_empty_analytics_candidate_slot(slot: str) -> None:
         )
         if existing is not None:
             raise ValueError("previous candidate container requires recovery")
+        return None
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except Exception:
+        raise AnalyticsActiveStateDenied(ERROR) from None
+
+
+# Section 5c: identify an exact dormant rollback container BEFORE any
+# potential ordinary slot retirement. This does not delete or authorize it.
+def inspect_dormant_analytics_candidate(
+    *, active: AnalyticsActiveState, expected_slot: str,
+    expected_image: str, expected_container_id: str,
+    allow_running_standby: bool = False,
+) -> None:
+    """Confirm an exact unrouted historical rollback container, stopped by default.
+
+    Signed previous/current release identity and durable retirement intent
+    MUST be independently authenticated by the UID991 coordinator. This
+    read-only predicate cannot establish those authorities or remove anything.
+    Its expected values are not trustworthy solely because a caller provided
+    them. A new observation must match the active signed service at both ends.
+    """
+    try:
+        if (
+            os.geteuid() != 991
+            or type(active) is not AnalyticsActiveState
+            or type(allow_running_standby) is not bool
+            or active.read_only is not True
+            or active.deployment_authorized is not False
+            or type(expected_slot) is not str
+            or expected_slot not in ("blue", "green")
+            or expected_slot != active.candidate_slot
+            or expected_slot == active.active_slot
+            or type(expected_image) is not str
+            or not expected_image.startswith(_IMAGE_PREFIX)
+            or validate_digest(expected_image[len(_IMAGE_PREFIX):])
+                == "sha256:" + "0" * 64
+            or type(expected_container_id) is not str
+            or _HEX64.fullmatch(expected_container_id) is None
+            or active.candidate_probe_present is not False
+            or active.candidate_container_id is not None
+            or active.candidate_digest is not None
+            or inspect_analytics_active_state() != active
+        ):
+            raise ValueError("untrusted dormant-slot review")
+        raw = _unix_get(
+            _DOCKER, "/containers/" + _PREFIX + expected_slot + "-1/json",
+        )
+        if type(raw) is not dict:
+            raise ValueError("no exact historical candidate")
+        state = raw.get("State")
+        config = raw.get("Config")
+        host = raw.get("HostConfig")
+        network = raw.get("NetworkSettings")
+        if (
+            type(state) is not dict
+            or (state.get("Running") is not False and not (
+                allow_running_standby is True
+                and state.get("Running") is True
+                and type(state.get("Health")) is dict
+                and state["Health"].get("Status") == "healthy"
+            ))
+            or type(config) is not dict
+            or config.get("Image") != expected_image
+            or config.get("User") != "10001:10001"
+            or raw.get("Id") != expected_container_id
+            or raw.get("Name") != "/" + _PREFIX + expected_slot + "-1"
+            or type(host) is not dict
+            or host.get("ReadonlyRootfs") is not True
+            or host.get("Privileged") is not False
+            or host.get("CapDrop") != ["ALL"]
+            or host.get("SecurityOpt") != ["no-new-privileges:true"]
+            or type(network) is not dict
+            or type(network.get("Networks")) is not dict
+            or set(network["Networks"]) not in (set(), {_NETWORK})
+            or (_NETWORK in network["Networks"] and (
+                type(network["Networks"][_NETWORK]) is not dict
+                or network["Networks"][_NETWORK].get("NetworkID")
+                    not in (None, "", active.active_network_id)
+            ))
+            or host.get("PortBindings") not in (None, {}, {
+                "3000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "3141"}],
+            })
+            or (host.get("PortBindings") not in (None, {})
+                and not (expected_slot == "blue"
+                         and expected_image == _IMAGE_PREFIX + PINNED_DIGEST))
+            or inspect_analytics_active_state() != active
+        ):
+            raise ValueError("wrong dormant-container identity")
+        # A running historical standby must still refer to the original
+        # immutable local OCI RepoDigest, not only Docker Config.Image.
+        if state["Running"] is True:
+            _check_local_image(raw, expected_image)
+            if inspect_analytics_active_state() != active:
+                raise ValueError("historical standby changed during review")
         return None
     except (KeyboardInterrupt, SystemExit, GeneratorExit):
         raise

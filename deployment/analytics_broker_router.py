@@ -12,7 +12,8 @@ Related: deployment/broker_https_ingress.py (original closed three-JWT ingress),
          deployment/tests/test_analytics_broker_router.py.
 
 Sections: exact install-authority capture, strict canonical product routing,
-          independent signed Analytics broker adapter and closed canary fallback.
+          independent signed Analytics broker adapter, root-only ordinary
+          source generation and closed original canary fallback.
 
 SECURITY: The router only chooses among two already-verified, constructor-bound
 operations. It never supplies OIDC/Sigstore/Cosign authority, installation
@@ -43,7 +44,7 @@ _ANALYTICS_PRODUCT = "analytics"
 class AnalyticsDEVPromotionRouter:
     """Exact two-path Task014 handler for original broker HTTPS ingress."""
 
-    __slots__ = ("_canary", "_analytics", "_successor", "_reviewed_source", "_allow_first_successor")
+    __slots__ = ("_canary", "_analytics", "_successor", "_reviewed_source", "_allow_first_successor", "_allow_ordinary_successor")
 
     def __init__(
         self, *, canary: InertDevPromotionHandler,
@@ -51,6 +52,7 @@ class AnalyticsDEVPromotionRouter:
         reviewed_installed_source: dict[str, str],
         successor_preflight_only: bool = False,
         owner_authorized_first_successor: bool = False,
+        owner_authorized_ordinary_successor: bool = False,
     ) -> None:
         """Require original canary handler and the explicit signed Analytics one.
 
@@ -61,7 +63,9 @@ class AnalyticsDEVPromotionRouter:
                 or type(analytics) is not AnalyticsPrivatePromotionBroker
                 or type(successor_preflight_only) is not bool
                 or type(owner_authorized_first_successor) is not bool
-                or (successor_preflight_only and owner_authorized_first_successor)):
+                or type(owner_authorized_ordinary_successor) is not bool
+                or sum((successor_preflight_only, owner_authorized_first_successor,
+                        owner_authorized_ordinary_successor)) > 1):
             raise TypeError("Analytics Task014 router configuration is invalid")
         try:
             from .analytics_unix_boundary import _root_reviewed_source
@@ -78,6 +82,9 @@ class AnalyticsDEVPromotionRouter:
             # broker replay and sealed-FD successor transport.
             selected = (
                 _bound_operation(
+                    analytics, "authorize_and_forward_ordinary_successor",
+                ) if owner_authorized_ordinary_successor else
+                _bound_operation(
                     analytics, "authorize_and_forward_first_successor",
                 ) if owner_authorized_first_successor else
                 _bound_operation(
@@ -86,7 +93,10 @@ class AnalyticsDEVPromotionRouter:
                 ) if successor_preflight_only else None
             )
             object.__setattr__(self, "_successor", selected)
-            object.__setattr__(self, "_allow_first_successor", owner_authorized_first_successor)
+            object.__setattr__(self, "_allow_first_successor",
+                owner_authorized_first_successor)
+            object.__setattr__(self, "_allow_ordinary_successor",
+                owner_authorized_ordinary_successor)
             object.__setattr__(self, "_reviewed_source", source)
         except _CONTROL:
             raise
@@ -178,8 +188,11 @@ class AnalyticsDEVPromotionRouter:
                 raise
             # Exact positive reply is verified in the existing broker
             # before this handler. Probe-only cannot ever return success.
-            if (object.__getattribute__(self, "_allow_first_successor") is not True
-                    or type(response) is not bytes or not response):
+            if (
+                not (object.__getattribute__(self, "_allow_first_successor")
+                     or object.__getattribute__(self, "_allow_ordinary_successor"))
+                or type(response) is not bytes or not response
+            ):
                 from .broker import BrokerUnavailableError, UNAVAILABLE_MESSAGE
                 _emit_analytics_release_boundary("router_signed_response", "unavailable")
                 raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None

@@ -12,7 +12,8 @@ Related: deployment/analytics_source_archive.py (32 exact review objects),
 
 Sections: root-only approval, 43 legacy source hash preflight, 70-file source
           assembly, secure private stage, original C31B final verification,
-          atomic isolated publication and fail-closed pre-cutover cleanup.
+          atomic isolated publication, SHA-named ordinary generations and
+          fail-closed pre-cutover cleanup.
 
 SECURITY: NO service/route/broker imports or entrypoint, NO CLI/autostart.
 The root-only operation is INERT until a separately authorized root actor
@@ -41,6 +42,7 @@ from .analytics_source_archive import (
     verify_analytics_successor_source_archive,
 )
 from .policy import canonical_bytes
+from .analytics_executor_service_config import ordinary_analytics_source_root
 
 _PARENT = "/opt/omnilyzer/deployment"
 _LEGACY = _PARENT + "/app"
@@ -48,6 +50,11 @@ _DESTINATION = "analytics-app"
 # The successor has a separate fixed destination. Staging must never rename
 # into, delete, or replace the live 0.15.0 source directory.
 _SUCCESSOR_DESTINATION = "analytics-app-candidate"
+# Section: ordinary release source is immutable per exact root-approved SHA.
+# Never repurpose the existing candidate or original live source directory.
+_ORDINARY_PREFIX = "analytics-app-release-"
+_ORDINARY_APPROVAL_PATH = "/etc/omnilyzer/deployment/dev/analytics-ordinary-source-install.json"
+_ORDINARY_ARCHIVE_PATH = "/opt/omnilyzer/deployment/.analytics-ordinary-source-review.tar"
 _STAGING = ".analytics-app-reviewed-staging"
 _SUCCESSOR_APPROVAL_PATH = "/etc/omnilyzer/deployment/dev/analytics-successor-source-install.json"
 _SUCCESSOR_ARCHIVE_PATH = "/opt/omnilyzer/deployment/.analytics-successor-source-review.tar"
@@ -132,6 +139,43 @@ def _successor_approval(raw: bytes) -> dict[str, str]:
             or type(model["reviewed_commit"]) is not str
             or re.fullmatch(r"[0-9a-f]{40}", model["reviewed_commit"]) is None
             or model["reviewed_commit"] == "0" * 40
+            or any(type(model[name]) is not str
+                   or re.fullmatch(r"[0-9a-f]{64}", model[name]) is None
+                   for name in ("manifest_sha256", "archive_sha256"))
+            or canonical_bytes(model) != raw
+        ):
+            raise ValueError
+        return model
+    except _CONTROL:
+        raise
+    except Exception:
+        raise AnalyticsIsolatedSourceInstallError(_ERROR) from None
+
+
+def _ordinary_approval(raw: bytes) -> dict[str, str]:
+    """Require separate canonical root approval bound to a SHA-named source.
+
+    The fixed approval file is NOT an API token or public release grant.
+    Schema3 is disjoint from the existing V1/V2 source approvals and refuses
+    any destination not derived from the exactly reviewed Git commit.
+    """
+    try:
+        if type(raw) is not bytes or not 0 < len(raw) <= _MAX_APPROVAL:
+            raise ValueError
+        model = json.loads(
+            raw.decode("ascii"), object_pairs_hook=_unique,
+            parse_constant=lambda _: (_ for _ in ()).throw(ValueError),
+        )
+        if (
+            type(model) is not dict or set(model) != _APPROVAL_FIELDS
+            or type(model["schema_version"]) is not int
+            or model["schema_version"] != 3
+            or model["product_id"] != "analytics"
+            or model["stage"] != "dev"
+            or type(model["reviewed_commit"]) is not str
+            or model["destination"] != ordinary_analytics_source_root(
+                model["reviewed_commit"]
+            )
             or any(type(model[name]) is not str
                    or re.fullmatch(r"[0-9a-f]{64}", model[name]) is None
                    for name in ("manifest_sha256", "archive_sha256"))
@@ -443,6 +487,7 @@ def _publish_isolated_generation(
     *, parent_root: str, original_root: str, archive: bytes,
     manifest_sha: str, reviewed_commit: str, uid: int, gid: int,
     successor_source: bool = False, candidate_only: bool = False,
+    ordinary_source: bool = False,
 ) -> str:
     """Write a verified V1 first install or a separate V2 source candidate.
 
@@ -454,11 +499,17 @@ def _publish_isolated_generation(
     if (
         type(parent_root) is not str or type(original_root) is not str
         or type(successor_source) is not bool or type(candidate_only) is not bool
-        or (candidate_only and not successor_source)
+        or type(ordinary_source) is not bool
+        or (candidate_only and ordinary_source)
+        or ((candidate_only or ordinary_source) and not successor_source)
         or type(archive) is not bytes or not 0 < len(archive) <= _MAX_ARCHIVE
         or type(uid) is not int or type(gid) is not int
     ):
         raise ValueError
+    # No private caller may smuggle traversal into an ordinary source name.
+    # Reject before any legacy source, archive or host descriptor is read.
+    if ordinary_source:
+        ordinary_analytics_source_root(reviewed_commit)
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as tar:
         handle = tar.extractfile(".omnilyzer-analytics-source-review.json")
         if handle is None:
@@ -485,8 +536,11 @@ def _publish_isolated_generation(
     owned: list[int] = []
     try:
         parent = _open_checked_root(parent_root, owned, uid, gid)
-        destination = _SUCCESSOR_DESTINATION if candidate_only else _DESTINATION
-        if candidate_only:
+        destination = (
+            _ORDINARY_PREFIX + reviewed_commit if ordinary_source else
+            _SUCCESSOR_DESTINATION if candidate_only else _DESTINATION
+        )
+        if candidate_only or ordinary_source:
             # The original live 0.15.0 source must exist and remain owned by
             # the approved root identity. No symlink or writable directory is
             # accepted, and the live directory is not opened for writing.
@@ -509,6 +563,8 @@ def _publish_isolated_generation(
             parent, combined, uid=uid, gid=gid,
             successor_source=successor_source,
         )
+        # A generation4 source is published under the SHA-named immutable
+        # directory only. No existing generation, symlink or stage is reused.
         # The parent is root-controlled, unprivileged users cannot race
         # publication. The existing canary directory is NEVER the target.
         try:
@@ -594,9 +650,42 @@ def stage_approved_analytics_successor_candidate_generation() -> str:
         raise AnalyticsIsolatedSourceInstallError(_ERROR) from None
 
 
+def stage_approved_analytics_ordinary_source_generation() -> str:
+    """Root-only install of a SHA-pinned ordinary source beside all old roots.
+
+    The exact approval and TAR must be root-owned 0600 at fixed protected
+    locations. A new root-approved commit installs into a new immutable path;
+    a duplicate or existing candidate is never overwritten. This function
+    does NOT switch services, sockets, routes, releases, sessions or replay.
+    """
+    try:
+        if (os.getuid(), os.geteuid(), os.getgid(), os.getegid()) != (0, 0, 0, 0):
+            raise PermissionError
+        approval = _ordinary_approval(_read_protected_file(
+            _ORDINARY_APPROVAL_PATH, limit=_MAX_APPROVAL, mode=0o600,
+        ))
+        archive = _read_protected_file(
+            _ORDINARY_ARCHIVE_PATH, limit=_MAX_ARCHIVE, mode=0o600,
+        )
+        if hashlib.sha256(archive).hexdigest() != approval["archive_sha256"]:
+            raise ValueError("untrusted ordinary archive")
+        return _publish_isolated_generation(
+            parent_root=_PARENT, original_root=_LEGACY,
+            archive=archive, manifest_sha=approval["manifest_sha256"],
+            reviewed_commit=approval["reviewed_commit"],
+            uid=0, gid=0, successor_source=True, ordinary_source=True,
+        )
+    except _CONTROL:
+        raise
+    except Exception:
+        raise AnalyticsIsolatedSourceInstallError(_ERROR) from None
+
+
 __all__ = (
     "AnalyticsIsolatedSourceInstallError",
     "install_approved_analytics_source_generation",
     "stage_approved_analytics_successor_candidate_generation",
+    "stage_approved_analytics_ordinary_source_generation",
+    "ordinary_analytics_source_root",
 )
 

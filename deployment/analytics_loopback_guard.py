@@ -4,7 +4,8 @@
 Purpose: Preserve the exact original, signed Analytics 0.15.0 DEV
          RootlessKit blue-only supervisor; add an inert future successor
          3141/3142 route transaction using the SAME local APIs and UID991.
-         Candidate 3142 preparation is durably journaled before routing.
+         Candidate 3142 preparation is durably journaled before routing,
+         including ordinary prepared records from signed slot retirement.
 Related: deployment/analytics_first_install.py,
          deployment/analytics_active_state_review.py,
          deployment/analytics_execution.py (signed next-release contract),
@@ -425,9 +426,17 @@ def _stage_reviewed_private_candidate_probe(
             # No prior journal means this is the FIRST successor only.
             if previous_slot != "blue" or previous_image != _IMAGE:
                 raise ValueError("first successor must preserve signed 0.15.0")
-        elif (
-            prior["phase"] not in ("switched", "restored")
-        ):
+        elif prior["phase"] == "prepared":
+            # Ordinary successor only: the existing UID991 journal has already
+            # durably prepared this specific generation AFTER signed dormant
+            # slot retirement. Never adopt a first-generation prepared record,
+            # or any record whose signed image/container/port identity differs.
+            if (
+                type(prior.get("generation")) is not int
+                or prior["generation"] < 2
+            ):
+                raise ValueError("unverified pre-staged ordinary generation")
+        elif prior["phase"] not in ("switched", "restored"):
             raise ValueError("unfinished prior release requires recovery")
         _rootless_info()
         previous_ip = _verified_slot(
@@ -455,13 +464,21 @@ def _stage_reviewed_private_candidate_probe(
             raise ValueError("ingress changed before durable prepare")
         # A real fsync-protected journal record MUST precede the POST. A
         # crash after preparing but before POST is recoverable as old 3141.
-        intent = journal.begin(
+        accepted = dict(
             request_sha256=request_sha256,
             previous_slot=previous_slot, previous_image=previous_image,
             previous_container_id=previous_id, previous_ip=previous_ip,
             next_slot=next_slot, next_image=next_image,
             next_container_id=next_id, next_ip=next_ip,
         )
+        if prior is not None and prior["phase"] == "prepared":
+            # This only carries forward the immutable previously fsynced
+            # ordinary journal; it is NEVER a new unsigned release grant.
+            if any(prior.get(key) != value for key, value in accepted.items()):
+                raise ValueError("ordinary prepared signed route mismatch")
+            intent = prior
+        else:
+            intent = journal.begin(**accepted)
         try:
             created = _api(
                 _ROOTLESS, "POST", "/v1/ports", candidate, status=201,

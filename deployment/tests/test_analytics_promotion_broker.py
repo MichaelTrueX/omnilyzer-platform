@@ -15,7 +15,8 @@ Related: deployment/analytics_promotion_broker.py,
 Sections: exact original private one-pass positive pipe; mandatory
           signer, OIDC, registry and replay failures, token/FD redaction,
           canary isolation; read-only root broker first-successor review
-          using signed old/new releases and measured active image.
+          using signed old/new releases and measured active image;
+          ordinary read-only independently signed predecessor/next pair.
 
 No actual Docker, network, real keys, secrets or installed executor.
 """
@@ -42,6 +43,7 @@ from deployment.private_registry_fd import (
 from deployment.registry_oidc_credentials import VerifiedRegistryCredentials
 from deployment.tests.test_analytics_execution import (
     EXPECTED, PRODUCT_SHA, RUNTIME_SHA, fixture,
+    AnalyticsSuccessorRequestTests,
 )
 from deployment.tests.test_analytics_review_composition import handler
 from deployment.tests.test_broker import Replay, Verifier
@@ -376,6 +378,314 @@ class AnalyticsSignedBrokerTests(unittest.TestCase):
         self.mocked.assert_not_called()
         self.assertEqual(replay.calls, [])
         self.assertEqual(transport.requests, [])
+
+
+# Section: ordinary signed predecessor and next-release relationship.
+class OrdinarySignedPredecessorTests(unittest.TestCase):
+    """Do not infer an active OCI image from a caller rollback hint."""
+
+    @staticmethod
+    def pair():
+        """Construct independent synthetic signed receipt shapes for both versions."""
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        from release.analytics_owner_source_selection import expected_owner_approval_bytes
+        _request, context = AnalyticsSuccessorRequestTests().candidate()
+        next_release = (
+            context["signed_release"], context["selected"],
+            context["owner_approval"],
+        )
+        new, selection, owner = next_release
+        old_digest = "sha256:" + "a" * 64
+        previous_selection = replace(selection, release_version="0.15.0")
+        previous_owner = replace(
+            owner, release_version="0.15.0",
+            approval_sha256=hashlib.sha256(
+                expected_owner_approval_bytes(previous_selection)
+            ).hexdigest(),
+        )
+        previous_signed = replace(
+            new, release_version="0.15.0",
+            image="oci-dev.omnilyzer.ai/omnilyzer/analytics@" + old_digest,
+            source=replace(new.source, oci_manifest_digest=old_digest),
+        )
+        return (previous_signed, previous_selection, previous_owner), next_release
+
+    def test_previous_signed_digest_is_independent_of_request_hint(self):
+        """Require two complete owner-approved signer and release shapes."""
+        from deployment.analytics_promotion_broker import _ordinary_signed_previous_digest
+        previous, next_release = self.pair()
+        self.assertEqual(
+            _ordinary_signed_previous_digest(previous, next_release),
+            previous[0].source.oci_manifest_digest,
+        )
+
+    def test_broker_reuses_real_oidc_and_both_independent_signed_reviews(self):
+        """Ordinary broker review never consumes replay or contacts executor."""
+        from deployment.analytics_signed_release_consumer import PINNED_DIGEST
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        request, context = AnalyticsSuccessorRequestTests().candidate()
+        request["owner_source_proof"] = "synthetic-public-proof"
+        raw = canonical_bytes(request)
+        previous, next_release = self.pair()
+        previous = (
+            replace(previous[0], image=PINNED_IMAGE,
+                source=replace(previous[0].source, oci_manifest_digest=PINNED_DIGEST)),
+            previous[1], previous[2],
+        )
+        broker, replay, transport = make_broker(owner_files=(
+            Path("/root/prior-approved.json"), Path("/root/prior-approved.json.sig"),
+        ))
+        args = dict(compact_token=TOKEN, zot_token=ZOT_TOKEN,
+                    forgejo_token=FORGEJO_TOKEN,
+                    canonical_request=raw, received_at=NOW)
+        with (
+            patch("deployment.analytics_registry_review_composition.load_and_verify_owner_signed_source",
+                  return_value=previous[1:]) as prior_owner,
+            patch("deployment.analytics_registry_review_composition.verify_owner_signed_source_proof",
+                  return_value=next_release[1:]) as next_owner,
+            patch("deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release",
+                  side_effect=[previous[0], next_release[0]]) as reviews,
+        ):
+            accepted = broker.review_ordinary_successor_without_forwarding(**args)
+        self.assertEqual(accepted.canonical_bytes(), raw)
+        self.assertEqual(accepted.rollback_reference["previous_digest"], PINNED_DIGEST)
+        self.assertEqual(reviews.call_count, 2)
+        self.assertEqual(prior_owner.call_count, 1)
+        next_owner.assert_called_once_with("synthetic-public-proof")
+        self.assertEqual(replay.calls, [])
+        self.assertEqual(transport.requests, [])
+
+    def test_ordinary_broker_rejects_untrusted_previous_hint_without_dispatch(self):
+        """A real previous signature, never the caller, selects old digest."""
+        from deployment.analytics_signed_release_consumer import PINNED_DIGEST
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+        data, _ = AnalyticsSuccessorRequestTests().candidate()
+        data["owner_source_proof"] = "synthetic-public-proof"
+        previous, next_release = self.pair()
+        previous = (
+            replace(previous[0], image=PINNED_IMAGE,
+                source=replace(previous[0].source, oci_manifest_digest=PINNED_DIGEST)),
+            previous[1], previous[2],
+        )
+        broker, replay, transport = make_broker(owner_files=(
+            Path("/root/prior-approved.json"), Path("/root/prior-approved.json.sig"),
+        ))
+        corrupted = dict(data)
+        corrupted["rollback_reference"] = {
+            **data["rollback_reference"], "previous_digest": "sha256:" + "f" * 64,
+        }
+        malformed = dict(data)
+        malformed["owner_source_proof"] = ""
+        for case, signed_calls in ((corrupted, 2), (malformed, 0)):
+            with self.subTest(case=case["owner_source_proof"]), patch(
+                "deployment.analytics_registry_review_composition.load_and_verify_owner_signed_source",
+                return_value=previous[1:],
+            ), patch(
+                "deployment.analytics_registry_review_composition.verify_owner_signed_source_proof",
+                return_value=next_release[1:],
+            ), patch(
+                "deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release",
+                side_effect=[previous[0], next_release[0]],
+            ) as reviews, self.assertRaises((BrokerRejectedError, BrokerUnavailableError)):
+                broker.review_ordinary_successor_without_forwarding(
+                    compact_token=TOKEN, zot_token=ZOT_TOKEN,
+                    forgejo_token=FORGEJO_TOKEN,
+                    canonical_request=canonical_bytes(case), received_at=NOW,
+                )
+            self.assertEqual(reviews.call_count, signed_calls)
+        self.assertEqual(replay.calls, [])
+        self.assertEqual(transport.requests, [])
+
+    def test_ordinary_early_denials_have_exact_static_phases_without_replay(self):
+        """Identify only the actual early boundary; no token or request is logged."""
+        from deployment.jwks import OIDCVerificationError, OIDCVerificationUnavailable
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+
+        request, _context = AnalyticsSuccessorRequestTests().candidate()
+        request["owner_source_proof"] = "synthetic-public-proof"
+        valid = canonical_bytes(request)
+        bad_shape = {**request, "owner_source_proof": ""}
+        cases = (
+            ("invalid_request", canonical_bytes(bad_shape), Verifier(),
+             BrokerRejectedError, "broker_request_shape", "rejected"),
+            ("invalid_oidc", valid,
+             Verifier(error=OIDCVerificationError("private synthetic details")),
+             BrokerRejectedError, "broker_verify_oidc", "rejected"),
+            ("oidc_unavailable", valid,
+             Verifier(error=OIDCVerificationUnavailable("private synthetic details")),
+             BrokerUnavailableError, "broker_verify_oidc", "unavailable"),
+        )
+        for name, raw, verifier, failure, phase, outcome in cases:
+            with self.subTest(name=name):
+                broker, replay, transport = make_broker(verifier=verifier)
+                with patch(
+                    "deployment.analytics_promotion_broker._emit_analytics_release_boundary"
+                ) as marker:
+                    with self.assertRaises(failure):
+                        broker.review_ordinary_successor_without_forwarding(
+                            compact_token=TOKEN, zot_token=ZOT_TOKEN,
+                            forgejo_token=FORGEJO_TOKEN,
+                            canonical_request=raw, received_at=NOW,
+                        )
+                marker.assert_called_once_with(phase, outcome)
+                self.assertEqual(replay.calls, [])
+                self.assertEqual(transport.requests, [])
+
+    def test_ordinary_oidc_closed_reason_classification_and_no_replay(self):
+        """Distinguish known verifier failures without leaking their messages."""
+        from deployment.identity import OIDCAuthorizationError
+        from deployment.jwks import OIDCVerificationError
+        from deployment.tests.test_analytics_execution import AnalyticsSuccessorRequestTests
+
+        request, _ = AnalyticsSuccessorRequestTests().candidate()
+        request["owner_source_proof"] = "synthetic-public-proof"
+        raw = canonical_bytes(request)
+        cases = (
+            ("structure", OIDCVerificationError("OIDC token structure is invalid"),
+             "broker_oidc_structure"),
+            ("header", OIDCVerificationError("OIDC token header is invalid"),
+             "broker_oidc_header"),
+            ("kid", OIDCVerificationError("OIDC signing key is not accepted"),
+             "broker_oidc_signing_key"),
+            ("signature", OIDCVerificationError("OIDC token verification failed"),
+             "broker_oidc_signature"),
+            ("integrity", OIDCVerificationError("OIDC verified claims are inconsistent"),
+             "broker_oidc_claims"),
+            ("policy", OIDCVerificationError("OIDC identity is not authorized"),
+             "broker_oidc_identity"),
+            ("reauthorize", OIDCAuthorizationError("private synthetic details"),
+             "broker_oidc_identity"),
+            ("unknown", OIDCVerificationError("sensitive synthetic value"),
+             "broker_verify_oidc"),
+        )
+        for name, reason, expected_phase in cases:
+            with self.subTest(name=name):
+                broker, replay, transport = make_broker(
+                    verifier=Verifier(error=reason),
+                )
+                with patch(
+                    "deployment.analytics_promotion_broker._emit_analytics_release_boundary"
+                ) as marker, self.assertRaises(BrokerRejectedError):
+                    broker.review_ordinary_successor_without_forwarding(
+                        compact_token=TOKEN, zot_token=ZOT_TOKEN,
+                        forgejo_token=FORGEJO_TOKEN,
+                        canonical_request=raw, received_at=NOW,
+                    )
+                marker.assert_called_once_with(expected_phase, "rejected")
+                self.assertEqual(replay.calls, [])
+                self.assertEqual(transport.requests, [])
+
+    def test_oidc_phase_markers_are_exact_allowlisted_public_constants(self):
+        """The original redacted emitter writes no untrusted exception contents."""
+        from deployment.analytics_registry_review_composition import (
+            _emit_analytics_release_boundary,
+        )
+
+        for phase in (
+            "broker_oidc_structure", "broker_oidc_header",
+            "broker_oidc_signing_key", "broker_oidc_signature",
+            "broker_oidc_claims", "broker_oidc_identity",
+        ):
+            with self.subTest(phase=phase), patch(
+                "deployment.analytics_registry_review_composition.os.write"
+            ) as written:
+                _emit_analytics_release_boundary(phase, "rejected")
+                written.assert_called_once_with(
+                    2,
+                    ("TASK014_ANALYTICS_BROKER_BOUNDARY phase=" + phase
+                     + " outcome=rejected\n").encode("ascii"),
+                )
+        with patch(
+            "deployment.analytics_registry_review_composition.os.write"
+        ) as written:
+            _emit_analytics_release_boundary("sensitive synthetic value", "rejected")
+            written.assert_not_called()
+
+    def test_ordinary_signed_broker_reuses_sealed_fd_replay_and_receipt(self):
+        """Two signed releases, three JWTs, one replay before exact Unix send."""
+        from deployment.analytics_signed_release_consumer import PINNED_DIGEST
+        data, _context = AnalyticsSuccessorRequestTests().candidate()
+        data["owner_source_proof"] = "synthetic-public-proof"
+        raw = canonical_bytes(data)
+        previous, future = self.pair()
+        previous = (
+            replace(previous[0], image=PINNED_IMAGE,
+                source=replace(previous[0].source, oci_manifest_digest=PINNED_DIGEST)),
+            previous[1], previous[2],
+        )
+        transport = SyntheticPositiveSuccessorTransport()
+        broker, replay, _ = make_broker(
+            transport=transport, owner_files=(
+                Path("/root/prior-approved.json"),
+                Path("/root/prior-approved.json.sig"),
+            ),
+        )
+        before = set(os.listdir("/proc/self/fd"))
+        with patch(
+            "deployment.analytics_promotion_broker.time.time", return_value=NOW,
+        ), patch(
+            "deployment.analytics_registry_review_composition.load_and_verify_owner_signed_source",
+            return_value=previous[1:],
+        ), patch(
+            "deployment.analytics_registry_review_composition.verify_owner_signed_source_proof",
+            return_value=future[1:],
+        ), patch(
+            "deployment.analytics_registry_review_composition.acquire_and_review_owner_approved_analytics_release",
+            side_effect=[previous[0], future[0]],
+        ) as signatures:
+            receipt = broker.authorize_and_forward_ordinary_successor(
+                compact_token=TOKEN, zot_token=ZOT_TOKEN,
+                forgejo_token=FORGEJO_TOKEN,
+                canonical_request=raw, received_at=NOW,
+            )
+        from deployment.executor import parse_canonical_response
+        self.assertEqual(
+            parse_canonical_response(receipt).executor_request_sha256,
+            hashlib.sha256(raw).hexdigest(),
+        )
+        self.assertEqual(signatures.call_count, 2)
+        self.assertEqual(len(replay.calls), 1)
+        self.assertEqual(transport.checked, [(raw, future[0].image)])
+        self.assertEqual(before, set(os.listdir("/proc/self/fd")))
+        self.assertNotIn(ZOT_TOKEN.encode(), raw)
+
+    def test_ordinary_signed_broker_no_sender_never_consumes_replay(self):
+        """Without an installed exact receiver the ordinary method is HOLD."""
+        data, _ = AnalyticsSuccessorRequestTests().candidate()
+        data["owner_source_proof"] = "synthetic-public-proof"
+        raw = canonical_bytes(data)
+        broker, replay, transport = make_broker()
+        with self.assertRaises(BrokerUnavailableError):
+            broker.authorize_and_forward_ordinary_successor(
+                compact_token=TOKEN, zot_token=ZOT_TOKEN,
+                forgejo_token=FORGEJO_TOKEN,
+                canonical_request=raw, received_at=NOW,
+            )
+        self.assertEqual(replay.calls, [])
+        self.assertEqual(transport.requests, [])
+
+    def test_tampered_previous_or_downgrade_fails_closed(self):
+        """Malformed, forged, duplicate and downgraded releases are denied."""
+        from deployment.analytics_promotion_broker import _ordinary_signed_previous_digest
+        previous, next_release = self.pair()
+        bad = (
+            None,
+            previous[:2],
+            (replace(previous[0], image=next_release[0].image), *previous[1:]),
+            (previous[0], previous[1], replace(previous[2], owner_signature_verified=False)),
+            (previous[0], previous[1], replace(previous[2], approval_sha256="0" * 64)),
+            (replace(previous[0], deployment_authorized=True), *previous[1:]),
+            (replace(previous[0], release_version=next_release[0].release_version),
+             replace(previous[1], release_version=next_release[1].release_version),
+             replace(previous[2], release_version=next_release[2].release_version,
+                     approval_sha256=next_release[2].approval_sha256)),
+        )
+        for invalid in bad:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                _ordinary_signed_previous_digest(invalid, next_release)
+        with self.assertRaises(ValueError):
+            _ordinary_signed_previous_digest(next_release, previous)
+
 
 
 # Section: a full original OIDC/owner/signed-release-reviewed successor can

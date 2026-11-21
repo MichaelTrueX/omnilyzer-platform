@@ -113,6 +113,112 @@ def staged(*, active_slot: str = "blue", candidate_digest: str | None = None) ->
     return raw
 
 
+# Section 2b: strict read-only identity of a previously retained rollback
+# container. The old image may be removed only by a separately authorized
+# durable retirement coordinator, never by this inspector.
+class DormantRollbackContainerReviewTests(unittest.TestCase):
+    """Refuse retiring the serving writer, wrong ID, routed or running slot."""
+
+    def fixture(self):
+        """Create a signed-active green with dormant original blue rollback."""
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        raw = observed(active_slot="green")
+        active = _active_state(**raw)
+        old = deepcopy(raw["blue"])
+        old["State"] = {"Running": False}
+        old["Config"]["Image"] = PINNED_IMAGE
+        return active, old
+
+    def review(self, *, old=None, active=None, image=None, identifier=None,
+               allow_running_standby=False, image_verification_error=False):
+        """Run only fixed read-only Unix GETs under a synthetic UID991."""
+        from deployment.analytics_active_state_review import inspect_dormant_analytics_candidate
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        baseline, old_original = self.fixture()
+        candidate = old_original if old is None else old
+        live = baseline if active is None else active
+        with patch("deployment.analytics_active_state_review.os.geteuid", return_value=991), patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            return_value=baseline,
+        ) as inspector, patch(
+            "deployment.analytics_active_state_review._unix_get",
+            return_value=candidate,
+        ) as unix, patch(
+            "deployment.analytics_active_state_review._check_local_image",
+            side_effect=ValueError("fake repo digest") if image_verification_error else None,
+        ) as verify_image:
+            result = inspect_dormant_analytics_candidate(
+                active=live, expected_slot="blue",
+                expected_image=PINNED_IMAGE if image is None else image,
+                expected_container_id=old_original["Id"] if identifier is None else identifier,
+                allow_running_standby=allow_running_standby,
+            )
+            self.assertIsNone(result)
+            self.assertEqual(inspector.call_count, 3 if candidate["State"]["Running"] is True else 2)
+            self.assertEqual(verify_image.call_count, int(candidate["State"]["Running"] is True))
+            unix.assert_called_once_with(
+                "/run/user/991/docker.sock",
+                "/containers/omnilyzer-analytics-dev-analytics-blue-1/json",
+            )
+
+    def test_stopped_unrouted_original_blue_is_only_observed_not_removed(self):
+        """One fixed GET and zero Docker stop/remove or journal writes."""
+        self.review()
+
+    def test_signed_running_standby_is_admitted_only_in_explicit_review_mode(self):
+        """Observed RUNNING 0.15 is valid only if isolated and healthy."""
+        _, old = self.fixture()
+        old["State"] = {"Running": True, "Health": {"Status": "healthy"}}
+        self.review(old=old, allow_running_standby=True)
+        for bad in (
+            {**old, "State": {"Running": True, "Health": {"Status": "unhealthy"}}},
+            {**old, "State": {"Running": True}},
+            {**old, "HostConfig": {**old["HostConfig"], "Privileged": True}},
+            {**old, "Config": {**old["Config"], "Image": "other/repo:tag"}},
+        ):
+            from deployment.analytics_active_state_review import AnalyticsActiveStateDenied
+            with self.subTest(bad=bad), self.assertRaises(AnalyticsActiveStateDenied):
+                self.review(old=bad, allow_running_standby=True)
+        from deployment.analytics_active_state_review import AnalyticsActiveStateDenied
+        with self.assertRaises(AnalyticsActiveStateDenied):
+            self.review(old=old, allow_running_standby=True, image_verification_error=True)
+        with self.assertRaises(AnalyticsActiveStateDenied):
+            self.review(old=old, allow_running_standby=1)
+
+    def test_active_or_substituted_candidate_never_passes_retirement(self):
+        """No ID substitution, active container or wrong image can pass."""
+        from deployment.analytics_active_state_review import (
+            inspect_dormant_analytics_candidate, AnalyticsActiveStateDenied,
+        )
+        from deployment.analytics_signed_release_consumer import PINNED_IMAGE
+        baseline, old = self.fixture()
+        cases = [
+            {"old": {**old, "State": {"Running": True}}},
+            {"old": {**old, "Id": "d" * 64}},
+            {"old": {**old, "Name": "/other-product-blue"}},
+            {"old": {**old, "Config": {**old["Config"], "Image": PREFIX + DIGEST_GREEN}}},
+            {"old": {**old, "HostConfig": {**old["HostConfig"], "Privileged": True}}},
+            {"old": {**old, "NetworkSettings": {"Networks": {
+                NET: {"NetworkID": "e" * 64},
+            }}}},
+            {"old": {**old, "NetworkSettings": {"Networks": {
+                "public-network": {},
+            }}}},
+            {"old": {}},
+            {"identifier": "d" * 64},
+            {"image": "omnilyzer/analytics:latest"},
+            {"active": "untrusted"},
+        ]
+        for i, case in enumerate(cases):
+            with self.subTest(case=i), self.assertRaises(AnalyticsActiveStateDenied):
+                self.review(**case)
+        with patch("deployment.analytics_active_state_review.os.geteuid", return_value=1005), self.assertRaises(AnalyticsActiveStateDenied):
+            inspect_dormant_analytics_candidate(
+                active=baseline, expected_slot="blue", expected_image=PINNED_IMAGE,
+                expected_container_id=old["Id"],
+            )
+
+
 # Section 3: actual read-only parser tests with observed Router-Docker equality.
 class AnalyticsActiveStateReviewTests(unittest.TestCase):
     """Reject forged candidate state, stale routes, public exposure and drift."""
@@ -770,6 +876,97 @@ class AnalyticsLiveSuccessorRequestTests(unittest.TestCase):
             review_analytics_successor_with_live_active(
                 raw, signed_previous=previous,
                 require_staged_candidate="yes", **kwargs,
+            )
+
+    def test_ordinary_candidate_requires_real_empty_opposite_slot(self):
+        """A 3142-less state is insufficient when a stopped slot survives."""
+        from dataclasses import replace
+        from deployment.analytics_execution import (
+            review_analytics_successor_with_live_active, AnalyticsRequestError,
+        )
+        raw, context, previous = self._candidate()
+        kwargs = {
+            name: value for name, value in context.items()
+            if name not in ("observed_active_digest", "observed_active_slot")
+        }
+        live = _active_state(**observed())
+        with patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            side_effect=[live, live],
+        ) as inspect, patch(
+            "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+        ) as empty:
+            result = review_analytics_successor_with_live_active(
+                raw, signed_previous=previous,
+                require_empty_candidate=True, **kwargs,
+            )
+            self.assertEqual(result.ingress_reference["slot"], "green")
+            empty.assert_called_once_with("green")
+            self.assertEqual(inspect.call_count, 2)
+
+        # Residual named container, even stopped and not routed, blocks before
+        # request authorization. Never infer vacancy from an absent probe.
+        with patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            return_value=live,
+        ), patch(
+            "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+            side_effect=AnalyticsActiveStateDenied("slot occupied"),
+        ), self.assertRaises(AnalyticsRequestError):
+            review_analytics_successor_with_live_active(
+                raw, signed_previous=previous,
+                require_empty_candidate=True, **kwargs,
+            )
+
+        for changed in (replace(live, candidate_slot="blue"), None):
+            with patch(
+                "deployment.analytics_active_state_review.inspect_analytics_active_state",
+                side_effect=[live, changed],
+            ), patch(
+                "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+            ), self.assertRaises(AnalyticsRequestError):
+                review_analytics_successor_with_live_active(
+                    raw, signed_previous=previous,
+                    require_empty_candidate=True, **kwargs,
+                )
+
+        for extra in (
+            {"require_staged_candidate": True, "require_empty_candidate": True},
+            {"require_empty_candidate": 1},
+            {"require_empty_candidate": "yes"},
+        ):
+            with self.subTest(extra=extra), patch(
+                "deployment.analytics_active_state_review.inspect_analytics_active_state",
+                return_value=live,
+            ), patch(
+                "deployment.analytics_active_state_review.verify_empty_analytics_candidate_slot",
+            ) as empty, self.assertRaises(AnalyticsRequestError):
+                review_analytics_successor_with_live_active(
+                    raw, signed_previous=previous, **extra, **kwargs,
+                )
+            empty.assert_not_called()
+
+    def test_staged_candidate_must_stay_unchanged_on_second_live_read(self):
+        """Do not accept a signed candidate if its route changed mid-review."""
+        from dataclasses import replace
+        from deployment.analytics_execution import (
+            review_analytics_successor_with_live_active, AnalyticsRequestError,
+        )
+        raw, context, previous = self._candidate()
+        kwargs = {
+            name: value for name, value in context.items()
+            if name not in ("observed_active_digest", "observed_active_slot")
+        }
+        ready = _active_state(**staged(
+            candidate_digest=context["signed_release"].source.oci_manifest_digest,
+        ))
+        with patch(
+            "deployment.analytics_active_state_review.inspect_analytics_active_state",
+            side_effect=[ready, replace(ready, candidate_container_id="d" * 64)],
+        ), self.assertRaises(AnalyticsRequestError):
+            review_analytics_successor_with_live_active(
+                raw, signed_previous=previous,
+                require_staged_candidate=True, **kwargs,
             )
 
     def test_missing_or_counterfeit_live_state_never_authorizes_request(self):
