@@ -187,6 +187,28 @@ class BrokerWorkflowRebindTests(unittest.TestCase):
         restart.assert_called_once_with()
         self.assertEqual(route.call_count, 2)
 
+    def test_catchable_control_interrupt_after_swap_restores_before_reraise(self):
+        """A Ctrl-C/SystemExit/GeneratorExit cannot bypass same-run rollback."""
+        for control in (KeyboardInterrupt, SystemExit, GeneratorExit):
+            with self.subTest(control=control.__name__):
+                stack, state, stage, publish, restart, service, route = self._fake_host()
+                service.side_effect = [17, 18]
+
+                def exchange(_dir, name, _old, new, **_kwargs):
+                    state["target"] = new
+
+                publish.side_effect = exchange
+                restart.side_effect = [control(), None]
+                with stack, self.assertRaises(control):
+                    candidate._execute(True)
+                self.assertEqual(state["target"], b"old")
+                self.assertEqual(
+                    [call.args[1] for call in publish.call_args_list],
+                    [candidate.STAGED, candidate.RESTORE],
+                )
+                self.assertEqual(restart.call_count, 2)
+                self.assertEqual(route.call_count, 2)
+
     def test_failure_before_swap_never_restarts_service(self):
         """A failed backup write cannot touch the running broker or its route."""
         stack, state, stage, publish, restart, service, route = self._fake_host()
