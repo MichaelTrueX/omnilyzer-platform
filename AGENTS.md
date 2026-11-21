@@ -309,10 +309,34 @@ protected files: original `broker/dev.json`, Analytics `broker/analytics.json`,
 and Analytics `dev/analytics-executor.json`. Each must match the exact
 protected GitHub main/workflow SHA and the SHA loaded by the running broker.
 A source cutover or a pairwise Analytics-specific config check does NOT
-establish that the original broker verifier was rebound. After any scoped,
-independently reviewed and owner-approved rebind, verify that the original
-broker restarted, reloaded the exact protected SHA, and retained signed
-Analytics image/route/replay before considering one new signed dispatch.
+establish that the original broker verifier was rebound. This is an explicit
+**release-blocking three-config gate**, not merely a recommended inspection:
+for each distinct future Task014 dispatch the accountable release chat must
+capture one exact, root-attested, secret-free `PASS` matrix for the
+same GitHub main SHA covering (1) original C32H broker `dev.json`,
+(2) Analytics broker `analytics.json`, (3) Analytics executor
+`analytics-executor.json`, and (4) the running broker generation
+and restart/reload evidence. Each file must be validated under its original
+root-owned metadata and canonical schema. A missing, inaccessible, stale or
+unverified value is `HOLD` and **prohibits dispatch**, even with
+successful Task013, green CI, correct product-specific configuration,
+`/readyz` HTTP200, or owner GO. Recheck current protected GitHub
+HEAD immediately before submitting the *one* permitted dispatch: a new
+merge/commit invalidates the previously accepted gate. An owner approval for
+a release candidate does not override this technical prerequisite.
+
+**Prevent this at source-change time:** Before merging any PR into protected
+main, including docs-only PRs, identify whether its resulting GitHub workflow
+SHA will change. While a live broker is pinned to the old SHA, leave the PR
+unmerged or perform the separately approved stopped/restarted authority
+transition as a coordinated release operation **before any subsequent
+dispatch**. Never force-merge, silently repin the broker, weaken signature
+checks, or issue repeated deployment attempts to test an unknown pin.
+After any scoped, independently reviewed and owner-approved rebind,
+verify the original broker restarted with a new PID and the fixed canonical
+SHA, preserve the signed Analytics image, route, replay and recovery custody,
+and then record a fresh full four-part gate before considering a new signed
+dispatch.
 The verified 21 November 2026 incident #44876028251 demonstrated why this
 is mandatory: original C32H broker still pinned prior `c6d6b067...`,
 while Analytics broker/executor and GitHub used `630db1ae...`, producing
