@@ -266,7 +266,7 @@ class BrokerWorkflowRebindTests(unittest.TestCase):
         """An old PID/start time must fail the actual loaded-authority gate."""
         from contextlib import ExitStack
         with ExitStack() as stack:
-            stack.enter_context(patch.object(candidate, "_service_property", return_value="100000"))
+            stack.enter_context(patch.object(candidate, "_service_property", return_value="50000000"))
             stack.enter_context(patch.object(candidate, "_service_state", return_value=17))
             stack.enter_context(patch("time.monotonic_ns", return_value=100_000_000_000))
             stack.enter_context(patch("time.time_ns", return_value=1_700_000_000_000_000_000))
