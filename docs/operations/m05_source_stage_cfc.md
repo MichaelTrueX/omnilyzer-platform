@@ -9,7 +9,7 @@ Status: DRAFT REVIEW ONLY / ROOT NOT EXECUTED / NO LIVE DEV CHANGE / NO PROD.
 - Destination new root SHA-named directory and the exclusive staging directory are ABSENT.
 - New root-source-stage-reviewed.py reuses the original, protected, root-only installer at /opt/omnilyzer/deployment/.m05-ordinary-reviewed-source-f4a69fc9a3afa361255365ed6d19419bcb58c1c8 and original audited stage+atomic rename functions. The 76-file runtime excludes the source-installer module, so it must not be imported from the runtime source.
 - New operator installation destination: /usr/local/libexec/omnilyzer-m05-ordinary-source-stage-cfc.py, root:root mode0500 and one link. No existing file is overwritten.
-- **Current proposed root operator source SHA256 3b788086f9bf56984d549ea555dd1bd739e831bcb2857ba46c0422a367f8d077.** The earlier operator 01f2e7aee65a40dcf95e314b92d8548bf8e60d553e734cb7f0dddc365c7e0c0e is superseded and MUST NOT be installed for this reviewed recovery transaction.
+- **Current proposed root operator source SHA256 f39c07b68aeeec662b879490f0cd80e7887469eff46c7dfbe7d126ac2c3f011f.** The earlier operator 01f2e7aee65a40dcf95e314b92d8548bf8e60d553e734cb7f0dddc365c7e0c0e is superseded and MUST NOT be installed for this reviewed recovery transaction.
 - Exact canonical 76-file manifest SHA256 f931fcd93d0a36245a3b7c66482040e0b27483c4254764cd95299a9d6be13f32 (user 1005:1005 mode0400, one link).
 - Reviewed replacements:
   - deployment/analytics_executor.py SHA256 34de557ca2d5e63adb6cc5c18c827dd5f266040e699525670d21c9667b84f5ff
@@ -64,3 +64,17 @@ The amended **existing** root-only operator verifies all **61 statically identif
 **No native root acceptance yet:** The root-only source package is not readable through UID1005's `no_new_privs` connection. A real root `--check` MUST establish that every installed import source actually matches these pinned reviewed bytes, with the new operator identity and mode, before a single source stage may be authorized. A SHA mismatch is a HARD HOLD and must not be papered over using a hash obtained from the live host. The tested files are staged privately for review only. A separate independent M04 decision and owner-native root cutover/rollback acceptance remain mandatory.
 
 GitHub review location: [PR318](https://github.com/MichaelTrueX/omnilyzer-platform/pull/318), source path `deployment/operators/m05_source_stage_cfc.py`. Do not install the earlier PR317-only version after this amendment.
+
+## Native-root findings and exact original installer mode - 21 Nov 2026
+
+Owner executed the SHA-pinned native-root read-only source preflight and then inspected the four mismatching historical protected files. All four are ordinary root:root single-link **0400** source files. The original `deployment/analytics_isolated_source_install.py` hash is `cc7dfd7fb022a01772bb2f18fd1705f6e4f15e706903e4b47c8833b7d7f9ac5b`, which **exactly matches independently reviewed Git source**. The prior stage operator erroneously demanded 0500 for that **data** file. The repaired stage operator now demands exactly 0400 for the importer; the privileged executable operator retains 0500. Focused 7/7 source-only importer tests PASS. This correction is a tighter file permission check, not a security relaxation.
+
+The following three root-protected files in the historical SCRATCH Python package are **not yet source-qualified** against the independently reviewed 330f runtime manifest:
+
+- `deployment/analytics_active_state_review.py`: observed SHA256 `07850982dfbce02fcb1499445aa42ba27d127c38b4306a82fd42265e376b389c`.
+- `deployment/analytics_executor.py`: observed SHA256 `ff55ac11e07209e3a3bd44ff0d69ac32bb0e6c73b1f895ac2b4f62c8975930a1`.
+- `deployment/analytics_first_install.py`: observed SHA256 `985cf6f82b9ae23af7bc4f3b0fb2d63bdf97e2f87702b127f8180a1ac3be3ee6`.
+
+None of those three SHA256 values matched an exact file revision in the locally reachable Git history or the currently available source-only delivery manifests. This does NOT prove compromise. It proves **provenance is currently insufficient to execute the historical private SCRATCH import tree with root privileges**. These host-observed hashes must never be adopted as expected pins without independent source provenance. A subsequent root preflight will remain HOLD unless the import dependency source is redesigned or the original exact approved source files can be established independently.
+
+**Delivery boundary:** No native-root source stage, cutover, service restart, Task014 replay mutation, failed-run retry or PROD change is permitted. Reuse the existing immutable source-stage and reviewed root module infrastructure, but bind the actual root-imported dependency bytes to a verified provenance source instead of forcing SCRATCH files to agree with a different source generation. Independent M04 approval remains required before installation.
