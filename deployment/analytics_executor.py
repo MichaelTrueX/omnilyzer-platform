@@ -674,6 +674,7 @@ def _review_executor_ordinary_signed_release(
                 active=live, expected_slot=live.candidate_slot,
                 expected_image=PINNED_IMAGE,
                 expected_container_id=original_route["previous_container_id"],
+                allow_running_standby=True,
             )
             if retirement_journal.read() != original_route:
                 raise ValueError("historical signed rollback journal changed")
