@@ -114,6 +114,43 @@ class BrokerWorkflowRebindTests(unittest.TestCase):
         read.assert_not_called()
 
 
+    def test_root_operator_rejects_writable_source_or_self_ancestor(self):
+        """A mutable parent must fail before the first imported source read."""
+        import stat
+        from types import SimpleNamespace
+
+        original_lstat = Path.lstat
+        for bad in (Path("/usr/local"), Path("/usr/local/libexec"),
+                    Path("/opt"), Path("/opt/omnilyzer"),
+                    Path("/opt/omnilyzer/deployment")):
+            with self.subTest(directory=str(bad)):
+                def unsafe_lstat(path, *args, **kwargs):
+                    info = original_lstat(path, *args, **kwargs)
+                    if path == bad:
+                        return SimpleNamespace(
+                            st_mode=info.st_mode | stat.S_IWOTH,
+                            st_uid=info.st_uid,
+                        )
+                    return info
+
+                with (
+                    patch.object(candidate.os, "getuid", return_value=0),
+                    patch.object(candidate.os, "geteuid", return_value=0),
+                    patch.object(candidate.os, "getgid", return_value=0),
+                    patch.object(candidate.os, "getegid", return_value=0),
+                    patch.object(candidate.socket, "gethostname",
+                                 return_value="omnilyzerdev"),
+                    patch.object(candidate.sys, "argv", [str(candidate.SELF),
+                                                        "--preflight"]),
+                    patch.object(Path, "lstat", unsafe_lstat),
+                    patch.object(candidate, "_trusted_regular",
+                                 return_value=b"") as read,
+                    self.assertRaises(candidate.RebindDenied),
+                ):
+                    candidate._trust_root()
+                self.assertEqual(read.call_count, 1)
+                self.assertEqual(read.call_args.args[0], candidate.SELF)
+
     def _fake_host(self, *, initial=b"old", new=b"new"):
         """Patch only root I/O boundaries; no privileged fixture is touched."""
         from contextlib import ExitStack
