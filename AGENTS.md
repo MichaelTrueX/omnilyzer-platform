@@ -299,6 +299,32 @@ as a message courier. Detailed runnable checklist and historical evidence:
 [Task014 pre-release checklist](docs/operations/task014-pre-release-checklist.md)
 and canonical [Issue #281](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281).
 
+**Mandatory signed-OIDC regression gate for EVERY Task014 release:** Compare the
+exact installed `deployment/oidc_verifier.py`, `deployment/identity.py` and
+`deployment/jwks.py` against the previous accepted runtime and the current
+protected workflow authority. Reuse the existing real-RS256, synthetic-JWT
+tests including a valid canonical GitHub JOSE `x5t` header for **all three
+audiences** (deployment, Zot, Forgejo); retain malformed header/thumbprint,
+signature tamper, kid/JWKS selection, issuer/audience, workflow/ref/environment,
+time and replay negative tests. When a relevant boundary changes, additionally
+run a source-bound broker positive test with a cryptographically verified token,
+not merely decoded claims. **`task014_diag oidc_codes=ok` is never an OIDC
+verifier PASS**, and a public JWKS fetch is never evidence that a specific
+historical JWT was accepted. Record authenticated live-broker OIDC admission as
+UNKNOWN unless actually observed; use the existing authorized non-promoting
+probe where its *documented scope* fits, never claim its Zot-only success proves
+broker deployment authority. Before any new signed dispatch after a 403, require
+one exact-run UTC-scoped phase diagnosis, verified cause or explicit recorded
+UNKNOWN, unchanged replay/route custody, focused independent security review
+where changed, and a reasoned single owner authorization. No blind repeated
+releases to improve logs. The historical October 2026 `x5t` incompatibility
+was reproducibly fixed by [PR #202](https://github.com/MichaelTrueX/omnilyzer-platform/pull/202)
+and the next real run changed from HTTP 403 to 503, **but the original JWT was
+not retained and the October 403 cause was never conclusively proven**.
+The 21 November 2026 HTTP 403 reached `broker_verify_oidc` despite the
+installed `x5t` fix; its specific JWT rejection is still UNKNOWN. Never
+relabel it as the old `x5t` defect without a matching verified reproduction.
+
 ## Before editing and context discipline
 
 - Understand the affected execution flow. Search for the owning implementation
