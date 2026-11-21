@@ -338,7 +338,7 @@ failed HTTP403 at `broker_oidc_identity`. Owner-root evidence proved the
 original C32H broker pinned `c6d6b067...` while the Analytics broker,
 executor and protected GitHub main used `630db1ae...`.
 The one-field correction is still **uninstalled, draft PR315** at HEAD
-`50a3b3415209a9d5d1ca8fae6055c41cd6c885c4` (source SHA256
+`99043a8abb6f03d03f2222fd2c40a2ffa4126d09` (source SHA256
 `70becf364ba1cbc29cff9df4971d0db4ad7d9914ec24606f1948ca6ea7e73afc`).
 M04 technical review found and corrected an interrupted-rollback defect;
 62/62 focused source tests, including trusted ancestor checks, and separate fault injections PASS. This is NOT a
