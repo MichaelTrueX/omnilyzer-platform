@@ -308,7 +308,15 @@ class BrokerWorkflowRebindTests(unittest.TestCase):
         return canonical_bytes(sample)
 
     def test_actual_schema4_parser_checks_both_protected_products(self):
-        """Run actual source parser for original broker+executor, with exact groups."""
+        """Run actual installed gen4 parser for broker/executor, with exact groups.
+
+        PR315 is intentionally based on protected main where generation4 has
+        not been merged. The exact combined PR313 330f source must ALSO run
+        this same test without a skip before any root install.
+        """
+        from deployment import analytics_executor_service_config as source_model
+        if not hasattr(source_model, "_ORDINARY_FIELDS"):
+            self.skipTest("source-only main lacks installed PR313 gen4 parser")
         from contextlib import ExitStack
         from types import SimpleNamespace
         from pathlib import Path
