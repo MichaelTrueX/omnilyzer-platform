@@ -169,6 +169,22 @@ automated retry.
    relevant boundary, make **one** minimal static, secret-free existing-module
    instrumentation change with focused regression and the required independent
    review before any new live signed attempt.
+   **Nov 21 repeat failure guard:** Signed Task014 run `#44871118758` at
+   `05:30:01.944473 UTC` proved `broker_verify_oidc outcome=rejected`
+   *before* signed evidence review or replay. This **does not identify**
+   signature-vs-identity denial. A green `task014_diag oidc_codes=ok` checks
+   only unverified CI-side claims; healthy public GitHub JWKS discovery and
+   working lookup of *one* current key cannot authenticate a historical JWT.
+   Compare actual real same-run JWT **verification vs authorization**
+   boundaries, using only private allowlisted fixed phase codes and
+   security-reviewed code. The original verifier and policy Git blobs matched
+   those of the successful earlier first successor release; do not weaken
+   JWT algorithm/header, audience, issuer, key provenance, GitHub workflow
+   SHA, time or identity constraints, or guess that old x5t fix has regressed.
+   If existing telemetry groups multiple rejection causes into a single phase,
+   fix the missing **secret-free precise phase classifier once** with focused
+   tests and independent security review *before* a newly authorized request;
+   do not send multiple live releases merely to learn where a 403 happened.
 5. **Establish durable postfailure custody before another request.** Read the
    protected broker and executor replay status for the **specific run ID**,
    root-owned route phase, slot-retirement intent, exact signed active/candidate
