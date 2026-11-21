@@ -263,7 +263,7 @@ def reviewed_source() -> tuple[object, tuple[tuple[str, bytes], ...]]:
     # Owner-root SHA256 evidence binds this exact pre-existing private
     # importer. Checking only root ownership would execute changed code
     # with root privileges if a prior installer was silently replaced.
-    importer_bytes = trusted_root_file(INSTALLER, 0o500)
+    importer_bytes = trusted_root_file(INSTALLER, 0o400)
     if hashlib.sha256(importer_bytes).hexdigest() != INSTALLER_SHA:
         raise ValueError("root-only source installer SHA is not approved")
     # A previously imported deployment package could shadow the pinned
