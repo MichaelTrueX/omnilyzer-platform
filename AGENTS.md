@@ -277,6 +277,28 @@ distinguish ordinary releases from platform setup, and keep unsupported releases
 blocked. Reuse qualification for unchanged boundaries; include blob streaming
 and coherent operation/credential/response deadlines when those boundaries change.
 
+**Permanent Task014 failure-prevention rule (21 November 2026):** Before each
+signed promotion, inspect the actual installed broker/executor, verify the
+**specific producer -> signed CI request -> root-owned broker -> UID991 executor**
+version/identity contract against the current signed active slot and journal,
+and reuse accepted evidence only where identical. A CI preflight, unverified
+OIDC claim decode, signed Task013 artifact, or HTTP 200 on the old application
+is never proof that the *new* signed request will pass the live broker. Capture
+one immutable run ID, UTC request window, authenticated response, and the
+corresponding **time-filtered** allowlisted broker/UID991 phase markers; never
+mix earlier journal events into the current incident. Differentiate 403
+(rejected) from 503 (unavailable) and from a successful broker/executor receipt;
+none alone identifies root cause. On failure, stop automatic retries, preserve
+replay/JTI, signed OCI, route/retirement journal and recovery state; classify
+the owning boundary and the original cause **before** any next unique signed
+request. Never reset consumed replay, rerun Task013 or reapply prior repairs
+without a proved matching defect. A required human-only root read must be ONE
+bounded, read-only, secret-free command with exact host, responsible actor and
+output. The delivery chat owns the end-to-end repair and does not use the owner
+as a message courier. Detailed runnable checklist and historical evidence:
+[Task014 pre-release checklist](docs/operations/task014-pre-release-checklist.md)
+and canonical [Issue #281](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281).
+
 ## Before editing and context discipline
 
 - Understand the affected execution flow. Search for the owning implementation
