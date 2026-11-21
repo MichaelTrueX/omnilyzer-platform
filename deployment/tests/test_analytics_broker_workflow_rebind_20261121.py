@@ -77,7 +77,7 @@ class BrokerWorkflowRebindTests(unittest.TestCase):
         self.assertEqual(candidate.SERVICE, "omnilyzer-deployment-broker.service")
         self.assertEqual(candidate.TARGET, "dev.json")
         self.assertEqual(candidate.DIRECTORY, Path("/etc/omnilyzer/deployment/broker"))
-        self.assertEqual(len(candidate.SOURCE_SHA256), 7)
+        self.assertEqual(len(candidate.SOURCE_SHA256), 10)
         with patch.object(candidate, "_execute") as execute:
             with patch.object(candidate.sys, "argv", ["operator"]):
                 self.assertEqual(candidate.main(), 2)
