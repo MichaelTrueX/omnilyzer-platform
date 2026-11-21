@@ -202,6 +202,126 @@ def _missing_at(parent: int, name: str) -> None:
     raise RebindDenied(_ERROR)
 
 
+# Section 4: Release-blocking check of original plus two Analytics pins.
+def _verify_analytics_pair(*, broker_gid: int, executor_gid: int) -> None:
+    """Require exact matching current SHA in both separate protected products.
+
+    The original C32H broker's workflow pin is read separately. The Analytics
+    broker and executor use the same canonical generation-4 model, but have
+    DIFFERENT protected groups. Never trust only one of those files.
+    """
+    from deployment.analytics_executor_service_config import (
+        parse_analytics_executor_service_config,
+    )
+
+    if (
+        type(broker_gid) is not int or type(executor_gid) is not int
+        or broker_gid <= 0 or executor_gid <= 0
+        or broker_gid == executor_gid
+    ):
+        raise RebindDenied(_ERROR)
+    specifications = (
+        (DIRECTORY, "analytics.json", broker_gid),
+        (Path("/etc/omnilyzer/deployment/dev"), "analytics-executor.json", executor_gid),
+    )
+    previous_bytes = None
+    for folder, filename, gid in specifications:
+        metadata = folder.lstat()
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != gid
+            or stat.S_IMODE(metadata.st_mode) != 0o750
+        ):
+            raise RebindDenied(_ERROR)
+        fd = os.open(
+            folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        )
+        try:
+            payload, _ = _read_at(fd, filename, gid=gid)
+        finally:
+            os.close(fd)
+        parsed = parse_analytics_executor_service_config(payload)
+        if (
+            parsed.get("source_generation") != 4
+            or parsed.get("expected_workflow_sha") != NEW
+            or parsed.get("reviewed_installed_commit")
+                != "330f3255f0067b9ddbe30d50466830bd71a55a11"
+            or parsed.get("owner_authorized_ordinary_successor") is not True
+            or (previous_bytes is not None and previous_bytes != payload)
+        ):
+            raise RebindDenied(_ERROR)
+        previous_bytes = payload
+
+
+def _verify_broker_start_after_config(*, pid: int, config_mtime_ns: int) -> None:
+    """Require the running systemd broker process to postdate canonical config.
+
+    Original broker loads C32H dev.json once when it starts. If its process
+    predates the file, equal disk SHA values do NOT establish loaded authority.
+    Use the kernel monotonic timestamp and systemd's fixed loaded-process
+    timestamp. This is a read-only plausibility check, not a token proof.
+    """
+    import time
+
+    value = _service_property(SERVICE, "ExecMainStartTimestampMonotonic")
+    if not value.isdecimal() or int(value) <= 0:
+        raise RebindDenied(_ERROR)
+    # The boot's monotonic clock and wall time are sampled adjacent to avoid
+    # accepting a process started before this protected config was written.
+    monotonic_now_ns = time.monotonic_ns()
+    real_now_ns = time.time_ns()
+    config_monotonic_ns = monotonic_now_ns - (real_now_ns - config_mtime_ns)
+    if (
+        type(pid) is not int or pid <= 1
+        or type(config_mtime_ns) is not int or config_mtime_ns <= 0
+        or config_mtime_ns > real_now_ns
+        or int(value) * 1000 <= config_monotonic_ns
+        or _service_state() != pid
+    ):
+        raise RebindDenied(_ERROR)
+
+
+def _verify_release_preflight() -> None:
+    """Fail closed before a NEW authorized Task014 run, without host mutation.
+
+    This fixed operator serves only the frozen GitHub main revision NEW.
+    A future main commit requires an independently reviewed new authority
+    binding; it cannot be substituted through a CLI argument or environment.
+    """
+    from deployment.broker_service_config import (
+        parse_canonical_broker_service_configuration,
+    )
+
+    _trust_root()
+    parent = os.open(
+        DIRECTORY, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    )
+    try:
+        fcntl.flock(parent, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        raw, identity = _read_at(parent, TARGET)
+        canonical = parse_canonical_broker_service_configuration(raw)
+        if (
+            canonical.canonical_bytes() != raw
+            or canonical.expected_workflow_sha != NEW
+            or canonical.broker_gid != identity[4]
+        ):
+            raise RebindDenied(_ERROR)
+        _verify_analytics_pair(
+            broker_gid=canonical.broker_gid, executor_gid=canonical.executor_gid,
+        )
+        pid = _service_state()
+        _verify_broker_start_after_config(pid=pid, config_mtime_ns=identity[2])
+        _route_state()
+        if _service_state() != pid or _read_at(parent, TARGET, gid=identity[4])[0] != raw:
+            raise RebindDenied(_ERROR)
+    finally:
+        os.close(parent)
+    print("M05_TASK014_TRIPLE_SHA_AND_RUNNING_BROKER_PREFLIGHT_PASS")
+    print("M05_TASK014_RELEASE_PREFLIGHT_MAIN_630_ONLY")
+    print("M05_NO_DISPATCH_NO_PROD")
+
+
 # Section 4: Existing service and signed live-route checks, strictly read-only.
 def _service_property(service: str, property_name: str) -> str:
     """Read a fixed systemd property, never issue a user-provided command."""
@@ -348,6 +468,9 @@ def _execute(apply: bool) -> None:
         for name in (BACKUP, STAGED, RESTORE):
             _missing_at(parent, name)
         pid = _service_state()
+        # Before replacing the original broker, independently prove the
+        # two Analytics products are already pinned to exact NEW.
+        _verify_analytics_pair(broker_gid=gid, executor_gid=991)
         active, route = _route_state()
         if not apply:
             print("M05_ORIGINAL_BROKER_REBIND_PREFLIGHT_PASS")
@@ -392,6 +515,9 @@ def _execute(apply: bool) -> None:
                 except Exception:
                     print("M05_ORIGINAL_BROKER_REBIND_RECOVERY_UNCONFIRMED_HOLD")
             raise RebindDenied(_ERROR) from None
+        # End-to-end release admission will be checked separately by
+        # --release-preflight after the one-time install/apply, before any
+        # independent owner-authorized GitHub dispatch.
         print("M05_ORIGINAL_BROKER_WORKFLOW_SHA_REBIND_PASS")
         print("M05_ANALYTICS_SIGNED_0160_ROUTE_UNCHANGED_PASS")
         print("M05_NO_TASK014_DISPATCH_NO_PROD")
@@ -406,6 +532,8 @@ def main() -> int:
             _execute(False)
         elif sys.argv[1:] == ["--apply"]:
             _execute(True)
+        elif sys.argv[1:] == ["--release-preflight"]:
+            _verify_release_preflight()
         else:
             raise RebindDenied(_ERROR)
         return 0
