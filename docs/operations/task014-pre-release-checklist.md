@@ -144,6 +144,23 @@ automated retry.
 | Running broker | Exact reviewed source generation, loaded C32H authority; after a rebind, changed PID and healthy restart with unchanged signed active Analytics OCI and durable route | HOLD |
 | Authorization | Fresh explicit one-run owner GO only after all preceding controls PASS | NO DISPATCH |
 
+**Current exact implementation, still uninstalled:** Draft
+[PR #315](https://github.com/MichaelTrueX/omnilyzer-platform/pull/315)
+adds `--release-preflight` to its existing root-only one-time broker SHA
+rebind operator. The command executes no mutation and exits nonzero if
+the original C32H broker, Analytics broker and Analytics executor do not
+share the same frozen `630db1ae...` workflow SHA and exact generation4
+trust, if broker process timestamp predates the protected original
+configuration, or if the signed0.16.0 active OCI/route is not coherent.
+After M04 source/security approval and owner-authorized installation,
+execute `--preflight` and `--apply` only for the exact reviewed one-field
+repair, then execute `--release-preflight` **before requesting a separate
+fresh owner GO/unique Task014 run**. Reverify GitHub protected main SHA
+in the owner-side dispatcher immediately before submission. GitHub CI
+cannot automatically inspect root-owned DEV config; do not represent
+successful CI checks as this mandatory runtime preflight. No silent
+reuse of this 630-specific code for a future workflow revision.
+
 The M05 owner must **collect or reuse** one already accepted root-attested
 read-only matrix for the *same* installed generation, configuration bytes,
 running broker instance and GitHub SHA. Reuse is invalid if any of these changes.
