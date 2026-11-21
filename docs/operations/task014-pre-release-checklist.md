@@ -90,11 +90,23 @@ in one pass, rather than stopping at the first mismatch.
   exchange extends token expiry. Successful manifest access does not prove
   complete large-blob streaming; require relevant size/digest/stream evidence. Registry authentication and
   repository read permission are separate checks. Never print tokens.
-- [ ] **Installed authority:** Compare actual installed source/configuration and
-  loaded units to the approved baseline. Bind the dispatch workflow SHA to the
-  independently installed broker authority. A new main commit, including a
-  documentation-only merge, can change workflow_sha under the current contract.
-  Reconcile that before dispatch; do not silently rotate the authority.
+- [ ] **Installed authority - mandatory root-attested four-part gate:**
+  Record one secret-free, source-bound `PASS` matrix for **the same current protected
+  GitHub main SHA**: (1) original root-owned C32H
+  `/etc/omnilyzer/deployment/broker/dev.json`, (2) independent Analytics broker
+  `/etc/omnilyzer/deployment/broker/analytics.json`, (3) Analytics executor
+  `/etc/omnilyzer/deployment/dev/analytics-executor.json`, and (4) the running
+  original broker generation, loaded identity authority and restart/reload
+  evidence following a source or config change. Inspect each file using the
+  exact original schema, owner/group/mode and approved root read-only tool.
+  Check the GitHub main SHA **again immediately before dispatch**. Any mismatch,
+  unavailable protected read, unknown running generation, or later GitHub commit
+  is a hard `HOLD`, regardless of Task013 signature, owner GO or CI success.
+  A main commit, including a docs-only merge, changes the OIDC workflow SHA
+  under the existing authority contract; defer merging or perform a separately
+  reviewed root workflow-authority transition before another dispatch.
+  Never confuse the two Analytics-specific files with original C32H authority.
+  Do not silently rotate broker authority or repeat a real dispatch to diagnose it.
 - [ ] **Runtime prerequisites:** Confirm the rootless daemon, approved image
   platform, private networks, slot/port availability and broker/socket state.
   Confirm image size and measured transfer capacity fit the operation, cleanup,
@@ -120,6 +132,27 @@ This section is mandatory for the single accountable M05 release owner. It
 preserves existing Task013/014 security/approval/independent review, and does not
 authorize or create a second deployment workflow, an extra test platform or an
 automated retry.
+
+**Release admission record for each distinct run (required, fail closed):**
+
+| Evidence | Accept only | Otherwise |
+| --- | --- | --- |
+| GitHub workflow | Exact protected `main` commit SHA captured, then reconfirmed immediately before submission | HOLD |
+| Original broker C32H | Root-attested canonical `broker/dev.json` `expected_workflow_sha` equals that exact SHA | HOLD |
+| Analytics broker | Root-attested canonical `broker/analytics.json` `expected_workflow_sha` equals the same SHA | HOLD |
+| Analytics executor | Root-attested canonical `dev/analytics-executor.json` `expected_workflow_sha` equals the same SHA | HOLD |
+| Running broker | Exact reviewed source generation, loaded C32H authority; after a rebind, changed PID and healthy restart with unchanged signed active Analytics OCI and durable route | HOLD |
+| Authorization | Fresh explicit one-run owner GO only after all preceding controls PASS | NO DISPATCH |
+
+The M05 owner must **collect or reuse** one already accepted root-attested
+read-only matrix for the *same* installed generation, configuration bytes,
+running broker instance and GitHub SHA. Reuse is invalid if any of these changes.
+If a root read is blocked by UID1005 isolation, do not report a presumed PASS:
+use the existing reviewed, bounded, owner-attended root preflight **once**.
+Do not require the owner to manually compare multiple files or interpret logs;
+the script must return a closed PASS/HOLD matrix with no secret values. This is
+a mandatory release gate and is not a new framework, workflow, or approval chain.
+
 
 1. **Check the real request/admission contract, not just the producer.**
    Compare the exact protected GitHub workflow SHA, canonical successor schema,
