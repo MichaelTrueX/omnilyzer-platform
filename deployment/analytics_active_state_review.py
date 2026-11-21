@@ -485,8 +485,9 @@ def verify_empty_analytics_candidate_slot(slot: str) -> None:
 def inspect_dormant_analytics_candidate(
     *, active: AnalyticsActiveState, expected_slot: str,
     expected_image: str, expected_container_id: str,
+    allow_running_standby: bool = False,
 ) -> None:
-    """Confirm a stopped, unrouted exact old Analytics rollback container.
+    """Confirm an exact unrouted historical rollback container, stopped by default.
 
     Signed previous/current release identity and durable retirement intent
     MUST be independently authenticated by the UID991 coordinator. This
@@ -498,6 +499,7 @@ def inspect_dormant_analytics_candidate(
         if (
             os.geteuid() != 991
             or type(active) is not AnalyticsActiveState
+            or type(allow_running_standby) is not bool
             or active.read_only is not True
             or active.deployment_authorized is not False
             or type(expected_slot) is not str
@@ -527,7 +529,12 @@ def inspect_dormant_analytics_candidate(
         network = raw.get("NetworkSettings")
         if (
             type(state) is not dict
-            or state.get("Running") is not False
+            or (state.get("Running") is not False and not (
+                allow_running_standby is True
+                and state.get("Running") is True
+                and type(state.get("Health")) is dict
+                and state["Health"].get("Status") == "healthy"
+            ))
             or type(config) is not dict
             or config.get("Image") != expected_image
             or config.get("User") != "10001:10001"
@@ -555,6 +562,12 @@ def inspect_dormant_analytics_candidate(
             or inspect_analytics_active_state() != active
         ):
             raise ValueError("wrong dormant-container identity")
+        # A running historical standby must still refer to the original
+        # immutable local OCI RepoDigest, not only Docker Config.Image.
+        if state["Running"] is True:
+            _check_local_image(raw, expected_image)
+        if inspect_analytics_active_state() != active:
+            raise ValueError("historical standby changed during review")
         return None
     except (KeyboardInterrupt, SystemExit, GeneratorExit):
         raise
