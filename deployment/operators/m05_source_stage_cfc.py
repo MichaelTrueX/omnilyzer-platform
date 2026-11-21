@@ -41,8 +41,9 @@ REPLACEMENTS_SHA = {
         "d6163f72d113b9c64765c6390923aab93e1d41408883f99d595f56fbaad10374",
 }
 # Section: fixed import-time and deferred import closure of the protected root installer.
-# Every root-executable deployment/release module must be byte-identical
-# to the approved original 330f manifest or the pinned Git cfc source.
+# Only 330f root runtime files or the 16 separately Git-pinned private
+# installer files may be imported. Historical SCRATCH runtime copies are
+# intentionally bypassed, regardless of their unproven SHA256.
 EXTRA_IMPORT_SOURCE_SHA = {
     "deployment/analytics_isolated_source_install.py": "cc7dfd7fb022a01772bb2f18fd1705f6e4f15e706903e4b47c8833b7d7f9ac5b",
     "deployment/analytics_source_archive.py": "7685c41b67b0ae3d8ffc92b18ab6318b89a2c64dd4bae3639b237df6aa693d4a",
@@ -272,11 +273,11 @@ def reviewed_source() -> tuple[object, tuple[tuple[str, bytes], ...]]:
     if any(k in ("deployment", "release") or k.startswith(("deployment.", "release."))
            for k in sys.modules):
         raise ValueError("deployment Python modules already loaded")
-    # Verify the complete immutable Python import closure BEFORE executing
-    # any of its contents with root privileges. The first 76 source SHA pins
-    # come from the already checked reviewed legacy manifest. Only the 16
-    # historical installer-side imports absent from that runtime inventory
-    # require additional pinned hashes from the exact audited Git source.
+    # Verify a split-origin import closure BEFORE executing privileged code:
+    # 45 historical runtime modules come from the already SHA-qualified
+    # immutable ROOT (330f), NOT the unqualified historical SCRATCH copies.
+    # The 16 installer-only modules absent from ROOT are supplied by the
+    # SHA-pinned SCRATCH files and verified against the reviewed Git source.
     if (
         len(REQUIRED_IMPORT_SOURCE_PATHS) != 61
         or len(EXTRA_IMPORT_SOURCE_SHA) != 16
@@ -285,14 +286,35 @@ def reviewed_source() -> tuple[object, tuple[tuple[str, bytes], ...]]:
     ):
         raise ValueError("unreviewed root importer source closure")
     for relative in sorted(REQUIRED_IMPORT_SOURCE_PATHS):
-        expected = mapping.get(relative, EXTRA_IMPORT_SOURCE_SHA.get(relative))
-        if expected is None:
-            raise ValueError("unreviewed root importer dependency")
-        source_bytes = trusted_root_file(SCRATCH / relative, None)
+        if relative in mapping:
+            # The installed 330f runtime is byte-checked and root-owned.
+            origin, expected, mode = ROOT / relative, mapping[relative], 0o644
+        else:
+            origin = SCRATCH / relative
+            expected = EXTRA_IMPORT_SOURCE_SHA[relative]
+            mode = 0o400 if relative == "deployment/analytics_isolated_source_install.py" else None
+        source_bytes = trusted_root_file(origin, mode)
         if hashlib.sha256(source_bytes).hexdigest() != expected:
             raise ValueError("root importer dependency SHA is not approved")
-    sys.path.insert(0, str(SCRATCH))
+    # Import deployment itself from immutable ROOT. Extend its package search
+    # path only for the pinned installer-only modules not present in ROOT.
+    # The package objects below are verified before any private importer runs.
+    sys.path.insert(0, str(ROOT))
+    sys.path.insert(1, str(SCRATCH))
     sys.dont_write_bytecode = True
+    # Do not read any unqualified __pycache__ or legacy .pyc from either
+    # source tree. This impossible cache directory forces source loading.
+    sys.pycache_prefix = "/dev/null/omnilyzer-m05-no-bytecode-cache"
+    import deployment
+    if (not isinstance(getattr(deployment, "__file__", None), str)
+            or os.path.abspath(deployment.__file__) != str(ROOT / "deployment/__init__.py")):
+        raise ValueError("deployment package import origin changed")
+    deployment.__path__ = [str(ROOT / "deployment"), str(SCRATCH / "deployment")]
+    import release
+    if (not isinstance(getattr(release, "__file__", None), str)
+            or os.path.abspath(release.__file__) != str(SCRATCH / "release/__init__.py")):
+        raise ValueError("release package import origin changed")
+    release.__path__ = [str(ROOT / "release"), str(SCRATCH / "release")]
     from deployment import analytics_isolated_source_install as installer
     if (not isinstance(getattr(installer, "__file__", None), str)
             or os.path.abspath(installer.__file__) != str(INSTALLER)):
