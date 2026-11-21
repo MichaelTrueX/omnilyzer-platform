@@ -26,38 +26,53 @@ import sys
 # only after a root-only, immutable, real on-host installation. Never make
 # Python -I import executable deployment code from a user-writable checkout.
 _ROOT_INSTALL_BASE = Path("/opt/omnilyzer/deployment")
+_OPERATOR = Path("/usr/local/libexec/omnilyzer-m05-legacy-0160-migration.py")
+_HEX = frozenset("0123456789abcdef")
 
 
-def _review_root_installed_operator_path(filename: str) -> Path:
-    """Return immutable installed source root; no arbitrary imports before this."""
+def _review_root_installed_operator_path(filename: str, reviewed_commit: str) -> Path:
+    """Accept only a separately approved root operator and SHA-named source.
+
+    The ordinary application archive contains exactly 26 privileged imports;
+    this one-shot operator MUST NOT be installed inside that immutable tree.
+    A native root actor explicitly supplies the exact source commit reviewed
+    with the signed 38-object source archive and the operator's own SHA256.
+    No HTTP/OCI/JTI/request value can choose a source or a destination.
+    """
     try:
         if ((os.getuid(), os.geteuid(), os.getgid(), os.getegid())
-                != (0, 0, 0, 0)):
-            raise ValueError("not root")
+                != (0, 0, 0, 0)
+                or type(reviewed_commit) is not str
+                or len(reviewed_commit) != 40
+                or any(c not in _HEX for c in reviewed_commit)
+                or reviewed_commit == "0" * 40):
+            raise ValueError("not root or unreviewed SHA")
         script = Path(os.path.abspath(filename))
-        source = script.parent.parent
-        if (source.parent != _ROOT_INSTALL_BASE
-                or not source.name.startswith("analytics-app-release-")
-                or len(source.name) != len("analytics-app-release-") + 40
-                or any(c not in "0123456789abcdef"
-                       for c in source.name[-40:])
-                or script.parent.name != "deployment"
-                or script.name != "analytics_legacy_0160_migration.py"):
-            raise ValueError("unreviewed source location")
+        if script != _OPERATOR:
+            raise ValueError("unreviewed operator path")
+        source = _ROOT_INSTALL_BASE / ("analytics-app-release-" + reviewed_commit)
         for item in (
+            Path("/usr"), Path("/usr/local"), _OPERATOR.parent,
             Path("/opt"), Path("/opt/omnilyzer"), _ROOT_INSTALL_BASE,
-            source, script.parent,
+            source, source / "deployment",
         ):
             st = os.lstat(item)
             if (not stat.S_ISDIR(st.st_mode)
                     or st.st_uid != 0 or st.st_gid != 0
                     or stat.S_IMODE(st.st_mode) != 0o755):
-                raise ValueError("unreviewed source ancestry")
+                raise ValueError("unreviewed root directory")
         st = os.lstat(script)
         if (not stat.S_ISREG(st.st_mode)
                 or (st.st_uid, st.st_gid, stat.S_IMODE(st.st_mode),
                     st.st_nlink) != (0, 0, 0o500, 1)):
-            raise ValueError("unreviewed root-only source")
+            raise ValueError("unreviewed root-only script")
+        for name in ("analytics_route_journal.py", "policy.py"):
+            imported = os.lstat(source / "deployment" / name)
+            if (not stat.S_ISREG(imported.st_mode)
+                    or (imported.st_uid, imported.st_gid,
+                        stat.S_IMODE(imported.st_mode), imported.st_nlink)
+                    != (0, 0, 0o644, 1)):
+                raise ValueError("unreviewed root source module")
         return source
     except (KeyboardInterrupt, SystemExit, GeneratorExit):
         raise
@@ -66,14 +81,21 @@ def _review_root_installed_operator_path(filename: str) -> Path:
 
 
 if __name__ == "__main__":
+    # A trusted native root command MUST supply the exact reviewed commit;
+    # no default, mutable branch, self-derived SHA or arbitrary file path.
+    if (len(sys.argv) != 3 or sys.argv[1] not in ("--preflight", "--apply")):
+        print("M05_LEGACY_ROOT_SOURCE_HOLD", flush=True)
+        raise SystemExit(3)
     try:
-        _reviewed_source_root = _review_root_installed_operator_path(__file__)
+        _reviewed_source_root = _review_root_installed_operator_path(
+            __file__, sys.argv[2],
+        )
     except ValueError:
         print("M05_LEGACY_ROOT_SOURCE_HOLD", flush=True)
         raise SystemExit(3)
 else:
-    # Source-only tests cannot install or invoke the root operator; the
-    # explicit privilege check in main() remains mandatory.
+    # This import path exists only for pure unprivileged source QA tests.
+    # The CLI checks root source ancestry BEFORE importing any package.
     _reviewed_source_root = Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(_reviewed_source_root))
@@ -337,13 +359,16 @@ def _apply(document: dict[str, object], before: bytes) -> None:
 
 
 def main() -> int:
-    if sys.argv[1:] not in (["--preflight"],["--apply"]):
+    if (len(sys.argv) != 3 or sys.argv[1] not in ("--preflight", "--apply")
+            or type(sys.argv[2]) is not str
+            or len(sys.argv[2]) != 40
+            or any(c not in _HEX for c in sys.argv[2])):
         return 2
     try:
         # Never run a writable operator from an untrusted user-owned script.
         if sys.argv[1] == "--apply":
-            st=os.lstat(__file__)
-            if (st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode),st.st_nlink) != (0,0,0o500,1):
+            if _review_root_installed_operator_path(__file__,sys.argv[2]) != \
+                    _ROOT_INSTALL_BASE / ("analytics-app-release-" + sys.argv[2]):
                 _fail()
         document,before=_preflight()
         print("M05_HISTORIC_ROOT_FINAL_AND_OAT_CERTIFICATE_PASS",flush=True)

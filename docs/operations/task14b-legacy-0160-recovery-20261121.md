@@ -130,3 +130,43 @@ operator: root:991 0440 creation, exact generation2 historical continuity,
 race/interrupted write, read-only OAT receipts, UID991 reader and 0.16 private
 route all require direct verification. No tests here used PROD or touched
 the working signed0.16 service.
+
+### M04 second installation review: operator packaging contract (supersedes older path language)
+
+The ordinary source installer accepts exactly the independently approved
+38-record archive and installs only the fixed 26-file privileged runtime
+closure, plus the existing bounded runtime evidence. It NEVER includes the
+one-shot `analytics_legacy_0160_migration.py` operator. An older proposed
+operator location *inside* the SHA-named installed tree was consequently
+uninstallable without modifying the immutable source after publication. That
+route is PROHIBITED.
+
+The one-time operator is therefore a separately reviewed, root-only
+`/usr/local/libexec/omnilyzer-m05-legacy-0160-migration.py`, installed
+root:root 0500 with an independently verified full SHA256 matching the
+exact reviewed Git source. The root actor must explicitly supply the
+approved 40-hex source commit as the second argument for either
+`--preflight` or `--apply`. There is no default to `main`, HEAD or a
+request-selected path. Before the operator imports any deployment Python,
+its hard-coded entrypoint validates root UID/EUID/GID/EGID, the exact
+operator pathname (including root-owned non-writable ancestry), exact
+root:root mode0500 single-link script, and the immutable reviewed
+root:root 0755 SHA-named installation with exact root-owned 0644
+`analytics_route_journal.py` and `policy.py`. A user worktree, symlink,
+wrong mode, wrong identity or unknown SHA is HOLD. A reviewed source SHA
+is not a release approval: only the separately authorized native-root
+installation/activation process may supply it, after verifying the exact
+38-file archive, signed owner authority and all 26 code hashes.
+
+Source-only tests assert both the reviewed expected filesystem state and
+independent negative failures for root script owner/mode/link, imported
+module owner/mode/link, untrusted parent directory and wrong SHA. No
+root 0500 installation or root-to-UID991 positive migration has occurred.
+
+M04 must review the complete root handoff procedure before approving
+installation: 1) immutable source install, 2) separately SHA-pinned operator
+installation, 3) root read-only preflight and complete historical evidence
+verification, 4) one-time `--apply` with root-owned certificate, 5) source
+config+service restart transaction with rollback preflight and no JTI reset.
+Every failure is HOLD with no silent auto-retry. Do not supply any root
+command that could run before all those gates are verified.
