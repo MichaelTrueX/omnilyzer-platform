@@ -830,6 +830,10 @@ class OrdinarySuccessorTransactionTests(unittest.TestCase):
             AnalyticsRouteJournal, "record_execution",
             side_effect=self.record_execution,
         ))
+        self.completion = self.stack.enter_context(patch.object(
+            AnalyticsRouteJournal, "record_completed_release",
+            side_effect=self.record_completed_release,
+        ))
         self.stop = self.stack.enter_context(patch.object(
             AnalyticsSuccessorCandidateOperation, "rollback_staged_successor",
             side_effect=self.stop_candidate,
@@ -967,6 +971,14 @@ class OrdinarySuccessorTransactionTests(unittest.TestCase):
             raise RuntimeError("synthetic journal disk loss")
         return None
 
+    def record_completed_release(self, raw, container_id, *, replay_guard):
+        self.assertEqual(raw, self.raw)
+        self.assertEqual(container_id, self.new_id)
+        self.assertIs(replay_guard, self.replay)
+        self.assertEqual(self.phase, "switched")
+        self.events.append("fsync_completion")
+        return None
+
     def stop_candidate(self, request, identifier):
         """Stop only the exact verified next ID AFTER old green restored."""
         self.assertEqual(self.phase, "restored")
@@ -997,6 +1009,7 @@ class OrdinarySuccessorTransactionTests(unittest.TestCase):
             "fsync_retirement", "remove_exact_stopped_blue",
             "stage_signed_blue", "fsync_prepared", "3142_ready",
             "3141_switch", "verify_committed", "fsync_execution",
+            "fsync_completion",
         ])
         self.signed.assert_called_once()
         self.execution.assert_called_once()
@@ -1518,6 +1531,69 @@ class OrdinaryCommittedRestartTests(ReplayTestCase):
         self.assertIsNone(self.attempt())
         self.assertIsNone(self.attempt())
         self.assertEqual(storage(), before)
+
+    def test_completed_certificate_survives_legitimate_replay_expiry(self):
+        """Fresh signed GitHub JTI may prune an old success without breaking boot."""
+        self.finish()
+        self.journal.record_completed_release(
+            self.raw, "b" * 64, replay_guard=self.guard,
+        )
+        completed = self.journal.read_completed_release(self.request_hash)
+        self.assertEqual(completed["request_sha256"], self.request_hash)
+        self.assertIsNone(self.attempt())
+        self.now = NOW + 1000
+        self.guard.consume(
+            "new-unrelated-github-jti", expires_at=self.now + 100,
+            request_hash="d" * 64, run_id=8, run_attempt=1,
+        )
+        self.assertIsNone(_read_analytics_execution_status(self.guard, self.request_hash))
+        before = (self.path.read_bytes(), self.journal.read())
+        self.assertIsNone(self.attempt())
+        self.assertIsNone(self.attempt())
+        self.assertEqual((self.path.read_bytes(), self.journal.read()), before)
+
+    def test_missing_certificate_with_pruned_replay_is_hold(self):
+        """Old proof alone cannot prove success after replay has expired."""
+        self.finish()
+        self.now = NOW + 1000
+        self.guard.consume(
+            "next-unique-jti", expires_at=self.now + 100,
+            request_hash="d" * 64, run_id=8, run_attempt=1,
+        )
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+
+    def test_unfinished_replay_cannot_write_completed_certificate(self):
+        """No forged FINISHED record when SQLite is only CONSUMED/EXECUTING."""
+        self.journal.record_execution(self.raw, "b" * 64)
+        with self.assertRaises(Exception):
+            self.journal.record_completed_release(
+                self.raw, "b" * 64, replay_guard=self.guard,
+            )
+        self.assertIsNone(self.journal.read_completed_release(self.request_hash))
+
+    def test_completion_certificate_tamper_and_symlink_are_hold(self):
+        self.finish()
+        self.journal.record_completed_release(
+            self.raw, "b" * 64, replay_guard=self.guard,
+        )
+        certificate = (Path(self.journal._directory) / "executions"
+                       / ("completion-" + self.request_hash + ".json"))
+        original = certificate.read_bytes()
+        before = self.path.read_bytes()
+        with self.assertRaises(Exception):
+            self.journal.record_completed_release(
+                self.raw, "b" * 64, replay_guard=self.guard,
+            )
+        self.assertEqual(certificate.read_bytes(), original)
+        self.assertEqual(self.path.read_bytes(), before)
+        certificate.write_bytes(original.replace(b"finished", b"unknown_"))
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
+        certificate.unlink()
+        certificate.symlink_to("execution-" + self.request_hash + ".json")
+        with self.assertRaises(ExecutorUnavailableError):
+            self.attempt()
 
     def test_ordinary_restart_requires_both_owner_and_finished_replay(self):
         """Forged source and uncommitted replay can never signal healthy GO."""

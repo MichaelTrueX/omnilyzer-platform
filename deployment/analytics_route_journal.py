@@ -536,6 +536,166 @@ class AnalyticsRouteJournal:
             if directory is not None:
                 os.close(directory)
 
+    # Section: durable, post-replay completed-release evidence.
+    # A completed request's short-lived OIDC JTI may legitimately be removed
+    # from SQLite long before its signed Analytics image is retired.
+    def record_completed_release(
+        self, canonical_request: bytes, container_id: str, *, replay_guard: object,
+    ) -> None:
+        """Write a one-time durable completion only AFTER real replay FINISHED.
+
+        This is NOT a deployment approval: the restart reader must separately
+        reverify both owner signatures, immutable image and live private route.
+        The replay clock remains intentionally bounded and unchanged.
+        """
+        from .replay_sqlite import SQLiteReplayGuard
+        from .analytics_executor import _read_analytics_execution_status
+        try:
+            if (type(canonical_request) is not bytes
+                    or type(container_id) is not str
+                    or _SHA.fullmatch(container_id) is None
+                    or type(replay_guard) is not SQLiteReplayGuard
+                    or os.getuid() != object.__getattribute__(self, '_uid')
+                    or os.getgid() != object.__getattribute__(self, '_gid')):
+                _reject()
+            request_hash = hashlib.sha256(canonical_request).hexdigest()
+            proof = self.read_execution(request_hash)
+            route = self.read()
+            if (
+                route is None or route.get('phase') != 'switched'
+                or route.get('generation', 0) < 2
+                or route.get('request_sha256') != request_hash
+                or route.get('next_image') != proof['image']
+                or route.get('next_container_id') != container_id
+                or proof['canonical_request'] != canonical_request
+                or proof['container_id'] != container_id
+                or _read_analytics_execution_status(replay_guard, request_hash)
+                    != 'finished'
+            ):
+                _reject()
+            payload = canonical_bytes({
+                'schema_version': 1,
+                'kind': 'ordinary_signed_release_finished',
+                'request_sha256': request_hash,
+                'image': proof['image'],
+                'container_id': container_id,
+                'canonical_request_sha256': request_hash,
+            })
+            with self.exclusive():
+                if (self.read() != route
+                        or self.read_execution(request_hash) != proof
+                        or _read_analytics_execution_status(replay_guard, request_hash)
+                            != 'finished'):
+                    _reject()
+                directory = object.__getattribute__(self, '_locked_fd')
+                proofs = self._open_executions(directory)
+                try:
+                    name = 'completion-' + request_hash + '.json'
+                    fd = os.open(
+                        name, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                        | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        0o600, dir_fd=proofs,
+                    )
+                    try:
+                        st = os.fstat(fd)
+                        if (st.st_uid != object.__getattribute__(self, '_uid')
+                                or st.st_gid != object.__getattribute__(self, '_gid')
+                                or st.st_nlink != 1
+                                or stat.S_IMODE(st.st_mode) != 0o600):
+                            _reject()
+                        if os.write(fd, payload) != len(payload):
+                            _reject()
+                        os.fsync(fd)
+                        os.fsync(proofs)
+                        os.fsync(directory)
+                    finally:
+                        os.close(fd)
+                finally:
+                    os.close(proofs)
+                if self.read_completed_release(request_hash) != {
+                    'schema_version': 1,
+                    'kind': 'ordinary_signed_release_finished',
+                    'request_sha256': request_hash,
+                    'image': proof['image'],
+                    'container_id': container_id,
+                    'canonical_request_sha256': request_hash,
+                }:
+                    _reject()
+        except _CONTROL:
+            raise
+        except Exception:
+            _reject()
+
+    def read_completed_release(self, request_hash: str) -> dict[str, object] | None:
+        """Read one immutable UID991 completion without trusting it alone.
+
+        Missing file is None; a malformed, symlinked or tampered file is HOLD.
+        A caller may NOT use this receipt without signed-owner and live-route
+        verification plus real replay status checks.
+        """
+        directory = proofs = fd = None
+        try:
+            if (type(request_hash) is not str or _SHA.fullmatch(request_hash) is None
+                    or request_hash == '0' * 64):
+                _reject()
+            directory = self._open_dir()
+            proofs = self._open_executions(directory)
+            name = 'completion-' + request_hash + '.json'
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW
+                             | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=proofs)
+            except FileNotFoundError:
+                return None
+            before = os.fstat(fd)
+            named = os.stat(name, dir_fd=proofs, follow_symlinks=False)
+            if (not stat.S_ISREG(before.st_mode)
+                    or before.st_uid != object.__getattribute__(self, '_uid')
+                    or before.st_gid != object.__getattribute__(self, '_gid')
+                    or stat.S_IMODE(before.st_mode) != 0o600
+                    or before.st_nlink != 1 or not 0 < before.st_size <= 768
+                    or (before.st_dev, before.st_ino) != (named.st_dev, named.st_ino)):
+                _reject()
+            payload = os.read(fd, 769)
+            if len(payload) != before.st_size or os.fstat(fd) != before:
+                _reject()
+            def unique(pairs):
+                result = {}
+                for key, value in pairs:
+                    if key in result:
+                        _reject()
+                    result[key] = value
+                return result
+            data = json.loads(payload.decode('ascii'), object_pairs_hook=unique)
+            if (type(data) is not dict
+                    or set(data) != {
+                        'schema_version', 'kind', 'request_sha256',
+                        'image', 'container_id', 'canonical_request_sha256',
+                    }
+                    or type(data['schema_version']) is not int
+                    or data['schema_version'] != 1
+                    or data['kind'] != 'ordinary_signed_release_finished'
+                    or data['request_sha256'] != request_hash
+                    or data['canonical_request_sha256'] != request_hash
+                    or type(data['container_id']) is not str
+                    or _SHA.fullmatch(data['container_id']) is None
+                    or type(data['image']) is not str
+                    or not data['image'].startswith(_IMAGE_PREFIX)
+                    or _SHA.fullmatch(data['image'][len(_IMAGE_PREFIX):]) is None
+                    or canonical_bytes(data) != payload):
+                _reject()
+            return data
+        except _CONTROL:
+            raise
+        except Exception:
+            _reject()
+        finally:
+            if fd is not None:
+                os.close(fd)
+            if proofs is not None:
+                os.close(proofs)
+            if directory is not None:
+                os.close(directory)
+
     def _replace_at(
         self, directory_fd: int, new: dict[str, object], *,
         allow_retirement: bool = False,
