@@ -23,7 +23,6 @@ import hashlib
 import http.client
 import os
 from pathlib import Path
-import pwd
 import socket
 import stat
 import subprocess
