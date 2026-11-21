@@ -145,7 +145,13 @@ def _trust_root() -> None:
     ):
         raise RebindDenied(_ERROR)
     _trusted_regular(SELF, mode=0o500, maximum=32768)
+    # Protect every ancestor of the privileged operator and imported code,
+    # not only the leaf directory. A writable parent can replace a trusted
+    # root-owned child after its metadata/hash check.
     for path in (
+        Path("/"), Path("/usr"), Path("/usr/local"),
+        Path("/usr/local/libexec"), Path("/opt"),
+        Path("/opt/omnilyzer"), Path("/opt/omnilyzer/deployment"),
         Path("/etc"), Path("/etc/omnilyzer"),
         Path("/etc/omnilyzer/deployment"), DIRECTORY, SOURCE,
         SOURCE / "deployment",
