@@ -31,10 +31,11 @@ class BrokerWorkflowRebindTests(unittest.TestCase):
     def test_one_field_diff_preserves_every_other_canonical_byte_value(self):
         """Only expected_workflow_sha may differ in a signed config review."""
         old = self.old_bytes()
-        new, gid = candidate._rebound_bytes(old)
+        new, gid, executor_gid = candidate._rebound_bytes(old)
         before = json.loads(old)
         after = json.loads(new)
         self.assertEqual(gid, before["broker_gid"])
+        self.assertEqual(executor_gid, before["executor_gid"])
         self.assertEqual(after["expected_workflow_sha"], candidate.NEW)
         self.assertEqual(
             {key for key in before if before[key] != after[key]},
@@ -86,7 +87,9 @@ class BrokerWorkflowRebindTests(unittest.TestCase):
 
     def test_preflight_and_apply_have_explicit_and_distinct_entry_points(self):
         """The default is always deny, and only two exact modes are accepted."""
-        with patch.object(candidate, "_execute") as execute:
+        with patch.object(candidate, "_execute") as execute, patch.object(
+            candidate, "_verify_release_preflight"
+        ) as release:
             with patch.object(candidate.sys, "argv", ["operator", "--preflight"]):
                 self.assertEqual(candidate.main(), 0)
                 execute.assert_called_once_with(False)
@@ -94,6 +97,11 @@ class BrokerWorkflowRebindTests(unittest.TestCase):
             with patch.object(candidate.sys, "argv", ["operator", "--apply"]):
                 self.assertEqual(candidate.main(), 0)
                 execute.assert_called_once_with(True)
+            execute.reset_mock()
+            with patch.object(candidate.sys, "argv", ["operator", "--release-preflight"]):
+                self.assertEqual(candidate.main(), 0)
+                release.assert_called_once_with()
+                execute.assert_not_called()
 
     def test_unprivileged_invocation_fails_before_file_access(self):
         """A remote UID1005 cannot use the operator as an elevation helper."""
@@ -118,7 +126,8 @@ class BrokerWorkflowRebindTests(unittest.TestCase):
         stack.enter_context(patch.object(candidate.os, "open", return_value=17))
         stack.enter_context(patch.object(candidate.os, "close"))
         stack.enter_context(patch.object(candidate.fcntl, "flock"))
-        stack.enter_context(patch.object(candidate, "_rebound_bytes", return_value=(new, 990)))
+        stack.enter_context(patch.object(candidate, "_rebound_bytes", return_value=(new, 990, 991)))
+        stack.enter_context(patch.object(candidate, "_verify_analytics_pair"))
         stack.enter_context(patch.object(candidate, "_missing_at"))
         stack.enter_context(patch("builtins.print"))
         stage = stack.enter_context(patch.object(candidate, "_stage_file"))
@@ -188,6 +197,88 @@ class BrokerWorkflowRebindTests(unittest.TestCase):
         publish.assert_not_called()
         restart.assert_not_called()
         route.assert_called_once_with()
+
+
+
+    def test_release_preflight_accepts_only_current_original_config(self):
+        """One read-only triple-config PASS when all exact authorities align."""
+        from contextlib import ExitStack
+        current = DevBrokerServiceConfiguration(
+            **configuration_values(expected_workflow_sha=candidate.NEW)
+        ).canonical_bytes()
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(candidate, "_trust_root"))
+            stack.enter_context(patch.object(candidate.os, "open", return_value=21))
+            stack.enter_context(patch.object(candidate.os, "close"))
+            stack.enter_context(patch.object(candidate.fcntl, "flock"))
+            stack.enter_context(patch.object(candidate, "_read_at", return_value=(
+                current, (1, 2, 345, 456, 1002)
+            )))
+            product = stack.enter_context(patch.object(candidate, "_verify_analytics_pair"))
+            broker = stack.enter_context(patch.object(candidate, "_verify_broker_start_after_config"))
+            service = stack.enter_context(patch.object(candidate, "_service_state", return_value=17))
+            route = stack.enter_context(patch.object(candidate, "_route_state"))
+            stack.enter_context(patch("builtins.print"))
+            candidate._verify_release_preflight()
+        product.assert_called_once_with(broker_gid=1002, executor_gid=2002)
+        broker.assert_called_once_with(pid=17, config_mtime_ns=345)
+        route.assert_called_once_with()
+        self.assertEqual(service.call_count, 2)
+
+    def test_release_preflight_denies_old_broker_even_if_products_match(self):
+        """The originally missed C32H SHA is a hard dispatch blocker."""
+        from contextlib import ExitStack
+        old = self.old_bytes()
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(candidate, "_trust_root"))
+            stack.enter_context(patch.object(candidate.os, "open", return_value=21))
+            stack.enter_context(patch.object(candidate.os, "close"))
+            stack.enter_context(patch.object(candidate.fcntl, "flock"))
+            stack.enter_context(patch.object(candidate, "_read_at", return_value=(
+                old, (1, 2, 345, 456, 1002)
+            )))
+            products = stack.enter_context(patch.object(candidate, "_verify_analytics_pair"))
+            with self.assertRaises(candidate.RebindDenied):
+                candidate._verify_release_preflight()
+            products.assert_not_called()
+
+    def test_release_preflight_rejects_stale_product_config(self):
+        """An otherwise current original broker cannot hide a mismatched pair."""
+        from contextlib import ExitStack
+        current = DevBrokerServiceConfiguration(
+            **configuration_values(expected_workflow_sha=candidate.NEW)
+        ).canonical_bytes()
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(candidate, "_trust_root"))
+            stack.enter_context(patch.object(candidate.os, "open", return_value=21))
+            stack.enter_context(patch.object(candidate.os, "close"))
+            stack.enter_context(patch.object(candidate.fcntl, "flock"))
+            stack.enter_context(patch.object(candidate, "_read_at", return_value=(
+                current, (1, 2, 345, 456, 1002)
+            )))
+            stack.enter_context(patch.object(
+                candidate, "_verify_analytics_pair", side_effect=candidate.RebindDenied("HOLD")
+            ))
+            with self.assertRaises(candidate.RebindDenied):
+                candidate._verify_release_preflight()
+
+    def test_broker_reloaded_after_configuration_timestamp(self):
+        """An old PID/start time must fail the actual loaded-authority gate."""
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(candidate, "_service_property", return_value="100000"))
+            stack.enter_context(patch.object(candidate, "_service_state", return_value=17))
+            stack.enter_context(patch("time.monotonic_ns", return_value=100_000_000_000))
+            stack.enter_context(patch("time.time_ns", return_value=1_700_000_000_000_000_000))
+            # config timestamp corresponds to 110 seconds on a 100-second boot
+            with self.assertRaises(candidate.RebindDenied):
+                candidate._verify_broker_start_after_config(
+                    pid=17, config_mtime_ns=1_700_000_010_000_000_000
+                )
+            # Existing boot starts at 50 seconds, after config at 30 seconds.
+            candidate._verify_broker_start_after_config(
+                pid=17, config_mtime_ns=1_699_999_930_000_000_000
+            )
 
 
 
