@@ -73,7 +73,7 @@ class RebindDenied(Exception):
 
 
 # Section 2: Pure, source-model-backed transformation of exactly one field.
-def _rebound_bytes(raw: bytes) -> tuple[bytes, int]:
+def _rebound_bytes(raw: bytes) -> tuple[bytes, int, int]:
     """Accept only canonical installed broker schema and old workflow SHA."""
     from deployment.broker_service_config import (
         DevBrokerServiceConfiguration,
@@ -103,7 +103,7 @@ def _rebound_bytes(raw: bytes) -> tuple[bytes, int]:
         raise RebindDenied(_ERROR)
     if parse_canonical_broker_service_configuration(result).to_dict() != after:
         raise RebindDenied(_ERROR)
-    return result, old.broker_gid
+    return result, old.broker_gid, old.executor_gid
 
 
 # Section 3: Exact root-installed source and protected-directory requirements.
@@ -289,11 +289,10 @@ def _verify_release_preflight() -> None:
     A future main commit requires an independently reviewed new authority
     binding; it cannot be substituted through a CLI argument or environment.
     """
+    _trust_root()
     from deployment.broker_service_config import (
         parse_canonical_broker_service_configuration,
     )
-
-    _trust_root()
     parent = os.open(
         DIRECTORY, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     )
@@ -462,7 +461,7 @@ def _execute(apply: bool) -> None:
     try:
         fcntl.flock(parent, fcntl.LOCK_EX | fcntl.LOCK_NB)
         before, original_identity = _read_at(parent, TARGET)
-        after, gid = _rebound_bytes(before)
+        after, gid, executor_gid = _rebound_bytes(before)
         if original_identity[4] != gid or DIRECTORY.stat().st_gid != gid:
             raise RebindDenied(_ERROR)
         for name in (BACKUP, STAGED, RESTORE):
@@ -470,7 +469,7 @@ def _execute(apply: bool) -> None:
         pid = _service_state()
         # Before replacing the original broker, independently prove the
         # two Analytics products are already pinned to exact NEW.
-        _verify_analytics_pair(broker_gid=gid, executor_gid=991)
+        _verify_analytics_pair(broker_gid=gid, executor_gid=executor_gid)
         active, route = _route_state()
         if not apply:
             print("M05_ORIGINAL_BROKER_REBIND_PREFLIGHT_PASS")
