@@ -206,6 +206,7 @@ automated retry.
    | JOSE header/RS256 | Run the existing real-RS256 synthetic-JWT `test_oidc_verifier.py` positive with valid `x5t` and `kid`, plus tampered-header, malformed `x5t`, duplicate header and non-RS256 negatives | Only checking JWT payload/claim values |
    | Three bounded audiences | Verify deployment, Zot and Forgejo tokens through the existing cryptographic verifier and negative audience/issuer/cross-token tests, not one shared audience | A successful Zot-only `auth_probe=true` or public JWKS fetch |
    | Signed identity policy | Check source-pinned repository/actor, `workflow_ref`, `workflow_sha`, `ref`, environment, event and token times/expiry; compare to actual installed root config and pinned protected main | A CI `oidc_codes=ok` computed from **unverified** claims |
+   | **All three workflow SHA pins** | Verify exact root-controlled `expected_workflow_sha` in original C32H `broker/dev.json`, separate Analytics `broker/analytics.json` and `dev/analytics-executor.json` matches protected GitHub main; prove running original broker reloaded `dev.json` after any reviewed rotation | Only checking the Analytics broker/executor pair or live `/readyz` HTTP200 |
    | Broker integration | Reuse existing source-bound real-signature positive/negative broker admission tests whenever verifier, caller or identity boundary changed; observe protected replay and no mutation on failures | A GitHub workflow gate PASS, /readyz HTTP200, synthetic collaborator that skips cryptographic verification |
    | Incident verdict | After rejection, one exact run/attempt/UTC window of fixed protected phase markers, broker replay status, and a proven matching source defect before repair | Another undiagnosed 403, a generic `broker_verify_oidc rejected`, or old runs' log tail |
 
@@ -221,6 +222,23 @@ automated retry.
    review and owner approval; avoid any new general infrastructure.
    October JOSE compatibility and November OIDC denial are **related
    failure boundaries, not proven identical root causes**.
+
+   **21 November 2026 confirmed omitted authority:** Real signed Task014
+   run #44876028251 at 06:33 UTC failed HTTP403 with protected
+   `broker_oidc_identity outcome=rejected`, then
+   `router_signed_response outcome=rejected`. Owner-native root read proved
+   original broker `/etc/omnilyzer/deployment/broker/dev.json` still
+   pinned `c6d6b067f932e60d82f8b7a9d75a2629a62606c8`, although both
+   Analytics-specific root configs and GitHub protected main were at
+   `630db1ae5a05a691493764637e066e487f52f599`. The real
+   `analytics_broker_service.py` verifier gets its SHA from the *original*
+   config, so verifying only Analytics-specific files missed a release-blocking
+   mismatch. Independent scoped fix is draft PR #315 (one-field rebind,
+   original service restart and private route preservation). The prior
+   owner-approved new run has been consumed and must NOT be retried; no
+   source merge, root install, or new signed dispatch is implied by the
+   documentation. Do not claim the historical JWT's other claims or
+   cryptographic result were independently retained.
 
 5. **Establish durable postfailure custody before another request.** Read the
    protected broker and executor replay status for the **specific run ID**,
