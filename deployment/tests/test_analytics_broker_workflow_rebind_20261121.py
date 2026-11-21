@@ -119,19 +119,18 @@ class BrokerWorkflowRebindTests(unittest.TestCase):
         import stat
         from types import SimpleNamespace
 
-        original_lstat = Path.lstat
+        # Simulate a complete production root tree: GitHub-hosted runners
+        # do not necessarily contain /opt or /usr/local/libexec.
         for bad in (Path("/usr/local"), Path("/usr/local/libexec"),
                     Path("/opt"), Path("/opt/omnilyzer"),
                     Path("/opt/omnilyzer/deployment")):
             with self.subTest(directory=str(bad)):
                 def unsafe_lstat(path, *args, **kwargs):
-                    info = original_lstat(path, *args, **kwargs)
-                    if path == bad:
-                        return SimpleNamespace(
-                            st_mode=info.st_mode | stat.S_IWOTH,
-                            st_uid=info.st_uid,
-                        )
-                    return info
+                    return SimpleNamespace(
+                        st_mode=(stat.S_IFDIR | 0o755 |
+                                 (stat.S_IWOTH if path == bad else 0)),
+                        st_uid=0,
+                    )
 
                 with (
                     patch.object(candidate.os, "getuid", return_value=0),
