@@ -494,9 +494,10 @@ def _execute(apply: bool) -> None:
                 raise RebindDenied(_ERROR)
             if _route_state() != (active, route):
                 raise RebindDenied(_ERROR)
-        except _CONTROL:
-            raise
-        except Exception:
+        except BaseException as failure:
+            # Catchable control interruptions must attempt the same safe
+            # restoration as ordinary exceptions after an atomic replacement.
+            # Preserve original control propagation after restoration.
             # A successful atomic replace followed by a failed fsync/readback
             # may raise BEFORE changed becomes True. Observe the exact target
             # and restore it if new bytes are already live. Never guess.
@@ -519,6 +520,8 @@ def _execute(apply: bool) -> None:
                     raise
                 except Exception:
                     print("M05_ORIGINAL_BROKER_REBIND_RECOVERY_UNCONFIRMED_HOLD")
+            if isinstance(failure, _CONTROL):
+                raise
             raise RebindDenied(_ERROR) from None
         # End-to-end release admission will be checked separately by
         # --release-preflight after the one-time install/apply, before any
