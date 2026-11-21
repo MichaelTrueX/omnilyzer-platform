@@ -282,5 +282,74 @@ class BrokerWorkflowRebindTests(unittest.TestCase):
 
 
 
+    @staticmethod
+    def _schema4_bytes(*, expected_sha=None):
+        """Construct one original, real-parser-approved synthetic Analytics config."""
+        from deployment.analytics_executor_service_config import (
+            ANALYTICS_SUCCESSOR_INSTALLED_FILES,
+        )
+        from deployment.tests.test_analytics_executor_service_bootstrap import sample_config
+        from deployment.policy import canonical_bytes
+
+        sample = sample_config()
+        sample.update({
+            "schema_version": 4,
+            "expected_workflow_sha": (
+                expected_sha if expected_sha is not None else candidate.NEW
+            ),
+            "reviewed_installed_commit":
+                "330f3255f0067b9ddbe30d50466830bd71a55a11",
+            "owner_authorized_ordinary_successor": True,
+            "source_sha256": {
+                member: "a" * 64
+                for member in ANALYTICS_SUCCESSOR_INSTALLED_FILES
+            },
+        })
+        return canonical_bytes(sample)
+
+    def test_actual_schema4_parser_checks_both_protected_products(self):
+        """Run actual source parser for original broker+executor, with exact groups."""
+        from contextlib import ExitStack
+        from types import SimpleNamespace
+        from pathlib import Path
+        import stat
+
+        correct = self._schema4_bytes()
+        wrong = self._schema4_bytes(expected_sha=candidate.OLD)
+
+        def run(left, right, *, executor_group=991):
+            with ExitStack() as stack:
+                def fake_dir(path):
+                    group = 990 if str(path).endswith("/broker") else executor_group
+                    return SimpleNamespace(
+                        st_mode=stat.S_IFDIR | 0o750, st_uid=0, st_gid=group,
+                    )
+
+                stack.enter_context(patch.object(Path, "lstat", autospec=True, side_effect=fake_dir))
+                stack.enter_context(patch.object(candidate.os, "open", return_value=21))
+                stack.enter_context(patch.object(candidate.os, "close"))
+                reader = stack.enter_context(patch.object(
+                    candidate, "_read_at",
+                    side_effect=[
+                        (left, (1, 1, 1, 1, 990)),
+                        (right, (2, 2, 2, 2, executor_group)),
+                    ],
+                ))
+                candidate._verify_analytics_pair(broker_gid=990, executor_gid=991)
+                self.assertEqual(reader.call_count, 2)
+
+        run(correct, correct)
+        for first, second, group in (
+            (wrong, correct, 991),
+            (correct, wrong, 991),
+            (correct, correct, 999),
+        ):
+            with self.subTest(wrong_group=group, wrong_first=first != correct), self.assertRaises(
+                candidate.RebindDenied
+            ):
+                run(first, second, executor_group=group)
+
+
+
 if __name__ == "__main__":
     unittest.main()
