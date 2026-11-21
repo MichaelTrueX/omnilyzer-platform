@@ -327,15 +327,25 @@ reauthorization boundary rejection, **not** whether header, `kid`, RS256,
 issuer/audience, identity or time caused it. Public GitHub JWKS disclosure
 and cache lookup were successful, and current installed `x5t` tests exist,
 so repeating PR202/other historical repairs without an exact reproduction
-would be a new error. The next source-only diagnostic candidate in existing
-PR313 at `330f3255f0067b9ddbe30d50466830bd71a55a11` uses only fixed
-private phase categories, with **191 focused tests and seven GitHub checks
-PASS**; it is **not installed** and does not itself fix a proven live OIDC
-defect. Independently review its exact three-file security change and both
-prepared root operators before any activation. Both Task014 runs are closed
-failed attempts, and **Analytics 0.16.1 remains NO-GO on DEV** pending verified
-cause/reconciliation. Signed Analytics0.16.0 remains the serving release.
-**NO blind redispatch, no Task013 rerun and no PROD promotion.**
+would be a new error. The fixed-phase diagnostic source in existing draft PR313 at
+`330f3255f0067b9ddbe30d50466830bd71a55a11` was **subsequently
+installed on DEV** through an independently reviewed, owner-attended root
+cutover. Its historical 191 focused tests and seven GitHub checks support
+source qualification only, not successful signed0.16.1 promotion.
+A subsequent authorized third Task014
+[run #44876028251](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/44876028251)
+failed HTTP403 at `broker_oidc_identity`. Owner-root evidence proved the
+original C32H broker pinned `c6d6b067...` while the Analytics broker,
+executor and protected GitHub main used `630db1ae...`.
+The one-field correction is still **uninstalled, draft PR315** at HEAD
+`8255193bae78187ec0dfa3cf0146ed5fb8c4075b` (source SHA256
+`1c08877d859e1d8ffa09400cda93dd16f36824d21fc9d31fd8f369410a818fec`).
+M04 technical review found and corrected an interrupted-rollback defect;
+61/61 focused source tests and separate fault injections PASS. This is NOT a
+formal independent M04 approval, actual root rebind or triple-config preflight.
+All three historical Task014 attempts are closed failed events.
+**Analytics 0.16.1 remains NO-GO on DEV; signed0.16.0 remains serving.**
+**NO blind redispatch, Task013 rerun or PROD promotion.**
 
 **Operational safety while the 0.16.1 release is pending:** The protected
 `main` SHA `630db1ae5a05a691493764637e066e487f52f599` is pinned by the
@@ -343,8 +353,10 @@ currently installed workflow/DEV authority. Even a documentation-only merge
 to `main` changes GitHub OIDC `workflow_sha` and can invalidate the
 pending dispatch. Stage instructions in a **separate documentation branch**
 and merge only after the current signed deployment authority is deliberately
-reconciled. Do not alter the installed immutable `6acbdc1` source to
-"apply" this document.
+reconciled. Do not alter the installed immutable
+`analytics-app-release-330f3255f0067b9ddbe30d50466830bd71a55a11`
+source to "apply" this document. The earlier `6acbdc1` and D4A references
+are historical evidence, not the current installed DEV authority.
 
 ### Release identity record
 
