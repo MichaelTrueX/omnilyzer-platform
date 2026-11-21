@@ -85,12 +85,16 @@ class RootSourcePinReviewTests(unittest.TestCase):
     def setUp(self):
         self.before_modules = set(sys.modules)
         self.before_path = list(sys.path)
+        self.before_cache_prefix = sys.pycache_prefix
+        self.before_write_bytecode = sys.dont_write_bytecode
 
     def tearDown(self):
         for name in set(sys.modules) - self.before_modules:
             if name in ("deployment", "release") or name.startswith(("deployment.", "release.")):
                 sys.modules.pop(name, None)
         sys.path[:] = self.before_path
+        sys.pycache_prefix = self.before_cache_prefix
+        sys.dont_write_bytecode = self.before_write_bytecode
 
     def test_original_root_installer_actual_git_bytes_match_owner_root_sha(self):
         module = load()
@@ -192,6 +196,39 @@ class RootSourcePinReviewTests(unittest.TestCase):
              if name in module.REPLACEMENTS_SHA},
             module.REPLACEMENTS_SHA,
         )
+
+    @unittest.skipUnless(HAS_ROOT_FIXTURE, "Requires existing DEV 330f root baseline")
+    def test_historical_scratch_runtime_copies_are_never_trusted_or_imported(self):
+        """Prove three unqualified old SCRATCH copies cannot supply root code."""
+        module = load()
+        module.SCRATCH = SOURCE
+        module.INSTALLER = SOURCE / "deployment/analytics_isolated_source_install.py"
+        baseline = json.loads(MANIFEST.read_text())["baseline_files_sha256"]
+        normal = simulated_root_reader(module)
+
+        def read(path, mode):
+            path = Path(path)
+            if path.is_relative_to(SOURCE):
+                relative = path.relative_to(SOURCE).as_posix()
+                if relative in baseline:
+                    raise AssertionError("historical unqualified SCRATCH runtime read")
+            return normal(path, mode)
+
+        with patch.object(module, "trusted_root_file", side_effect=read):
+            installer, files = module.reviewed_source()
+        self.assertEqual(len(files), 76)
+        self.assertEqual(Path(sys.modules["deployment"].__file__),
+                         ROOT / "deployment/__init__.py")
+        self.assertEqual(Path(sys.modules["deployment.policy"].__file__),
+                         ROOT / "deployment/policy.py")
+        self.assertEqual(Path(sys.modules[
+            "deployment.dev_host_provisioning_mechanics"
+        ].__file__), SOURCE / "deployment/dev_host_provisioning_mechanics.py")
+        self.assertEqual(Path(installer.__file__), module.INSTALLER)
+        self.assertEqual(sys.pycache_prefix, "/dev/null/omnilyzer-m05-no-bytecode-cache")
+        self.assertEqual(list(sys.modules["deployment"].__path__), [
+            str(ROOT / "deployment"), str(SOURCE / "deployment")
+        ])
 
     def test_nonroot_rejects_root_stage(self):
         module = load()
