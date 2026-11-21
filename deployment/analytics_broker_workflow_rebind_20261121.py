@@ -135,7 +135,8 @@ def _trust_root() -> None:
         (os.getuid(), os.geteuid(), os.getgid(), os.getegid())
         != (0, 0, 0, 0)
         or socket.gethostname() != "omnilyzerdev"
-        or Path(sys.argv[0]).resolve() != SELF
+        or Path(sys.argv[0]) != SELF
+        or Path(sys.argv[0]).is_symlink()
     ):
         raise RebindDenied(_ERROR)
     _trusted_regular(SELF, mode=0o500, maximum=32768)
@@ -369,7 +370,14 @@ def _execute(apply: bool) -> None:
         except _CONTROL:
             raise
         except Exception:
-            if changed:
+            # A successful atomic replace followed by a failed fsync/readback
+            # may raise BEFORE changed becomes True. Observe the exact target
+            # and restore it if new bytes are already live. Never guess.
+            try:
+                current_bytes, _ = _read_at(parent, TARGET, gid=gid)
+            except Exception:
+                current_bytes = None
+            if changed or current_bytes == after:
                 try:
                     _publish(parent, RESTORE, after, before, gid=gid)
                     _restart_broker()
