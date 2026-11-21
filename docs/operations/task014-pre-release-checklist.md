@@ -143,6 +143,19 @@ automated retry.
    [PR #300](https://github.com/MichaelTrueX/omnilyzer-platform/pull/300).
    Those fixes are not a diagnosis of a different live request. Compare
    **the exact failing phase** and current installed source before changing code.
+   Historical proof (not an identical-current-cause claim): on 18 October 2026,
+   the old `_parse_compact_token` rejected GitHub's valid canonical JOSE
+   `x5t` header **before RS256 signature verification**. An authentic
+   synthetically signed token reproduced `OIDC token header is invalid` and
+   HTTP 403 semantics. [PR #202](https://github.com/MichaelTrueX/omnilyzer-platform/pull/202)
+   accepted only canonical 20-byte unpadded base64url `x5t`, retained RS256,
+   validated `kid`, signature and every existing identity restriction.
+   The reviewed source was installed by guarded root migration; the next
+   real DEV run [#39107441829](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/39107441829)
+   returned **503 instead of 403**. This supports progress but the original
+   October live JWT was never retained, so do **not** claim definitive
+   historical-root-cause proof. The installed 21 November `oidc_verifier.py`
+   already includes that exact `x5t` fix and its original tests.
 3. **Correlate each error to one actual run and UTC interval.** Record the unique
    run ID and attempt, GitHub job start/end and protected workflow SHA first.
    Extract only bounded secret-free marker lines from the broker and UID991
@@ -185,6 +198,30 @@ automated retry.
    fix the missing **secret-free precise phase classifier once** with focused
    tests and independent security review *before* a newly authorized request;
    do not send multiple live releases merely to learn where a 403 happened.
+   **Required pre-dispatch OIDC acceptance record, reused per unchanged
+   installed source/policy instead of adding generic pipelines:**
+
+   | Exact control | Evidence needed | What does NOT count |
+   | --- | --- | --- |
+   | JOSE header/RS256 | Run the existing real-RS256 synthetic-JWT `test_oidc_verifier.py` positive with valid `x5t` and `kid`, plus tampered-header, malformed `x5t`, duplicate header and non-RS256 negatives | Only checking JWT payload/claim values |
+   | Three bounded audiences | Verify deployment, Zot and Forgejo tokens through the existing cryptographic verifier and negative audience/issuer/cross-token tests, not one shared audience | A successful Zot-only `auth_probe=true` or public JWKS fetch |
+   | Signed identity policy | Check source-pinned repository/actor, `workflow_ref`, `workflow_sha`, `ref`, environment, event and token times/expiry; compare to actual installed root config and pinned protected main | A CI `oidc_codes=ok` computed from **unverified** claims |
+   | Broker integration | Reuse existing source-bound real-signature positive/negative broker admission tests whenever verifier, caller or identity boundary changed; observe protected replay and no mutation on failures | A GitHub workflow gate PASS, /readyz HTTP200, synthetic collaborator that skips cryptographic verification |
+   | Incident verdict | After rejection, one exact run/attempt/UTC window of fixed protected phase markers, broker replay status, and a proven matching source defect before repair | Another undiagnosed 403, a generic `broker_verify_oidc rejected`, or old runs' log tail |
+
+   **Boundedness:** No production JWTs, signatures, JTI, exception messages,
+   claim values, secrets, raw headers or private keys may be retained in
+   GitHub, logs, chat, debug output or a new telemetry stream. The existing
+   non-promoting `auth_probe` verifies a different Zot credential path, not
+   broker-side deployment-JWT verification; it may be reused only within
+   that documented scope. If a live signed broker token cannot be verified
+   without dispatch, explicitly record that limitation as UNKNOWN; do not
+   claim a substitute test passed, or send repeated releases solely for
+   diagnostics. Retain the original Task014 mandatory independent security
+   review and owner approval; avoid any new general infrastructure.
+   October JOSE compatibility and November OIDC denial are **related
+   failure boundaries, not proven identical root causes**.
+
 5. **Establish durable postfailure custody before another request.** Read the
    protected broker and executor replay status for the **specific run ID**,
    root-owned route phase, slot-retirement intent, exact signed active/candidate
@@ -210,9 +247,26 @@ and `recovery_unconfirmed` markers that **must not** be attributed to this
 run. Owner read-only postfailure observation was
 `ROUTE_PHASE=switched; RETIREMENT_PHASE=NONE; ACTIVE_SLOT=green;
 ACTIVE_DIGEST=sha256:a0ce1e63dd379c939a2e558b04307b129fa79128da1362caa90d963d8bb3f6a1`.
-Actual replay status for this run and exact first `BrokerRejectedError` cause
-remain **UNKNOWN**. This is a specific early signed-handler rejection diagnosis
-boundary, not proof that previous x5t, Forgejo or RootlessKit fixes regressed.
+A later authorized read-only lookup found `ABSENT_OR_PRUNED` for this
+run's replay row; that is **not** proof the row was never consumed.
+The original exact first `BrokerRejectedError` cause remains **UNKNOWN**.
+At the subsequent separately authorized [Task014 #44871118758](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/44871118758)
+(21 Nov 2026 05:30:01.944473 UTC), the newly installed D4A private
+broker emitted `broker_verify_oidc outcome=rejected` followed by
+`router_signed_response outcome=rejected`. The replay lookup again returned
+`ABSENT_OR_PRUNED`. This proves an early actual OIDC verification or identity
+reauthorization boundary rejection, **not** whether header, `kid`, RS256,
+issuer/audience, identity or time caused it. Public GitHub JWKS disclosure
+and cache lookup were successful, and current installed `x5t` tests exist,
+so repeating PR202/other historical repairs without an exact reproduction
+would be a new error. The next source-only diagnostic candidate in existing
+PR313 at `330f3255f0067b9ddbe30d50466830bd71a55a11` uses only fixed
+private phase categories, with **191 focused tests and seven GitHub checks
+PASS**; it is **not installed** and does not itself fix a proven live OIDC
+defect. Independently review its exact three-file security change and both
+prepared root operators before any activation. Both Task014 runs are closed
+failed attempts, and **Analytics 0.16.1 remains NO-GO on DEV** pending verified
+cause/reconciliation. Signed Analytics0.16.0 remains the serving release.
 **NO blind redispatch, no Task013 rerun and no PROD promotion.**
 
 **Operational safety while the 0.16.1 release is pending:** The protected
