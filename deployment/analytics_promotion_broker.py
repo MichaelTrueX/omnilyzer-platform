@@ -425,6 +425,8 @@ class AnalyticsPrivatePromotionBroker:
         except _CONTROL:
             raise
         except Exception:
+            # Existing closed, secret-free marker; no caller-derived text.
+            _emit_analytics_release_boundary("broker_request_shape", "rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
 
         try:
@@ -439,13 +441,20 @@ class AnalyticsPrivatePromotionBroker:
                 authorization=authorize_verified_github_oidc,
                 expected_fields=IDENTITY_FIELDS,
             )
+        except OIDCVerificationUnavailable:
+            _emit_analytics_release_boundary("broker_verify_oidc", "unavailable")
+            raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
         except (OIDCVerificationError, OIDCAuthorizationError):
+            _emit_analytics_release_boundary("broker_verify_oidc", "rejected")
             raise BrokerRejectedError(REJECTED_MESSAGE) from None
         except _CONTROL:
             raise
         except Exception:
+            _emit_analytics_release_boundary("broker_verify_oidc", "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
+        # Reuse the original allowlisted phase labels for both release paths.
+        phase = "broker_original_evidence"
         try:
             reviewer = object.__getattribute__(self, "_review_successor")
             tokens = dict(
@@ -454,18 +463,22 @@ class AnalyticsPrivatePromotionBroker:
             )
             # ROOT-OWNED predecessor selection; never derive it from caller.
             previous = reviewer(**tokens)
+            phase = "broker_successor_evidence"
             next_release = reviewer(
                 **tokens, owner_source_proof=request["owner_source_proof"],
             )
+            phase = "broker_signed_shape"
             previous_digest = _ordinary_signed_previous_digest(
                 previous, next_release,
             )
+            phase = "broker_registry_audiences"
             registry = object.__getattribute__(self, "_registry")(
                 identity, zot_token=zot_token, forgejo_token=forgejo_token,
                 received_at=received_at,
             )
             if type(registry) is not VerifiedRegistryCredentials:
                 raise ValueError("unverified registry JWT audiences")
+            phase = "broker_rollback_hint"
             rollback = request.get("rollback_reference")
             ingress = request.get("ingress_reference")
             if (
@@ -478,6 +491,7 @@ class AnalyticsPrivatePromotionBroker:
                 raise ValueError("untrusted predecessor hint")
             # Even when this read-only review succeeds, prior slot is only a
             # request HINT. The UID991 route check must establish it afresh.
+            phase = "broker_signed_request_binding"
             result = parse_analytics_successor_request(
                 canonical_request,
                 **dict(object.__getattribute__(self, "_reviewed_source")),
@@ -488,10 +502,12 @@ class AnalyticsPrivatePromotionBroker:
             )
             if type(result) is not AnalyticsSuccessorRequest:
                 raise ValueError("invalid ordinary signed request")
+            _emit_analytics_release_boundary("broker_signed_request_binding", "passed")
             return result
         except _CONTROL:
             raise
         except Exception:
+            _emit_analytics_release_boundary(phase, "unavailable")
             raise BrokerUnavailableError(UNAVAILABLE_MESSAGE) from None
 
     def forward_verified_first_successor_probe_without_deployment(
