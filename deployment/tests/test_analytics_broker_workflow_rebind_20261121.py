@@ -107,5 +107,91 @@ class BrokerWorkflowRebindTests(unittest.TestCase):
         read.assert_not_called()
 
 
+    def _fake_host(self, *, initial=b"old", new=b"new"):
+        """Patch only root I/O boundaries; no privileged fixture is touched."""
+        from contextlib import ExitStack
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        stack = ExitStack()
+        state = {"target": initial}
+        directory = SimpleNamespace(stat=lambda: SimpleNamespace(st_gid=990))
+        stack.enter_context(patch.object(candidate, "_trust_root"))
+        stack.enter_context(patch.object(candidate, "DIRECTORY", directory))
+        stack.enter_context(patch.object(candidate.os, "open", return_value=17))
+        stack.enter_context(patch.object(candidate.os, "close"))
+        stack.enter_context(patch.object(candidate.fcntl, "flock"))
+        stack.enter_context(patch.object(candidate, "_rebound_bytes", return_value=(new, 990)))
+        stack.enter_context(patch.object(candidate, "_missing_at"))
+        stack.enter_context(patch("builtins.print"))
+        stage = stack.enter_context(patch.object(candidate, "_stage_file"))
+        publish = stack.enter_context(patch.object(candidate, "_publish"))
+        restart = stack.enter_context(patch.object(candidate, "_restart_broker"))
+        service = stack.enter_context(patch.object(candidate, "_service_state", return_value=17))
+        route = stack.enter_context(patch.object(candidate, "_route_state", return_value=("active", {"phase":"switched"})))
+
+        def read(_parent, name, **_kwargs):
+            if name == candidate.BACKUP:
+                return initial, (1, 8, 2, 3, 0)
+            return state["target"], (1, 7, 2, 3, 990)
+
+        stack.enter_context(patch.object(candidate, "_read_at", side_effect=read))
+        return stack, state, stage, publish, restart, service, route
+
+    def test_full_preflight_has_zero_write_or_restart(self):
+        """Real root-only write helpers cannot be reached during preflight."""
+        stack, _state, stage, publish, restart, _service, route = self._fake_host()
+        with stack:
+            candidate._execute(False)
+        stage.assert_not_called()
+        publish.assert_not_called()
+        restart.assert_not_called()
+        route.assert_called_once_with()
+
+    def test_successful_apply_swaps_once_and_restarts_only_broker(self):
+        """Commit only one exact config exchange with unchanged active writer."""
+        stack, state, stage, publish, restart, service, route = self._fake_host()
+        service.side_effect = [17, 18]
+        def exchange(_dir, name, old, new, **_kwargs):
+            self.assertEqual((name, old, new), (candidate.STAGED, b"old", b"new"))
+            state["target"] = new
+        publish.side_effect = exchange
+        with stack:
+            candidate._execute(True)
+        self.assertEqual(stage.call_count, 1)
+        self.assertEqual(publish.call_count, 1)
+        restart.assert_called_once_with()
+        self.assertEqual(route.call_count, 2)
+
+    def test_failure_after_atomic_swap_triggers_restore(self):
+        """An error after rename must not strand the changed original broker."""
+        stack, state, stage, publish, restart, service, route = self._fake_host()
+        def interrupted(_dir, name, _old, new, **_kwargs):
+            state["target"] = new
+            if name == candidate.STAGED:
+                raise OSError("synthetic post-rename fsync failure")
+        publish.side_effect = interrupted
+        with stack, self.assertRaises(candidate.RebindDenied):
+            candidate._execute(True)
+        self.assertEqual(
+            [c.args[1] for c in publish.call_args_list],
+            [candidate.STAGED, candidate.RESTORE],
+        )
+        self.assertEqual(state["target"], b"old")
+        restart.assert_called_once_with()
+        self.assertEqual(route.call_count, 2)
+
+    def test_failure_before_swap_never_restarts_service(self):
+        """A failed backup write cannot touch the running broker or its route."""
+        stack, state, stage, publish, restart, service, route = self._fake_host()
+        stage.side_effect = OSError("synthetic backup denied")
+        with stack, self.assertRaises(candidate.RebindDenied):
+            candidate._execute(True)
+        self.assertEqual(state["target"], b"old")
+        publish.assert_not_called()
+        restart.assert_not_called()
+        route.assert_called_once_with()
+
+
+
 if __name__ == "__main__":
     unittest.main()
