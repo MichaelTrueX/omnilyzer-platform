@@ -63,6 +63,12 @@ SOURCE_SHA256 = {
         "9d1d8bc48f83839da376c0312ce314401cf147a9be620b319bcaed6ea6d443ec",
     "deployment/analytics_route_journal.py":
         "a187b1242943b6b55f992e889e66e6a658095733755ec946e4be5cdc46764964",
+    "deployment/analytics_executor_service_config.py":
+        "51c095f3a6c4f83ee400d0c9b41e7d811eb208dcf30c7e92a81d548f88be51fb",
+    "deployment/analytics_broker_service.py":
+        "45d74563f91872ac6ebf5e9168bc0c63d9aa3a3408e118886e0c6148d03f0647",
+    "deployment/broker_service_config_loader.py":
+        "7e89e16d736fc83b1a27e1afad1bfcc923cd32d4b71ebd7b1899d3d7e50e49a5",
 }
 _ERROR = "M05_ORIGINAL_BROKER_REBIND_HOLD"
 _CONTROL = (KeyboardInterrupt, SystemExit, GeneratorExit)
