@@ -22,13 +22,66 @@ import stat
 import subprocess
 import sys
 
-# An installed root operator is invoked with Python -I. Never trust
-# current working directory or caller-supplied PYTHONPATH.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# This source is imported by unprivileged unit tests, but is EXECUTED
+# only after a root-only, immutable, real on-host installation. Never make
+# Python -I import executable deployment code from a user-writable checkout.
+_ROOT_INSTALL_BASE = Path("/opt/omnilyzer/deployment")
 
-from deployment.analytics_legacy_0160_attestation import (
+
+def _review_root_installed_operator_path(filename: str) -> Path:
+    """Return immutable installed source root; no arbitrary imports before this."""
+    try:
+        if ((os.getuid(), os.geteuid(), os.getgid(), os.getegid())
+                != (0, 0, 0, 0)):
+            raise ValueError("not root")
+        script = Path(os.path.abspath(filename))
+        source = script.parent.parent
+        if (source.parent != _ROOT_INSTALL_BASE
+                or not source.name.startswith("analytics-app-release-")
+                or len(source.name) != len("analytics-app-release-") + 40
+                or any(c not in "0123456789abcdef"
+                       for c in source.name[-40:])
+                or script.parent.name != "deployment"
+                or script.name != "analytics_legacy_0160_migration.py"):
+            raise ValueError("unreviewed source location")
+        for item in (
+            Path("/opt"), Path("/opt/omnilyzer"), _ROOT_INSTALL_BASE,
+            source, script.parent,
+        ):
+            st = os.lstat(item)
+            if (not stat.S_ISDIR(st.st_mode)
+                    or st.st_uid != 0 or st.st_gid != 0
+                    or stat.S_IMODE(st.st_mode) != 0o755):
+                raise ValueError("unreviewed source ancestry")
+        st = os.lstat(script)
+        if (not stat.S_ISREG(st.st_mode)
+                or (st.st_uid, st.st_gid, stat.S_IMODE(st.st_mode),
+                    st.st_nlink) != (0, 0, 0o500, 1)):
+            raise ValueError("unreviewed root-only source")
+        return source
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except Exception:
+        raise ValueError("root operator source is not trusted") from None
+
+
+if __name__ == "__main__":
+    try:
+        _reviewed_source_root = _review_root_installed_operator_path(__file__)
+    except ValueError:
+        print("M05_LEGACY_ROOT_SOURCE_HOLD", flush=True)
+        raise SystemExit(3)
+else:
+    # Source-only tests cannot install or invoke the root operator; the
+    # explicit privilege check in main() remains mandatory.
+    _reviewed_source_root = Path(__file__).resolve().parents[1]
+
+sys.path.insert(0, str(_reviewed_source_root))
+
+from deployment.analytics_route_journal import (
     LEGACY_REQUEST, LEGACY_RUN, LEGACY_FINAL_SHA, LEGACY_GREEN, LEGACY_IMAGE,
-    LEGACY_SOURCE, CERTIFICATE_NAME, verify_root_legacy_certificate,
+    LEGACY_SOURCE, LEGACY_PLATFORM_SOURCE,
+    CERTIFICATE_NAME, verify_root_legacy_certificate,
 )
 from deployment.policy import canonical_bytes
 
@@ -73,7 +126,15 @@ def _read_file(path: Path, *, uid: int, gid: int, mode: int, limit: int) -> byte
                 info.st_size,info.st_nlink):
             _fail()
         data = os.read(fd, limit + 1)
-        if len(data) != info.st_size or os.fstat(fd) != opened:
+        # A read may update atime. Compare only immutable security-relevant
+        # identity/metadata, and the exact bounded content length.
+        def stable_identity(st):
+            return (
+                st.st_dev, st.st_ino, st.st_uid, st.st_gid, st.st_mode,
+                st.st_nlink, st.st_size, st.st_mtime_ns, st.st_ctime_ns,
+            )
+        if (len(data) != info.st_size
+                or stable_identity(os.fstat(fd)) != stable_identity(opened)):
             _fail()
         return data
     finally:
@@ -196,6 +257,11 @@ def _preflight() -> tuple[dict[str, object], bytes]:
     }
     documents={name:_json(body) for name,body in originals.items()}
     _check_directory(_ROUTE,uid=991,gid=991,mode=0o700)
+    # Existing, partial, or symlinked evidence means the one-time minting
+    # transaction has already been attempted. Never report a fresh preflight
+    # as PASS in that state and never erase/overwrite it.
+    if os.path.lexists(_EXECUTIONS / CERTIFICATE_NAME):
+        _fail()
     current_bytes=_read_file(_TRANSACTION,uid=991,gid=991,mode=0o600,limit=2048)
     current=_json(current_bytes)
     _validate_historical_documents(
@@ -216,6 +282,8 @@ def _preflight() -> tuple[dict[str, object], bytes]:
         "oat_returned_sha256":hashlib.sha256(originals["returned016.json"]).hexdigest(),
         "oat_result_sha256":hashlib.sha256(originals["result.json"]).hexdigest(),
         "image":LEGACY_IMAGE,"container_id":LEGACY_GREEN,
+        "owner_approved_product_source":LEGACY_SOURCE,
+        "owner_approved_platform_source":LEGACY_PLATFORM_SOURCE,
         "slot":"green","generation":2,
     }
     payload=canonical_bytes(document)

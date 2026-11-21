@@ -1139,15 +1139,17 @@ def _review_root_attested_legacy_0160_restart(
     """
     from .analytics_route_journal import AnalyticsRouteJournal
     from .analytics_active_state_review import inspect_committed_analytics_route
-    from .analytics_legacy_0160_attestation import (
+    from .analytics_route_journal import (
         LEGACY_REQUEST, LEGACY_IMAGE, LEGACY_GREEN, LEGACY_VERSION,
-        LEGACY_SOURCE, LEGACY_PLATFORM_SOURCE, read_root_legacy_certificate,
+        LEGACY_SOURCE, LEGACY_PLATFORM_SOURCE, LEGACY_FINAL_SHA,
+        read_root_legacy_certificate,
     )
     from .replay_sqlite import PRODUCTION_REPLAY_DATABASE, SQLiteReplayGuard
-    from release.analytics_owner_source_selection import (
-        AnalyticsOwnerSourceSelection, AnalyticsOwnerSignatureReceipt,
-        load_and_verify_owner_signed_source, expected_owner_approval_bytes,
-    )
+    # This is an exceptional ROOT-ATTESTED HISTORICAL OAT, not a new
+    # release request. The exact archived signed0.16.0 final root receipt
+    # was independently verified at root with its pinned SHA during the
+    # one-time certificate mint. New ordinary releases still verify BOTH
+    # live Ed25519 owner-signed identities from canonical schema3 evidence.
     if (
         type(journal) is not AnalyticsRouteJournal
         or type(intent) is not dict or type(identities) is not dict
@@ -1174,28 +1176,17 @@ def _review_root_attested_legacy_0160_restart(
     certificate = read_root_legacy_certificate(journal, intent)
     if type(certificate) is not dict:
         raise ValueError("legacy root completion certificate unavailable")
-    selected, approved = load_and_verify_owner_signed_source(
-        _OWNER_APPROVAL_FILE, _OWNER_SIGNATURE_FILE,
-    )
+    # The historical 0.16.0 signer bytes were verified in the ORIGINAL
+    # signed Task014 and are now preserved by the exact root-owned final
+    # receipt SHA256, not by the generic pre-existing 0.15.0 owner file.
+    # The latter cannot prove this different historical signed version.
     if (
-        type(selected) is not AnalyticsOwnerSourceSelection
-        or type(approved) is not AnalyticsOwnerSignatureReceipt
-        or approved.owner_signature_verified is not True
-        or selected.release_version != LEGACY_VERSION
-        or selected.source_commit != LEGACY_SOURCE
-        or selected.platform_workflow_commit != LEGACY_PLATFORM_SOURCE
-        or approved.source_commit != selected.source_commit
-        or approved.source_tree != selected.source_tree
-        or approved.release_version != selected.release_version
-        or approved.approval_sha256 != hashlib.sha256(
-            expected_owner_approval_bytes(selected)
-        ).hexdigest()
-        or selected.release_authorized is not False
-        or selected.deployment_authorized is not False
-        or approved.release_authorized is not False
-        or approved.deployment_authorized is not False
+        certificate.get("final_release_receipt_sha256") != LEGACY_FINAL_SHA
+        or certificate.get("owner_approved_product_source") != LEGACY_SOURCE
+        or certificate.get("owner_approved_platform_source")
+            != LEGACY_PLATFORM_SOURCE
     ):
-        raise ValueError("legacy owner Ed25519 source proof absent")
+        raise ValueError("root-attested original signed release is not approved")
     observed = inspect_committed_analytics_route(
         journal=journal, reviewed_image=LEGACY_IMAGE,
         reviewed_slot="green", reviewed_container_id=LEGACY_GREEN,
@@ -1443,7 +1434,7 @@ def _reconcile_interrupted_first_successor_before_receive() -> None:
             # One exact owner-approved maintenance OAT, never a forged
             # second Task014. Root 0440 lineage attestation MUST exist;
             # without it the historical incident remains hard HOLD.
-            from .analytics_legacy_0160_attestation import LEGACY_REQUEST
+            from .analytics_route_journal import LEGACY_REQUEST
             if (intent["generation"] == 2
                     and intent.get("request_sha256") == LEGACY_REQUEST):
                 return _review_root_attested_legacy_0160_restart(

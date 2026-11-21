@@ -8,8 +8,9 @@ from unittest.mock import patch
 
 from deployment.analytics_legacy_0160_migration import (
     _validate_historical_documents, _preflight, _apply, main,
+    _review_root_installed_operator_path,
 )
-from deployment.analytics_legacy_0160_attestation import (
+from deployment.analytics_route_journal import (
     LEGACY_REQUEST, LEGACY_IMAGE, LEGACY_GREEN,
 )
 from deployment.tests.test_analytics_legacy_0160_attestation import legacy_intent
@@ -61,6 +62,24 @@ class HistoricalRootOATLineageTests(unittest.TestCase):
                 changed=copy.deepcopy(self.base)
                 changed["result"][key]=value
                 self.accept(changed)
+
+    def test_root_import_must_refuse_user_worktree_and_wrong_operator_location(self):
+        # A root process must not import source from this DEV user checkout.
+        import os
+        with patch("deployment.analytics_legacy_0160_migration.os.getuid",return_value=0), patch(
+            "deployment.analytics_legacy_0160_migration.os.geteuid",return_value=0
+        ), patch(
+            "deployment.analytics_legacy_0160_migration.os.getgid",return_value=0
+        ), patch(
+            "deployment.analytics_legacy_0160_migration.os.getegid",return_value=0
+        ):
+            for path in (
+                "/home/omnigpt/repos/omnilyzer-platform/deployment/analytics_legacy_0160_migration.py",
+                "/usr/local/libexec/analytics_legacy_0160_migration.py",
+                "/opt/omnilyzer/deployment/analytics-app-release-notasha/deployment/analytics_legacy_0160_migration.py",
+            ):
+                with self.subTest(path=path),self.assertRaises(ValueError):
+                    _review_root_installed_operator_path(path)
 
     def test_non_root_migration_is_denied_without_existing_file_access(self):
         # Works under both GitHub native-root QA and unprivileged DEV QA.

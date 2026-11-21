@@ -1,14 +1,13 @@
 """Source-only fail-closed tests: exact owner-root historical0.16.0 bridge."""
 from __future__ import annotations
 
-from dataclasses import replace
 import hashlib
 import json
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from deployment.analytics_legacy_0160_attestation import (
+from deployment.analytics_route_journal import (
     LEGACY_REQUEST, LEGACY_RUN, LEGACY_FINAL_SHA, LEGACY_IMAGE,
     LEGACY_GREEN, LEGACY_VERSION, LEGACY_SOURCE, LEGACY_PLATFORM_SOURCE,
     Legacy0160AuthorityUnavailable, verify_root_legacy_certificate,
@@ -18,8 +17,6 @@ from deployment.analytics_route_journal import AnalyticsRouteJournal
 from deployment.executor import ExecutorUnavailableError
 from deployment.analytics_executor import _review_root_attested_legacy_0160_restart
 from deployment.policy import canonical_bytes
-from deployment.tests.test_analytics_promotion_broker import OrdinarySignedPredecessorTests
-from release.analytics_owner_source_selection import expected_owner_approval_bytes
 
 
 def legacy_intent():
@@ -49,6 +46,8 @@ def certificate(intent=None):
         "oat_returned_sha256": "c" * 64,
         "oat_result_sha256": "d" * 64,
         "image": LEGACY_IMAGE, "container_id": LEGACY_GREEN,
+        "owner_approved_product_source": LEGACY_SOURCE,
+        "owner_approved_platform_source": LEGACY_PLATFORM_SOURCE,
         "slot": "green", "generation": 2,
     }
 
@@ -90,6 +89,8 @@ class LegacyRootCertificateTests(unittest.TestCase):
         for changed in (
             {"original_run_id":44890393889},
             {"final_release_receipt_sha256":"e"*64},
+            {"owner_approved_product_source":"f"*40},
+            {"owner_approved_platform_source":"f"*40},
             {"oat_returned_sha256":"0"*64},
             {"oat_returned_sha256":"a"*64},
             {"request_sha256":"f"*64},
@@ -124,27 +125,13 @@ class LegacyRestartBindingTests(unittest.TestCase):
             "/var/lib/omnilyzer/deployment/analytics-route",
             expected_uid=991,expected_gid=991,
         )
-        former=OrdinarySignedPredecessorTests.pair()[0]
-        self.selection=replace(
-            former[1], release_version=LEGACY_VERSION,
-            source_commit=LEGACY_SOURCE,
-            platform_workflow_commit=LEGACY_PLATFORM_SOURCE,
-        )
-        self.receipt=replace(
-            former[2], release_version=LEGACY_VERSION,
-            source_commit=LEGACY_SOURCE,
-            source_tree=self.selection.source_tree,
-            approval_sha256=hashlib.sha256(
-                expected_owner_approval_bytes(self.selection)
-            ).hexdigest(),
-        )
         self.identities={
             "expected_replay_directory_uid":0,
             "expected_replay_directory_gid":992,
             "expected_broker_uid":990,"expected_executor_uid":991,
         }
 
-    def review(self, *, state=None, signed=None, image=None, attested=True):
+    def review(self, *, state=None, image=None, attested=True, root_claims=None):
         seen=SimpleNamespace(
             active_slot="green",
             active_image=LEGACY_IMAGE if image is None else image,
@@ -156,10 +143,11 @@ class LegacyRestartBindingTests(unittest.TestCase):
             patch("deployment.analytics_executor.os.getgid",return_value=991),
             patch("deployment.analytics_executor.os.getegid",return_value=991),
             patch("deployment.analytics_executor._read_analytics_execution_status",return_value=state),
-            patch("deployment.analytics_legacy_0160_attestation.read_root_legacy_certificate",
-                  return_value=certificate(self.intent) if attested else None),
-            patch("release.analytics_owner_source_selection.load_and_verify_owner_signed_source",
-                  return_value=(self.selection,self.receipt if signed is None else signed)),
+            patch("deployment.analytics_route_journal.read_root_legacy_certificate",
+                  return_value=(
+                      {**certificate(self.intent), **(root_claims or {})}
+                      if attested else None
+                  )),
             patch("deployment.analytics_active_state_review.inspect_committed_analytics_route",
                   return_value=seen),
             patch.object(AnalyticsRouteJournal,"read",return_value=self.intent),
@@ -168,15 +156,20 @@ class LegacyRestartBindingTests(unittest.TestCase):
                 journal=self.journal,intent=self.intent,identities=self.identities,
             )
 
-    def test_no_old_jti_row_but_root_attestation_and_original_owner_permit_readonly(self):
+    def test_no_old_jti_row_but_root_signed_release_attestation_permits_readonly(self):
         self.assertIsNone(self.review(state=None))
 
-    def test_inflight_replay_and_invalid_owner_or_image_always_hold(self):
+    def test_inflight_replay_changed_historical_source_or_image_always_hold(self):
         for state in ("consumed","executing"):
             with self.subTest(state=state), self.assertRaises(ValueError):
                 self.review(state=state)
-        with self.assertRaises(ValueError):
-            self.review(signed=replace(self.receipt,owner_signature_verified=False))
+        for changed in (
+            {"owner_approved_product_source":"f"*40},
+            {"owner_approved_platform_source":"f"*40},
+            {"final_release_receipt_sha256":"f"*64},
+        ):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                self.review(root_claims=changed)
         with self.assertRaises(ValueError):
             self.review(image="wrong")
 

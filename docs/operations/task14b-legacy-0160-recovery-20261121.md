@@ -74,3 +74,59 @@ never authorize any other product/version/run/generation.
 6. Preserve all PROD protections and original signed release records. The
    later second ordinary new-version release without source/root changes is
    still required to satisfy the original Task14B Definition of Done.
+
+### M04 source-review clarification: historical owner proof
+
+The permanent ordinary successor path always revalidates both current
+Ed25519 owner approvals from the canonical persisted request and root
+approval. The narrow historical OAT has no new ordinary schema3 request:
+its 0.16.0 owner verification occurred in the original signed Task014
+run43838827603. On restart, the immutable exact SHA256 of its subsequent
+root final-release receipt and exact SHA256 root OAT lineage are the
+historic completed owner-attestation trust anchor. The root-owned bridge
+pins the exact original product and platform source SHA; it cannot
+create new signed owner authority. This intentionally does NOT pretend
+to re-read the original release's missing/older per-version Ed25519 file.
+The current installed root approval directory is 0750 and was not
+readable to UID1005, so its contents were not independently examined
+in this unprivileged M04-style source review. Acceptance still requires
+native root review and an explicit independent security verdict.
+
+### Additional M04 review: immutable source closure and root operator
+
+The installed Generation4 application source graph is exactly 26 reviewed
+files under the root-owned SHA-named directory. The historical certificate
+reader and its pinned source identities are now in the EXISTING allowlisted
+'deployment/analytics_route_journal.py'. The former separate
+'deployment/analytics_legacy_0160_attestation.py' was removed from the patch
+because the generation4 archive would otherwise omit it and make real
+UID991 restart fail despite green source-only tests. Preserve this exact
+runtime allowlist and independently rebuild its 26-file SHA binding.
+
+'deployment/analytics_legacy_0160_migration.py' is intentionally not a
+permanent runtime dependency. It is a separate root-operator SNAPSHOT,
+requiring its own exact Git SHA256 review and owner-native installation as
+root:root 0500. Its entrypoint refuses Python -I execution from a mutable
+checkout, symlink source or arbitrary /usr/local helper path. It only admits
+an approved root-owned 0755 SHA-named installed generation path beneath
+/opt/omnilyzer/deployment; this root-only companion must not be copied
+or run until that exact source generation has been immutably installed
+and its separate operator bytes formally approved by M04.
+
+No new module changes to PROD or to the Canary baseline are authorized.
+
+The old original local owner-approval path is beneath a root:GID991
+0750 directory, which UID1005 cannot inspect. The old original Task014
+release had its own already-verified signed owner source; for this unique
+historical OAT recovery, the root final receipt's SHA256 and exact
+owner-approved source SHA metadata are the durable attestation, not a
+fresh signed owner authorization. This is an explicit historical authority
+exception requiring independent M04 source/security review, not a
+permission for future ordinary schema3 releases. Those continue to verify
+both Ed25519 owner approvals at each restart.
+
+The native-root QA gate remains unfulfilled for the separately installed
+operator: root:991 0440 creation, exact generation2 historical continuity,
+race/interrupted write, read-only OAT receipts, UID991 reader and 0.16 private
+route all require direct verification. No tests here used PROD or touched
+the working signed0.16 service.
