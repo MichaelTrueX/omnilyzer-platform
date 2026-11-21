@@ -46,3 +46,7 @@ An active new socket alone is NOT proof of working executor, and is NOT permissi
 7/7 source-only positive/negative tests PASSED. All systemctl, journal write, root config replacement operations were MOCKED. Missing certificate denies before service mutation. Exact known failed socket state is required. Simulated new socket start failure restores old bytes and does not restart old failed socket. Current nonroot connected session cannot access actual protected credentials or execute root due no_new_privs.
 
 Pending: truly independent M04 review of both PR316 and PR317 plus this operator, root-only positive verification of source stage and historical completion, actual root preflight, approved immutable source installation and controlled source cutover. No operation should be considered production-ready based on this document or synthetic test suite alone. PROD unchanged.
+
+### M04 storage durability review amendment
+
+In addition to fsync on each root-only preimage file, the bounded cutover operator now fsyncs the rollback directory and its parent after creating all four preimage files plus the complete manifest, BEFORE it stops the broker. The same directory metadata fsync is performed after the success marker and the fail-closed rollback marker. The preimage journal persists even on failure. This addresses the power-loss window in which file data might be durable but parent directory entries for the only trusted rollback copies are not. Source-only simulated service tests still pass; real native-root filesystem crash/recovery tests remain mandatory.

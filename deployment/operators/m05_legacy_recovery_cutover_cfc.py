@@ -510,6 +510,22 @@ def atomic_replace(path: Path, data: bytes, *, gid: int, mode: int) -> None:
         raise
 
 
+def fsync_rollback_custody() -> None:
+    """Persist directory metadata of root-only rollback evidence.
+
+    Fsync'ing preimage file data alone is insufficient: parent directory
+    entry creation also needs durability before any protected file changes.
+    """
+    for path in (JOURNAL, JOURNAL.parent):
+        fd = os.open(
+            path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        )
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
 def journal(originals: tuple[tuple[Path, bytes, bytes, int, int], ...]) -> None:
     """Make single-use root-only rollback storage before touching service files."""
     # Check the existing trusted parent before creating this one-use journal.
@@ -524,6 +540,8 @@ def journal(originals: tuple[tuple[Path, bytes, bytes, int, int], ...]) -> None:
                      "new_sha256": sha(new), "gid": gid, "mode": mode}
                     for path, old, new, mode, gid in originals],
     }, sort_keys=True).encode(), gid=0, mode=0o600)
+    # Commit all four preimages and their names BEFORE stopping broker.
+    fsync_rollback_custody()
 
 
 # Section: atomic source selection, bounded service outage and automatic rollback.
@@ -551,6 +569,7 @@ def cutover(originals: tuple[tuple[Path, bytes, bytes, int, int], ...]) -> None:
             raise RuntimeError("service not ready after cutover")
         verify_service_selection(NEW_ROOT)
         write_exclusive(JOURNAL / "SOURCE_SWITCH_COMPLETE", SHA.encode(), gid=0, mode=0o600)
+        fsync_rollback_custody()
     except BaseException:
         try:
             systemctl("stop", BROKER)
@@ -566,6 +585,7 @@ def cutover(originals: tuple[tuple[Path, bytes, bytes, int, int], ...]) -> None:
             systemctl("start", BROKER)
             verify_service_selection(OLD_ROOT)
             write_exclusive(JOURNAL / "ROLLBACK_TO_330F_FAILCLOSED", SHA.encode(), gid=0, mode=0o600)
+            fsync_rollback_custody()
         except BaseException:
             pass
         raise

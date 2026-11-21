@@ -111,7 +111,7 @@ class FailClosedServiceTransitionTests(unittest.TestCase):
             return unit != m.EXECUTOR
         original=((Path("/etc/file1"),b"old1",b"new1",0o640,990),
                   (Path("/etc/file2"),b"old2",b"new2",0o640,991))
-        with patch.object(m,"existing_failed_executor_boundary",side_effect=lambda:events.append(("incident",))),patch.object(
+        with patch.object(m,"fsync_rollback_custody"),patch.object(m,"existing_failed_executor_boundary",side_effect=lambda:events.append(("incident",))),patch.object(
             m,"stable_legacy_state",side_effect=lambda:events.append(("attested",))
         ),patch.object(m,"journal",side_effect=lambda x:events.append(("journal",))),patch.object(
             m,"systemctl",side_effect=syst
@@ -140,7 +140,7 @@ class FailClosedServiceTransitionTests(unittest.TestCase):
                   (Path("/etc/file2"),b"old2",b"new2",0o640,991))
         def atomic(path,payload,*,gid,mode):
             events.append(("atomic",str(path),payload))
-        with patch.object(m,"existing_failed_executor_boundary"),patch.object(
+        with patch.object(m,"fsync_rollback_custody"),patch.object(m,"existing_failed_executor_boundary"),patch.object(
             m,"stable_legacy_state"
         ),patch.object(m,"journal"),patch.object(m,"systemctl",side_effect=syst),patch.object(
             m,"atomic_replace",side_effect=atomic
