@@ -566,8 +566,8 @@ def inspect_dormant_analytics_candidate(
         # immutable local OCI RepoDigest, not only Docker Config.Image.
         if state["Running"] is True:
             _check_local_image(raw, expected_image)
-        if inspect_analytics_active_state() != active:
-            raise ValueError("historical standby changed during review")
+            if inspect_analytics_active_state() != active:
+                raise ValueError("historical standby changed during review")
         return None
     except (KeyboardInterrupt, SystemExit, GeneratorExit):
         raise
