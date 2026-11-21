@@ -114,6 +114,100 @@ in one pass, rather than stopping at the first mismatch.
   application results will be inspected. Retain a once-only submission marker.
   An ambiguous submission is investigated before another request is sent.
 
+### 2A. Prevent repeat Task014 failures before a signed dispatch (21 November 2026)
+
+This section is mandatory for the single accountable M05 release owner. It
+preserves existing Task013/014 security/approval/independent review, and does not
+authorize or create a second deployment workflow, an extra test platform or an
+automated retry.
+
+1. **Check the real request/admission contract, not just the producer.**
+   Compare the exact protected GitHub workflow SHA, canonical successor schema,
+   source/owner proof, prior/next signed evidence, broker generation and
+   installed UID991 ordinary handler with the **actual** root-owned configuration
+   and the live signed active/candidate images. Before dispatch, run the
+   source-bound, focused existing producer/consumer positive and malicious-input
+   cases covering this real generation and rollback state. Validate protected
+   signer/registry access from the correct service security context when
+   possible. A synthetic success does not verify a future live GitHub JWT;
+   `task014_diag oidc_codes=ok` only checks **unverified CI-side claims**.
+   Record any unexercised live OIDC/credential/security boundary as UNKNOWN,
+   never PASS.
+2. **Do not reintroduce solved historical incompatibilities.** Inspect the
+   actually installed modules before diagnosing a new error. Historical fixes
+   include the GitHub JOSE `x5t` acceptance in
+   [PR #202](https://github.com/MichaelTrueX/omnilyzer-platform/pull/202),
+   Forgejo Generic Registry `application/octet-stream` in
+   [PR #203](https://github.com/MichaelTrueX/omnilyzer-platform/pull/203),
+   and deterministic RootlessKit route-rule comparison in
+   [PR #300](https://github.com/MichaelTrueX/omnilyzer-platform/pull/300).
+   Those fixes are not a diagnosis of a different live request. Compare
+   **the exact failing phase** and current installed source before changing code.
+3. **Correlate each error to one actual run and UTC interval.** Record the unique
+   run ID and attempt, GitHub job start/end and protected workflow SHA first.
+   Extract only bounded secret-free marker lines from the broker and UID991
+   executor's existing journals for the exact UTC request window, using
+   `journalctl --utc --since ... --until ... -o short-iso-precise`, then
+   filter to `TASK014_ANALYTICS_BROKER_BOUNDARY phase=...`,
+   `TASK014_ANALYTICS_UID991_HOLD phase=...` and
+   `TASK014_ANALYTICS_SUCCESSOR_HOLD phase=...`. Never diagnose one request
+   by reading the last 50 markers spanning several old deployments. A failed
+   `Submit DEV promotion once` and a generic HTTP 403 or 503 are not a
+   cause-specific exception trace. A marker with `outcome=passed` is valid
+   only for its matching time-scoped request and component.
+4. **Discriminate the security boundary before fixing.** HTTP 403 with
+   `router_signed_response outcome=rejected` means a
+   `BrokerRejectedError` propagated through the selected signed successor
+   handler, **not** proof of a Docker, Unix socket, route or replay failure.
+   If no preceding signed-review or replay markers occur in that request
+   window, inspect the fail-closed early broker request/OIDC validation first;
+   do not infer an OIDC root cause without a focused reproduction. A distinct
+   `broker_unix_send outcome=unavailable` or
+   `recovery_unconfirmed` belongs to the same incident only when its timestamp
+   matches. Different branches of the same error-handling code may map to the
+   same HTTP response. If fixed phase telemetry cannot distinguish the
+   relevant boundary, make **one** minimal static, secret-free existing-module
+   instrumentation change with focused regression and the required independent
+   review before any new live signed attempt.
+5. **Establish durable postfailure custody before another request.** Read the
+   protected broker and executor replay status for the **specific run ID**,
+   root-owned route phase, slot-retirement intent, exact signed active/candidate
+   image/container and any recovery HOLD using authorized read-only methods.
+   `ROUTE_PHASE=switched` and `RETIREMENT_PHASE=NONE` do not by themselves
+   prove whether a **different** request's replay JTI was consumed.
+   Never replay a previous run/attempt/JTI, reset the replay DB, restart
+   an executor to clear a result, stop/remove old signed containers or send
+   a second signed Task014 request on an unexplained 403/503. Preserve all
+   previous receipts and known-good serving images. Fix the demonstrated
+   owning component, complete necessary source/security review, source-bound
+   installed acceptance and authorized state reconciliation once, then use
+   a **new** owner-authorized signed run only after the gates genuinely pass.
+   Keep Task013 immutable and PROD unchanged unless separately authorized.
+
+**Observed example, NOT a finished release:** [Task014 #44866000599](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/44866000599)
+on 21 Nov 2026 failed at 04:25:31 UTC with HTTP 403. Its **time-filtered**
+broker journal shows only
+`TASK014_ANALYTICS_BROKER_BOUNDARY phase=router_signed_response outcome=rejected`
+at `04:25:31.603896 UTC`; broad historical `tail` output also contained
+older `broker_unix_send`, `broker_replay_consume`, `broker_executor_receipt`
+and `recovery_unconfirmed` markers that **must not** be attributed to this
+run. Owner read-only postfailure observation was
+`ROUTE_PHASE=switched; RETIREMENT_PHASE=NONE; ACTIVE_SLOT=green;
+ACTIVE_DIGEST=sha256:a0ce1e63dd379c939a2e558b04307b129fa79128da1362caa90d963d8bb3f6a1`.
+Actual replay status for this run and exact first `BrokerRejectedError` cause
+remain **UNKNOWN**. This is a specific early signed-handler rejection diagnosis
+boundary, not proof that previous x5t, Forgejo or RootlessKit fixes regressed.
+**NO blind redispatch, no Task013 rerun and no PROD promotion.**
+
+**Operational safety while the 0.16.1 release is pending:** The protected
+`main` SHA `630db1ae5a05a691493764637e066e487f52f599` is pinned by the
+currently installed workflow/DEV authority. Even a documentation-only merge
+to `main` changes GitHub OIDC `workflow_sha` and can invalidate the
+pending dispatch. Stage instructions in a **separate documentation branch**
+and merge only after the current signed deployment authority is deliberately
+reconciled. Do not alter the installed immutable `6acbdc1` source to
+"apply" this document.
+
 ### Release identity record
 
 | Field | Required source of truth |
