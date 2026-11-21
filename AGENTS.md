@@ -277,6 +277,114 @@ distinguish ordinary releases from platform setup, and keep unsupported releases
 blocked. Reuse qualification for unchanged boundaries; include blob streaming
 and coherent operation/credential/response deadlines when those boundaries change.
 
+**Permanent Task014 failure-prevention rule (21 November 2026):** Before each
+signed promotion, inspect the actual installed broker/executor, verify the
+**specific producer -> signed CI request -> root-owned broker -> UID991 executor**
+version/identity contract against the current signed active slot and journal,
+and reuse accepted evidence only where identical. A CI preflight, unverified
+OIDC claim decode, signed Task013 artifact, or HTTP 200 on the old application
+is never proof that the *new* signed request will pass the live broker. Capture
+one immutable run ID, UTC request window, authenticated response, and the
+corresponding **time-filtered** allowlisted broker/UID991 phase markers; never
+mix earlier journal events into the current incident. Differentiate 403
+(rejected) from 503 (unavailable) and from a successful broker/executor receipt;
+none alone identifies root cause. On failure, stop automatic retries, preserve
+replay/JTI, signed OCI, route/retirement journal and recovery state; classify
+the owning boundary and the original cause **before** any next unique signed
+request. Never reset consumed replay, rerun Task013 or reapply prior repairs
+without a proved matching defect. A required human-only root read must be ONE
+bounded, read-only, secret-free command with exact host, responsible actor and
+output. The delivery chat owns the end-to-end repair and does not use the owner
+as a message courier. Detailed runnable checklist and historical evidence:
+[Task014 pre-release checklist](docs/operations/task014-pre-release-checklist.md)
+and canonical [Issue #281](https://github.com/MichaelTrueX/omnilyzer-platform/issues/281).
+
+**Mandatory three-config Task014 workflow-SHA reconciliation:** The actual
+running Analytics broker constructs its original GitHub OIDC verifier from
+the original root-owned C32H
+`/etc/omnilyzer/deployment/broker/dev.json`, **not** the independent
+Analytics broker product config. Before every signed Task014 DEV dispatch,
+independently verify the exact `expected_workflow_sha` in ALL THREE
+protected files: original `broker/dev.json`, Analytics `broker/analytics.json`,
+and Analytics `dev/analytics-executor.json`. Each must match the exact
+protected GitHub main/workflow SHA and the SHA loaded by the running broker.
+A source cutover or a pairwise Analytics-specific config check does NOT
+establish that the original broker verifier was rebound. This is an explicit
+**release-blocking three-config gate**, not merely a recommended inspection:
+for each distinct future Task014 dispatch the accountable release chat must
+capture one exact, root-attested, secret-free `PASS` matrix for the
+same GitHub main SHA covering (1) original C32H broker `dev.json`,
+(2) Analytics broker `analytics.json`, (3) Analytics executor
+`analytics-executor.json`, and (4) the running broker generation
+and restart/reload evidence. Each file must be validated under its original
+root-owned metadata and canonical schema. A missing, inaccessible, stale or
+unverified value is `HOLD` and **prohibits dispatch**, even with
+successful Task013, green CI, correct product-specific configuration,
+`/readyz` HTTP200, or owner GO. Recheck current protected GitHub
+HEAD immediately before submitting the *one* permitted dispatch: a new
+merge/commit invalidates the previously accepted gate. An owner approval for
+a release candidate does not override this technical prerequisite.
+
+**Prevent this at source-change time:** Before merging any PR into protected
+main, including docs-only PRs, identify whether its resulting GitHub workflow
+SHA will change. While a live broker is pinned to the old SHA, leave the PR
+unmerged or perform the separately approved stopped/restarted authority
+transition as a coordinated release operation **before any subsequent
+dispatch**. Never force-merge, silently repin the broker, weaken signature
+checks, or issue repeated deployment attempts to test an unknown pin.
+After any scoped, independently reviewed and owner-approved rebind,
+verify the original broker restarted with a new PID and the fixed canonical
+SHA, preserve the signed Analytics image, route, replay and recovery custody,
+and then record a fresh full four-part gate before considering a new signed
+dispatch.
+**Enforced pre-dispatch implementation, not just documentation:** The
+current, immutable-630-bound source-only operator in draft
+[PR #315](https://github.com/MichaelTrueX/omnilyzer-platform/pull/315)
+provides a root-only, read-only `--release-preflight`. After independent
+M04 acceptance and authorized installation, it verifies all three canonical
+protected config files, broker process start after the original config
+mtime, exact generation-4 source/permissions and signed active-image/route.
+It exits nonzero on mismatch. The release owner must actually run and
+verify this tool before the *separately approved* next signed Task014
+request and must recheck protected GitHub main SHA immediately before
+dispatch. **This fixed tool is not automatically invoked by GitHub CI**,
+which cannot read DEV root-protected files. A later GitHub main/source
+generation requires an independently reviewed replacement binding, not
+reuse of a stale fixed-SHA PASS. Neither PR315 source nor this draft
+instruction is a live install or authorization to run Task014.
+
+The verified 21 November 2026 incident #44876028251 demonstrated why this
+is mandatory: original C32H broker still pinned prior `c6d6b067...`,
+while Analytics broker/executor and GitHub used `630db1ae...`, producing
+`broker_oidc_identity rejected` despite unverified CI `oidc_codes=ok`.
+Do not weaken verifier rules or repeat Task013/Task014 as a substitute.
+
+**Mandatory signed-OIDC regression gate for EVERY Task014 release:** Compare the
+exact installed `deployment/oidc_verifier.py`, `deployment/identity.py` and
+`deployment/jwks.py` against the previous accepted runtime and the current
+protected workflow authority. Reuse the existing real-RS256, synthetic-JWT
+tests including a valid canonical GitHub JOSE `x5t` header for **all three
+audiences** (deployment, Zot, Forgejo); retain malformed header/thumbprint,
+signature tamper, kid/JWKS selection, issuer/audience, workflow/ref/environment,
+time and replay negative tests. When a relevant boundary changes, additionally
+run a source-bound broker positive test with a cryptographically verified token,
+not merely decoded claims. **`task014_diag oidc_codes=ok` is never an OIDC
+verifier PASS**, and a public JWKS fetch is never evidence that a specific
+historical JWT was accepted. Record authenticated live-broker OIDC admission as
+UNKNOWN unless actually observed; use the existing authorized non-promoting
+probe where its *documented scope* fits, never claim its Zot-only success proves
+broker deployment authority. Before any new signed dispatch after a 403, require
+one exact-run UTC-scoped phase diagnosis, verified cause or explicit recorded
+UNKNOWN, unchanged replay/route custody, focused independent security review
+where changed, and a reasoned single owner authorization. No blind repeated
+releases to improve logs. The historical October 2026 `x5t` incompatibility
+was reproducibly fixed by [PR #202](https://github.com/MichaelTrueX/omnilyzer-platform/pull/202)
+and the next real run changed from HTTP 403 to 503, **but the original JWT was
+not retained and the October 403 cause was never conclusively proven**.
+The 21 November 2026 HTTP 403 reached `broker_verify_oidc` despite the
+installed `x5t` fix; its specific JWT rejection is still UNKNOWN. Never
+relabel it as the old `x5t` defect without a matching verified reproduction.
+
 ## Before editing and context discipline
 
 - Understand the affected execution flow. Search for the owning implementation

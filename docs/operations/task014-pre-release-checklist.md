@@ -90,11 +90,23 @@ in one pass, rather than stopping at the first mismatch.
   exchange extends token expiry. Successful manifest access does not prove
   complete large-blob streaming; require relevant size/digest/stream evidence. Registry authentication and
   repository read permission are separate checks. Never print tokens.
-- [ ] **Installed authority:** Compare actual installed source/configuration and
-  loaded units to the approved baseline. Bind the dispatch workflow SHA to the
-  independently installed broker authority. A new main commit, including a
-  documentation-only merge, can change workflow_sha under the current contract.
-  Reconcile that before dispatch; do not silently rotate the authority.
+- [ ] **Installed authority - mandatory root-attested four-part gate:**
+  Record one secret-free, source-bound `PASS` matrix for **the same current protected
+  GitHub main SHA**: (1) original root-owned C32H
+  `/etc/omnilyzer/deployment/broker/dev.json`, (2) independent Analytics broker
+  `/etc/omnilyzer/deployment/broker/analytics.json`, (3) Analytics executor
+  `/etc/omnilyzer/deployment/dev/analytics-executor.json`, and (4) the running
+  original broker generation, loaded identity authority and restart/reload
+  evidence following a source or config change. Inspect each file using the
+  exact original schema, owner/group/mode and approved root read-only tool.
+  Check the GitHub main SHA **again immediately before dispatch**. Any mismatch,
+  unavailable protected read, unknown running generation, or later GitHub commit
+  is a hard `HOLD`, regardless of Task013 signature, owner GO or CI success.
+  A main commit, including a docs-only merge, changes the OIDC workflow SHA
+  under the existing authority contract; defer merging or perform a separately
+  reviewed root workflow-authority transition before another dispatch.
+  Never confuse the two Analytics-specific files with original C32H authority.
+  Do not silently rotate broker authority or repeat a real dispatch to diagnose it.
 - [ ] **Runtime prerequisites:** Confirm the rootless daemon, approved image
   platform, private networks, slot/port availability and broker/socket state.
   Confirm image size and measured transfer capacity fit the operation, cleanup,
@@ -113,6 +125,238 @@ in one pass, rather than stopping at the first mismatch.
   capture the exact inputs and establish where run, broker, executor and
   application results will be inspected. Retain a once-only submission marker.
   An ambiguous submission is investigated before another request is sent.
+
+### 2A. Prevent repeat Task014 failures before a signed dispatch (21 November 2026)
+
+This section is mandatory for the single accountable M05 release owner. It
+preserves existing Task013/014 security/approval/independent review, and does not
+authorize or create a second deployment workflow, an extra test platform or an
+automated retry.
+
+**Release admission record for each distinct run (required, fail closed):**
+
+| Evidence | Accept only | Otherwise |
+| --- | --- | --- |
+| GitHub workflow | Exact protected `main` commit SHA captured, then reconfirmed immediately before submission | HOLD |
+| Original broker C32H | Root-attested canonical `broker/dev.json` `expected_workflow_sha` equals that exact SHA | HOLD |
+| Analytics broker | Root-attested canonical `broker/analytics.json` `expected_workflow_sha` equals the same SHA | HOLD |
+| Analytics executor | Root-attested canonical `dev/analytics-executor.json` `expected_workflow_sha` equals the same SHA | HOLD |
+| Running broker | Exact reviewed source generation, loaded C32H authority; after a rebind, changed PID and healthy restart with unchanged signed active Analytics OCI and durable route | HOLD |
+| Authorization | Fresh explicit one-run owner GO only after all preceding controls PASS | NO DISPATCH |
+
+**Current exact implementation, still uninstalled:** Draft
+[PR #315](https://github.com/MichaelTrueX/omnilyzer-platform/pull/315)
+adds `--release-preflight` to its existing root-only one-time broker SHA
+rebind operator. The command executes no mutation and exits nonzero if
+the original C32H broker, Analytics broker and Analytics executor do not
+share the same frozen `630db1ae...` workflow SHA and exact generation4
+trust, if broker process timestamp predates the protected original
+configuration, or if the signed0.16.0 active OCI/route is not coherent.
+After M04 source/security approval and owner-authorized installation,
+execute `--preflight` and `--apply` only for the exact reviewed one-field
+repair, then execute `--release-preflight` **before requesting a separate
+fresh owner GO/unique Task014 run**. Reverify GitHub protected main SHA
+in the owner-side dispatcher immediately before submission. GitHub CI
+cannot automatically inspect root-owned DEV config; do not represent
+successful CI checks as this mandatory runtime preflight. No silent
+reuse of this 630-specific code for a future workflow revision.
+
+The M05 owner must **collect or reuse** one already accepted root-attested
+read-only matrix for the *same* installed generation, configuration bytes,
+running broker instance and GitHub SHA. Reuse is invalid if any of these changes.
+If a root read is blocked by UID1005 isolation, do not report a presumed PASS:
+use the existing reviewed, bounded, owner-attended root preflight **once**.
+Do not require the owner to manually compare multiple files or interpret logs;
+the script must return a closed PASS/HOLD matrix with no secret values. This is
+a mandatory release gate and is not a new framework, workflow, or approval chain.
+
+
+1. **Check the real request/admission contract, not just the producer.**
+   Compare the exact protected GitHub workflow SHA, canonical successor schema,
+   source/owner proof, prior/next signed evidence, broker generation and
+   installed UID991 ordinary handler with the **actual** root-owned configuration
+   and the live signed active/candidate images. Before dispatch, run the
+   source-bound, focused existing producer/consumer positive and malicious-input
+   cases covering this real generation and rollback state. Validate protected
+   signer/registry access from the correct service security context when
+   possible. A synthetic success does not verify a future live GitHub JWT;
+   `task014_diag oidc_codes=ok` only checks **unverified CI-side claims**.
+   Record any unexercised live OIDC/credential/security boundary as UNKNOWN,
+   never PASS.
+2. **Do not reintroduce solved historical incompatibilities.** Inspect the
+   actually installed modules before diagnosing a new error. Historical fixes
+   include the GitHub JOSE `x5t` acceptance in
+   [PR #202](https://github.com/MichaelTrueX/omnilyzer-platform/pull/202),
+   Forgejo Generic Registry `application/octet-stream` in
+   [PR #203](https://github.com/MichaelTrueX/omnilyzer-platform/pull/203),
+   and deterministic RootlessKit route-rule comparison in
+   [PR #300](https://github.com/MichaelTrueX/omnilyzer-platform/pull/300).
+   Those fixes are not a diagnosis of a different live request. Compare
+   **the exact failing phase** and current installed source before changing code.
+   Historical proof (not an identical-current-cause claim): on 18 October 2026,
+   the old `_parse_compact_token` rejected GitHub's valid canonical JOSE
+   `x5t` header **before RS256 signature verification**. An authentic
+   synthetically signed token reproduced `OIDC token header is invalid` and
+   HTTP 403 semantics. [PR #202](https://github.com/MichaelTrueX/omnilyzer-platform/pull/202)
+   accepted only canonical 20-byte unpadded base64url `x5t`, retained RS256,
+   validated `kid`, signature and every existing identity restriction.
+   The reviewed source was installed by guarded root migration; the next
+   real DEV run [#39107441829](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/39107441829)
+   returned **503 instead of 403**. This supports progress but the original
+   October live JWT was never retained, so do **not** claim definitive
+   historical-root-cause proof. The installed 21 November `oidc_verifier.py`
+   already includes that exact `x5t` fix and its original tests.
+3. **Correlate each error to one actual run and UTC interval.** Record the unique
+   run ID and attempt, GitHub job start/end and protected workflow SHA first.
+   Extract only bounded secret-free marker lines from the broker and UID991
+   executor's existing journals for the exact UTC request window, using
+   `journalctl --utc --since ... --until ... -o short-iso-precise`, then
+   filter to `TASK014_ANALYTICS_BROKER_BOUNDARY phase=...`,
+   `TASK014_ANALYTICS_UID991_HOLD phase=...` and
+   `TASK014_ANALYTICS_SUCCESSOR_HOLD phase=...`. Never diagnose one request
+   by reading the last 50 markers spanning several old deployments. A failed
+   `Submit DEV promotion once` and a generic HTTP 403 or 503 are not a
+   cause-specific exception trace. A marker with `outcome=passed` is valid
+   only for its matching time-scoped request and component.
+4. **Discriminate the security boundary before fixing.** HTTP 403 with
+   `router_signed_response outcome=rejected` means a
+   `BrokerRejectedError` propagated through the selected signed successor
+   handler, **not** proof of a Docker, Unix socket, route or replay failure.
+   If no preceding signed-review or replay markers occur in that request
+   window, inspect the fail-closed early broker request/OIDC validation first;
+   do not infer an OIDC root cause without a focused reproduction. A distinct
+   `broker_unix_send outcome=unavailable` or
+   `recovery_unconfirmed` belongs to the same incident only when its timestamp
+   matches. Different branches of the same error-handling code may map to the
+   same HTTP response. If fixed phase telemetry cannot distinguish the
+   relevant boundary, make **one** minimal static, secret-free existing-module
+   instrumentation change with focused regression and the required independent
+   review before any new live signed attempt.
+   **Nov 21 repeat failure guard:** Signed Task014 run `#44871118758` at
+   `05:30:01.944473 UTC` proved `broker_verify_oidc outcome=rejected`
+   *before* signed evidence review or replay. This **does not identify**
+   signature-vs-identity denial. A green `task014_diag oidc_codes=ok` checks
+   only unverified CI-side claims; healthy public GitHub JWKS discovery and
+   working lookup of *one* current key cannot authenticate a historical JWT.
+   Compare actual real same-run JWT **verification vs authorization**
+   boundaries, using only private allowlisted fixed phase codes and
+   security-reviewed code. The original verifier and policy Git blobs matched
+   those of the successful earlier first successor release; do not weaken
+   JWT algorithm/header, audience, issuer, key provenance, GitHub workflow
+   SHA, time or identity constraints, or guess that old x5t fix has regressed.
+   If existing telemetry groups multiple rejection causes into a single phase,
+   fix the missing **secret-free precise phase classifier once** with focused
+   tests and independent security review *before* a newly authorized request;
+   do not send multiple live releases merely to learn where a 403 happened.
+   **Required pre-dispatch OIDC acceptance record, reused per unchanged
+   installed source/policy instead of adding generic pipelines:**
+
+   | Exact control | Evidence needed | What does NOT count |
+   | --- | --- | --- |
+   | JOSE header/RS256 | Run the existing real-RS256 synthetic-JWT `test_oidc_verifier.py` positive with valid `x5t` and `kid`, plus tampered-header, malformed `x5t`, duplicate header and non-RS256 negatives | Only checking JWT payload/claim values |
+   | Three bounded audiences | Verify deployment, Zot and Forgejo tokens through the existing cryptographic verifier and negative audience/issuer/cross-token tests, not one shared audience | A successful Zot-only `auth_probe=true` or public JWKS fetch |
+   | Signed identity policy | Check source-pinned repository/actor, `workflow_ref`, `workflow_sha`, `ref`, environment, event and token times/expiry; compare to actual installed root config and pinned protected main | A CI `oidc_codes=ok` computed from **unverified** claims |
+   | **All three workflow SHA pins** | Verify exact root-controlled `expected_workflow_sha` in original C32H `broker/dev.json`, separate Analytics `broker/analytics.json` and `dev/analytics-executor.json` matches protected GitHub main; prove running original broker reloaded `dev.json` after any reviewed rotation | Only checking the Analytics broker/executor pair or live `/readyz` HTTP200 |
+   | Broker integration | Reuse existing source-bound real-signature positive/negative broker admission tests whenever verifier, caller or identity boundary changed; observe protected replay and no mutation on failures | A GitHub workflow gate PASS, /readyz HTTP200, synthetic collaborator that skips cryptographic verification |
+   | Incident verdict | After rejection, one exact run/attempt/UTC window of fixed protected phase markers, broker replay status, and a proven matching source defect before repair | Another undiagnosed 403, a generic `broker_verify_oidc rejected`, or old runs' log tail |
+
+   **Boundedness:** No production JWTs, signatures, JTI, exception messages,
+   claim values, secrets, raw headers or private keys may be retained in
+   GitHub, logs, chat, debug output or a new telemetry stream. The existing
+   non-promoting `auth_probe` verifies a different Zot credential path, not
+   broker-side deployment-JWT verification; it may be reused only within
+   that documented scope. If a live signed broker token cannot be verified
+   without dispatch, explicitly record that limitation as UNKNOWN; do not
+   claim a substitute test passed, or send repeated releases solely for
+   diagnostics. Retain the original Task014 mandatory independent security
+   review and owner approval; avoid any new general infrastructure.
+   October JOSE compatibility and November OIDC denial are **related
+   failure boundaries, not proven identical root causes**.
+
+   **21 November 2026 confirmed omitted authority:** Real signed Task014
+   run #44876028251 at 06:33 UTC failed HTTP403 with protected
+   `broker_oidc_identity outcome=rejected`, then
+   `router_signed_response outcome=rejected`. Owner-native root read proved
+   original broker `/etc/omnilyzer/deployment/broker/dev.json` still
+   pinned `c6d6b067f932e60d82f8b7a9d75a2629a62606c8`, although both
+   Analytics-specific root configs and GitHub protected main were at
+   `630db1ae5a05a691493764637e066e487f52f599`. The real
+   `analytics_broker_service.py` verifier gets its SHA from the *original*
+   config, so verifying only Analytics-specific files missed a release-blocking
+   mismatch. Independent scoped fix is draft PR #315 (one-field rebind,
+   original service restart and private route preservation). The prior
+   owner-approved new run has been consumed and must NOT be retried; no
+   source merge, root install, or new signed dispatch is implied by the
+   documentation. Do not claim the historical JWT's other claims or
+   cryptographic result were independently retained.
+
+5. **Establish durable postfailure custody before another request.** Read the
+   protected broker and executor replay status for the **specific run ID**,
+   root-owned route phase, slot-retirement intent, exact signed active/candidate
+   image/container and any recovery HOLD using authorized read-only methods.
+   `ROUTE_PHASE=switched` and `RETIREMENT_PHASE=NONE` do not by themselves
+   prove whether a **different** request's replay JTI was consumed.
+   Never replay a previous run/attempt/JTI, reset the replay DB, restart
+   an executor to clear a result, stop/remove old signed containers or send
+   a second signed Task014 request on an unexplained 403/503. Preserve all
+   previous receipts and known-good serving images. Fix the demonstrated
+   owning component, complete necessary source/security review, source-bound
+   installed acceptance and authorized state reconciliation once, then use
+   a **new** owner-authorized signed run only after the gates genuinely pass.
+   Keep Task013 immutable and PROD unchanged unless separately authorized.
+
+**Observed example, NOT a finished release:** [Task014 #44866000599](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/44866000599)
+on 21 Nov 2026 failed at 04:25:31 UTC with HTTP 403. Its **time-filtered**
+broker journal shows only
+`TASK014_ANALYTICS_BROKER_BOUNDARY phase=router_signed_response outcome=rejected`
+at `04:25:31.603896 UTC`; broad historical `tail` output also contained
+older `broker_unix_send`, `broker_replay_consume`, `broker_executor_receipt`
+and `recovery_unconfirmed` markers that **must not** be attributed to this
+run. Owner read-only postfailure observation was
+`ROUTE_PHASE=switched; RETIREMENT_PHASE=NONE; ACTIVE_SLOT=green;
+ACTIVE_DIGEST=sha256:a0ce1e63dd379c939a2e558b04307b129fa79128da1362caa90d963d8bb3f6a1`.
+A later authorized read-only lookup found `ABSENT_OR_PRUNED` for this
+run's replay row; that is **not** proof the row was never consumed.
+The original exact first `BrokerRejectedError` cause remains **UNKNOWN**.
+At the subsequent separately authorized [Task014 #44871118758](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/44871118758)
+(21 Nov 2026 05:30:01.944473 UTC), the newly installed D4A private
+broker emitted `broker_verify_oidc outcome=rejected` followed by
+`router_signed_response outcome=rejected`. The replay lookup again returned
+`ABSENT_OR_PRUNED`. This proves an early actual OIDC verification or identity
+reauthorization boundary rejection, **not** whether header, `kid`, RS256,
+issuer/audience, identity or time caused it. Public GitHub JWKS disclosure
+and cache lookup were successful, and current installed `x5t` tests exist,
+so repeating PR202/other historical repairs without an exact reproduction
+would be a new error. The fixed-phase diagnostic source in existing draft PR313 at
+`330f3255f0067b9ddbe30d50466830bd71a55a11` was **subsequently
+installed on DEV** through an independently reviewed, owner-attended root
+cutover. Its historical 191 focused tests and seven GitHub checks support
+source qualification only, not successful signed0.16.1 promotion.
+A subsequent authorized third Task014
+[run #44876028251](https://github.com/MichaelTrueX/omnilyzer-platform/actions/runs/44876028251)
+failed HTTP403 at `broker_oidc_identity`. Owner-root evidence proved the
+original C32H broker pinned `c6d6b067...` while the Analytics broker,
+executor and protected GitHub main used `630db1ae...`.
+The one-field correction is still **uninstalled, draft PR315** at HEAD
+`99043a8abb6f03d03f2222fd2c40a2ffa4126d09` (source SHA256
+`70becf364ba1cbc29cff9df4971d0db4ad7d9914ec24606f1948ca6ea7e73afc`).
+M04 technical review found and corrected an interrupted-rollback defect;
+62/62 focused source tests, including trusted ancestor checks, and separate fault injections PASS. This is NOT a
+formal independent M04 approval, actual root rebind or triple-config preflight.
+All three historical Task014 attempts are closed failed events.
+**Analytics 0.16.1 remains NO-GO on DEV; signed0.16.0 remains serving.**
+**NO blind redispatch, Task013 rerun or PROD promotion.**
+
+**Operational safety while the 0.16.1 release is pending:** The protected
+`main` SHA `630db1ae5a05a691493764637e066e487f52f599` is pinned by the
+currently installed workflow/DEV authority. Even a documentation-only merge
+to `main` changes GitHub OIDC `workflow_sha` and can invalidate the
+pending dispatch. Stage instructions in a **separate documentation branch**
+and merge only after the current signed deployment authority is deliberately
+reconciled. Do not alter the installed immutable
+`analytics-app-release-330f3255f0067b9ddbe30d50466830bd71a55a11`
+source to "apply" this document. The earlier `6acbdc1` and D4A references
+are historical evidence, not the current installed DEV authority.
 
 ### Release identity record
 
