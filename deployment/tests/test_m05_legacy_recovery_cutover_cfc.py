@@ -144,8 +144,9 @@ class FailClosedServiceTransitionTests(unittest.TestCase):
             m,"stable_legacy_state"
         ),patch.object(m,"journal"),patch.object(m,"systemctl",side_effect=syst),patch.object(
             m,"atomic_replace",side_effect=atomic
-        ),patch.object(m,"active",side_effect=lambda unit:unit!=m.EXECUTOR),patch.object(
-            m,"verify_service_selection",side_effect=lambda x:events.append(("verified",x))
+        ),patch.object(m,"active",side_effect=lambda unit:unit not in (m.EXECUTOR,m.SOCKET)),patch.object(
+            m,"checked_read",side_effect=lambda path,**kw: b"old1" if str(path)=="/etc/file1" else b"old2"
+        ),patch.object(m,"verify_service_selection",side_effect=lambda x:events.append(("verified",x))
         ),patch.object(m,"write_exclusive",side_effect=lambda *a,**k:events.append(("receipt",))):
             with self.assertRaises(RuntimeError):
                 m.cutover(original)
@@ -158,6 +159,57 @@ class FailClosedServiceTransitionTests(unittest.TestCase):
         self.assertIn(("verified",m.OLD_ROOT),events)
         self.assertIn(("systemctl","start",m.BROKER),events)
         self.assertNotIn(("systemctl","reset-failed",m.EXECUTOR,"retry"),events)
+
+    def test_partial_rollback_never_misreports_old_signed_runtime_as_restored(self):
+        events=[]
+        old=((Path("/etc/file1"),b"old1",b"new1",0o640,990),
+             (Path("/etc/file2"),b"old2",b"new2",0o640,991))
+        def system(*args):
+            events.append(("systemctl",)+args)
+            if args==("start",m.SOCKET):
+                raise RuntimeError("simulated new socket failure")
+        def atomic(path,payload,*,gid,mode):
+            events.append(("atomic",str(path),payload))
+            if str(path)=="/etc/file2" and payload==b"old2":
+                raise OSError("simulated second rollback write failure")
+        def receipt(path,data,**kwargs):
+            events.append(("receipt",Path(path).name))
+        with patch.object(m,"fsync_rollback_custody"),patch.object(
+            m,"existing_failed_executor_boundary"
+        ),patch.object(m,"stable_legacy_state"),patch.object(m,"journal"),patch.object(
+            m,"systemctl",side_effect=system
+        ),patch.object(m,"atomic_replace",side_effect=atomic),patch.object(
+            m,"active",side_effect=lambda unit:unit not in (m.EXECUTOR,m.SOCKET)
+        ),patch.object(m,"verify_service_selection") as verify,patch.object(
+            m,"write_exclusive",side_effect=receipt
+        ):
+            with self.assertRaisesRegex(RuntimeError,"M05_CFC_ROLLBACK_UNVERIFIED_HOLD"):
+                m.cutover(old)
+            verify.assert_not_called()
+        self.assertIn(("receipt","ROLLBACK_UNVERIFIED_HOLD"),events)
+        self.assertNotIn(("receipt","ROLLBACK_TO_330F_FAILCLOSED"),events)
+        self.assertNotIn(("systemctl","start",m.BROKER),events[events.index(("systemctl","daemon-reload"))+1:])
+
+    def test_successful_restore_requires_old_byte_content_verification(self):
+        old=((Path("/etc/file1"),b"old1",b"new1",0o640,990),)
+        events=[]
+        def system(*args):
+            events.append(args)
+            if args==("start",m.SOCKET):
+                raise RuntimeError("new socket failed")
+        with patch.object(m,"fsync_rollback_custody"),patch.object(
+            m,"existing_failed_executor_boundary"
+        ),patch.object(m,"stable_legacy_state"),patch.object(m,"journal"),patch.object(
+            m,"systemctl",side_effect=system
+        ),patch.object(m,"atomic_replace"),patch.object(
+            m,"active",side_effect=lambda unit:unit not in (m.EXECUTOR,m.SOCKET)
+        ),patch.object(m,"checked_read",return_value=b"tampered"),patch.object(
+            m,"write_exclusive"
+        ) as marker,patch.object(m,"verify_service_selection") as verified:
+            with self.assertRaisesRegex(RuntimeError,"M05_CFC_ROLLBACK_UNVERIFIED_HOLD"):
+                m.cutover(old)
+            verified.assert_not_called()
+            self.assertEqual(marker.call_args[0][0].name,"ROLLBACK_UNVERIFIED_HOLD")
 
     def test_unexpected_user_or_commands_never_mutate(self):
         with patch.object(m.os,"getuid",return_value=1005),patch.object(m,"systemctl") as ctl:

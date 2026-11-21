@@ -571,6 +571,7 @@ def cutover(originals: tuple[tuple[Path, bytes, bytes, int, int], ...]) -> None:
         write_exclusive(JOURNAL / "SOURCE_SWITCH_COMPLETE", SHA.encode(), gid=0, mode=0o600)
         fsync_rollback_custody()
     except BaseException:
+        rollback_incomplete = None
         try:
             systemctl("stop", BROKER)
             if active(EXECUTOR):
@@ -579,15 +580,33 @@ def cutover(originals: tuple[tuple[Path, bytes, bytes, int, int], ...]) -> None:
             for path, old, _, mode, gid in originals:
                 atomic_replace(path, old, gid=gid, mode=mode)
             systemctl("daemon-reload")
-            # The previous signed0.16.0 is live but the old executor
-            # was already failed. Recreating the old broken socket is NOT
-            # a safe rollback target. Preserve it stopped/fail-closed.
+            # Verify every restored byte, owner, mode, and bound path BEFORE
+            # attempting to restart the original signed0.16 broker. An
+            # interrupted replace or wrong protected file must not be
+            # misreported as successful rollback.
+            for path, old, _, mode, gid in originals:
+                if checked_read(path,uid=0,gid=gid,mode=mode) != old:
+                    raise ValueError("old protected configuration not restored")
+            if active(SOCKET) or active(EXECUTOR):
+                raise ValueError("previously failed socket/executor not fail-closed")
             systemctl("start", BROKER)
             verify_service_selection(OLD_ROOT)
-            write_exclusive(JOURNAL / "ROLLBACK_TO_330F_FAILCLOSED", SHA.encode(), gid=0, mode=0o600)
+            write_exclusive(JOURNAL / "ROLLBACK_TO_330F_FAILCLOSED",
+                            SHA.encode(), gid=0, mode=0o600)
             fsync_rollback_custody()
-        except BaseException:
-            pass
+        except BaseException as failure:
+            rollback_incomplete = failure
+            # Best-effort durable RED evidence. If storage itself failed,
+            # the original preimages are retained and external read-only
+            # root inspection is still required. Never auto-retry.
+            try:
+                write_exclusive(JOURNAL / "ROLLBACK_UNVERIFIED_HOLD",
+                                SHA.encode(), gid=0, mode=0o600)
+                fsync_rollback_custody()
+            except BaseException:
+                pass
+        if rollback_incomplete is not None:
+            raise RuntimeError("M05_CFC_ROLLBACK_UNVERIFIED_HOLD") from rollback_incomplete
         raise
 
 

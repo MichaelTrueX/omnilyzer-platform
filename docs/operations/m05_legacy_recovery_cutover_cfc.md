@@ -50,3 +50,35 @@ Pending: truly independent M04 review of both PR316 and PR317 plus this operator
 ### M04 storage durability review amendment
 
 In addition to fsync on each root-only preimage file, the bounded cutover operator now fsyncs the rollback directory and its parent after creating all four preimage files plus the complete manifest, BEFORE it stops the broker. The same directory metadata fsync is performed after the success marker and the fail-closed rollback marker. The preimage journal persists even on failure. This addresses the power-loss window in which file data might be durable but parent directory entries for the only trusted rollback copies are not. Source-only simulated service tests still pass; real native-root filesystem crash/recovery tests remain mandatory.
+
+### Independent M04 rollback-path correction
+
+The previous root cutover source caught and silently discarded failures in the
+rollback handler while preserving only the original cutover exception. Thus a
+partial restoration could leave one or more protected JSON/drop-in files on the
+new source and still look superficially identical to a safe rollback HOLD.
+That is not an acceptable incident recovery claim.
+
+The revised source now, after attempting restoration, **reads back each exact
+original preimage** using the existing root owner, group, mode, single-link and
+stable-FD verifier. It requires both old failed units remain inactive before
+restarting the original broker, then independently verifies old WorkingDirectory
+and signed0.16 private readiness before writing the explicit
+`ROLLBACK_TO_330F_FAILCLOSED` root receipt.
+
+If any protected file, service or metadata cannot be restored, it attempts to
+fsync the distinct `ROLLBACK_UNVERIFIED_HOLD` root receipt and raises a
+different hard failure; it **must not** falsely write the successful rollback
+marker, start the old failed socket or auto-retry a consumed Task014. Even if
+the disk prevents this marker, the original root-only preimages remain, and
+manual native-root afterstate inspection is mandatory.
+
+9/9 source-only tests PASS, including simulated interrupted second rollback
+write, byte-content mismatch during restoration, correct stop/start order and
+exact returned root config. Systemd operations and file writes were MOCKED.
+These are necessary negative controls, not a native-root recovery acceptance.
+
+Before any source stage, independent M04 must also review PR317's latest pinned
+protected-importer SHA256 check and confirm the actual root-only importer
+metadata. Neither this amendment nor GitHub Repository Quality authorizes a
+new Task014 run or a new privileged maintenance operation.
