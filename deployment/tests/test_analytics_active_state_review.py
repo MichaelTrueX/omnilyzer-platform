@@ -129,7 +129,8 @@ class DormantRollbackContainerReviewTests(unittest.TestCase):
         old["Config"]["Image"] = PINNED_IMAGE
         return active, old
 
-    def review(self, *, old=None, active=None, image=None, identifier=None):
+    def review(self, *, old=None, active=None, image=None, identifier=None,
+               allow_running_standby=False, image_verification_error=False):
         """Run only fixed read-only Unix GETs under a synthetic UID991."""
         from deployment.analytics_active_state_review import inspect_dormant_analytics_candidate
         from deployment.analytics_signed_release_consumer import PINNED_IMAGE
@@ -142,14 +143,19 @@ class DormantRollbackContainerReviewTests(unittest.TestCase):
         ) as inspector, patch(
             "deployment.analytics_active_state_review._unix_get",
             return_value=candidate,
-        ) as unix:
+        ) as unix, patch(
+            "deployment.analytics_active_state_review._check_local_image",
+            side_effect=ValueError("fake repo digest") if image_verification_error else None,
+        ) as verify_image:
             result = inspect_dormant_analytics_candidate(
                 active=live, expected_slot="blue",
                 expected_image=PINNED_IMAGE if image is None else image,
                 expected_container_id=old_original["Id"] if identifier is None else identifier,
+                allow_running_standby=allow_running_standby,
             )
             self.assertIsNone(result)
-            self.assertEqual(inspector.call_count, 2)
+            self.assertEqual(inspector.call_count, 3 if candidate["State"]["Running"] is True else 2)
+            self.assertEqual(verify_image.call_count, int(candidate["State"]["Running"] is True))
             unix.assert_called_once_with(
                 "/run/user/991/docker.sock",
                 "/containers/omnilyzer-analytics-dev-analytics-blue-1/json",
@@ -158,6 +164,26 @@ class DormantRollbackContainerReviewTests(unittest.TestCase):
     def test_stopped_unrouted_original_blue_is_only_observed_not_removed(self):
         """One fixed GET and zero Docker stop/remove or journal writes."""
         self.review()
+
+    def test_signed_running_standby_is_admitted_only_in_explicit_review_mode(self):
+        """Observed RUNNING 0.15 is valid only if isolated and healthy."""
+        _, old = self.fixture()
+        old["State"] = {"Running": True, "Health": {"Status": "healthy"}}
+        self.review(old=old, allow_running_standby=True)
+        for bad in (
+            {**old, "State": {"Running": True, "Health": {"Status": "unhealthy"}}},
+            {**old, "State": {"Running": True}},
+            {**old, "HostConfig": {**old["HostConfig"], "Privileged": True}},
+            {**old, "Config": {**old["Config"], "Image": "other/repo:tag"}},
+        ):
+            from deployment.analytics_active_state_review import AnalyticsActiveStateDenied
+            with self.subTest(bad=bad), self.assertRaises(AnalyticsActiveStateDenied):
+                self.review(old=bad, allow_running_standby=True)
+        from deployment.analytics_active_state_review import AnalyticsActiveStateDenied
+        with self.assertRaises(AnalyticsActiveStateDenied):
+            self.review(old=old, allow_running_standby=True, image_verification_error=True)
+        with self.assertRaises(AnalyticsActiveStateDenied):
+            self.review(old=old, allow_running_standby=1)
 
     def test_active_or_substituted_candidate_never_passes_retirement(self):
         """No ID substitution, active container or wrong image can pass."""
