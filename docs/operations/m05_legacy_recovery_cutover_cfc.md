@@ -6,17 +6,17 @@ Status: SOURCE ONLY, DRAFT, INDEPENDENT M04 ROOT QA OUTSTANDING. This document d
 
 Root-native owner output identified current broker and executor JSON SHA256, both de054fbc2f54c35835ed53d91aa2caa5da965d4a619db3e9f6c909c94598d4cc. The old protected installer module SHA256 is cc7dfd7fb022a01772bb2f18fd1705f6e4f15e706903e4b47c8833b7d7f9ac5b. Two currently selected systemd drop-ins SHA256 are 43bcd3234c8428cedd5d4bda06db3a0b4144c1275ca2121230046affe4f89342 (broker) and fa635a6d8321cf202487aca19abafaf20f62af38f9f9fb5d55892b7b82511ea6 (executor).
 
-Original live root: 330f3255f0067b9ddbe30d50466830bd71a55a11. Proposed new root: cfc274117fed99e01c24fda62ab0065170f3314a (draft PR316).
+Original live root: 330f3255f0067b9ddbe30d50466830bd71a55a11. Proposed new root: 17972bff312a3df7c6e5e4f3d83b239b9b11aba1 (draft PR316).
 Old broker active, executor FAILED exit-code, socket FAILED service-start-limit-hit, signed0.16.0 green private readyz HTTP200. This operator deliberately does NOT demand an initially active socket.
 
-All 76 original root-owned source files have been compared read-only to the cfc Git revision: 74 byte-identical, exactly 2 modified: deployment/analytics_executor.py SHA256 34de557ca2d5e63adb6cc5c18c827dd5f266040e699525670d21c9667b84f5ff, deployment/analytics_route_journal.py SHA256 d6163f72d113b9c64765c6390923aab93e1d41408883f99d595f56fbaad10374. New SHA root must be immutably stage-installed and verified independently via draft PR317 before cutover.
+All 76 original root-owned source files have been compared read-only to the cfc Git revision: 74 byte-identical, exactly 2 modified: deployment/analytics_executor.py SHA256 34de557ca2d5e63adb6cc5c18c827dd5f266040e699525670d21c9667b84f5ff, deployment/analytics_route_journal.py SHA256 b4029a2a1f152ac7848ff2b9e73e9fb8a6ce40101b58cb301d57fb82730171cc. New SHA root must be immutably stage-installed and verified independently via draft PR317 before cutover.
 
 ## Proposed four exact root configuration outputs
 
-- Broker JSON (root:990 0640) SHA256: 899ff556faad63633f545a089cb4ef992fc2e82f31280d75a6f430dce6d06bad.
-- Executor JSON (root:991 0640) SHA256: 899ff556faad63633f545a089cb4ef992fc2e82f31280d75a6f430dce6d06bad.
-- Broker systemd drop-in (root:root 0644) SHA256: 9efe668971219db34afbd654c5cc133a5296c64cdc9ecbaa99433ca6de47bc8f.
-- Executor systemd drop-in (root:root 0644) SHA256: ce7ca2bca4bc1943bf9fdd6b947ecbd82af0b8e839ab12f7e36c467f313dd6d9.
+- Broker JSON (root:990 0640) SHA256: 09d54fac2ed1be212d64db42d8d1570dbc4849614c5a108fa6e6c1adf5fb8386.
+- Executor JSON (root:991 0640) SHA256: 09d54fac2ed1be212d64db42d8d1570dbc4849614c5a108fa6e6c1adf5fb8386.
+- Broker systemd drop-in (root:root 0644) SHA256: a85e2f8bd49f1c79ae5683506e58065ceebbf0784b6ce395dcdba8652aa7b529.
+- Executor systemd drop-in (root:root 0644) SHA256: 6b0b1b4619dbe34037cfe12e35181daf516ba34266cbeff7a31d51f23ab722de.
 
 Broker and executor JSON remain byte-identical. Only source commit + two source_sha256 entry hashes differ from old JSON; all original security controls, identity, owner, workflow630, route, environment and remaining 24 hashes are retained. Each systemd drop-in replaces exactly one WorkingDirectory reference. The new review artifacts are UID1005 private mode0400, not root-installed.
 
@@ -82,3 +82,19 @@ Before any source stage, independent M04 must also review PR317's latest pinned
 protected-importer SHA256 check and confirm the actual root-only importer
 metadata. Neither this amendment nor GitHub Repository Quality authorizes a
 new Task014 run or a new privileged maintenance operation.
+
+## 22 November 2026 source correction - supersedes cfc pre-install hashes
+
+PR316 source HEAD 17972bff312a3df7c6e5e4f3d83b239b9b11aba1 fixes the independent CodeRabbit
+root chown race, replay writer lifetime, source-probe binding and certificate
+publication ordering. The source-only security test group passed 75/75 on
+small-laptop. The root-installed 330f application remains untouched.
+
+The revised source-stage manifest and two immutable replacement payloads are
+in the separate, user-owned DEV review handoff
+`.delivery/m05-pr316-source-stage-17972-20261122/`. Four exact cutover
+payloads are in `.delivery/m05-pr316-recovery-cutover-17972-20261122/`.
+No previous cfc input hash or native-root PASS is sufficient for the new
+target; an exact independent review of this version, renewed root read-only
+preflight and owner-approved controlled DEV recovery are mandatory before any
+stage/cutover. No Task014 JTI replay or PROD change is allowed.

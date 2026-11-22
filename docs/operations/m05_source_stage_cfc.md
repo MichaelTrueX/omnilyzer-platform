@@ -4,16 +4,16 @@ Status: DRAFT REVIEW ONLY / ROOT NOT EXECUTED / NO LIVE DEV CHANGE / NO PROD.
 
 - Signed Analytics0.16.0 remains green and private ready HTTP200.
 - Current immutable root source: 330f3255f0067b9ddbe30d50466830bd71a55a11.
-- Target reviewed app source: cfc274117fed99e01c24fda62ab0065170f3314a (draft PR316).
+- Target reviewed app source: 17972bff312a3df7c6e5e4f3d83b239b9b11aba1 (draft PR316).
 - Existing root-owned immutable source contains 76 root:root 0644 files and 9 root:root 0755 directories. Exact Git source diff requires ONLY 2 runtime replacements: analytics_executor.py and analytics_route_journal.py. Other 74 files unchanged.
 - Destination new root SHA-named directory and the exclusive staging directory are ABSENT.
 - New root-source-stage-reviewed.py reuses the original, protected, root-only installer at /opt/omnilyzer/deployment/.m05-ordinary-reviewed-source-f4a69fc9a3afa361255365ed6d19419bcb58c1c8 and original audited stage+atomic rename functions. The 76-file runtime excludes the source-installer module, so it must not be imported from the runtime source.
 - New operator installation destination: /usr/local/libexec/omnilyzer-m05-ordinary-source-stage-cfc.py, root:root mode0500 and one link. No existing file is overwritten.
-- **Current proposed root operator source SHA256 adc601b86738011e7e0903b6e0aa545767d8b089c47af3ae6ac7a81292317fb1.** The earlier operator 01f2e7aee65a40dcf95e314b92d8548bf8e60d553e734cb7f0dddc365c7e0c0e is superseded and MUST NOT be installed for this reviewed recovery transaction.
-- Exact canonical 76-file manifest SHA256 f931fcd93d0a36245a3b7c66482040e0b27483c4254764cd95299a9d6be13f32 (user 1005:1005 mode0400, one link).
+- **Current proposed root operator source SHA256 0da493f19704da9b5271f17371f0574dfa4b38013e89fd713353c4633c677c8f.** The earlier operator 01f2e7aee65a40dcf95e314b92d8548bf8e60d553e734cb7f0dddc365c7e0c0e is superseded and MUST NOT be installed for this reviewed recovery transaction.
+- Exact canonical 76-file manifest SHA256 1d57383e82b7f0efe9f6b28a6d7168ad3736c9dd2a2f75d59b54b8ac1cbb8f5a (user 1005:1005 mode0400, one link).
 - Reviewed replacements:
   - deployment/analytics_executor.py SHA256 34de557ca2d5e63adb6cc5c18c827dd5f266040e699525670d21c9667b84f5ff
-  - deployment/analytics_route_journal.py SHA256 d6163f72d113b9c64765c6390923aab93e1d41408883f99d595f56fbaad10374
+  - deployment/analytics_route_journal.py SHA256 b4029a2a1f152ac7848ff2b9e73e9fb8a6ce40101b58cb301d57fb82730171cc
 - Root operator has only --check (read-only) and --stage (one-time new immutable 76-file source creation), with original root-only identity and exact hash checks. No broker/executor socket, service, Docker, OCI image, replay/JTI, database, Task014 dispatch, OAT certificate or PROD mutation.
 - The unprivileged 76-file source/2-replacement identity test PASSED, but positive native-root --check and --stage were NOT performed; UID1005 cannot inspect the original root0500 installer code.
 - The separate target source approval remains UNSIGNED. Draft handover does not authorize a release or privileged operation.
@@ -89,7 +89,7 @@ The revised source-stage operator therefore imports across **two already-reviewe
 2. Independently verify the exact **16 installer-only source modules** not present in 330f, including the original importer, from the existing root-only SCRATCH directory against independently reviewed immutable Git source SHA256. The original importer requires root:root 0400; all others require root:root, single link, stable bytes and no group/other write permissions.
 3. Reject preloaded `deployment` and `release` modules, disable loading legacy Python bytecode caches with `sys.pycache_prefix = '/dev/null/omnilyzer-m05-no-bytecode-cache'`, select the reviewed 330f `deployment` package and the pinned SCRATCH `release` package, and extend package lookup only to the other verified source root. Assert exact importer origin before publishing any new source.
 
-The source-only test suite now includes positive and negative source SHA checks and a direct assertion that historical SCRATCH runtime files are **not even read** by the stage operator. **8/8 targeted importer tests PASS** on DEV from byte-identical submitted candidate; the earlier cutover 9/9 tests were not changed. Exact new proposed source SHA256: `adc601b86738011e7e0903b6e0aa545767d8b089c47af3ae6ac7a81292317fb1`. Corresponding exact test file SHA256: `06938112927aa417c2a44de1cf4e5546e4d38bab9e478ad741ccce6cf9a9005b`.
+The source-only test suite now includes positive and negative source SHA checks and a direct assertion that historical SCRATCH runtime files are **not even read** by the stage operator. **8/8 targeted importer tests PASS** on DEV from byte-identical submitted candidate; the earlier cutover 9/9 tests were not changed. Exact new proposed source SHA256: `0da493f19704da9b5271f17371f0574dfa4b38013e89fd713353c4633c677c8f`. Corresponding exact test file SHA256: `06938112927aa417c2a44de1cf4e5546e4d38bab9e478ad741ccce6cf9a9005b`.
 
 The **previous native-root preflight v1** validated all 61 modules against SCRATCH, so it is **no longer applicable** to this design. Its HOLD was correct for the previous design and must never be reinterpreted as a PASS. Before any source installation, a distinct read-only native-root check for this exact split origin is required, along with independent M04 review and Product Owner authorization of any privileged cutover. All three historical SCRATCH hashes remain untrusted but will not be imported. Do not change any existing root file permissions, hashes, services, replay JTI or PROD.
 

@@ -21,11 +21,11 @@ REPO_OPERATOR = REPO / "deployment/operators/m05_source_stage_cfc.py"
 OP = REPO_OPERATOR if REPO_OPERATOR.is_file() else Path(__file__).with_name(
     "root-source-stage-reviewed.py"
 )
-REVIEW_SOURCE = Path("/tmp/m05-pr316-review-source-cfc274-20261121")
+REVIEW_SOURCE = Path("/tmp/m05-pr316-11fix-20261122")
 SOURCE = REVIEW_SOURCE if REVIEW_SOURCE.is_dir() else REPO
 ORIGINAL = (SOURCE / "deployment/analytics_isolated_source_install.py").read_bytes()
 ROOT = Path("/opt/omnilyzer/deployment/analytics-app-release-330f3255f0067b9ddbe30d50466830bd71a55a11")
-MANIFEST = Path("/home/omnigpt/repos/omnilyzer-platform/.delivery/m05-pr316-source-stage-cfc-20261121/manifest.json")
+MANIFEST = Path("/home/omnigpt/repos/omnilyzer-platform/.delivery/m05-pr316-source-stage-17972-20261122/manifest.json")
 HAS_ROOT_FIXTURE = ROOT.is_dir() and MANIFEST.is_file()
 
 
@@ -83,15 +83,25 @@ class RootSourcePinReviewTests(unittest.TestCase):
     """Review exact root importer bytes, dependency closure and fail-closed stage."""
 
     def setUp(self):
-        self.before_modules = set(sys.modules)
+        # unittest imports deployment before this test runs. Deliberately
+        # remove and later restore those test-only modules so the closed
+        # import graph is actually tested from a clean interpreter state.
+        self.previous_private_modules = {
+            name: module for name, module in sys.modules.items()
+            if name in ("deployment", "release") or
+            name.startswith(("deployment.", "release."))
+        }
+        for name in self.previous_private_modules:
+            sys.modules.pop(name, None)
         self.before_path = list(sys.path)
         self.before_cache_prefix = sys.pycache_prefix
         self.before_write_bytecode = sys.dont_write_bytecode
 
     def tearDown(self):
-        for name in set(sys.modules) - self.before_modules:
+        for name in list(sys.modules):
             if name in ("deployment", "release") or name.startswith(("deployment.", "release.")):
                 sys.modules.pop(name, None)
+        sys.modules.update(self.previous_private_modules)
         sys.path[:] = self.before_path
         sys.pycache_prefix = self.before_cache_prefix
         sys.dont_write_bytecode = self.before_write_bytecode

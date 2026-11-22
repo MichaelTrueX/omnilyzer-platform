@@ -18,8 +18,8 @@ import unittest
 from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[2]
-REVIEW=Path("/home/omnigpt/repos/omnilyzer-platform/.delivery/m05-pr316-source-stage-closure-review-20261121")
-REVIEW_SOURCE=Path("/tmp/m05-pr316-review-source-cfc274-20261121")
+REVIEW=Path("/home/omnigpt/repos/omnilyzer-platform/.delivery/m05-pr316-source-stage-17972-20261122")
+REVIEW_SOURCE=Path("/tmp/m05-pr316-11fix-20261122")
 SOURCE=REVIEW_SOURCE if REVIEW_SOURCE.is_dir() else REPO
 REPO_OPERATOR=REPO/"deployment/operators/m05_readonly_native_root_preflight_v2.py"
 PATH=REPO_OPERATOR if REPO_OPERATOR.is_file() else REVIEW/"m05_readonly_native_root_preflight_v2.py"
@@ -105,7 +105,7 @@ class SplitNativeRootReadOnlyReviewTests(unittest.TestCase):
 
     def test_exact_stage_digest_bound(self):
         self.assertEqual(hashlib.sha256(self.m.STAGE.read_bytes()).hexdigest(),self.m.OP_SHA)
-        self.assertEqual(self.m.OP_SHA,"adc601b86738011e7e0903b6e0aa545767d8b089c47af3ae6ac7a81292317fb1")
+        self.assertEqual(self.m.OP_SHA,"0da493f19704da9b5271f17371f0574dfa4b38013e89fd713353c4633c677c8f")
 
 if __name__=="__main__":
     unittest.main(verbosity=2)

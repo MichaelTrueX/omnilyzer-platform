@@ -114,8 +114,14 @@ class LegacyRootCertificateTests(unittest.TestCase):
             "/var/lib/omnilyzer/deployment/analytics-route",
             expected_uid=991,expected_gid=991,
         )
-        with self.assertRaises(Legacy0160AuthorityUnavailable):
-            read_root_legacy_certificate(journal,legacy_intent())
+        with (patch("deployment.analytics_route_journal.os.getuid", return_value=1005),
+              patch("deployment.analytics_route_journal.os.geteuid", return_value=1005),
+              patch("deployment.analytics_route_journal.os.getgid", return_value=1005),
+              patch("deployment.analytics_route_journal.os.getegid", return_value=1005),
+              patch.object(AnalyticsRouteJournal, "_open_dir",
+                           side_effect=AssertionError("UID1005 must not access evidence"))):
+            with self.assertRaises(Legacy0160AuthorityUnavailable):
+                read_root_legacy_certificate(journal,legacy_intent())
 
 
 class LegacyRestartBindingTests(unittest.TestCase):

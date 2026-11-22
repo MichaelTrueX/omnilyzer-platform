@@ -976,6 +976,9 @@ class OrdinarySuccessorTransactionTests(unittest.TestCase):
         self.assertEqual(container_id, self.new_id)
         self.assertIs(replay_guard, self.replay)
         self.assertEqual(self.phase, "switched")
+        # Finishing replay must precede *entry* to the durable completion
+        # callback, not merely appear somewhere in the final event lists.
+        self.assertEqual(self.replay.events, ["begin", "finish"])
         self.events.append("fsync_completion")
         return None
 
@@ -1534,6 +1537,25 @@ class OrdinaryCommittedRestartTests(ReplayTestCase):
         self.assertIsNone(self.attempt())
         self.assertIsNone(self.attempt())
         self.assertEqual(storage(), before)
+
+    def test_failed_receipt_fsync_never_publishes_final_and_retry_works(self):
+        """Power loss before fsync leaves only an ignored pending file."""
+        self.journal.record_execution(self.raw,"b"*64)
+        self.guard.finish_execution("jti-1",**self.binding)
+        sync=os.fsync
+        def fail_before_publication(fd):
+            if os.fstat(fd).st_mode & 0o170000 == 0o100000:
+                raise OSError("synthetic failed payload fsync")
+            return sync(fd)
+        with patch("deployment.analytics_route_journal.os.fsync",
+                   side_effect=fail_before_publication):
+            with self.assertRaises(Exception):
+                self.journal.record_completed_release(
+                    self.raw,"b"*64,replay_guard=self.guard)
+        self.assertIsNone(self.journal.read_completed_release(self.request_hash))
+        self.journal.record_completed_release(
+            self.raw,"b"*64,replay_guard=self.guard)
+        self.assertIsNotNone(self.journal.read_completed_release(self.request_hash))
 
     def test_completed_certificate_survives_legitimate_replay_expiry(self):
         """Fresh signed GitHub JTI may prune an old success without breaking boot."""

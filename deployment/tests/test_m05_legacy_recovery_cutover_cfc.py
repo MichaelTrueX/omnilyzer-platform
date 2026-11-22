@@ -26,7 +26,11 @@ class PinnedSourceConfigTests(unittest.TestCase):
     def test_exact_four_current_root_preimages_and_derived_payloads(self):
         root = Path("/home/omnigpt/repos/omnilyzer-platform")
         old_handoff = root / ".m05-ordinary-dev-review-handoff-330f-20261121/payload"
-        new_handoff = MODULE_PATH.parent / "payload"
+        # The existing private handoff is bound by the operator, not by
+        # this test file's source checkout location.
+        new_handoff = m.REVIEW
+        if not new_handoff.is_dir():
+            self.skipTest("Requires exact private DEV cutover payload")
         self.assertEqual(len(m.PLAN), 4)
         for name, expected_target_sha, _, _ in m.PLAN:
             with self.subTest(file=name):
