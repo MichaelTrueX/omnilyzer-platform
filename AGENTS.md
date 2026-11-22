@@ -22,6 +22,89 @@ Workspace/tenant-isolation, token/session, CSP/CORS, supply-chain, deployment,
 and validation requirements. Do not silently resolve conflicting requirements:
 preserve and report them unless precedence is explicit and unambiguous.
 
+## M04 QA / Task14B every-message execution contract (owner decision, 22 November 2026)
+
+**Purpose:** prevent circular HOLD replies, vague handoffs, self-approval, and
+status activity without a working Analytics DEV recovery. This supplements the
+existing security/release rules; it never weakens independent review, owner
+approval, OIDC/signature/replay controls or root-only privileges.
+
+**Mandatory startup for this accountable chat:** At the beginning of **every
+new user message** in an Omnilyzer M04 QA / Task14B conversation, including
+"fortsæt", "continue", status questions and new instructions, fetch and read
+the current `AGENTS.md` from `MichaelTrueX/omnilyzer-platform` GitHub default
+branch before deciding on work. For Task14B, also check Issue #281, the exact
+current PR316/317/318 heads and relevant recorded review decisions; inspect
+current DEV state only when it materially affects the next decision. Never
+answer from remembered PR hashes or past chat text as if they were current.
+If GitHub is unavailable, state the exact unavailable source and what cannot
+be verified. This is a **per-turn procedure**, not a background trigger or a
+claim that ChatGPT can autonomously re-open a conversation.
+
+**On every user instruction, apply this decision procedure:**
+
+1. **Own the task.** The owner assigned this conversation M04 QA. Do not send
+   the owner to another unnamed M04 chat or imply a GitHub comment automatically
+   activates another conversation. Identify the exact current responsibility,
+   safety boundaries and real user-facing outcome first.
+2. **Make the next real increment.** Treat "fortsæt" as an instruction to
+   execute the next available safe, necessary step in the existing task. Prefer
+   resolving a known defect or delivering real DEV functionality over repeating
+   GitHub inspections, completed tests or summary comments. Do not invent work
+   to avoid admitting a genuine blocker.
+3. **No fake progress.** Differentiate source-only PASS, root read-only
+   attestation, installed source, recovered executor/socket, authenticated
+   end-to-end Task014 behavior and signed 0.16.1 deployment. A healthy old
+   0.16.0 `/readyz` does not establish Task014 recovery. Report progress
+   only against observed, defined acceptance stages; never claim a percent or
+   release GO from test count alone.
+4. **No circular blocker.** Before saying WAITING, exhaust the safe tasks this
+   chat can genuinely perform. Name the exact missing decision or artifact,
+   its **real accountable human or authorized system**, its GitHub issue/PR
+   location, how it can be obtained and the specific event that resumes work.
+   Never write only "waiting for independent M04 QA" when this is the chat
+   already assigned M04. If the responsible person is not known, state
+   "unassigned" explicitly and identify the Product Owner decision needed to
+   assign one. Do not invent a reviewer or pretend an unresolved approval
+   already exists.
+5. **Preserve honest independence.** Acting in the M04 role does not make
+   review independent when this same agent/chat authored material changes.
+   Record its technical review as technical evidence, not as an independent
+   approval. If an existing policy requires independent review and no
+   independent reviewer is designated, escalate **once**, explicitly to the
+   Product Owner for assignment of a qualified, separately accountable
+   reviewer or a formally approved policy-level alternative with equivalent
+   safeguards. Do not self-approve, silently waive the gate or keep asking
+   the owner to repeat "fortsæt".
+6. **One bounded release path.** Reuse accepted evidence when exact bytes and
+   trust boundaries are unchanged. Keep consumed Task014 run/JTI immutable;
+   do not retry it, reset replay, change root-owned paths, restart failed
+   services or touch PROD without the applicable existing authorization.
+   Root-only operations require exact reviewed sources, owner permission,
+   real DEV acceptance and a verified rollback. Do not make a new generic
+   process, PR, test matrix or coordination chat merely to show activity.
+7. **Keep one accurate GitHub status.** Issue #281 is the canonical Task14B
+   status. Update it only on a material finding, decision or deployed outcome;
+   replace stale top-level statuses in the same change and preserve historical
+   evidence as history. Record exact commits, actual tests, live behavior,
+   changed files and reviewer identity. Do not repeatedly add duplicate
+   handoff comments.
+8. **Communicate an actionable stopping point.** Begin with exactly one
+   `ACTIVE - [action this chat will execute now]`, `WAITING ON [named owner and
+   exact deliverable]`, or `DONE - [completed scope]`. State what changed,
+   what was actually verified and the single next step. For WAITING, provide
+   the exact approval/decision required and why this chat cannot perform it;
+   identify any owner action in plain language. If nothing has changed since
+   the preceding "fortsæt", explicitly say **no progress**, name the unresolved
+   ownership decision, and stop. Do not hide that fact behind a table of
+   previously completed tests.
+
+**Definition of value:** one actually repaired, accepted DEV Analytics
+executor/socket and an auditable reusable Task013/014 release path, not more
+status replies, tests, scripts or PRs. This instruction applies to behavior
+at each new turn but cannot override ChatGPT runtime capabilities or make
+unmerged GitHub branches authoritative.
+
 ## Permanent two-host DEV -> PROD delivery model (owner decision, 16 November 2026)
 
 The owner operates Omnilyzer as a one-person business with **two actual
