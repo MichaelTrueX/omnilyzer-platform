@@ -592,8 +592,12 @@ class AnalyticsRouteJournal:
                 proofs = self._open_executions(directory)
                 try:
                     name = 'completion-' + request_hash + '.json'
+                    # Do not expose a final receipt until its full payload
+                    # has been fsynced. A random pending name never counts as
+                    # an authoritative receipt and cannot block later retry.
+                    pending = '.completion-' + request_hash + '-' + os.urandom(12).hex() + '.pending'
                     fd = os.open(
-                        name, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                        pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL
                         | os.O_NOFOLLOW | os.O_CLOEXEC,
                         0o600, dir_fd=proofs,
                     )
@@ -607,10 +611,18 @@ class AnalyticsRouteJournal:
                         if os.write(fd, payload) != len(payload):
                             _reject()
                         os.fsync(fd)
-                        os.fsync(proofs)
-                        os.fsync(directory)
                     finally:
                         os.close(fd)
+                    # Hardlink is an exclusive publish: the final name cannot
+                    # be replaced; nlink=2 makes it unreadable until unlink.
+                    # A crash before unlink is fail-closed and recoverable only
+                    # under the existing strict journal controls.
+                    os.link(pending, name, src_dir_fd=proofs,
+                            dst_dir_fd=proofs, follow_symlinks=False)
+                    os.fsync(proofs)
+                    os.unlink(pending, dir_fd=proofs)
+                    os.fsync(proofs)
+                    os.fsync(directory)
                 finally:
                     os.close(proofs)
                 if self.read_completed_release(request_hash) != {

@@ -11,6 +11,7 @@ An unexpected file or inconsistent state is permanent HOLD, not auto-retry.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
@@ -139,7 +140,7 @@ def _read_file(path: Path, *, uid: int, gid: int, mode: int, limit: int) -> byte
             or stat.S_IMODE(info.st_mode) != mode or info.st_nlink != 1
             or not 0 < info.st_size <= limit):
         _fail()
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
     try:
         opened = os.fstat(fd)
         if (opened.st_dev,opened.st_ino,opened.st_uid,opened.st_gid,opened.st_mode,
@@ -194,6 +195,15 @@ def _validate_historical_documents(
     for record in (initial,old,new,current):
         if record.get("request_sha256") != LEGACY_REQUEST:
             _fail()
+    # The original switch and restore must identify the exact same immutable
+    # blue/green endpoints as the final returned intent, not merely its run ID.
+    endpoints = (
+        "previous_slot", "previous_image", "previous_container_id",
+        "next_slot", "next_image", "next_container_id",
+    )
+    if any(record.get(key) != current.get(key)
+           for record in (initial, old) for key in endpoints):
+        _fail()
     if (initial.get("generation") != 1 or initial.get("phase") != "switched"
             or old.get("generation") != 1 or old.get("phase") != "restored"
             or new.get("generation") != 2 or new.get("phase") != "switched"
@@ -208,33 +218,53 @@ def _validate_historical_documents(
         _fail()
 
 
-def _check_replay() -> None:
-    """Two exact run IDs only, never display or change a JTI."""
-    if any(os.path.lexists(str(_REPLAY) + suffix) for suffix in ("-wal","-shm")):
+@contextmanager
+def _held_replay_evidence():
+    """Pin both replay statuses with a real SQLite DELETE-mode read lock.
+
+    The existing replay guard writes with BEGIN IMMEDIATE. A read transaction
+    in DELETE journal mode blocks a competing writer from COMMIT until the
+    certificate is durably published. WAL/SHM and alternate journal modes are
+    forbidden, never silently read using SQLite immutable=1.
+    """
+    if any(os.path.lexists(str(_REPLAY) + suffix) for suffix in ("-wal", "-shm")):
         _fail()
-    conn = sqlite3.connect(_REPLAY.as_uri() + "?mode=ro&immutable=1", uri=True)
+    conn = sqlite3.connect(_REPLAY.as_uri() + "?mode=ro",
+                           uri=True, timeout=0, isolation_level=None)
     try:
         conn.execute("PRAGMA query_only=ON")
-        former=conn.execute(
+        conn.execute("PRAGMA trusted_schema=OFF")
+        if conn.execute("PRAGMA journal_mode").fetchone() != ("delete",):
+            _fail()
+        conn.execute("BEGIN")
+        former = conn.execute(
             "SELECT status FROM consumptions "
             "WHERE github_run_id=? AND github_run_attempt=1",
             (LEGACY_RUN,),
         ).fetchmany(2)
-        failed=conn.execute(
+        failed = conn.execute(
             "SELECT status FROM consumptions "
             "WHERE github_run_id=? AND github_run_attempt=1",
             (44890393889,),
         ).fetchmany(2)
-        if former not in ([],[("finished",)]) or failed != [("consumed",)]:
+        if former not in ([], [("finished",)]) or failed != [("consumed",)]:
             _fail()
+        # Do not release this SHARED lock before _apply publishes the cert.
+        yield "absent" if not former else "finished"
     finally:
         conn.close()
 
 
-def _live_uid991_route() -> None:
+def _check_replay() -> str:
+    """Read exact replay state in preflight, without changing any JTI."""
+    with _held_replay_evidence() as former:
+        return former
+
+
+def _live_uid991_route(source: Path) -> None:
     """Require genuine UID991 inspected immutable OCI and private 3141 route."""
     script = f"""import sys
-sys.path.insert(0,{_SOURCE!r})
+sys.path.insert(0,{str(source)!r})
 from deployment.analytics_route_journal import AnalyticsRouteJournal
 from deployment.analytics_active_state_review import inspect_committed_analytics_route
 j=AnalyticsRouteJournal()
@@ -291,7 +321,7 @@ def _preflight() -> tuple[dict[str, object], bytes]:
         documents["returned016.json"],documents["result.json"],current,
     )
     _check_replay()
-    _live_uid991_route()
+    _live_uid991_route(_reviewed_source_root)
     document={
         "schema_version":1,
         "kind":"owner_root_attested_legacy_0160_oat",
@@ -318,42 +348,85 @@ def _preflight() -> tuple[dict[str, object], bytes]:
 
 
 def _apply(document: dict[str, object], before: bytes) -> None:
-    """One root-created immutable bridge, atomically scoped to UID991 journal."""
-    _check_directory(_ROUTE,uid=991,gid=991,mode=0o700)
-    fd=os.open(_ROUTE, os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    """Mint one durable certificate only while route and replay are locked.
+
+    Root never chowns a pathname inside a UID991-owned directory. The staged
+    root-only evidence is not authoritative; the exclusive final hardlink has
+    nlink=2 (which the UID991 reader refuses) until the staged name is removed.
+    Failed or interrupted writes never publish partial accepted evidence.
+    """
+    _check_directory(_ROUTE, uid=991, gid=991, mode=0o700)
+    fd = os.open(_ROUTE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX|fcntl.LOCK_NB)
-        if _read_file(_TRANSACTION,uid=991,gid=991,mode=0o600,limit=2048) != before:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if _read_file(_TRANSACTION, uid=991, gid=991, mode=0o600, limit=2048) != before:
             _fail()
-        try:
-            os.mkdir(_EXECUTIONS,mode=0o700)
-            os.chown(_EXECUTIONS,991,991)
-            os.fsync(fd)
-        except FileExistsError:
-            pass
-        _check_directory(_EXECUTIONS,uid=991,gid=991,mode=0o700)
-        evidence=os.open(_EXECUTIONS,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
-        try:
-            payload=canonical_bytes(document)
-            certificate_fd=os.open(
-                CERTIFICATE_NAME, os.O_CREAT|os.O_EXCL|os.O_WRONLY|os.O_NOFOLLOW|os.O_CLOEXEC,
-                0o400,dir_fd=evidence,
-            )
+        # SQLite DELETE-mode shared lock excludes replay writer commits while
+        # the one-time authoritative certificate becomes durable.
+        with _held_replay_evidence():
+            made = False
             try:
-                os.fchown(certificate_fd,0,991)
-                os.fchmod(certificate_fd,0o440)
-                st=os.fstat(certificate_fd)
-                if (st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode),st.st_nlink) != (0,991,0o440,1):
+                os.mkdir("executions", mode=0o700, dir_fd=fd)
+                made = True
+            except FileExistsError:
+                pass
+            evidence = os.open("executions", os.O_RDONLY | os.O_DIRECTORY
+                               | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+            try:
+                original = os.fstat(evidence)
+                if not stat.S_ISDIR(original.st_mode):
                     _fail()
-                if os.write(certificate_fd,payload) != len(payload):
+                if made:
+                    if (original.st_uid, original.st_gid,
+                            stat.S_IMODE(original.st_mode)) != (0, 0, 0o700):
+                        _fail()
+                    os.fchown(evidence, 991, 991)
+                opened = os.fstat(evidence)
+                named = os.stat("executions", dir_fd=fd, follow_symlinks=False)
+                if (opened.st_uid, opened.st_gid, stat.S_IMODE(opened.st_mode)) != (991, 991, 0o700):
                     _fail()
-                os.fsync(certificate_fd)
+                if not stat.S_ISDIR(named.st_mode) or (
+                    opened.st_dev, opened.st_ino
+                ) != (named.st_dev, named.st_ino):
+                    _fail()
+                os.fsync(fd)
+
+                payload = canonical_bytes(document)
+                # A preexisting non-authoritative pending file is evidence of
+                # an interrupted prior root attempt: permanent HOLD, no cleanup.
+                stage = "." + CERTIFICATE_NAME + ".pending"
+                stage_fd = os.open(
+                    stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                    os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=evidence,
+                )
+                try:
+                    if os.write(stage_fd, payload) != len(payload):
+                        _fail()
+                    os.fchown(stage_fd, 0, 991)
+                    os.fchmod(stage_fd, 0o440)
+                    st = os.fstat(stage_fd)
+                    if (st.st_uid, st.st_gid, stat.S_IMODE(st.st_mode),
+                            st.st_nlink) != (0, 991, 0o440, 1):
+                        _fail()
+                    os.fsync(stage_fd)
+                finally:
+                    os.close(stage_fd)
+                # Link publishes exclusively without replacing a named
+                # certificate. While pending still exists its nlink=2 is
+                # rejected by read_root_legacy_certificate.
+                os.link(stage, CERTIFICATE_NAME, src_dir_fd=evidence,
+                        dst_dir_fd=evidence, follow_symlinks=False)
+                os.fsync(evidence)
+                os.unlink(stage, dir_fd=evidence)
                 os.fsync(evidence)
                 os.fsync(fd)
+                named = os.stat("executions", dir_fd=fd, follow_symlinks=False)
+                current = os.fstat(evidence)
+                if ((named.st_dev, named.st_ino) !=
+                        (current.st_dev, current.st_ino)):
+                    _fail()
             finally:
-                os.close(certificate_fd)
-        finally:
-            os.close(evidence)
+                os.close(evidence)
     finally:
         os.close(fd)
 
@@ -373,7 +446,7 @@ def main() -> int:
         document,before=_preflight()
         print("M05_HISTORIC_ROOT_FINAL_AND_OAT_CERTIFICATE_PASS",flush=True)
         print("M05_UID991_SIGNED_ACTIVE0160_ROUTE_PASS",flush=True)
-        print("M05_OLD_REPLAY_ABSENT_NEW_RUN_CONSUMED_PASS",flush=True)
+        print("M05_OLD_REPLAY_ABSENT_OR_FINISHED_NEW_RUN_CONSUMED_PASS",flush=True)
         if sys.argv[1] == "--apply":
             _apply(document,before)
             print("M05_LEGACY_ROOT_0440_COMPLETION_CERTIFICATE_CREATED",flush=True)
