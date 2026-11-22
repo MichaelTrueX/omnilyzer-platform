@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import copy
+import os
+import sqlite3
+import tempfile
 import stat
 from types import SimpleNamespace
 from pathlib import Path
@@ -10,6 +13,7 @@ from unittest.mock import patch
 
 from deployment.analytics_legacy_0160_migration import (
     _validate_historical_documents, _preflight, _apply, main,
+    _held_replay_evidence, _live_uid991_route,
     _review_root_installed_operator_path,
 )
 from deployment.analytics_route_journal import (
@@ -55,6 +59,36 @@ class HistoricalRootOATLineageTests(unittest.TestCase):
                 record=changed[kind]["route"]["journal"] if kind=="before" else changed[kind]["journal"]
                 record[key]=value
                 self.accept(changed)
+
+    def test_before_and_restored_pinned_oci_identities_must_agree(self):
+        # No original OAT certificate for a switched or restored foreign
+        # image/container, even when the final current journal is identical.
+        for key,value in (
+            ("next_container_id","a"*64),
+            ("next_image","oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "a"*64),
+            ("previous_container_id","b"*64),
+            ("previous_image","oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:" + "b"*64),
+        ):
+            for which in ("before","restored"):
+                with self.subTest(which=which,key=key), self.assertRaises(ValueError):
+                    changed=copy.deepcopy(self.base)
+                    record=(changed["before"]["route"]["journal"]
+                            if which=="before" else changed["restored"]["journal"])
+                    record[key]=value
+                    self.accept(changed)
+
+    def test_uid991_child_probe_imports_exact_reviewed_source(self):
+        from unittest.mock import patch
+        chosen=Path("/opt/omnilyzer/deployment/analytics-app-release-" + "f"*40)
+        def intercepted(args, **kwargs):
+            code=args[-1]
+            self.assertIn(repr(str(chosen)),code)
+            self.assertNotIn("analytics-app-release-330f3255",code)
+            self.assertEqual(args[1:7],["--reuid","991","--regid","991","--groups","992"])
+            return SimpleNamespace(returncode=0,stdout="M05_LEGACY_UID991_ACTIVE_IMAGE_ROUTE_PASS\n")
+        with patch("deployment.analytics_legacy_0160_migration.subprocess.run",
+                   side_effect=intercepted):
+            self.assertIsNone(_live_uid991_route(chosen))
 
     def test_failure_or_unknown_database_replay_result_denied(self):
         for key,value in (("pass",False),("database_unchanged",False),
@@ -148,9 +182,72 @@ class HistoricalRootOATLineageTests(unittest.TestCase):
     def test_no_source_only_apply_can_write_real_root_journal(self):
         # Reading or calling the operator through the connected UID1005 is
         # a *negative* path; its mandatory root guard stops before any writes.
-        with patch("deployment.analytics_legacy_0160_migration.os.getuid",return_value=1005):
-            with self.assertRaises(ValueError):
-                _preflight()
+        with (patch("deployment.analytics_legacy_0160_migration.os.getuid",return_value=1005),
+              patch("deployment.analytics_legacy_0160_migration.sys.argv",
+                    ["operator", "--apply", "d" * 40]),
+              patch("deployment.analytics_legacy_0160_migration._apply",
+                    side_effect=AssertionError("nonroot may not write")) as writer):
+            self.assertEqual(main(), 3)
+            writer.assert_not_called()
+
+
+
+class RootReplayPublicationLockTests(unittest.TestCase):
+    """Disposable real SQLite proves a reader holds the old JTI invariant."""
+
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(prefix="m05-replay-lock-")
+        self.addCleanup(self.temp.cleanup)
+        self.path=Path(self.temp.name)/"replay.sqlite3"
+        with sqlite3.connect(self.path) as conn:
+            conn.execute("CREATE TABLE consumptions (github_run_id INTEGER, "
+                         "github_run_attempt INTEGER, status TEXT)")
+            conn.execute("INSERT INTO consumptions VALUES(?,1,?)",
+                         (43838827603,"finished"))
+            conn.execute("INSERT INTO consumptions VALUES(?,1,?)",
+                         (44890393889,"consumed"))
+
+    def bind(self):
+        return patch("deployment.analytics_legacy_0160_migration._REPLAY",self.path)
+
+    def test_stale_writer_commit_is_rejected_while_certificate_guard_active(self):
+        with self.bind(), _held_replay_evidence() as previous:
+            self.assertEqual(previous,"finished")
+            writer=sqlite3.connect(self.path,timeout=0,isolation_level=None)
+            self.addCleanup(writer.close)
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute("UPDATE consumptions SET status='executing' "
+                           "WHERE github_run_id=44890393889")
+            with self.assertRaises(sqlite3.OperationalError):
+                writer.execute("COMMIT")
+            writer.execute("ROLLBACK")
+        with sqlite3.connect(self.path) as conn:
+            self.assertEqual(conn.execute(
+                "SELECT status FROM consumptions WHERE github_run_id=44890393889"
+            ).fetchone(),("consumed",))
+
+    def test_changed_consumption_and_wal_mode_hard_hold(self):
+        with sqlite3.connect(self.path) as conn:
+            conn.execute("UPDATE consumptions SET status='finished' "
+                         "WHERE github_run_id=44890393889")
+        with self.bind(), self.assertRaises(ValueError):
+            with _held_replay_evidence():
+                pass
+        class WalModeConnection:
+            def execute(self, statement, *args):
+                if statement == "PRAGMA journal_mode":
+                    return self
+                return self
+            def fetchone(self):
+                return ("wal",)
+            def close(self):
+                pass
+        with self.bind(), patch(
+            "deployment.analytics_legacy_0160_migration.sqlite3.connect",
+            return_value=WalModeConnection()
+        ), self.assertRaises(ValueError):
+            with _held_replay_evidence():
+                pass
 
 
 def main_root_uid():
