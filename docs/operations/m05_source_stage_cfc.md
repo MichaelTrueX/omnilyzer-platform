@@ -52,3 +52,8 @@ M04 must verify **actual** protected installer file mode, UID/GID, hash and
 full import dependency trust under native root before approving its one-use
 source stage. An unexpected mode remains HOLD, never a reason to weaken the
 predicate or repeat a failed privileged source stage.
+
+## Current target source revision - 24 November 2026
+
+Previous target 17972bff312a3df7c6e5e4f3d83b239b9b11aba1 is superseded. The updated reviewed source is fcd56406e350b9b20ba107f357d18c0dfb7e6985.
+The root operator now binds manifest dded55ab8a8773c74ba5ac909628cf266849b1e09c66bcc9ee6c75710494d645 at .delivery/m05-pr316-source-stage-fcd564-20261124/manifest.json. The 76-file baseline and two replacement SHA256 values have not changed. Earlier recorded positive root attestation does not apply to this new target.

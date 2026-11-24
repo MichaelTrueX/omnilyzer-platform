@@ -3,7 +3,7 @@
 
 Purpose: Stage precisely one new immutable 76-file Task014 Analytics DEV source
          generation from an independently reviewed installed root baseline.
-Related: PR316 HEAD 17972bff312a3df7c6e5e4f3d83b239b9b11aba1,
+Related: PR316 HEAD fcd56406e350b9b20ba107f357d18c0dfb7e6985,
          existing analytics_isolated_source_install.py root importer,
          .m05-ordinary-dev-review-handoff-330f-20261121/manifest.json,
          .m05-ordinary-dev-cutover-330f-20261121.py.
@@ -21,15 +21,15 @@ import sys
 
 # Section 1: exact audited source targets and pinned user-owned review bytes.
 BASE = "330f3255f0067b9ddbe30d50466830bd71a55a11"
-COMMIT = "17972bff312a3df7c6e5e4f3d83b239b9b11aba1"
+COMMIT = "fcd56406e350b9b20ba107f357d18c0dfb7e6985"
 PARENT = Path("/opt/omnilyzer/deployment")
 ROOT = PARENT / ("analytics-app-release-" + BASE)
 DEST = PARENT / ("analytics-app-release-" + COMMIT)
 OPERATOR = Path("/usr/local/libexec/omnilyzer-m05-ordinary-source-stage-cfc.py")
 SCRATCH = PARENT / ".m05-ordinary-reviewed-source-f4a69fc9a3afa361255365ed6d19419bcb58c1c8"
-HANDOFF = Path("/home/omnigpt/repos/omnilyzer-platform/.delivery/m05-pr316-source-stage-17972-20261122")
+HANDOFF = Path("/home/omnigpt/repos/omnilyzer-platform/.delivery/m05-pr316-source-stage-fcd564-20261124")
 MANIFEST = HANDOFF / "manifest.json"
-MANIFEST_SHA = "1d57383e82b7f0efe9f6b28a6d7168ad3736c9dd2a2f75d59b54b8ac1cbb8f5a"
+MANIFEST_SHA = "dded55ab8a8773c74ba5ac909628cf266849b1e09c66bcc9ee6c75710494d645"
 # Owner-root verified after the broker SHA rebinding; this root-installed
 # importer must remain bit-for-bit identical, not merely root-owned.
 INSTALLER_SHA = "cc7dfd7fb022a01772bb2f18fd1705f6e4f15e706903e4b47c8833b7d7f9ac5b"
