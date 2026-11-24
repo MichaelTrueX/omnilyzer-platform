@@ -7,7 +7,7 @@ Related: PR316 HEAD fcd56406e350b9b20ba107f357d18c0dfb7e6985,
          existing analytics_isolated_source_install.py root importer,
          .m05-ordinary-dev-review-handoff-330f-20261121/manifest.json,
          .m05-ordinary-dev-cutover-330f-20261121.py.
-Sections: fixed pins; trusted bytes; reviewed exact handoff; root stage; CLI.
+Sections: fixed pins; trusted bytes; closed root import graph; reviewed handoff; root stage; CLI.
 This script never changes systemd, active OCI, Task014 replay, Docker or PROD.
 """
 from __future__ import annotations
@@ -40,11 +40,97 @@ REPLACEMENTS_SHA = {
     "deployment/analytics_route_journal.py":
         "b4029a2a1f152ac7848ff2b9e73e9fb8a6ce40101b58cb301d57fb82730171cc",
 }
+# Section: fixed import-time and deferred import closure of the protected root installer.
+# Only 330f root runtime files or the 16 separately Git-pinned private
+# installer files may be imported. Historical SCRATCH runtime copies are
+# intentionally bypassed, regardless of their unproven SHA256.
+EXTRA_IMPORT_SOURCE_SHA = {
+    "deployment/analytics_isolated_source_install.py": "cc7dfd7fb022a01772bb2f18fd1705f6e4f15e706903e4b47c8833b7d7f9ac5b",
+    "deployment/analytics_source_archive.py": "7685c41b67b0ae3d8ffc92b18ab6318b89a2c64dd4bae3639b237df6aa693d4a",
+    "deployment/analytics_source_handoff.py": "9c5183e29e26bfc53791ad3eb1e665d055a5ebef68f5e067a3192729c405bc20",
+    "deployment/application_manifest.py": "99d2bddb45d341b46e24c77987c5c5f527b5fee28ad3fd6583b77ae6f23be669",
+    "deployment/application_source_set.py": "2b6cffbbb54bcc995757bebd9253eee4efb02130b06b6bae0f8831d560b40720",
+    "deployment/dev_host_provisioning_mechanics.py": "33ff3ef0346e5b75d4c5796d9af3ad6d4e8814e5c2b316cff1073f263c156df4",
+    "deployment/dev_host_qualification.py": "8aaa651a1bacd905f0a4b78928a300af07935ff6e288ff228bedb763ef0dfb8b",
+    "deployment/host_provisioning_contract.py": "2100e1dc69e7c9b135bafeaa0829041876ce3bc5a6722a78f076a394a6da15b0",
+    "deployment/host_service_layout.py": "fb323635bf2ece8e520bb5a8bf8b8716ad625a25fd123237bb4481ccbf333a0b",
+    "deployment/installation_integrity_contract.py": "4aa29a26815d3dd499c00ea4ab445a26e411f001e52f9c926ab29849a2249722",
+    "deployment/pip_installer_provenance.py": "4dab87dcfd40f8666b25e56c97eb6bf680146c022a63a4de65820082a760d1e1",
+    "deployment/pip_installer_qualification.py": "72dc38ab09ddd04f62d08c3e59b05f90a683c1c3e50a30193fe29bc740a33631",
+    "deployment/python_environment_qualification.py": "9f9df741ac2fa2a192a034e0bab191d75e1ae410071082835bcef92bccc74b29",
+    "deployment/python_interpreter_provenance.py": "6ab29c26380d6459cc1505bb2c2b0a85a0bd4acc151378f8c0c81c034634f35b",
+    "deployment/wheelhouse_qualification.py": "1ad9c7692a0d1d714b2a118dddaf87917366c15f187564ef130a89ca62a8374b",
+    "release/__init__.py": "330c2df95d9706ec9582877c4723f0284319365b5debe44ed5c8a1a2914fb325",
+}
+REQUIRED_IMPORT_SOURCE_PATHS = frozenset({
+    "deployment/__init__.py",
+    "deployment/analytics_active_state_review.py",
+    "deployment/analytics_dev_release_review.py",
+    "deployment/analytics_execution.py",
+    "deployment/analytics_executor.py",
+    "deployment/analytics_executor_service_config.py",
+    "deployment/analytics_first_install.py",
+    "deployment/analytics_isolated_source_install.py",
+    "deployment/analytics_loopback_guard.py",
+    "deployment/analytics_private_registry.py",
+    "deployment/analytics_route_journal.py",
+    "deployment/analytics_signed_release_consumer.py",
+    "deployment/analytics_signed_source_pin.py",
+    "deployment/analytics_source_archive.py",
+    "deployment/analytics_source_handoff.py",
+    "deployment/analytics_unix_boundary.py",
+    "deployment/application_manifest.py",
+    "deployment/application_source_set.py",
+    "deployment/audit.py",
+    "deployment/blob_verifier.py",
+    "deployment/broker.py",
+    "deployment/broker_service_config.py",
+    "deployment/controller.py",
+    "deployment/dev_host_provisioning_mechanics.py",
+    "deployment/dev_host_qualification.py",
+    "deployment/docker_runtime.py",
+    "deployment/execution.py",
+    "deployment/executor.py",
+    "deployment/executor_listener.py",
+    "deployment/executor_server.py",
+    "deployment/executor_service_config.py",
+    "deployment/executor_service_config_loader.py",
+    "deployment/host_provisioning_contract.py",
+    "deployment/host_service_layout.py",
+    "deployment/identity.py",
+    "deployment/installation_contract.py",
+    "deployment/installation_integrity_contract.py",
+    "deployment/jwks.py",
+    "deployment/oci_verifier.py",
+    "deployment/oidc_verifier.py",
+    "deployment/pip_installer_provenance.py",
+    "deployment/pip_installer_qualification.py",
+    "deployment/policy.py",
+    "deployment/private_registry_fd.py",
+    "deployment/private_registry_pull.py",
+    "deployment/promotion.py",
+    "deployment/python_environment_qualification.py",
+    "deployment/python_interpreter_provenance.py",
+    "deployment/registry_oidc_credentials.py",
+    "deployment/release_consumer.py",
+    "deployment/replay_sqlite.py",
+    "deployment/rootless_docker_authority.py",
+    "deployment/saas_product_contract.py",
+    "deployment/saas_product_runtime.py",
+    "deployment/sigstore_authority_provenance.py",
+    "deployment/state.py",
+    "deployment/state_store.py",
+    "deployment/unix_transport.py",
+    "deployment/wheelhouse_qualification.py",
+    "release/__init__.py",
+    "release/analytics_owner_source_selection.py",
+})
+
 ERROR = "M05_ORDINARY_CFC_SOURCE_STAGE_HOLD"
 
 
 # Section 2: accept root-owned old source only under closed, immutable ancestry.
-def trusted_root_file(path: Path, mode: int) -> bytes:
+def trusted_root_file(path: Path, mode: int | None) -> bytes:
     """Read a stable root:root single-link regular file, rejecting symlinks."""
     current = Path("/")
     for name in path.parts[1:-1]:
@@ -56,8 +142,14 @@ def trusted_root_file(path: Path, mode: int) -> bytes:
     try:
         before = os.fstat(fd)
         if (not stat.S_ISREG(before.st_mode)
-                or (before.st_uid, before.st_gid, stat.S_IMODE(before.st_mode), before.st_nlink)
-                != (0, 0, mode, 1)
+                or before.st_uid != 0 or before.st_gid != 0
+                or before.st_nlink != 1
+                or (
+                    mode is not None and stat.S_IMODE(before.st_mode) != mode
+                )
+                or (
+                    mode is None and stat.S_IMODE(before.st_mode) & 0o022
+                )
                 or not 0 < before.st_size <= 1048576):
             raise ValueError("untrusted root-owned source file")
         data = bytearray()
@@ -106,7 +198,7 @@ def user_handoff_file(path: Path, expected_sha: str, limit: int) -> bytes:
         os.close(fd)
 
 
-# Section 4: exact 76-file audited root baseline; ONE reviewed replacement.
+# Section 4: exact 76-file audited root baseline; TWO reviewed replacements.
 def reviewed_source() -> tuple[object, tuple[tuple[str, bytes], ...]]:
     """Check every old root-owned file and new source hash without executing it."""
     from collections import Counter
@@ -172,17 +264,57 @@ def reviewed_source() -> tuple[object, tuple[tuple[str, bytes], ...]]:
     # Owner-root SHA256 evidence binds this exact pre-existing private
     # importer. Checking only root ownership would execute changed code
     # with root privileges if a prior installer was silently replaced.
-    importer_bytes = trusted_root_file(INSTALLER, 0o500)
+    importer_bytes = trusted_root_file(INSTALLER, 0o400)
     if hashlib.sha256(importer_bytes).hexdigest() != INSTALLER_SHA:
         raise ValueError("root-only source installer SHA is not approved")
     # A previously imported deployment package could shadow the pinned
     # SCRATCH modules even after sys.path insertion. Deny instead of
     # borrowing an unverified module from an unrelated Python environment.
-    if any(k == "deployment" or k.startswith("deployment.")
+    if any(k in ("deployment", "release") or k.startswith(("deployment.", "release."))
            for k in sys.modules):
         raise ValueError("deployment Python modules already loaded")
-    sys.path.insert(0, str(SCRATCH))
+    # Verify a split-origin import closure BEFORE executing privileged code:
+    # 45 historical runtime modules come from the already SHA-qualified
+    # immutable ROOT (330f), NOT the unqualified historical SCRATCH copies.
+    # The 16 installer-only modules absent from ROOT are supplied by the
+    # SHA-pinned SCRATCH files and verified against the reviewed Git source.
+    if (
+        len(REQUIRED_IMPORT_SOURCE_PATHS) != 61
+        or len(EXTRA_IMPORT_SOURCE_SHA) != 16
+        or set(EXTRA_IMPORT_SOURCE_SHA) != REQUIRED_IMPORT_SOURCE_PATHS - set(mapping)
+        or EXTRA_IMPORT_SOURCE_SHA.get("deployment/analytics_isolated_source_install.py") != INSTALLER_SHA
+    ):
+        raise ValueError("unreviewed root importer source closure")
+    for relative in sorted(REQUIRED_IMPORT_SOURCE_PATHS):
+        if relative in mapping:
+            # The installed 330f runtime is byte-checked and root-owned.
+            origin, expected, mode = ROOT / relative, mapping[relative], 0o644
+        else:
+            origin = SCRATCH / relative
+            expected = EXTRA_IMPORT_SOURCE_SHA[relative]
+            mode = 0o400 if relative == "deployment/analytics_isolated_source_install.py" else None
+        source_bytes = trusted_root_file(origin, mode)
+        if hashlib.sha256(source_bytes).hexdigest() != expected:
+            raise ValueError("root importer dependency SHA is not approved")
+    # Import deployment itself from immutable ROOT. Extend its package search
+    # path only for the pinned installer-only modules not present in ROOT.
+    # The package objects below are verified before any private importer runs.
+    sys.path.insert(0, str(ROOT))
+    sys.path.insert(1, str(SCRATCH))
     sys.dont_write_bytecode = True
+    # Do not read any unqualified __pycache__ or legacy .pyc from either
+    # source tree. This impossible cache directory forces source loading.
+    sys.pycache_prefix = "/dev/null/omnilyzer-m05-no-bytecode-cache"
+    import deployment
+    if (not isinstance(getattr(deployment, "__file__", None), str)
+            or os.path.abspath(deployment.__file__) != str(ROOT / "deployment/__init__.py")):
+        raise ValueError("deployment package import origin changed")
+    deployment.__path__ = [str(ROOT / "deployment"), str(SCRATCH / "deployment")]
+    import release
+    if (not isinstance(getattr(release, "__file__", None), str)
+            or os.path.abspath(release.__file__) != str(SCRATCH / "release/__init__.py")):
+        raise ValueError("release package import origin changed")
+    release.__path__ = [str(ROOT / "release"), str(SCRATCH / "release")]
     from deployment import analytics_isolated_source_install as installer
     if (not isinstance(getattr(installer, "__file__", None), str)
             or os.path.abspath(installer.__file__) != str(INSTALLER)):
