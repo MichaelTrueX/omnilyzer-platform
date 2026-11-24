@@ -74,7 +74,7 @@ _UID991_FAILURE_PHASES = frozenset({
     "private_stability", "replay_begin",
     "candidate_stage", "candidate_identity", "candidate_probe",
     "candidate_ready_preflight", "private_route_switch",
-    "private_route_verify", "execution_receipt", "replay_finish", "signed_success_reply",
+    "private_route_verify", "execution_receipt", "replay_finish", "completion_certificate", "signed_success_reply",
 })
 
 
@@ -1125,6 +1125,86 @@ def _read_analytics_execution_status(guard: object, request_hash: str) -> str | 
     return observed_status
 
 
+# Section: exact original signed0.16.0 after owner-approved generation2 OAT.
+def _review_root_attested_legacy_0160_restart(
+    *, journal: object, intent: dict[str, object], identities: dict[str, object],
+) -> None:
+    """Read-only legacy OAT migration gate; NO replay resurrection.
+
+    This is the ONLY accepted exception to generation2 schema3-completion
+    requirements. The UID991 reader must verify a separately ROOT-minted
+    root:991 0440 certificate whose creation requires full historical root
+    receipts. No caller, release token, arbitrary image or journal alone may
+    mint or select it. A consumed/in-progress original replay always denies.
+    """
+    from .analytics_route_journal import AnalyticsRouteJournal
+    from .analytics_active_state_review import inspect_committed_analytics_route
+    from .analytics_route_journal import (
+        LEGACY_REQUEST, LEGACY_IMAGE, LEGACY_GREEN, LEGACY_VERSION,
+        LEGACY_SOURCE, LEGACY_PLATFORM_SOURCE, LEGACY_FINAL_SHA,
+        read_root_legacy_certificate,
+    )
+    from .replay_sqlite import PRODUCTION_REPLAY_DATABASE, SQLiteReplayGuard
+    # This is an exceptional ROOT-ATTESTED HISTORICAL OAT, not a new
+    # release request. The exact archived signed0.16.0 final root receipt
+    # was independently verified at root with its pinned SHA during the
+    # one-time certificate mint. New ordinary releases still verify BOTH
+    # live Ed25519 owner-signed identities from canonical schema3 evidence.
+    if (
+        type(journal) is not AnalyticsRouteJournal
+        or type(intent) is not dict or type(identities) is not dict
+        or (os.getuid(), os.geteuid(), os.getgid(), os.getegid())
+            != (991, 991, 991, 991)
+        or intent.get("generation") != 2
+        or intent.get("phase") != "switched"
+        or intent.get("request_sha256") != LEGACY_REQUEST
+        or intent.get("next_image") != LEGACY_IMAGE
+        or intent.get("next_container_id") != LEGACY_GREEN
+        or intent.get("next_slot") != "green"
+    ):
+        raise ValueError("untrusted legacy release lineage")
+    replay = SQLiteReplayGuard(
+        PRODUCTION_REPLAY_DATABASE,
+        expected_directory_uid=identities["expected_replay_directory_uid"],
+        expected_directory_gid=identities["expected_replay_directory_gid"],
+        expected_broker_uid=identities["expected_broker_uid"],
+        expected_executor_uid=identities["expected_executor_uid"],
+    )
+    status = _read_analytics_execution_status(replay, LEGACY_REQUEST)
+    if status not in (None, "finished"):
+        raise ValueError("legacy release was not completed")
+    certificate = read_root_legacy_certificate(journal, intent)
+    if type(certificate) is not dict:
+        raise ValueError("legacy root completion certificate unavailable")
+    # The historical 0.16.0 signer bytes were verified in the ORIGINAL
+    # signed Task014 and are now preserved by the exact root-owned final
+    # receipt SHA256, not by the generic pre-existing 0.15.0 owner file.
+    # The latter cannot prove this different historical signed version.
+    if (
+        certificate.get("final_release_receipt_sha256") != LEGACY_FINAL_SHA
+        or certificate.get("owner_approved_product_source") != LEGACY_SOURCE
+        or certificate.get("owner_approved_platform_source")
+            != LEGACY_PLATFORM_SOURCE
+    ):
+        raise ValueError("root-attested original signed release is not approved")
+    observed = inspect_committed_analytics_route(
+        journal=journal, reviewed_image=LEGACY_IMAGE,
+        reviewed_slot="green", reviewed_container_id=LEGACY_GREEN,
+        reviewed_request_sha256=LEGACY_REQUEST,
+    )
+    if (
+        getattr(observed, "active_slot", None) != "green"
+        or getattr(observed, "active_image", None) != LEGACY_IMAGE
+        or getattr(observed, "active_container_id", None) != LEGACY_GREEN
+        or journal.read() != intent
+        or read_root_legacy_certificate(journal, intent) != certificate
+        or _read_analytics_execution_status(replay, LEGACY_REQUEST)
+            not in (None, "finished")
+    ):
+        raise ValueError("legacy signed route changed during review")
+    return None
+
+
 # Section: root-proven second-and-later successful private route restart.
 def _review_completed_ordinary_successor_restart(
     *, journal: object, intent: dict[str, object], identities: dict[str, object],
@@ -1175,8 +1255,16 @@ def _review_completed_ordinary_successor_restart(
         expected_executor_uid=identities["expected_executor_uid"],
     )
     request_hash = intent["request_sha256"]
-    if _read_analytics_execution_status(replay, request_hash) != "finished":
-        raise ValueError("no finished ordinary signed replay")
+    status = _read_analytics_execution_status(replay, request_hash)
+    completed = journal.read_completed_release(request_hash)
+    # A pruned historical FINISHED replay is NOT a live authorization; only
+    # a prior immutable post-FINISHED certificate, with the full original
+    # owner/source/live-route review below, can prove this old completion.
+    if status not in (None, "finished") or type(completed) is not dict:
+        # Even a still-retained FINISHED row is not sufficient alone for a
+        # future ordinary release. A crash between replay.finish and fsynced
+        # completion must HOLD now, not work once then fail after TTL pruning.
+        raise ValueError("no durable ordinary signed completion")
     proof = journal.read_execution(request_hash)
     if (
         type(proof) is not dict
@@ -1266,7 +1354,13 @@ def _review_completed_ordinary_successor_restart(
         or getattr(observed, "active_container_id", None) != intent["next_container_id"]
         or journal.read() != intent
         or journal.read_execution(request_hash) != proof
-        or _read_analytics_execution_status(replay, request_hash) != "finished"
+        or _read_analytics_execution_status(replay, request_hash)
+            not in (None, "finished")
+        or completed.get("request_sha256") != request_hash
+        or completed.get("image") != intent["next_image"]
+        or completed.get("container_id") != intent["next_container_id"]
+        or completed.get("canonical_request_sha256") != request_hash
+        or journal.read_completed_release(request_hash) != completed
     ):
         raise ValueError("ordinary signed active route changed during restart")
     return None
@@ -1337,6 +1431,15 @@ def _reconcile_interrupted_first_successor_before_receive() -> None:
         # Later generations must prove signed prior/current source, durable
         # FINISHED replay and actual immutable OCI+Canary private route.
         if type(intent) is dict and type(intent.get("generation")) is int and intent["generation"] >= 2:
+            # One exact owner-approved maintenance OAT, never a forged
+            # second Task014. Root 0440 lineage attestation MUST exist;
+            # without it the historical incident remains hard HOLD.
+            from .analytics_route_journal import LEGACY_REQUEST
+            if (intent["generation"] == 2
+                    and intent.get("request_sha256") == LEGACY_REQUEST):
+                return _review_root_attested_legacy_0160_restart(
+                    journal=journal, intent=intent, identities=identities,
+                )
             return _review_completed_ordinary_successor_restart(
                 journal=journal, intent=intent, identities=identities,
             )
@@ -1977,6 +2080,13 @@ def _execute_reviewed_ordinary_successor_transaction(
             run_attempt=request.github_run_attempt,
         ) is not None:
             raise ValueError("replay did not commit")
+        # Durable success is separate from expiring JWT/JTI replay retention.
+        # Do not answer success until the signed completion is fsynced.
+        phase = "completion_certificate"
+        journal.record_completed_release(
+            canonical_request, candidate_id,
+            replay_guard=replay_begin.__self__,
+        )
         return _build_success_response(request_hash)
     except _CONTROL:
         raise

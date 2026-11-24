@@ -22,6 +22,7 @@ Security: This is a storage/consistency primitive, NEVER an approval of an
 from __future__ import annotations
 
 from contextlib import contextmanager
+from typing import Any
 import base64
 import fcntl
 import hashlib
@@ -536,6 +537,186 @@ class AnalyticsRouteJournal:
             if directory is not None:
                 os.close(directory)
 
+    # Section: durable, post-replay completed-release evidence.
+    # A completed request's short-lived OIDC JTI may legitimately be removed
+    # from SQLite long before its signed Analytics image is retired.
+    def record_completed_release(
+        self, canonical_request: bytes, container_id: str, *, replay_guard: object,
+    ) -> None:
+        """Write a one-time durable completion only AFTER real replay FINISHED.
+
+        This is NOT a deployment approval: the restart reader must separately
+        reverify both owner signatures, immutable image and live private route.
+        The replay clock remains intentionally bounded and unchanged.
+        """
+        from .replay_sqlite import SQLiteReplayGuard
+        from .analytics_executor import _read_analytics_execution_status
+        try:
+            if (type(canonical_request) is not bytes
+                    or type(container_id) is not str
+                    or _SHA.fullmatch(container_id) is None
+                    or type(replay_guard) is not SQLiteReplayGuard
+                    or os.getuid() != object.__getattribute__(self, '_uid')
+                    or os.getgid() != object.__getattribute__(self, '_gid')):
+                _reject()
+            request_hash = hashlib.sha256(canonical_request).hexdigest()
+            proof = self.read_execution(request_hash)
+            route = self.read()
+            if (
+                route is None or route.get('phase') != 'switched'
+                or route.get('generation', 0) < 2
+                or route.get('request_sha256') != request_hash
+                or route.get('next_image') != proof['image']
+                or route.get('next_container_id') != container_id
+                or proof['canonical_request'] != canonical_request
+                or proof['container_id'] != container_id
+                or _read_analytics_execution_status(replay_guard, request_hash)
+                    != 'finished'
+            ):
+                _reject()
+            payload = canonical_bytes({
+                'schema_version': 1,
+                'kind': 'ordinary_signed_release_finished',
+                'request_sha256': request_hash,
+                'image': proof['image'],
+                'container_id': container_id,
+                'canonical_request_sha256': request_hash,
+            })
+            with self.exclusive():
+                if (self.read() != route
+                        or self.read_execution(request_hash) != proof
+                        or _read_analytics_execution_status(replay_guard, request_hash)
+                            != 'finished'):
+                    _reject()
+                directory = object.__getattribute__(self, '_locked_fd')
+                proofs = self._open_executions(directory)
+                try:
+                    name = 'completion-' + request_hash + '.json'
+                    # Do not expose a final receipt until its full payload
+                    # has been fsynced. A random pending name never counts as
+                    # an authoritative receipt and cannot block later retry.
+                    pending = '.completion-' + request_hash + '-' + os.urandom(12).hex() + '.pending'
+                    fd = os.open(
+                        pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                        | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        0o600, dir_fd=proofs,
+                    )
+                    try:
+                        st = os.fstat(fd)
+                        if (st.st_uid != object.__getattribute__(self, '_uid')
+                                or st.st_gid != object.__getattribute__(self, '_gid')
+                                or st.st_nlink != 1
+                                or stat.S_IMODE(st.st_mode) != 0o600):
+                            _reject()
+                        if os.write(fd, payload) != len(payload):
+                            _reject()
+                        os.fsync(fd)
+                    finally:
+                        os.close(fd)
+                    # Hardlink is an exclusive publish: the final name cannot
+                    # be replaced; nlink=2 makes it unreadable until unlink.
+                    # A crash before unlink is fail-closed and recoverable only
+                    # under the existing strict journal controls.
+                    os.link(pending, name, src_dir_fd=proofs,
+                            dst_dir_fd=proofs, follow_symlinks=False)
+                    os.fsync(proofs)
+                    os.unlink(pending, dir_fd=proofs)
+                    os.fsync(proofs)
+                    os.fsync(directory)
+                finally:
+                    os.close(proofs)
+                if self.read_completed_release(request_hash) != {
+                    'schema_version': 1,
+                    'kind': 'ordinary_signed_release_finished',
+                    'request_sha256': request_hash,
+                    'image': proof['image'],
+                    'container_id': container_id,
+                    'canonical_request_sha256': request_hash,
+                }:
+                    _reject()
+        except _CONTROL:
+            raise
+        except Exception:
+            _reject()
+
+    def read_completed_release(self, request_hash: str) -> dict[str, object] | None:
+        """Read one immutable UID991 completion without trusting it alone.
+
+        Missing file is None; a malformed, symlinked or tampered file is HOLD.
+        A caller may NOT use this receipt without signed-owner and live-route
+        verification plus real replay status checks.
+        """
+        directory = proofs = fd = None
+        try:
+            if (type(request_hash) is not str or _SHA.fullmatch(request_hash) is None
+                    or request_hash == '0' * 64):
+                _reject()
+            directory = self._open_dir()
+            proofs = self._open_executions(directory)
+            name = 'completion-' + request_hash + '.json'
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW
+                             | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=proofs)
+            except FileNotFoundError:
+                return None
+            before = os.fstat(fd)
+            named = os.stat(name, dir_fd=proofs, follow_symlinks=False)
+            if (not stat.S_ISREG(before.st_mode)
+                    or before.st_uid != object.__getattribute__(self, '_uid')
+                    or before.st_gid != object.__getattribute__(self, '_gid')
+                    or stat.S_IMODE(before.st_mode) != 0o600
+                    or before.st_nlink != 1 or not 0 < before.st_size <= 768
+                    or (before.st_dev, before.st_ino) != (named.st_dev, named.st_ino)):
+                _reject()
+            payload = os.read(fd, 769)
+            # Reading may advance st_atime (relatime/ext4). Do not mistake
+            # that ordinary read-only metadata change for file tampering.
+            def stable_identity(st):
+                return (
+                    st.st_dev, st.st_ino, st.st_uid, st.st_gid, st.st_mode,
+                    st.st_nlink, st.st_size, st.st_mtime_ns, st.st_ctime_ns,
+                )
+            if (len(payload) != before.st_size
+                    or stable_identity(os.fstat(fd)) != stable_identity(before)):
+                _reject()
+            def unique(pairs):
+                result = {}
+                for key, value in pairs:
+                    if key in result:
+                        _reject()
+                    result[key] = value
+                return result
+            data = json.loads(payload.decode('ascii'), object_pairs_hook=unique)
+            if (type(data) is not dict
+                    or set(data) != {
+                        'schema_version', 'kind', 'request_sha256',
+                        'image', 'container_id', 'canonical_request_sha256',
+                    }
+                    or type(data['schema_version']) is not int
+                    or data['schema_version'] != 1
+                    or data['kind'] != 'ordinary_signed_release_finished'
+                    or data['request_sha256'] != request_hash
+                    or data['canonical_request_sha256'] != request_hash
+                    or type(data['container_id']) is not str
+                    or _SHA.fullmatch(data['container_id']) is None
+                    or type(data['image']) is not str
+                    or not data['image'].startswith(_IMAGE_PREFIX)
+                    or _SHA.fullmatch(data['image'][len(_IMAGE_PREFIX):]) is None
+                    or canonical_bytes(data) != payload):
+                _reject()
+            return data
+        except _CONTROL:
+            raise
+        except Exception:
+            _reject()
+        finally:
+            if fd is not None:
+                os.close(fd)
+            if proofs is not None:
+                os.close(proofs)
+            if directory is not None:
+                os.close(directory)
+
     def _replace_at(
         self, directory_fd: int, new: dict[str, object], *,
         allow_retirement: bool = False,
@@ -1000,3 +1181,167 @@ __all__ = (
     "ROUTE_JOURNAL_DIRECTORY", "AnalyticsRouteJournal",
     "AnalyticsRouteJournalUnavailable",
 )
+
+
+# Section: one exact original signed0.16.0 maintenance/OAT bridge.
+# This is NOT a general legacy migration API. Root-owned historical receipts
+# and source digests are pinned, and only a root:991 0440 certificate can
+# attest that exact owner-authorized generation2 return transaction.
+LEGACY_REQUEST = "73071f42dffcce2dc7eaa2cf494335b6cc7e85eb7346c074529065f4fb079004"
+LEGACY_RUN = 43838827603
+LEGACY_FINAL_SHA = "e1efe4109156c6c0116a806dc287f7edbd6e828973db77f2fe4f6d2ceaa5d341"
+LEGACY_VERSION = "0.16.0"
+LEGACY_SOURCE = "a86a9b5e6a72afac05628e85335cbdf47c6f0255"
+LEGACY_PLATFORM_SOURCE = "d18f8f5cab4be0be7873472c26d44d5d9c42a195"
+LEGACY_IMAGE = (
+    "oci-dev.omnilyzer.ai/omnilyzer/analytics@sha256:"
+    "a0ce1e63dd379c939a2e558b04307b129fa79128da1362"
+    "caa90d963d8bb3f6a1"
+)
+LEGACY_GREEN = "c160029c449cbdf37f35515dd25e5e2235cdeb08f3eebe6525fee17d2d839432"
+LEGACY_SLOT = "green"
+CERTIFICATE_NAME = "legacy-completion-" + LEGACY_REQUEST + ".json"
+_LEGACY_KIND = "owner_root_attested_legacy_0160_oat"
+_LEGACY_SHA = re.compile(r"[0-9a-f]{64}\Z")
+_LEGACY_FIELDS = frozenset({
+    "schema_version", "kind", "original_run_id", "request_sha256",
+    "current_journal_sha256", "final_release_receipt_sha256",
+    "oat_before_sha256", "oat_restored_sha256",
+    "oat_returned_sha256", "oat_result_sha256",
+    "image", "container_id", "slot", "generation",
+    "owner_approved_product_source", "owner_approved_platform_source",
+})
+
+
+class Legacy0160AuthorityUnavailable(Exception):
+    """A root-attested historical recovery boundary did not verify."""
+
+
+def _legacy_reject() -> None:
+    raise Legacy0160AuthorityUnavailable("legacy completed release is not verified")
+
+
+def verify_root_legacy_certificate(
+    payload: bytes, *, intent: dict[str, Any], file_uid: int,
+    file_gid: int, file_mode: int, file_nlink: int,
+) -> dict[str, Any]:
+    """Check strictly root-owned immutable bridge + exact current journal.
+
+    A pure parser for negative QA, but *its acceptance alone is NOT authority*.
+    Real reads must establish immutable POSIX root:991 mode0440/nlink1 and
+    independent live signed release proof in the caller.
+    """
+    try:
+        if (type(payload) is not bytes or not 0 < len(payload) <= 1250
+                or (file_uid, file_gid, file_mode, file_nlink) !=
+                (0, 991, 0o440, 1)
+                or type(intent) is not dict
+                or intent.get("generation") != 2
+                or intent.get("phase") != "switched"
+                or intent.get("request_sha256") != LEGACY_REQUEST
+                or intent.get("next_slot") != LEGACY_SLOT
+                or intent.get("next_image") != LEGACY_IMAGE
+                or intent.get("next_container_id") != LEGACY_GREEN):
+            _legacy_reject()
+
+        def unique(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    _legacy_reject()
+                result[key] = value
+            return result
+
+        document = json.loads(payload.decode("ascii"), object_pairs_hook=unique)
+        if (type(document) is not dict
+                or set(document) != _LEGACY_FIELDS
+                or type(document["schema_version"]) is not int
+                or document["schema_version"] != 1
+                or document["kind"] != _LEGACY_KIND
+                or type(document["original_run_id"]) is not int
+                or document["original_run_id"] != LEGACY_RUN
+                or document["request_sha256"] != LEGACY_REQUEST
+                or document["final_release_receipt_sha256"] != LEGACY_FINAL_SHA
+                or document["image"] != LEGACY_IMAGE
+                or document["container_id"] != LEGACY_GREEN
+                or document["owner_approved_product_source"] != LEGACY_SOURCE
+                or document["owner_approved_platform_source"] != LEGACY_PLATFORM_SOURCE
+                or document["slot"] != LEGACY_SLOT
+                or type(document["generation"]) is not int
+                or document["generation"] != 2
+                or document["current_journal_sha256"] !=
+                hashlib.sha256(canonical_bytes(intent)).hexdigest()
+                or canonical_bytes(document) != payload):
+            _legacy_reject()
+        for key in (
+            "oat_before_sha256", "oat_restored_sha256",
+            "oat_returned_sha256", "oat_result_sha256",
+        ):
+            if (type(document[key]) is not str
+                    or _LEGACY_SHA.fullmatch(document[key]) is None
+                    or document[key] == "0" * 64):
+                _legacy_reject()
+        if len({
+            document["oat_before_sha256"], document["oat_restored_sha256"],
+            document["oat_returned_sha256"], document["oat_result_sha256"],
+        }) != 4:
+            _legacy_reject()
+        return document
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except Exception:
+        _legacy_reject()
+
+
+def read_root_legacy_certificate(journal: object, intent: dict[str, Any]) -> dict[str, Any]:
+    """Read the actual root-minted 0440 file inside UID991 protected journal.
+
+    No caller input can pick a pathname, prefix, uid, mode or source SHA.
+    The caller *must additionally verify* replay status, owner Ed25519 and live
+    route and recheck journal stability before permitting socket receive.
+    """
+    directory = proofs = fd = None
+    try:
+        if (type(journal) is not AnalyticsRouteJournal
+                or (os.getuid(), os.geteuid(), os.getgid(), os.getegid()) !=
+                (991, 991, 991, 991)):
+            _legacy_reject()
+        directory = journal._open_dir()
+        proofs = journal._open_executions(directory)
+        fd = os.open(
+            CERTIFICATE_NAME,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=proofs,
+        )
+        before = os.fstat(fd)
+        named = os.stat(CERTIFICATE_NAME, dir_fd=proofs, follow_symlinks=False)
+        if (not stat.S_ISREG(before.st_mode)
+                or (before.st_dev, before.st_ino) != (named.st_dev, named.st_ino)
+                or before.st_nlink != 1 or not 0 < before.st_size <= 1250):
+            _legacy_reject()
+        payload = os.read(fd, 1251)
+        after = os.fstat(fd)
+        def stable_identity(st):
+            return (
+                st.st_dev, st.st_ino, st.st_uid, st.st_gid, st.st_mode,
+                st.st_nlink, st.st_size, st.st_mtime_ns, st.st_ctime_ns,
+            )
+        if (len(payload) != before.st_size
+                or stable_identity(before) != stable_identity(after)):
+            _legacy_reject()
+        return verify_root_legacy_certificate(
+            payload, intent=intent,
+            file_uid=before.st_uid, file_gid=before.st_gid,
+            file_mode=stat.S_IMODE(before.st_mode), file_nlink=before.st_nlink,
+        )
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except Exception:
+        _legacy_reject()
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if proofs is not None:
+            os.close(proofs)
+        if directory is not None:
+            os.close(directory)
