@@ -98,3 +98,7 @@ No previous cfc input hash or native-root PASS is sufficient for the new
 target; an exact independent review of this version, renewed root read-only
 preflight and owner-approved controlled DEV recovery are mandatory before any
 stage/cutover. No Task014 JTI replay or PROD change is allowed.
+
+## Current source - 24 November 2026
+
+Prior root target 17972bff312a3df7c6e5e4f3d83b239b9b11aba1 is superseded by fcd56406e350b9b20ba107f357d18c0dfb7e6985. The corrected root attestation uses a separate root-controlled staging directory. New reviewed source-stage manifest SHA256 dded55ab8a8773c74ba5ac909628cf266849b1e09c66bcc9ee6c75710494d645 and new stage operator SHA256 fc15016de7525804d766c1dccf19957d1675e5e2bf8800b321196c5531e08295. All four future cutover payload hashes are pinned in the current operator, stored privately under .delivery/m05-pr316-recovery-cutover-fcd564-20261124/payload. Historical root verification must not be reused for this revised operator.

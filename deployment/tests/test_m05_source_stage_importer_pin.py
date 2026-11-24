@@ -21,11 +21,11 @@ REPO_OPERATOR = REPO / "deployment/operators/m05_source_stage_cfc.py"
 OP = REPO_OPERATOR if REPO_OPERATOR.is_file() else Path(__file__).with_name(
     "root-source-stage-reviewed.py"
 )
-REVIEW_SOURCE = Path("/tmp/m05-pr316-11fix-20261122")
+REVIEW_SOURCE = Path("/tmp/m05-pr316-rootcommit-fix-20261124")
 SOURCE = REVIEW_SOURCE if REVIEW_SOURCE.is_dir() else REPO
 ORIGINAL = (SOURCE / "deployment/analytics_isolated_source_install.py").read_bytes()
 ROOT = Path("/opt/omnilyzer/deployment/analytics-app-release-330f3255f0067b9ddbe30d50466830bd71a55a11")
-MANIFEST = Path("/home/omnigpt/repos/omnilyzer-platform/.delivery/m05-pr316-source-stage-17972-20261122/manifest.json")
+MANIFEST = Path("/home/omnigpt/repos/omnilyzer-platform/.delivery/m05-pr316-source-stage-fcd564-20261124/manifest.json")
 HAS_ROOT_FIXTURE = ROOT.is_dir() and MANIFEST.is_file()
 
 

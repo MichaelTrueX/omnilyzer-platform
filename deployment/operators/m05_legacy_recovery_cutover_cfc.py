@@ -2,7 +2,7 @@
 """File: /usr/local/libexec/omnilyzer-m05-legacy-recovery-cutover-cfc.py
 Purpose: Single-use fail-closed DEV source recovery switch to approved
          cfc274 source only after root-attested legacy0.16.0 OAT certificate.
-Related: PR316 17972bff312a3df7c6e5e4f3d83b239b9b11aba1, Issue #281,
+Related: PR316 fcd56406e350b9b20ba107f357d18c0dfb7e6985, Issue #281,
          deployment/analytics_executor_service_config.py, Task014 broker/socket.
 Sections: fixed inputs; source verification; rollback backup; atomic install;
           service cutover; automatic rollback and durable one-use receipt.
@@ -24,22 +24,22 @@ import subprocess
 import sys
 
 # Section: immutable expected source and two config/two service destinations.
-SHA = "17972bff312a3df7c6e5e4f3d83b239b9b11aba1"
+SHA = "fcd56406e350b9b20ba107f357d18c0dfb7e6985"
 SOURCE = Path("/opt/omnilyzer/deployment/analytics-app-release-" + SHA)
 OPERATOR = Path("/usr/local/libexec/omnilyzer-m05-legacy-recovery-cutover-cfc.py")
-REVIEW = Path("/home/omnigpt/repos/omnilyzer-platform/.delivery/m05-pr316-recovery-cutover-17972-20261122/payload")
+REVIEW = Path("/home/omnigpt/repos/omnilyzer-platform/.delivery/m05-pr316-recovery-cutover-fcd564-20261124/payload")
 JOURNAL = Path("/opt/omnilyzer/deployment/.m05-ordinary-cutover-" + SHA)
 OLD_ROOT = "/opt/omnilyzer/deployment/analytics-app-release-330f3255f0067b9ddbe30d50466830bd71a55a11"
 NEW_ROOT = str(SOURCE)
 PLAN = (
     ("/etc/omnilyzer/deployment/broker/analytics.json",
-     "09d54fac2ed1be212d64db42d8d1570dbc4849614c5a108fa6e6c1adf5fb8386", 0o640, 990),
+     "416fc9c2b6e7d902b8bb6d3eff8e14eaa6f9e526b4632e90ecfac2f4169ba2b4", 0o640, 990),
     ("/etc/omnilyzer/deployment/dev/analytics-executor.json",
-     "09d54fac2ed1be212d64db42d8d1570dbc4849614c5a108fa6e6c1adf5fb8386", 0o640, 991),
+     "416fc9c2b6e7d902b8bb6d3eff8e14eaa6f9e526b4632e90ecfac2f4169ba2b4", 0o640, 991),
     ("/etc/systemd/system/omnilyzer-deployment-broker.service.d/analytics-v2-source.conf",
-     "a85e2f8bd49f1c79ae5683506e58065ceebbf0784b6ce395dcdba8652aa7b529", 0o644, 0),
+     "ea274b9e6655e23494cf8a9d61f47f53e572bc2dfd8f2a7d94eeff17150575d2", 0o644, 0),
     ("/etc/systemd/system/omnilyzer-deployment-analytics-executor.service.d/analytics-v2-source.conf",
-     "6b0b1b4619dbe34037cfe12e35181daf516ba34266cbeff7a31d51f23ab722de", 0o644, 0),
+     "26094c49bf29373324d76219fc436a185426a50fd9d9c70224c52cf0ded7ffce", 0o644, 0),
 )
 BROKER = "omnilyzer-deployment-broker.service"
 EXECUTOR = "omnilyzer-deployment-analytics-executor.service"
@@ -225,9 +225,9 @@ ROUTE = Path("/var/lib/omnilyzer/deployment/analytics-route/transaction.json")
 CERT = Path("/var/lib/omnilyzer/deployment/analytics-route/executions/legacy-completion-" + LEGACY_SHA + ".json")
 REPLAY = Path("/var/lib/omnilyzer/deployment/authority/replay.sqlite3")
 MANIFEST = Path(
-    "/home/omnigpt/repos/omnilyzer-platform/.delivery/m05-pr316-source-stage-17972-20261122/manifest.json"
+    "/home/omnigpt/repos/omnilyzer-platform/.delivery/m05-pr316-source-stage-fcd564-20261124/manifest.json"
 )
-MANIFEST_SHA = "1d57383e82b7f0efe9f6b28a6d7168ad3736c9dd2a2f75d59b54b8ac1cbb8f5a"
+MANIFEST_SHA = "dded55ab8a8773c74ba5ac909628cf266849b1e09c66bcc9ee6c75710494d645"
 BASE_SHA = "330f3255f0067b9ddbe30d50466830bd71a55a11"
 
 

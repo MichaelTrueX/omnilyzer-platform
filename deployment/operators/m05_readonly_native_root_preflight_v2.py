@@ -24,16 +24,16 @@ import sys
 
 # Section 1: exact original authority values from current approved Git source.
 WORK = Path('/home/omnigpt/repos/omnilyzer-platform/.delivery')
-STAGE = WORK / 'm05-pr316-source-stage-17972-20261122/root-source-stage-reviewed.py'
-MANIFEST = WORK / 'm05-pr316-source-stage-17972-20261122/manifest.json'
+STAGE = WORK / 'm05-pr316-source-stage-fcd564-20261124/root-source-stage-reviewed.py'
+MANIFEST = WORK / 'm05-pr316-source-stage-fcd564-20261124/manifest.json'
 SCRATCH = Path('/opt/omnilyzer/deployment/.m05-ordinary-reviewed-source-f4a69fc9a3afa361255365ed6d19419bcb58c1c8')
 ROOT = Path('/opt/omnilyzer/deployment/analytics-app-release-330f3255f0067b9ddbe30d50466830bd71a55a11')
-TARGET = Path('/opt/omnilyzer/deployment/analytics-app-release-17972bff312a3df7c6e5e4f3d83b239b9b11aba1')
+TARGET = Path('/opt/omnilyzer/deployment/analytics-app-release-fcd56406e350b9b20ba107f357d18c0dfb7e6985')
 OPERATOR = Path('/usr/local/libexec/omnilyzer-m05-ordinary-source-stage-cfc.py')
-OP_SHA = '0da493f19704da9b5271f17371f0574dfa4b38013e89fd713353c4633c677c8f'
-MANIFEST_SHA = '1d57383e82b7f0efe9f6b28a6d7168ad3736c9dd2a2f75d59b54b8ac1cbb8f5a'
+OP_SHA = 'fc15016de7525804d766c1dccf19957d1675e5e2bf8800b321196c5531e08295'
+MANIFEST_SHA = 'dded55ab8a8773c74ba5ac909628cf266849b1e09c66bcc9ee6c75710494d645'
 OLD = '330f3255f0067b9ddbe30d50466830bd71a55a11'
-NEW = '17972bff312a3df7c6e5e4f3d83b239b9b11aba1'
+NEW = 'fcd56406e350b9b20ba107f357d18c0dfb7e6985'
 problems: list[str] = []
 
 

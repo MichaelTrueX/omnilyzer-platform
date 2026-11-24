@@ -102,3 +102,8 @@ The exact v2 source is `deployment/operators/m05_readonly_native_root_preflight_
 The v2 preflight only reads and SHA-verifies the user-owned reviewed stage operator, original signed 76-file manifest, **45 immutable ROOT runtime modules** and **16 root-owned SCRATCH installer-only modules**. It never imports source modules, stages source, alters services, modifies Task014 replay or touches PROD. It must be installed as a new root:root 0500 one-link diagnostic at `/usr/local/libexec/omnilyzer-m05-readonly-native-root-preflight-v2.py` after its exact reviewed bytes are verified. The previous v1 root diagnostic remains untouched. Expected accepted output is `M05_NATIVE_ROOT_READONLY_SPLIT_CLOSURE_PASS module_count=61 runtime_330f=45 importer_extras=16` followed by `M05_NO_INSTALL_NO_SERVICE_CHANGE_NO_REPLAY_NO_PROD`.
 
 The source-stage operator itself is still **NOT installed**, the cfc new immutable source does not exist, the broker remains ACTIVE and executor/socket FAILED, signed0.16.0 readyz is HTTP200, and independent M04 review plus owner-approved cutover gates remain in force.
+
+## Current target source revision - 24 November 2026
+
+Previous target 17972bff312a3df7c6e5e4f3d83b239b9b11aba1 is superseded. The updated reviewed source is fcd56406e350b9b20ba107f357d18c0dfb7e6985.
+The root operator now binds manifest dded55ab8a8773c74ba5ac909628cf266849b1e09c66bcc9ee6c75710494d645 at .delivery/m05-pr316-source-stage-fcd564-20261124/manifest.json. The 76-file baseline and two replacement SHA256 values have not changed. Earlier recorded positive root attestation does not apply to this new target.
