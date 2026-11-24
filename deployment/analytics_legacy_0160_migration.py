@@ -347,13 +347,54 @@ def _preflight() -> tuple[dict[str, object], bytes]:
     return document,current_bytes
 
 
+def _publish_root_protected_certificate(
+    oat_fd: int, proofs_fd: int, payload: bytes, *,
+    uid: int = 0, gid: int = 991,
+) -> None:
+    """Only release the final certificate after root-owned staging is durable.
+
+    The staging directory is the separately verified root:root mode0700 OAT
+    directory, never the UID991-controlled executions directory. This prevents
+    the unprivileged executor from removing the staged hardlink and making an
+    unfinished root certificate appear to have the required single link.
+    Existing pending evidence is permanent HOLD, never silently discarded.
+    """
+    stage = "." + CERTIFICATE_NAME + ".pending"
+    stage_fd = os.open(
+        stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        | os.O_CLOEXEC, 0o600, dir_fd=oat_fd,
+    )
+    try:
+        if os.write(stage_fd, payload) != len(payload):
+            _fail()
+        os.fchown(stage_fd, uid, gid)
+        os.fchmod(stage_fd, 0o440)
+        st = os.fstat(stage_fd)
+        if (not stat.S_ISREG(st.st_mode)
+                or (st.st_uid, st.st_gid, stat.S_IMODE(st.st_mode), st.st_nlink)
+                != (uid, gid, 0o440, 1)):
+            _fail()
+        os.fsync(stage_fd)
+    finally:
+        os.close(stage_fd)
+    # Durable root-controlled pending inode cannot be unlinked by UID991.
+    os.fsync(oat_fd)
+    os.link(stage, CERTIFICATE_NAME, src_dir_fd=oat_fd,
+            dst_dir_fd=proofs_fd, follow_symlinks=False)
+    # UID991's reader rejects link count two until root completes the gate.
+    os.fsync(proofs_fd)
+    os.unlink(stage, dir_fd=oat_fd)
+    os.fsync(oat_fd)
+    os.fsync(proofs_fd)
+
+
 def _apply(document: dict[str, object], before: bytes) -> None:
     """Mint one durable certificate only while route and replay are locked.
 
-    Root never chowns a pathname inside a UID991-owned directory. The staged
-    root-only evidence is not authoritative; the exclusive final hardlink has
-    nlink=2 (which the UID991 reader refuses) until the staged name is removed.
-    Failed or interrupted writes never publish partial accepted evidence.
+    Root never chowns a pathname inside a UID991-owned directory. Staged
+    evidence lives exclusively in the root-controlled OAT directory; the
+    destination hardlink remains nlink=2 (rejected by the UID991 reader)
+    until root removes the protected staging name after durable publication.
     """
     _check_directory(_ROUTE, uid=991, gid=991, mode=0o700)
     fd = os.open(_ROUTE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -391,34 +432,29 @@ def _apply(document: dict[str, object], before: bytes) -> None:
                     _fail()
                 os.fsync(fd)
 
-                payload = canonical_bytes(document)
-                # A preexisting non-authoritative pending file is evidence of
-                # an interrupted prior root attempt: permanent HOLD, no cleanup.
-                stage = "." + CERTIFICATE_NAME + ".pending"
-                stage_fd = os.open(
-                    stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
-                    os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=evidence,
+                # Keep the staging name exclusively in root's OAT, since
+                # UID991 owns the destination and can unlink any of its names.
+                _check_directory(_OAT, uid=0, gid=0, mode=0o700)
+                oat_fd = os.open(
+                    _OAT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                    | os.O_CLOEXEC,
                 )
                 try:
-                    if os.write(stage_fd, payload) != len(payload):
+                    opened_oat = os.fstat(oat_fd)
+                    named_oat = os.lstat(_OAT)
+                    if (
+                        not stat.S_ISDIR(opened_oat.st_mode)
+                        or (opened_oat.st_uid, opened_oat.st_gid,
+                            stat.S_IMODE(opened_oat.st_mode)) != (0, 0, 0o700)
+                        or (opened_oat.st_dev, opened_oat.st_ino) !=
+                        (named_oat.st_dev, named_oat.st_ino)
+                    ):
                         _fail()
-                    os.fchown(stage_fd, 0, 991)
-                    os.fchmod(stage_fd, 0o440)
-                    st = os.fstat(stage_fd)
-                    if (st.st_uid, st.st_gid, stat.S_IMODE(st.st_mode),
-                            st.st_nlink) != (0, 991, 0o440, 1):
-                        _fail()
-                    os.fsync(stage_fd)
+                    _publish_root_protected_certificate(
+                        oat_fd, evidence, canonical_bytes(document),
+                    )
                 finally:
-                    os.close(stage_fd)
-                # Link publishes exclusively without replacing a named
-                # certificate. While pending still exists its nlink=2 is
-                # rejected by read_root_legacy_certificate.
-                os.link(stage, CERTIFICATE_NAME, src_dir_fd=evidence,
-                        dst_dir_fd=evidence, follow_symlinks=False)
-                os.fsync(evidence)
-                os.unlink(stage, dir_fd=evidence)
-                os.fsync(evidence)
+                    os.close(oat_fd)
                 os.fsync(fd)
                 named = os.stat("executions", dir_fd=fd, follow_symlinks=False)
                 current = os.fstat(evidence)

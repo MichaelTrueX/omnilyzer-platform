@@ -14,6 +14,7 @@ from unittest.mock import patch
 from deployment.analytics_legacy_0160_migration import (
     _validate_historical_documents, _preflight, _apply, main,
     _held_replay_evidence, _live_uid991_route,
+    _publish_root_protected_certificate,
     _review_root_installed_operator_path,
 )
 from deployment.analytics_route_journal import (
@@ -190,6 +191,70 @@ class HistoricalRootOATLineageTests(unittest.TestCase):
             self.assertEqual(main(), 3)
             writer.assert_not_called()
 
+
+
+class RootProtectedCertificatePublicationTests(unittest.TestCase):
+    """Verify exact root-stage versus unprivileged destination boundaries."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="m05-root-stage-")
+        self.addCleanup(self.temp.cleanup)
+        base = Path(self.temp.name)
+        self.oat = base / "root-attestation"
+        self.proofs = base / "uid991-executions"
+        self.oat.mkdir(mode=0o700)
+        self.proofs.mkdir(mode=0o700)
+        self.oat_fd = os.open(self.oat, os.O_RDONLY | os.O_DIRECTORY)
+        self.proofs_fd = os.open(self.proofs, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, self.oat_fd)
+        self.addCleanup(os.close, self.proofs_fd)
+        from deployment.analytics_legacy_0160_migration import CERTIFICATE_NAME
+        self.name = CERTIFICATE_NAME
+        self.stage = "." + self.name + ".pending"
+
+    def run_publish(self, payload: bytes):
+        # Test process cannot chown to UID0. Match to current test UID/GID,
+        # then independently test file placement and publication sequencing.
+        return _publish_root_protected_certificate(
+            self.oat_fd, self.proofs_fd, payload,
+            uid=os.getuid(), gid=os.getgid(),
+        )
+
+    def test_staged_inode_stays_outside_uid991_directory_until_final(self):
+        real_link = os.link
+        observed = []
+
+        def observe_link(src, dst, **kwargs):
+            self.assertEqual(kwargs["src_dir_fd"], self.oat_fd)
+            self.assertEqual(kwargs["dst_dir_fd"], self.proofs_fd)
+            self.assertTrue((self.oat / self.stage).is_file())
+            self.assertFalse((self.proofs / self.stage).exists())
+            real_link(src, dst, **kwargs)
+            self.assertEqual((self.proofs / self.name).stat().st_nlink, 2)
+            observed.append("source-protected-final-not-authoritative")
+
+        with patch("deployment.analytics_legacy_0160_migration.os.link",
+                   side_effect=observe_link):
+            self.run_publish(b"test-only-canonical-bytes")
+        self.assertEqual(observed, ["source-protected-final-not-authoritative"])
+        self.assertFalse((self.oat / self.stage).exists())
+        self.assertEqual((self.proofs / self.name).stat().st_nlink, 1)
+        self.assertEqual((self.proofs / self.name).read_bytes(),
+                         b"test-only-canonical-bytes")
+
+    def test_failed_sync_keeps_authoritative_final_name_absent(self):
+        real_sync = os.fsync
+        def fail_first(fd):
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError("simulated staging fsync failure")
+            return real_sync(fd)
+        with patch("deployment.analytics_legacy_0160_migration.os.fsync",
+                   side_effect=fail_first), self.assertRaises(OSError):
+            self.run_publish(b"test-only-canonical-bytes")
+        self.assertFalse((self.proofs / self.name).exists())
+        self.assertTrue((self.oat / self.stage).is_file())
+        with self.assertRaises(FileExistsError):
+            self.run_publish(b"test-only-canonical-bytes")
 
 
 class RootReplayPublicationLockTests(unittest.TestCase):
